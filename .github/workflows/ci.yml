@@ -56,6 +56,15 @@ jobs:
       - name: Build container-mode web export
         run: npm run build:container
 
+      - name: Stage tracked console media probe for source smoke tests
+        working-directory: ${{ github.workspace }}
+        run: |
+          probe_dir="00_总览/assets/media"
+          probe_file="$probe_dir/14a0091da9_孢雾巡猎者_档案卡.png"
+          mkdir -p "$probe_dir"
+          cp "tools/agent-server/package/obsidian-epoch/assets/activity/anomaly-activity.png" "$probe_file"
+          test -s "$probe_file"
+
       - name: Agent server tests (serial)
         run: node --import tsx --test --test-concurrency=1 ../agent-server/test/*.test.ts
 
