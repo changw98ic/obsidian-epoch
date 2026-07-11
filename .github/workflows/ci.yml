@@ -53,6 +53,9 @@ jobs:
       - name: Typecheck and source-policy gates
         run: npm run typecheck
 
+      - name: Build container-mode web export
+        run: npm run build:container
+
       - name: Agent server tests (serial)
         run: node --import tsx --test --test-concurrency=1 ../agent-server/test/*.test.ts
 
@@ -61,9 +64,6 @@ jobs:
 
       - name: Web and script tests (serial)
         run: node --import tsx --test --test-concurrency=1 src/agent/*.test.ts scripts/*.test.ts
-
-      - name: Build container-mode web export
-        run: npm run build:container
 
       - name: Remove host-generated web artifacts before image build
         working-directory: ${{ github.workspace }}
@@ -135,12 +135,30 @@ jobs:
               --severity HIGH,CRITICAL --exit-code 1 "$image"
           done
 
-      - name: Upload supply-chain evidence
+      - name: Record supply-chain evidence digests
         if: always()
+        working-directory: ${{ runner.temp }}/supply-chain
+        run: |
+          shopt -s nullglob
+          evidence_files=(*.json)
+          test "${#evidence_files[@]}" -gt 0
+          sha256sum "${evidence_files[@]}" | tee evidence.sha256
+          {
+            echo '### Supply-chain evidence digests'
+            echo '```text'
+            cat evidence.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload supply-chain evidence when artifact storage is available
+        if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: supply-chain-${{ github.sha }}
-          path: ${{ runner.temp }}/supply-chain/*.json
+          path: |
+            ${{ runner.temp }}/supply-chain/*.json
+            ${{ runner.temp }}/supply-chain/evidence.sha256
           if-no-files-found: error
           retention-days: 30
 
