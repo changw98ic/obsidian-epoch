@@ -14,6 +14,7 @@ import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const graphAppRoot = resolve(repoRoot, "tools/graph-react-app");
 const AGENT_SERVER_PROCESS_HEALTH_TIMEOUT_MS = 30_000;
+const SUPPORTS_PROCESS_GROUP_SIGNALS = process.platform !== "win32";
 
 async function runInstallSmokeCommand(args: string[], env: NodeJS.ProcessEnv = {}) {
   const child = spawn("npm", ["run", "agent:install-smoke", "--", ...args], {
@@ -250,11 +251,26 @@ async function waitForHealthyServer(baseUrl: string, childOutput: () => string) 
 
 async function stopChildProcess(child: ReturnType<typeof spawn>) {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill();
-  await Promise.race([
-    once(child, "exit"),
-    new Promise((resolve) => setTimeout(resolve, 2_000)),
+
+  const signalProcessTree = (signal: NodeJS.Signals) => {
+    if (SUPPORTS_PROCESS_GROUP_SIGNALS && child.pid) {
+      try {
+        process.kill(-child.pid, signal);
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+        throw error;
+      }
+    }
+    child.kill(signal);
+  };
+
+  signalProcessTree("SIGTERM");
+  const exited = await Promise.race([
+    once(child, "exit").then(() => true),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), 2_000)),
   ]);
+  if (!exited) signalProcessTree("SIGKILL");
 }
 
 test("npm install smoke command proves MCP package can play one server turn", async () => {
@@ -502,6 +518,7 @@ test("agent server process supports MCP alias and package install smoke", async 
   const dataDir = await mkdtemp(resolve(tmpdir(), "agent-server-process-smoke-"));
   const child = spawn("npm", ["run", "agent:server"], {
     cwd: graphAppRoot,
+    detached: SUPPORTS_PROCESS_GROUP_SIGNALS,
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
