@@ -164,11 +164,38 @@ function stopAndRequireCleanExit(containerName: string) {
   assert.equal(exitCode, 0, `container ${containerName} exit code`);
 }
 
+function stageSecretFile(input: {
+  readonly image: string;
+  readonly secretVolume: string;
+  readonly sourcePath: string;
+  readonly targetName: string;
+}) {
+  docker([
+    "run",
+    "--rm",
+    "--network=none",
+    "--read-only",
+    "--user",
+    "0:0",
+    "--security-opt=no-new-privileges:true",
+    "--mount",
+    `type=bind,source=${resolve(input.sourcePath)},target=/input/secret,readonly`,
+    "--volume",
+    `${input.secretVolume}:/run/secrets`,
+    "--entrypoint",
+    "/nodejs/bin/node",
+    input.image,
+    "--input-type=module",
+    "--eval",
+    `import { chmodSync, copyFileSync } from 'node:fs'; copyFileSync('/input/secret', ${JSON.stringify(`/run/secrets/${input.targetName}`)}); chmodSync(${JSON.stringify(`/run/secrets/${input.targetName}`)}, 0o444);`,
+  ]);
+}
+
 function startServer(input: {
   readonly image: string;
   readonly containerName: string;
   readonly volumeMount: string;
-  readonly packageSigningKeyPath: string;
+  readonly secretVolume: string;
   readonly environment: Readonly<Record<string, string>>;
 }) {
   docker([
@@ -188,8 +215,8 @@ function startServer(input: {
     "127.0.0.1::8787",
     "--volume",
     input.volumeMount,
-    "--mount",
-    `type=bind,source=${resolve(input.packageSigningKeyPath)},target=/run/secrets/package-private.pem,readonly`,
+    "--volume",
+    `${input.secretVolume}:/run/secrets:ro`,
     ...environmentArgs(input.environment),
     input.image,
   ]);
@@ -202,6 +229,7 @@ export async function runContainerLifecycleGate(image: string) {
   const dataVolume = `obsidian-epoch-gate-data-${suffix}`;
   const backupVolume = `obsidian-epoch-gate-backup-${suffix}`;
   const restoreVolume = `obsidian-epoch-gate-restore-${suffix}`;
+  const secretVolume = `obsidian-epoch-gate-secrets-${suffix}`;
   const tempDir = await mkdtemp(join(tmpdir(), "obsidian-epoch-container-gate-"));
   const packageSigning = signingMaterial();
   const backupSigning = signingMaterial();
@@ -217,13 +245,20 @@ export async function runContainerLifecycleGate(image: string) {
   let issuedToken = "";
   let tokenId = "";
 
-  for (const volume of [dataVolume, backupVolume, restoreVolume]) docker(["volume", "create", volume]);
+  for (const volume of [dataVolume, backupVolume, restoreVolume, secretVolume]) docker(["volume", "create", volume]);
   try {
+    for (const [sourcePath, targetName] of [
+      [packagePrivateKeyPath, "package-private.pem"],
+      [backupPrivateKeyPath, "backup-private.pem"],
+      [backupPublicKeyPath, "backup-public.txt"],
+    ] as const) {
+      stageSecretFile({ image, secretVolume, sourcePath, targetName });
+    }
     startServer({
       image,
       containerName: primaryContainer,
       volumeMount: `${dataVolume}:/data`,
-      packageSigningKeyPath: packagePrivateKeyPath,
+      secretVolume,
       environment: primaryServer.values,
     });
     const primaryPort = containerPort(primaryContainer);
@@ -268,8 +303,8 @@ export async function runContainerLifecycleGate(image: string) {
       `${dataVolume}:/data`,
       "--volume",
       `${backupVolume}:/backups`,
-      "--mount",
-      `type=bind,source=${resolve(backupPrivateKeyPath)},target=/run/secrets/backup-private.pem,readonly`,
+      "--volume",
+      `${secretVolume}:/run/secrets:ro`,
       "--env",
       "AGENT_SERVER_BACKUP_SIGNING_PRIVATE_KEY_FILE=/run/secrets/backup-private.pem",
       "--env",
@@ -297,6 +332,12 @@ export async function runContainerLifecycleGate(image: string) {
     assert.equal(backupSignature?.algorithm, "Ed25519");
     assert.equal(backupCheckpoint?.manifestSha256, backupSignature?.manifestSha256);
     await writeFile(backupCheckpointPath, `${JSON.stringify(backupCheckpoint)}\n`, { mode: 0o600 });
+    stageSecretFile({
+      image,
+      secretVolume,
+      sourcePath: backupCheckpointPath,
+      targetName: "backup-checkpoint.json",
+    });
 
     const restoreRun = docker([
       "run",
@@ -311,10 +352,8 @@ export async function runContainerLifecycleGate(image: string) {
       `${backupVolume}:/backups:ro`,
       "--volume",
       `${restoreVolume}:/restore`,
-      "--mount",
-      `type=bind,source=${resolve(backupPublicKeyPath)},target=/run/secrets/backup-public.txt,readonly`,
-      "--mount",
-      `type=bind,source=${resolve(backupCheckpointPath)},target=/run/secrets/backup-checkpoint.json,readonly`,
+      "--volume",
+      `${secretVolume}:/run/secrets:ro`,
       "--env",
       `AGENT_SERVER_RESTORE_BACKUP=/backups/${backupId}`,
       "--env",
@@ -348,7 +387,7 @@ export async function runContainerLifecycleGate(image: string) {
       image,
       containerName: restoredContainer,
       volumeMount: `${restoreVolume}:/restore`,
-      packageSigningKeyPath: packagePrivateKeyPath,
+      secretVolume,
       environment: restoredServer.values,
     });
     const restoredPort = containerPort(restoredContainer);
@@ -384,7 +423,7 @@ export async function runContainerLifecycleGate(image: string) {
   } finally {
     docker(["rm", "--force", primaryContainer], { allowFailure: true });
     docker(["rm", "--force", restoredContainer], { allowFailure: true });
-    for (const volume of [dataVolume, backupVolume, restoreVolume]) {
+    for (const volume of [dataVolume, backupVolume, restoreVolume, secretVolume]) {
       docker(["volume", "rm", "--force", volume], { allowFailure: true });
     }
     await rm(tempDir, { recursive: true, force: true });
