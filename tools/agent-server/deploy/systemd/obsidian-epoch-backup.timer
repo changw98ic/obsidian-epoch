@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Obsidian Epoch backup rotation daily
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=obsidian-epoch-backup.service
+
+[Install]
+WantedBy=timers.target

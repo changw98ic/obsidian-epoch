@@ -1,0 +1,57 @@
+.DS_Store
+
+# Local environment and secret files
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# Obsidian/local app state
+.obsidian/workspace*.json
+.trash/
+
+# OMX / local orchestration state
+.codegraph/
+.omc/
+.omx/logs/
+.omx/state/
+.omx/artifacts/
+.omx/metrics.json
+
+# Node/Vite
+tools/graph-react-app/node_modules/
+tools/graph-react-app/dist/
+00_总览/黑曜纪元3D世界地图.html
+00_总览/黑曜纪元3D世界地图.http.html
+00_总览/assets/
+00_总览/data/
+00_总览/3d-graph-data.json
+00_总览/cinematic-3d-graph-data.json
+00_总览/graph-data.json
+00_总览/黑曜纪元3D知识图谱.html
+00_总览/黑曜纪元知识图谱网状视图.html
+00_总览/黑曜纪元知识图谱网状视图.svg
+00_总览/黑曜纪元战略关系图.html
+00_总览/黑曜纪元星图3D.html
+
+# Original multi-gigabyte art awaits a reviewed Git LFS or object-storage
+# authority. Keep it out of ordinary Git history in the meantime.
+09_素材与图片/*
+!09_素材与图片/ChatGPT批量生成/
+09_素材与图片/ChatGPT批量生成/*
+!09_素材与图片/ChatGPT批量生成/*-jobs.json
+!09_素材与图片/ChatGPT批量生成/object-storage-manifest.json
+
+# Local agent-server append-only runtime data
+tools/agent-server/data/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs and temporary files
+*.log
+*.pid
+
+# Accidental empty shell artifact
+/=

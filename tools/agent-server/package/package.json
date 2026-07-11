@@ -1,0 +1,13 @@
+{
+  "name": "obsidian-epoch-agent-world",
+  "version": "0.1.0-alpha",
+  "private": true,
+  "type": "module",
+  "description": "Installable Obsidian Epoch MCP proxy and Skill package.",
+  "scripts": {
+    "agent:mcp": "node obsidian-epoch/bin/mcp-proxy.ts"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

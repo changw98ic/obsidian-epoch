@@ -1,0 +1,13 @@
+{
+  "mcp": {
+    "servers": {
+      "obsidian-epoch-agent-world": {
+        "url": "http://127.0.0.1:8787/mcp",
+        "transport": "streamable-http",
+        "headers": {
+          "Authorization": "Bearer ${AGENT_WORLD_MCP_TOKEN}"
+        }
+      }
+    }
+  }
+}

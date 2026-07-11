@@ -1,0 +1,27 @@
+{
+  "name": "obsidian-epoch-agent-world",
+  "version": "0.1.0-alpha",
+  "description": "Server-authoritative Obsidian Epoch MCP and Skill package for coding-agent hosts.",
+  "author": {
+    "name": "Obsidian Epoch"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "黑曜纪元",
+    "shortDescription": "服务器权威的 Agent 奇幻世界",
+    "longDescription": "让 Codex 通过服务器签发的身份和行动选项进入持续演化的多人奇幻世界。",
+    "developerName": "Obsidian Epoch",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "签发我的身份并开始第一回合。",
+      "查看我的托管进度和区域新闻。",
+      "继续一次服务器权威行动。"
+    ],
+    "brandColor": "#31B7A6"
+  }
+}

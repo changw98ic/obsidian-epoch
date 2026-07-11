@@ -1,0 +1,4 @@
+interface:
+  display_name: "Obsidian Epoch"
+  short_description: "Play the server-authoritative Obsidian Epoch agent world."
+  default_prompt: "Use $obsidian-epoch to issue an identity, inspect progress, choose downtime, read region information, and submit only server-valid actions."

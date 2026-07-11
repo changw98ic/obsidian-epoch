@@ -1,0 +1,268 @@
+services:
+  obsidian-epoch-agent-server:
+    build:
+      context: ../../..
+      dockerfile: tools/agent-server/deploy/Dockerfile
+      args:
+        SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH:?set immutable release epoch from git show -s --format=%ct HEAD}
+        OCI_IMAGE_VERSION: ${AGENT_IMAGE_VERSION:?set immutable release version}
+        OCI_IMAGE_REVISION: ${AGENT_IMAGE_REVISION:?set full release commit sha}
+        OCI_IMAGE_SOURCE: ${AGENT_IMAGE_SOURCE:?set canonical source repository URL}
+    image: ${AGENT_IMAGE_REGISTRY:?set image registry}/obsidian-epoch-agent-server:${AGENT_IMAGE_VERSION:?set immutable release version}
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: ${AGENT_SERVER_PIDS_LIMIT:-256}
+    cpus: ${AGENT_SERVER_CPU_LIMIT:-1.0}
+    mem_limit: ${AGENT_SERVER_MEMORY_LIMIT:-1g}
+    stop_signal: SIGTERM
+    stop_grace_period: ${AGENT_SERVER_STOP_GRACE_PERIOD:-15s}
+    ports:
+      - "127.0.0.1:8787:8787"
+    expose:
+      - "8787"
+    environment:
+      AGENT_SERVER_HOST: 0.0.0.0
+      AGENT_SERVER_PORT: "8787"
+      AGENT_PUBLIC_SERVER_BASE: ${AGENT_PUBLIC_SERVER_BASE:?set canonical HTTPS server origin}
+      AGENT_SERVER_ALLOWED_ORIGINS: ${AGENT_SERVER_ALLOWED_ORIGINS:?set exact HTTPS production origin}
+      AGENT_SERVER_MAX_BODY_BYTES: ${AGENT_SERVER_MAX_BODY_BYTES:-1000000}
+      AGENT_SERVER_SHUTDOWN_TIMEOUT_MS: ${AGENT_SERVER_SHUTDOWN_TIMEOUT_MS:-10000}
+      AGENT_SERVER_STORE: sqlite
+      AGENT_SERVER_DATA_DIR: /data
+      AGENT_SERVER_SQLITE_PATH: /data/agent-world.sqlite
+      AGENT_SERVER_SQLITE_MIGRATE_JSONL: ${AGENT_SERVER_SQLITE_MIGRATE_JSONL:-0}
+      SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH:?set immutable release epoch from git show -s --format=%ct HEAD}
+      AGENT_EPOCH_CONSOLE_MEDIA_BASE_URL: ${AGENT_EPOCH_CONSOLE_MEDIA_BASE_URL:?set public CDN or object storage base URL for console media assets}
+      AGENT_SERVER_OPERATOR_KEY_FILE: /run/secrets/obsidian_epoch_operator_key
+      AGENT_SERVER_MCP_BEARER_TOKEN_FILE: /run/secrets/obsidian_epoch_mcp_bearer_token
+      AGENT_SERVER_MCP_PLAYER_TOKEN_JSONL_PATH: ${AGENT_SERVER_MCP_PLAYER_TOKEN_JSONL_PATH:-/data/player-mcp-access-tokens.jsonl}
+      AGENT_SERVER_MCP_PLAYER_TOKEN_TTL_SECONDS: ${AGENT_SERVER_MCP_PLAYER_TOKEN_TTL_SECONDS:-43200}
+      AGENT_SERVER_REGISTRATION_SECRET_FILE: /run/secrets/obsidian_epoch_registration_secret
+      AGENT_SERVER_REGISTRATION_ACTOR_HASH_SECRET_FILE: /run/secrets/obsidian_epoch_registration_actor_hash_secret
+      AGENT_SERVER_REGISTRATION_TRUST_PROXY_HOPS: ${AGENT_SERVER_REGISTRATION_TRUST_PROXY_HOPS:?set exact trusted proxy hop count}
+      AGENT_SERVER_PUBLIC_REGISTRATION_MODE: enforce
+      AGENT_SERVER_REGISTRATION_WINDOW_SECONDS: ${AGENT_SERVER_REGISTRATION_WINDOW_SECONDS:-86400}
+      AGENT_SERVER_REGISTRATION_MAX_ACTIONS: ${AGENT_SERVER_REGISTRATION_MAX_ACTIONS:-8}
+      AGENT_SERVER_REGISTRATION_COOLDOWN_SECONDS: ${AGENT_SERVER_REGISTRATION_COOLDOWN_SECONDS:-30}
+      AGENT_SERVER_REGISTRATION_DEVICE_CHALLENGE_TTL_SECONDS: ${AGENT_SERVER_REGISTRATION_DEVICE_CHALLENGE_TTL_SECONDS:-86400}
+      AGENT_SERVER_REGISTRATION_INVITES_FILE: /run/secrets/obsidian_epoch_registration_invites
+      AGENT_PACKAGE_SIGNING_PRIVATE_KEY_PEM_FILE: /run/secrets/obsidian_epoch_package_signing_private_key
+      AGENT_SERVER_MAINTENANCE_ENABLED: ${AGENT_SERVER_MAINTENANCE_ENABLED:-1}
+      AGENT_SERVER_MAINTENANCE_INTERVAL_MS: ${AGENT_SERVER_MAINTENANCE_INTERVAL_MS:-900000}
+      AGENT_SERVER_MAINTENANCE_NPC_REGION_ID: ${AGENT_SERVER_MAINTENANCE_NPC_REGION_ID:-}
+      AGENT_SERVER_MAINTENANCE_NPC_LIMIT: ${AGENT_SERVER_MAINTENANCE_NPC_LIMIT:-5}
+      AGENT_SERVER_MAINTENANCE_MARKET_MAX_AGE_SECONDS: ${AGENT_SERVER_MAINTENANCE_MARKET_MAX_AGE_SECONDS:-86400}
+      AGENT_SERVER_MAINTENANCE_MARKET_LIMIT: ${AGENT_SERVER_MAINTENANCE_MARKET_LIMIT:-50}
+      AGENT_SERVER_MAINTENANCE_RESOURCE_NODE_REGION_IDS: ${AGENT_SERVER_MAINTENANCE_RESOURCE_NODE_REGION_IDS:-}
+      AGENT_SERVER_MAINTENANCE_RESOURCE_NODE_LIMIT: ${AGENT_SERVER_MAINTENANCE_RESOURCE_NODE_LIMIT:-0}
+      AGENT_SERVER_MAINTENANCE_RESOURCE_NODE_SETTLEMENT_LIMIT: ${AGENT_SERVER_MAINTENANCE_RESOURCE_NODE_SETTLEMENT_LIMIT:-0}
+      AGENT_SERVER_MAINTENANCE_ANOMALY_REGION_IDS: ${AGENT_SERVER_MAINTENANCE_ANOMALY_REGION_IDS:-}
+      AGENT_SERVER_MAINTENANCE_ANOMALY_LIMIT: ${AGENT_SERVER_MAINTENANCE_ANOMALY_LIMIT:-0}
+      AGENT_SERVER_MAINTENANCE_ANOMALY_TEMPLATE_KEY: ${AGENT_SERVER_MAINTENANCE_ANOMALY_TEMPLATE_KEY:-}
+      AGENT_SERVER_MAINTENANCE_SEASON_REGION_IDS: ${AGENT_SERVER_MAINTENANCE_SEASON_REGION_IDS:-}
+      AGENT_SERVER_MAINTENANCE_SEASON_LIMIT: ${AGENT_SERVER_MAINTENANCE_SEASON_LIMIT:-0}
+      AGENT_SERVER_MAINTENANCE_SEASON_KEY: ${AGENT_SERVER_MAINTENANCE_SEASON_KEY:-}
+      AGENT_SERVER_MAINTENANCE_SEASON_SETTLEMENT_LIMIT: ${AGENT_SERVER_MAINTENANCE_SEASON_SETTLEMENT_LIMIT:-0}
+      AGENT_SERVER_MAINTENANCE_PARTY_RUN_SETTLEMENT_LIMIT: ${AGENT_SERVER_MAINTENANCE_PARTY_RUN_SETTLEMENT_LIMIT:-0}
+      AGENT_SERVER_MAINTENANCE_REGION_CONTROL_DECAY_LIMIT: ${AGENT_SERVER_MAINTENANCE_REGION_CONTROL_DECAY_LIMIT:-0}
+      AGENT_SERVER_MAINTENANCE_REGION_CONTROL_DECAY_AMOUNT: ${AGENT_SERVER_MAINTENANCE_REGION_CONTROL_DECAY_AMOUNT:-1}
+      AGENT_SERVER_MAINTENANCE_REGION_CONTROL_DECAY_MIN_AGE_SECONDS: ${AGENT_SERVER_MAINTENANCE_REGION_CONTROL_DECAY_MIN_AGE_SECONDS:-604800}
+      AGENT_SERVER_MAINTENANCE_SERVER_HOSTED_JOB_LIMIT: ${AGENT_SERVER_MAINTENANCE_SERVER_HOSTED_JOB_LIMIT:-0}
+      AGENT_SERVER_MAINTENANCE_RUN_ON_START: ${AGENT_SERVER_MAINTENANCE_RUN_ON_START:-1}
+      AGENT_SERVER_ATTESTED_RUNNERS_FILE: /run/secrets/obsidian_epoch_attested_runners
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=${AGENT_SERVER_TMPFS_SIZE:-64m},mode=1777
+    secrets:
+      - source: obsidian_epoch_operator_key
+        target: obsidian_epoch_operator_key
+      - source: obsidian_epoch_mcp_bearer_token
+        target: obsidian_epoch_mcp_bearer_token
+      - source: obsidian_epoch_registration_secret
+        target: obsidian_epoch_registration_secret
+      - source: obsidian_epoch_registration_actor_hash_secret
+        target: obsidian_epoch_registration_actor_hash_secret
+      - source: obsidian_epoch_package_signing_private_key
+        target: obsidian_epoch_package_signing_private_key
+      - source: obsidian_epoch_registration_invites
+        target: obsidian_epoch_registration_invites
+      - source: obsidian_epoch_attested_runners
+        target: obsidian_epoch_attested_runners
+    volumes:
+      - type: volume
+        source: obsidian_epoch_data
+        target: /data
+        read_only: false
+    healthcheck:
+      test: ["CMD", "node", "--input-type=module", "-e", "const response = await fetch('http://127.0.0.1:8787/api/health'); process.exit(response.ok ? 0 : 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  obsidian-epoch-backup:
+    image: ${AGENT_IMAGE_REGISTRY:?set image registry}/obsidian-epoch-agent-server:${AGENT_IMAGE_VERSION:?set immutable release version}
+    profiles: ["operations"]
+    init: true
+    restart: "no"
+    network_mode: "none"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: ${AGENT_SERVER_PIDS_LIMIT:-256}
+    cpus: ${AGENT_SERVER_CPU_LIMIT:-1.0}
+    mem_limit: ${AGENT_SERVER_MEMORY_LIMIT:-1g}
+    environment:
+      AGENT_SERVER_DATA_DIR: /data
+      AGENT_SERVER_SQLITE_PATH: /data/agent-world.sqlite
+      AGENT_SERVER_MCP_PLAYER_TOKEN_JSONL_PATH: /data/player-mcp-access-tokens.jsonl
+      AGENT_SERVER_BACKUP_DIR: /backups
+      AGENT_SERVER_BACKUP_KEEP_LAST: ${AGENT_SERVER_BACKUP_KEEP_LAST:-14}
+      AGENT_SERVER_BACKUP_SIGNING_PRIVATE_KEY_FILE: /run/secrets/obsidian_epoch_backup_signing_private_key
+      AGENT_SERVER_BACKUP_VERIFICATION_PUBLIC_KEY_FILE: /run/secrets/obsidian_epoch_backup_verification_public_key
+      AGENT_SERVER_BACKUP_SIGNATURE_REQUIRED: "1"
+    command:
+      - tools/agent-server/backup.ts
+      - --sqlite
+      - /data/agent-world.sqlite
+      - --sqlite-only
+      - --player-mcp-tokens
+      - /data/player-mcp-access-tokens.jsonl
+      - --backup-root
+      - /backups
+      - --keep-last
+      - ${AGENT_SERVER_BACKUP_KEEP_LAST:-14}
+      - --require-signature
+      - --json
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=${AGENT_SERVER_TMPFS_SIZE:-64m},mode=1777
+    secrets:
+      - source: obsidian_epoch_backup_signing_private_key
+        target: obsidian_epoch_backup_signing_private_key
+      - source: obsidian_epoch_backup_verification_public_key
+        target: obsidian_epoch_backup_verification_public_key
+    volumes:
+      - type: volume
+        source: obsidian_epoch_data
+        target: /data
+        read_only: false
+      - type: volume
+        source: obsidian_epoch_backups
+        target: /backups
+        read_only: false
+
+  obsidian-epoch-restore:
+    image: ${AGENT_IMAGE_REGISTRY:?set image registry}/obsidian-epoch-agent-server:${AGENT_IMAGE_VERSION:?set immutable release version}
+    profiles: ["operations"]
+    init: true
+    restart: "no"
+    network_mode: "none"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: ${AGENT_SERVER_PIDS_LIMIT:-256}
+    cpus: ${AGENT_SERVER_CPU_LIMIT:-1.0}
+    mem_limit: ${AGENT_SERVER_MEMORY_LIMIT:-1g}
+    environment:
+      AGENT_SERVER_RESTORE_BACKUP: ${AGENT_SERVER_RESTORE_BACKUP:-}
+      AGENT_SERVER_RESTORE_DATA_DIR: ${AGENT_SERVER_RESTORE_DATA_DIR:-/restore/jsonl}
+      AGENT_SERVER_RESTORE_SQLITE_PATH: ${AGENT_SERVER_RESTORE_SQLITE_PATH:-/restore/agent-world.sqlite}
+      AGENT_SERVER_RESTORE_MCP_PLAYER_TOKEN_JSONL_PATH: ${AGENT_SERVER_RESTORE_MCP_PLAYER_TOKEN_JSONL_PATH:-/restore/player-mcp-access-tokens.jsonl}
+      AGENT_SERVER_BACKUP_VERIFICATION_PUBLIC_KEY_FILE: /run/secrets/obsidian_epoch_backup_verification_public_key
+      AGENT_SERVER_BACKUP_TRUSTED_CHECKPOINT_FILE: /run/secrets/obsidian_epoch_backup_trusted_checkpoint
+      AGENT_SERVER_BACKUP_SIGNATURE_REQUIRED: "1"
+      AGENT_SERVER_BACKUP_REPLAY_PROTECTION_REQUIRED: "1"
+    command:
+      - tools/agent-server/restore-backup.ts
+      - --require-signature
+      - --json
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=${AGENT_SERVER_TMPFS_SIZE:-64m},mode=1777
+    secrets:
+      - source: obsidian_epoch_backup_verification_public_key
+        target: obsidian_epoch_backup_verification_public_key
+      - source: obsidian_epoch_backup_trusted_checkpoint
+        target: obsidian_epoch_backup_trusted_checkpoint
+    volumes:
+      - type: volume
+        source: obsidian_epoch_backups
+        target: /backups
+        read_only: true
+      - type: volume
+        source: obsidian_epoch_restore
+        target: /restore
+        read_only: false
+
+  obsidian-epoch-caddy:
+    image: ${AGENT_IMAGE_REGISTRY:?set image registry}/obsidian-epoch-caddy:${AGENT_IMAGE_VERSION:?set immutable release version}
+    profiles: ["public"]
+    user: "65532:65532"
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: ${AGENT_CADDY_PIDS_LIMIT:-128}
+    cpus: ${AGENT_CADDY_CPU_LIMIT:-0.5}
+    mem_limit: ${AGENT_CADDY_MEMORY_LIMIT:-256m}
+    depends_on:
+      obsidian-epoch-agent-server:
+        condition: service_healthy
+    environment:
+      AGENT_PUBLIC_HOST: ${AGENT_PUBLIC_HOST:?set public DNS hostname without scheme}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=${AGENT_CADDY_TMPFS_SIZE:-32m},mode=1777
+    healthcheck:
+      test: ["CMD", "/usr/bin/caddy-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - obsidian_epoch_caddy_data:/data
+      - obsidian_epoch_caddy_config:/config
+
+volumes:
+  obsidian_epoch_data:
+  obsidian_epoch_backups:
+  obsidian_epoch_restore:
+  obsidian_epoch_caddy_data:
+  obsidian_epoch_caddy_config:
+
+secrets:
+  obsidian_epoch_operator_key:
+    file: ${AGENT_SERVER_OPERATOR_KEY_FILE:?set path to operator key file}
+  obsidian_epoch_mcp_bearer_token:
+    file: ${AGENT_SERVER_MCP_BEARER_TOKEN_FILE:?set path to MCP bearer token file}
+  obsidian_epoch_registration_secret:
+    file: ${AGENT_SERVER_REGISTRATION_SECRET_FILE:?set path to registration HMAC secret file}
+  obsidian_epoch_registration_actor_hash_secret:
+    file: ${AGENT_SERVER_REGISTRATION_ACTOR_HASH_SECRET_FILE:?set path to actor hash secret file}
+  obsidian_epoch_package_signing_private_key:
+    file: ${AGENT_PACKAGE_SIGNING_PRIVATE_KEY_PEM_FILE:?set path to package signing private key file}
+  obsidian_epoch_registration_invites:
+    file: ${AGENT_SERVER_REGISTRATION_INVITES_FILE:-./registration-invites.empty}
+  obsidian_epoch_attested_runners:
+    file: ${AGENT_SERVER_ATTESTED_RUNNERS_FILE:-./attested-runners.empty.json}
+  obsidian_epoch_backup_signing_private_key:
+    file: ${AGENT_SERVER_BACKUP_SIGNING_PRIVATE_KEY_FILE:?set path to independent backup signing private key file}
+  obsidian_epoch_backup_verification_public_key:
+    file: ${AGENT_SERVER_BACKUP_VERIFICATION_PUBLIC_KEY_FILE:?set path to pinned backup verification public key file}
+  obsidian_epoch_backup_trusted_checkpoint:
+    file: ${AGENT_SERVER_BACKUP_TRUSTED_CHECKPOINT_FILE:?set path to out-of-band trusted backup checkpoint file}

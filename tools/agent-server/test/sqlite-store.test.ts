@@ -1,0 +1,280 @@
+import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { createEpochGameCore } from "../lib/epoch/gameCore.ts";
+import { createSequentialEpochIdFactory } from "../lib/epoch/protocol.ts";
+import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import {
+  appendSqliteEpochEventBatch,
+  appendSqliteJsonl,
+  loadAgentRuntimeOptionsFromSqlite,
+  migrateJsonlDataDirToSqlite,
+  readSqliteJsonlRecords,
+} from "../lib/sqliteStore.ts";
+
+async function writeJsonl(filePath: string, records: readonly unknown[]) {
+  await writeFile(filePath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
+}
+
+test("migrateJsonlDataDirToSqlite preserves canonical epoch events and result pages", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "epoch-sqlite-migrate-"));
+  const sourceDir = path.join(tempDir, "jsonl");
+  const dbPath = path.join(tempDir, "agent-world.sqlite");
+  await mkdir(sourceDir, { recursive: true });
+  try {
+    const core = createEpochGameCore({
+      idFactory: createSequentialEpochIdFactory("sqlite"),
+      defaultLifetime: 12,
+    });
+    const identity = core.issueIdentity({
+      explorerId: "explorer_sqlite",
+      identityName: "SQLite 迁移者",
+    }, {
+      actorExplorerId: "explorer_sqlite",
+      trustClass: "untrusted_client",
+      idempotencyKey: "issue-sqlite-1",
+    });
+    const page = {
+      pageId: "page_sqlite_1",
+      createdAt: "2026-06-25T00:00:00.000Z",
+      urlPath: "/epoch/result/page_sqlite_1",
+      payload: {
+        pageType: "agent_result",
+        generatedAt: "2026-06-25T00:00:00.000Z",
+        progress: {
+          agentId: identity.value.agentId,
+          explorerId: "explorer_sqlite",
+          lineage: [identity.value.agentId],
+          identities: [identity.value],
+          resources: {},
+          downtime: null,
+          latestEvents: identity.events,
+        },
+      },
+      createdBy: "explorer_sqlite",
+      idempotencyKey: "result_page:sqlite",
+    };
+
+    await writeJsonl(path.join(sourceDir, "epoch-events.jsonl"), identity.events.map((event) => ({
+      type: "epoch_event",
+      event,
+    })));
+    await writeJsonl(path.join(sourceDir, "result-pages.jsonl"), [{
+      type: "epoch_result_page",
+      page,
+    }]);
+
+    const summary = await migrateJsonlDataDirToSqlite({ sourceDataDir: sourceDir, dbPath });
+    assert.equal(summary.records, 2);
+    assert.equal(summary.files["epoch-events.jsonl"], 1);
+    assert.equal(summary.files["result-pages.jsonl"], 1);
+
+    const rawEpochRecords = readSqliteJsonlRecords(dbPath, "epoch-events.jsonl");
+    assert.equal(rawEpochRecords.length, 1);
+    assert.equal(rawEpochRecords[0].type, "epoch_event");
+
+    const runtime = createAgentWorldRuntime(await loadAgentRuntimeOptionsFromSqlite(dbPath));
+    assert.equal(runtime.epochProgress({ agentId: identity.value.agentId }).identity?.identityName, "SQLite 迁移者");
+    assert.equal(runtime.epochGetResultPage({ pageId: "page_sqlite_1" })?.pageId, "page_sqlite_1");
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("appendSqliteJsonl stores new append-only records for runtime hydration", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "epoch-sqlite-append-"));
+  const dbPath = path.join(tempDir, "agent-world.sqlite");
+  try {
+    const core = createEpochGameCore({
+      idFactory: createSequentialEpochIdFactory("sqlite_append"),
+    });
+    const identity = core.issueIdentity({
+      explorerId: "explorer_sqlite_append",
+      identityName: "SQLite 追加者",
+    }, {
+      actorExplorerId: "explorer_sqlite_append",
+      trustClass: "untrusted_client",
+      idempotencyKey: "issue-sqlite-append-1",
+    });
+
+    await appendSqliteJsonl(dbPath, "epoch-events.jsonl", {
+      type: "epoch_event",
+      event: identity.events[0],
+    });
+
+    const runtime = createAgentWorldRuntime(await loadAgentRuntimeOptionsFromSqlite(dbPath));
+    assert.equal(runtime.epochProgress({ agentId: identity.value.agentId }).identity?.identityName, "SQLite 追加者");
+    assert.equal(readSqliteJsonlRecords(dbPath, "epoch-events.jsonl").length, 1);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("appendSqliteEpochEventBatch stores one batch record and indexes every event", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "epoch-sqlite-batch-"));
+  const dbPath = path.join(tempDir, "agent-world.sqlite");
+  try {
+    const core = createEpochGameCore({
+      idFactory: createSequentialEpochIdFactory("sqlite_batch"),
+    });
+    const first = core.issueIdentity({
+      explorerId: "explorer_sqlite_batch_1",
+      identityName: "SQLite 批次一号",
+    }, {
+      actorExplorerId: "explorer_sqlite_batch_1",
+      trustClass: "untrusted_client",
+      idempotencyKey: "issue-sqlite-batch-1",
+    });
+    const second = core.issueIdentity({
+      explorerId: "explorer_sqlite_batch_2",
+      identityName: "SQLite 批次二号",
+    }, {
+      actorExplorerId: "explorer_sqlite_batch_2",
+      trustClass: "untrusted_client",
+      idempotencyKey: "issue-sqlite-batch-2",
+    });
+
+    await appendSqliteEpochEventBatch(dbPath, [first.events[0], second.events[0]]);
+
+    const rawRecords = readSqliteJsonlRecords(dbPath, "epoch-events.jsonl");
+    assert.equal(rawRecords.length, 1);
+    assert.equal(rawRecords[0].type, "epoch_event_batch");
+    assert.deepEqual(
+      (rawRecords[0].events as { eventId: string }[]).map((event) => event.eventId),
+      [first.events[0].eventId, second.events[0].eventId],
+    );
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      const indexed = db.prepare("SELECT event_id FROM epoch_events ORDER BY rowid ASC").all() as { event_id: string }[];
+      assert.deepEqual(indexed.map((row) => row.event_id), [first.events[0].eventId, second.events[0].eventId]);
+    } finally {
+      db.close();
+    }
+
+    const runtime = createAgentWorldRuntime(await loadAgentRuntimeOptionsFromSqlite(dbPath));
+    assert.equal(runtime.epochProgress({ agentId: first.value.agentId }).identity?.identityName, "SQLite 批次一号");
+    assert.equal(runtime.epochProgress({ agentId: second.value.agentId }).identity?.identityName, "SQLite 批次二号");
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("default runtime continues sequential event IDs after a SQLite restart", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "epoch-sqlite-restart-id-"));
+  const dbPath = path.join(tempDir, "agent-world.sqlite");
+  const registrationSecret = "sqlite-restart-registration-secret-32-chars";
+  try {
+    const firstRuntime = createAgentWorldRuntime({ epoch: { registrationSecret } });
+    const first = firstRuntime.epochRegisterExplorer({
+      idempotencyKey: "sqlite-restart-register-first",
+    });
+    assert.equal(first.events[0].eventId, "epoch_event_000001");
+    await appendSqliteEpochEventBatch(dbPath, first.events);
+
+    const loaded = await loadAgentRuntimeOptionsFromSqlite(dbPath);
+    const restartedRuntime = createAgentWorldRuntime({
+      ...loaded,
+      epoch: { registrationSecret },
+    });
+    const second = restartedRuntime.epochRegisterExplorer({
+      idempotencyKey: "sqlite-restart-register-second",
+    });
+    assert.equal(second.events[0].eventId, "epoch_event_000002");
+    assert.notEqual(second.events[0].eventId, first.events[0].eventId);
+    await appendSqliteEpochEventBatch(dbPath, second.events);
+
+    const db = new DatabaseSync(dbPath);
+    try {
+      const indexed = db.prepare("SELECT event_id FROM epoch_events ORDER BY rowid ASC").all() as { event_id: string }[];
+      assert.deepEqual(indexed.map((row) => row.event_id), [
+        "epoch_event_000001",
+        "epoch_event_000002",
+      ]);
+    } finally {
+      db.close();
+    }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("appendSqliteEpochEventBatch rolls back the record and all indexes on an event conflict", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "epoch-sqlite-batch-rollback-"));
+  const dbPath = path.join(tempDir, "agent-world.sqlite");
+  try {
+    const core = createEpochGameCore({
+      idFactory: createSequentialEpochIdFactory("sqlite_batch_rollback"),
+    });
+    const identity = core.issueIdentity({
+      explorerId: "explorer_sqlite_batch_rollback",
+      identityName: "SQLite 回滚校验者",
+    }, {
+      actorExplorerId: "explorer_sqlite_batch_rollback",
+      trustClass: "untrusted_client",
+      idempotencyKey: "issue-sqlite-batch-rollback-1",
+    });
+
+    await assert.rejects(
+      appendSqliteEpochEventBatch(dbPath, [identity.events[0], identity.events[0]]),
+      /UNIQUE constraint failed: epoch_events\.event_id/,
+    );
+
+    assert.equal(readSqliteJsonlRecords(dbPath, "epoch-events.jsonl").length, 0);
+    const db = new DatabaseSync(dbPath);
+    try {
+      const row = db.prepare("SELECT COUNT(*) AS count FROM epoch_events").get() as { count: number };
+      assert.equal(Number(row.count), 0);
+    } finally {
+      db.close();
+    }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("SQLite migration hydrates saved context snapshots", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "epoch-sqlite-context-snapshot-"));
+  const sourceDir = path.join(tempDir, "jsonl");
+  const dbPath = path.join(tempDir, "agent-world.sqlite");
+  await mkdir(sourceDir, { recursive: true });
+  try {
+    await writeJsonl(path.join(sourceDir, "context-snapshots.jsonl"), [{
+      type: "context_snapshot",
+      snapshot: {
+        snapshotId: "ctxsnap_persisted_sqlite_001",
+        contextVersion: "obsidian-epoch-context-pack-test",
+        versions: { contextPackVersion: "obsidian-epoch-context-pack-test" },
+        retrievalParams: {
+          requestedAgentId: "agent_grayfile_07",
+          resolvedAgentId: "agent_grayfile_07",
+          explorerId: "explorer_sqlite_snapshot",
+          mandate: "sqlite snapshot",
+          anchorCount: 0,
+          anchorIds: [],
+        },
+        filteringReasons: ["core_secrets_excluded"],
+        settingCards: [{
+          cardId: "agent:agent_grayfile_07",
+          version: "obsidian-epoch-context-pack-test",
+          publicSummary: "灰档-07 public summary",
+          filteringReasons: ["core_secrets_excluded"],
+        }],
+      },
+    }]);
+
+    const summary = await migrateJsonlDataDirToSqlite({ sourceDataDir: sourceDir, dbPath });
+    assert.equal(summary.files["context-snapshots.jsonl"], 1);
+
+    const runtime = createAgentWorldRuntime(await loadAgentRuntimeOptionsFromSqlite(dbPath));
+    const snapshots = runtime.contextSnapshots();
+    assert.equal(snapshots.summary.total, 1);
+    assert.equal(snapshots.entries[0].snapshotId, "ctxsnap_persisted_sqlite_001");
+    assert.equal(snapshots.entries[0].retrievalParams.explorerId, "explorer_sqlite_snapshot");
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});

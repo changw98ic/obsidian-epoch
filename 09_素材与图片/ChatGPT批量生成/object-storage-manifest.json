@@ -1,0 +1,3501 @@
+{
+  "type": "obsidian_epoch_object_storage_manifest",
+  "version": 1,
+  "algorithm": "sha256",
+  "root": "09_素材与图片",
+  "selectionPolicy": "exclude_batch_runtime_and_local_metadata",
+  "objectCount": 698,
+  "totalBytes": 2162976458,
+  "objects": [
+    {
+      "path": "万眼躁动小蛇_档案卡.png",
+      "bytes": 3380390,
+      "sha256": "d2fc47cec35a1d12b7abf5806de3c00f5d1edd1e0c368f6fb120826d29520bd6"
+    },
+    {
+      "path": "万眼躁动小蛇_正面设定图.png",
+      "bytes": 2982727,
+      "sha256": "c280f23ad5bea9257ade544979e3806f088bbcafda781aed8f9223991bc51007"
+    },
+    {
+      "path": "万眼逆鳞小蛇_档案卡.png",
+      "bytes": 3158761,
+      "sha256": "ae643a62440060068dd4ba36f82cc0a204ff113578f76bfcc877b10b7832c44b"
+    },
+    {
+      "path": "万眼逆鳞小蛇_正面设定图.png",
+      "bytes": 2707606,
+      "sha256": "3518d859ee5e3964aabeb9e783aed8499e4c3dd00d2b51e7c78d39b79e4dd7fd"
+    },
+    {
+      "path": "丹瘤药鼠_档案卡.png",
+      "bytes": 3475114,
+      "sha256": "e9a4506e531d87a802c6ea63531778a328e8615824c26b1e5e17bdacd9229a34"
+    },
+    {
+      "path": "丹瘤药鼠_概念展示.png",
+      "bytes": 2734997,
+      "sha256": "f100d7cc51fa93798743c2ffb51f6d8ca5ab5328e6217cb3ce7d9237b8794a0e"
+    },
+    {
+      "path": "丹瘤药鼠_正面设定图.png",
+      "bytes": 2913104,
+      "sha256": "1868c91f38e54c7b415e9f1dc94963b03d1da37fdd3c8a8e9a6be90b0daa5a83"
+    },
+    {
+      "path": "丹瘤药鼠_节点正面.png",
+      "bytes": 1147125,
+      "sha256": "bf0e4b5f7ada6f69cd06b5a67ffa15c6bf26d9d0d8848ad810b97546939d398f"
+    },
+    {
+      "path": "丹瘤药鼠_黑底档案卡.png",
+      "bytes": 2547027,
+      "sha256": "b69547e03060f49a622bf03d54348dcf1b52192951f90d4b1f553793150532a3"
+    },
+    {
+      "path": "丹瘤药鼠_黑底概念展示.png",
+      "bytes": 2849293,
+      "sha256": "5901d6bbfedccd27199d5d818f6ee9b939f892254b4d1045803f932e3fd3aa07"
+    },
+    {
+      "path": "丹瘤药鼠_黑底节点正面.png",
+      "bytes": 1176515,
+      "sha256": "457b4448422aeb7a961a0a0dadf39e7efba6401be0093cf29368f01d05844a21"
+    },
+    {
+      "path": "二手腺秘纹缝合鸦_档案卡.png",
+      "bytes": 3215772,
+      "sha256": "bf945d31042fb0949334413757454b5ff98bad5002460d0292688be29cc6a078"
+    },
+    {
+      "path": "二手腺秘纹缝合鸦_正面设定图.png",
+      "bytes": 3002554,
+      "sha256": "eb02eb1fde4e9eae0adcb936e5e822a87dab45d858c618d8e5996c5d5396a2be"
+    },
+    {
+      "path": "二手腺错位炉主_档案卡.png",
+      "bytes": 3393311,
+      "sha256": "f88730eaba2c3bea76c9a100e897c44c8f6bdef36cc530e817e1bfa324f59b45"
+    },
+    {
+      "path": "二手腺错位炉主_正面设定图.png",
+      "bytes": 3475484,
+      "sha256": "5c6562e5039df5caa566a3dca7a5e0d99ea33ec052621f1b766b741d6514dc84"
+    },
+    {
+      "path": "云墓低语螺_档案卡.png",
+      "bytes": 3304659,
+      "sha256": "842003ce64bb7b0ecc596886cbf5f8025c5de86db4dd3eac48f8951b9d7dc2eb"
+    },
+    {
+      "path": "云墓低语螺_正面设定图.png",
+      "bytes": 3053708,
+      "sha256": "2995f756b5c1b92174378d8bb5945582588739b9a27f4f3c1a89bad18d5cff49"
+    },
+    {
+      "path": "云墓慈悲炉主_档案卡.png",
+      "bytes": 3406603,
+      "sha256": "d46dc4339da77ccb546565ba5c42a4d40bc5636c1ff32131840b0993a24267c2"
+    },
+    {
+      "path": "云墓慈悲炉主_正面设定图.png",
+      "bytes": 2993269,
+      "sha256": "12b4a0c94992160d5f678de2082517c046723355181e70191aa8e8a20f308c14"
+    },
+    {
+      "path": "亡名冷焰猫_档案卡.png",
+      "bytes": 3369328,
+      "sha256": "20c100bdce23dbfbc8eeeb8f111f33d2cb33f135840228f2171c34a0bd9d639a"
+    },
+    {
+      "path": "亡名冷焰猫_正面设定图.png",
+      "bytes": 3046281,
+      "sha256": "8479a9faa60e5466bbe450ad9b76942138bed77c7aefc1f792615501b364888e"
+    },
+    {
+      "path": "亡名净翼巢主_档案卡.png",
+      "bytes": 3459417,
+      "sha256": "616a6345d22e20c2850a12cb97b630d3b518db5d23419998fd499506fabaa355"
+    },
+    {
+      "path": "亡名净翼巢主_正面设定图.png",
+      "bytes": 3280674,
+      "sha256": "1e7bae877092239946037be34a6d9e245272d4103acae6c1b91d24d269899bd6"
+    },
+    {
+      "path": "人格剥面炉主_档案卡.png",
+      "bytes": 3288632,
+      "sha256": "caa3af24831a641d894d4b5afa413ae4567a44cbafe7f522458c57586ecef1a6"
+    },
+    {
+      "path": "人格剥面炉主_正面设定图.png",
+      "bytes": 2933668,
+      "sha256": "86ad0cac8adde9e478c735743cbef353e86c8004c4f0530e99b830cbcce4d836"
+    },
+    {
+      "path": "人格纸骨缝合鸦_档案卡.png",
+      "bytes": 3216810,
+      "sha256": "7e94452470fa230ad9c35691597a683ba19020ea7a95c407a150ff8c8b7e6e9b"
+    },
+    {
+      "path": "人格纸骨缝合鸦_正面设定图.png",
+      "bytes": 3018843,
+      "sha256": "c4a9aa59087a0086d6749943a5f8fdb7dd89f3647c3b44c064802995310b33d8"
+    },
+    {
+      "path": "传说伏行尘蛹_档案卡.png",
+      "bytes": 3293827,
+      "sha256": "685ee418968ab287a18f78fbc85dfef2b56e2f9cccebcdd87dc0b4430c87a75c"
+    },
+    {
+      "path": "传说伏行尘蛹_正面设定图.png",
+      "bytes": 2962518,
+      "sha256": "00b009c30115dbf7aaa919a79299fc331c6799230159574d90c74997027974ec"
+    },
+    {
+      "path": "传说碑背尘蛹_档案卡.png",
+      "bytes": 3157884,
+      "sha256": "796466e962b99d239ab49ecfce0606820acd43ddf0bf867ae3a79151388ab118"
+    },
+    {
+      "path": "传说碑背尘蛹_正面设定图.png",
+      "bytes": 2893296,
+      "sha256": "5d3313ed97f13914f8239aa33e5fe2f749cf6c38e966e21772cece57d9ada9d9"
+    },
+    {
+      "path": "余烬碎梦猫_档案卡.png",
+      "bytes": 3277315,
+      "sha256": "7900d91c274140e1eea2c325df455ecbb985847f2929bae4aa86f46e36ae9459"
+    },
+    {
+      "path": "余烬碎梦猫_正面设定图.png",
+      "bytes": 2852761,
+      "sha256": "8a7d0f9067cc0464f45309f1ae6215358ecbb6917e2ed9f2554eb0b337524103"
+    },
+    {
+      "path": "信标空腹蝠_档案卡.png",
+      "bytes": 3168851,
+      "sha256": "aadccc6e789f8cfa7423a0a2c9e673ba8338a8afd67b9f5cd66f4ed04e958d57"
+    },
+    {
+      "path": "信标空腹蝠_正面设定图.png",
+      "bytes": 2811341,
+      "sha256": "f561165052718e43016b5a9ca963dde32621daa3b4fc5effdaebce30a40337bd"
+    },
+    {
+      "path": "信标逆鳞巨蟹_档案卡.png",
+      "bytes": 3198416,
+      "sha256": "fbd96fed16ee2f3aed93ac1e50f49ac42a281f3399752a382c0853cabd392f55"
+    },
+    {
+      "path": "信标逆鳞巨蟹_正面设定图.png",
+      "bytes": 3134566,
+      "sha256": "2ec5938d4daddaecf64c940111dc4a3aa21822dd06cf07a5c12b66d41e96b652"
+    },
+    {
+      "path": "借面狸奴_宣纸档案卡.png",
+      "bytes": 3429143,
+      "sha256": "9eee60812c5260b389fd4fdfe5bffb8c9ae78d89b7e4ce981e73ca3c1dd18f07"
+    },
+    {
+      "path": "借面狸奴_宣纸概念展示.png",
+      "bytes": 3318417,
+      "sha256": "e6d36203fb061bfe766d2bf6b4a53d8c0d480c97450f5d1c428f1e7770efb476"
+    },
+    {
+      "path": "借面狸奴_宣纸节点正面.png",
+      "bytes": 1297550,
+      "sha256": "f05f49c0dcc3518dd4cac662131922ff735f39f1959bd99dd74bd44a536481c0"
+    },
+    {
+      "path": "借面狸奴_档案卡.png",
+      "bytes": 3145137,
+      "sha256": "36cab682dc3d5269f2bf1a0aaa5fefebe6942d0a090445161e134591187d3c0c"
+    },
+    {
+      "path": "借面狸奴_正面设定图.png",
+      "bytes": 3025987,
+      "sha256": "d1acee52fcd5115e17e74378752dc47f0fb504a253d2a98560991f6bc6a20f48"
+    },
+    {
+      "path": "光污染无影炉主_档案卡.png",
+      "bytes": 3416599,
+      "sha256": "154d041d808ba2df02b0ab721435d0ce1bdc541618848d7a338db601c33bcc82"
+    },
+    {
+      "path": "光污染无影炉主_正面设定图.png",
+      "bytes": 3247136,
+      "sha256": "a8c579c7df6f2b35e49d53db9b078c171e9a6e8ae0023f1b339f1a702a539918"
+    },
+    {
+      "path": "光环油膜菌毯_档案卡.png",
+      "bytes": 3146707,
+      "sha256": "71ab30edb9f0b8ac3e9e5339bc916b64ec6b1ec50afb2ec205db62c244f0891f"
+    },
+    {
+      "path": "光环油膜菌毯_正面设定图.png",
+      "bytes": 2977821,
+      "sha256": "cc7bdf1ee887c351fc17c1334f7ba084fcca3f9ab0063a57e49c500d539760e2"
+    },
+    {
+      "path": "光环青火菌毯_档案卡.png",
+      "bytes": 3394748,
+      "sha256": "3408f06013006ecec5af42fc5ab60996e83e18782e1e7552ba92ca541e01a5b4"
+    },
+    {
+      "path": "光环青火菌毯_正面设定图.png",
+      "bytes": 3106875,
+      "sha256": "7ea90ac2553b48cf357cad1661c5cd8cf62162001d0ab3c11755cbde9fe72c8e"
+    },
+    {
+      "path": "光谱盐霜仓主兽_档案卡.png",
+      "bytes": 3429283,
+      "sha256": "b3e65d5fe14ef655144379634d75a54a1e3adafde5d3dfeccd89956e82e008eb"
+    },
+    {
+      "path": "光谱盐霜仓主兽_正面设定图.png",
+      "bytes": 3078215,
+      "sha256": "bc1bef65a3229346c1cf2b6b7e56aba1a8b82e557eeb3ef0ffe4aa5e019bc025"
+    },
+    {
+      "path": "光谱雾鳞灯虫_档案卡.png",
+      "bytes": 3151007,
+      "sha256": "f20c2eda97c1826d494530e343338d3a861a437a4517affd3b9d2d7b7a5d8199"
+    },
+    {
+      "path": "光谱雾鳞灯虫_正面设定图.png",
+      "bytes": 2372791,
+      "sha256": "edcbfd88a575313d84648adbc9a495a12aa762c7a365bb9ecc638fd3d4d8e6e5"
+    },
+    {
+      "path": "全息折光小蜥_档案卡.png",
+      "bytes": 3314984,
+      "sha256": "e22c9e770f15e701c1ddcf9d411b4d53284cecbde96c73760e4df7999a63cf0d"
+    },
+    {
+      "path": "全息折光小蜥_正面设定图.png",
+      "bytes": 2720927,
+      "sha256": "bb42254707436879ded92089c5eecc0d648a724420a274db656a181bfbd98e16"
+    },
+    {
+      "path": "全息断章小蜥_档案卡.png",
+      "bytes": 3047802,
+      "sha256": "3cf1b76b98579b03cf36b7a0986cf079f57e85a1f42ec1225419bd7489738bd2"
+    },
+    {
+      "path": "全息断章小蜥_正面设定图.png",
+      "bytes": 2724694,
+      "sha256": "ccf7d2de8f2a628cf1f45922d7b594069cda0c419eca5a92142b282e7c64157b"
+    },
+    {
+      "path": "兽牙伏行豹_档案卡.png",
+      "bytes": 3351487,
+      "sha256": "afdfad3d2b89130a806a5690239c02c9ef83e85c60a0cb53602a73eee4a317a9"
+    },
+    {
+      "path": "兽牙伏行豹_正面设定图.png",
+      "bytes": 3052362,
+      "sha256": "ff0e701782d1d095a1e1b56c0dbb1243e369713c678c1a9fd56fcb147337cd58"
+    },
+    {
+      "path": "兽牙骨铃豹_档案卡.png",
+      "bytes": 3272405,
+      "sha256": "b3dbbad62bfc62e7eac3324dda76ee4706f376dcc059494091baf505175c4ecc"
+    },
+    {
+      "path": "兽牙骨铃豹_正面设定图.png",
+      "bytes": 3091057,
+      "sha256": "a07f5dcee58643c3327757c2cb8d9a7f4eff7c805342d345ddaa79795afca4da"
+    },
+    {
+      "path": "冰腔雪虱_HUB档案卡.png",
+      "bytes": 2339002,
+      "sha256": "c13dc87ebc7ce8da6ca79e21a3d5aa59ecf560cf17c574ee849b94e6ed292975"
+    },
+    {
+      "path": "冰腔雪虱_HUB概念展示.png",
+      "bytes": 2361277,
+      "sha256": "43641e9c0bff3126ed8d757634a492ad48ca34d8dbea290d07e2134d0e5c14c9"
+    },
+    {
+      "path": "冰腔雪虱_HUB节点正面.png",
+      "bytes": 1037837,
+      "sha256": "21cc4c53d9315fd13e53f7a061a102959946aab4d63d9945902cb6e884fed6ec"
+    },
+    {
+      "path": "冰腔雪虱_档案卡.png",
+      "bytes": 2946291,
+      "sha256": "91b7e7621bf9a432d9f7e6231990b142bf1d03c012e96fc103fed6b608dcba67"
+    },
+    {
+      "path": "冰腔雪虱_正面设定图.png",
+      "bytes": 3038469,
+      "sha256": "7b0fc71b1bf513f374fdd2391fb67d59ec83cbe995f067aa14bcdb083b89ee4a"
+    },
+    {
+      "path": "冷却雾低语鼠_档案卡.png",
+      "bytes": 3358025,
+      "sha256": "ad0ed10b222c5f742beb2c8e249f3a2d41fe33fa26256665413a275525afe898"
+    },
+    {
+      "path": "冷却雾低语鼠_正面设定图.png",
+      "bytes": 2970627,
+      "sha256": "1b5cda217864ae7588b1a3f5028a85aaa92a610b1547a58aeeb587778d863768"
+    },
+    {
+      "path": "冷却雾潮纹猎犬_档案卡.png",
+      "bytes": 3302596,
+      "sha256": "5ab80c288844d3b33791bdf1d2a8663a78be50e56e430e34d78341aebe484c37"
+    },
+    {
+      "path": "冷却雾潮纹猎犬_正面设定图.png",
+      "bytes": 2986270,
+      "sha256": "090ef53cebfc98c64289487cacaef21ea3c1e06f5922f7ad6b6df4d43a251f3c"
+    },
+    {
+      "path": "冷玻璃净盐折角兽_档案卡.png",
+      "bytes": 3204754,
+      "sha256": "f8bb77081480dbe28045c46231e35b93a72155e70755fcf4b90e64d03f6f9fd9"
+    },
+    {
+      "path": "冷玻璃净盐折角兽_正面设定图.png",
+      "bytes": 2756103,
+      "sha256": "740c5c9c9580420d4e2c894849231d5bca7553e1c44b0611a49ab0c08f19acd8"
+    },
+    {
+      "path": "冷玻璃喉灯蜗_档案卡.png",
+      "bytes": 3280994,
+      "sha256": "333ec5830819465c5fc6569edcc99853c268904f4999d2a50ba0a0a403fcb2dc"
+    },
+    {
+      "path": "冷玻璃喉灯蜗_正面设定图.png",
+      "bytes": 3000433,
+      "sha256": "6aa112c332a8a8508175595a6337291c2f0022e13b73d956fb83137867868881"
+    },
+    {
+      "path": "冷白熔泪刃翅虫_档案卡.png",
+      "bytes": 3331790,
+      "sha256": "56462082a2e88872fbf579ce29dcd430eb6c2dd30609a9e4be53616264161c9c"
+    },
+    {
+      "path": "冷白熔泪刃翅虫_正面设定图.png",
+      "bytes": 2809737,
+      "sha256": "b1840457adc5f2f4475899d76328f0e3dd0fb5b35d6c8e2a88c6a334df1312e9"
+    },
+    {
+      "path": "冷白空腹蝠_档案卡.png",
+      "bytes": 3184976,
+      "sha256": "6bd9d8d876a6607f6067267904472191ba8f5f8f9479b8e18f9d74fe5cf51b1b"
+    },
+    {
+      "path": "冷白空腹蝠_正面设定图.png",
+      "bytes": 2822503,
+      "sha256": "6820a8092c9fe0352256851c7899409eaf42e66c7efba35398e504d3f7f0857f"
+    },
+    {
+      "path": "净翼星霜虱_档案卡.png",
+      "bytes": 3331697,
+      "sha256": "a4b20cb42c2576d107cf91026c275b60e01ce2b0d6cd8df6a2383002e73d72b1"
+    },
+    {
+      "path": "净翼星霜虱_正面设定图.png",
+      "bytes": 3078509,
+      "sha256": "147e37d273b086659788911c3e8edb2945d6f43bf3cae5053b78d124befd5c28"
+    },
+    {
+      "path": "净翼碎梦虱_档案卡.png",
+      "bytes": 3544133,
+      "sha256": "8cb861559ae512161e56a939fc0e6ec2e704a10250f5519b37c6be96e1fb7203"
+    },
+    {
+      "path": "净翼碎梦虱_正面设定图.png",
+      "bytes": 3368225,
+      "sha256": "44cd9ae9e66ab8c7cab4c1fef8ae910d8b01a25cd9c0f571d6f123d11b031cec"
+    },
+    {
+      "path": "几何净盐猎犬_档案卡.png",
+      "bytes": 3521449,
+      "sha256": "6136c0a332c4b1f905e5942a3b18a7ea3363a533787600bd3c7636f1dfc26d7a"
+    },
+    {
+      "path": "几何净盐猎犬_正面设定图.png",
+      "bytes": 3368995,
+      "sha256": "a3f0a70ebf134ad3df79676f2101ef4ba0a192890e02f348364a3c96104135b0"
+    },
+    {
+      "path": "几何旧誓灾兽_档案卡.png",
+      "bytes": 3272429,
+      "sha256": "0f5a0a33d9b91555c81fc9db0ef2a4b6b187b312941d45431e36efde881c09d5"
+    },
+    {
+      "path": "几何旧誓灾兽_正面设定图.png",
+      "bytes": 3018410,
+      "sha256": "02c65653e70b3456fbbcdd70fea9d9aba124c6da42d9e12f7081796e69c9bbda"
+    },
+    {
+      "path": "剪梦剑螂_档案卡.png",
+      "bytes": 3142630,
+      "sha256": "de481be39b1badecc04bbc58139d4897a27e92588abd89191495ce107f0cce51"
+    },
+    {
+      "path": "剪梦剑螂_正面设定图.png",
+      "bytes": 2753756,
+      "sha256": "8f270387be23556d583ba887124d5b005642b3dd5ff483155437439446a7d708"
+    },
+    {
+      "path": "参考母版/丹瘤药鼠_黑底档案卡母版.png",
+      "bytes": 2547027,
+      "sha256": "b69547e03060f49a622bf03d54348dcf1b52192951f90d4b1f553793150532a3"
+    },
+    {
+      "path": "参考母版/丹瘤药鼠_黑底海报母版.png",
+      "bytes": 2849293,
+      "sha256": "5901d6bbfedccd27199d5d818f6ee9b939f892254b4d1045803f932e3fd3aa07"
+    },
+    {
+      "path": "参考母版/借面狸奴_宣纸档案卡母版.png",
+      "bytes": 3429143,
+      "sha256": "9eee60812c5260b389fd4fdfe5bffb8c9ae78d89b7e4ce981e73ca3c1dd18f07"
+    },
+    {
+      "path": "参考母版/借面狸奴_宣纸海报母版.png",
+      "bytes": 3318417,
+      "sha256": "e6d36203fb061bfe766d2bf6b4a53d8c0d480c97450f5d1c428f1e7770efb476"
+    },
+    {
+      "path": "参考母版/冰腔雪虱_HUB档案卡母版.png",
+      "bytes": 2339002,
+      "sha256": "c13dc87ebc7ce8da6ca79e21a3d5aa59ecf560cf17c574ee849b94e6ed292975"
+    },
+    {
+      "path": "参考母版/冰腔雪虱_HUB海报母版.png",
+      "bytes": 2361277,
+      "sha256": "43641e9c0bff3126ed8d757634a492ad48ca34d8dbea290d07e2134d0e5c14c9"
+    },
+    {
+      "path": "双城双相妖主_档案卡.png",
+      "bytes": 3205925,
+      "sha256": "b188074463e1521fd83a868e299d30d33181d0b4de837c04d99e724cf3650150"
+    },
+    {
+      "path": "双城双相妖主_正面设定图.png",
+      "bytes": 3064313,
+      "sha256": "266567c3f75fd43f633aac0c4a505bd1ee09e688c3bc30bb85a1049cf937e32b"
+    },
+    {
+      "path": "双城蓝焰尘蛹_档案卡.png",
+      "bytes": 3240927,
+      "sha256": "6b6e293c435edeed9072db35099ae6c3833929d5e9dd5b3c93ce1bd168219ce7"
+    },
+    {
+      "path": "双城蓝焰尘蛹_正面设定图.png",
+      "bytes": 2829310,
+      "sha256": "5f628e47b313db4d440a654e1a2a84cb4c8c7ac9faface98c4dc5ff0c8655cbf"
+    },
+    {
+      "path": "双身灰舌翼蛇_档案卡.png",
+      "bytes": 3325829,
+      "sha256": "da684ebd335e8d1f34dd49f85c75ebc85883abb993a24d84840bee17f610cc3f"
+    },
+    {
+      "path": "双身灰舌翼蛇_正面设定图.png",
+      "bytes": 3067126,
+      "sha256": "7a896671422325d20512029ff0a0dba0a686fc8a2b7b7ced376443000c874872"
+    },
+    {
+      "path": "反光蜡纹幼虫_档案卡.png",
+      "bytes": 3168410,
+      "sha256": "419709d97b780f2772f8d8f944b36d9ab422ce65aced1b921c8209dcb1a453df"
+    },
+    {
+      "path": "反光蜡纹幼虫_正面设定图.png",
+      "bytes": 2832956,
+      "sha256": "0a8bb1d7f7bc56ef55a23a3a139d0bd1269878579e8818b841da82c3a487f644"
+    },
+    {
+      "path": "叠影白瞳鹿_档案卡.png",
+      "bytes": 3288240,
+      "sha256": "1fd68e6ba813aeca62301d11a42fbd47108e59838dd97a1028d6d31688bfad1d"
+    },
+    {
+      "path": "叠影白瞳鹿_正面设定图.png",
+      "bytes": 2708212,
+      "sha256": "7a1832f668dd806221faf1554bb1ce07007034aa1a152dbccd8fa48182588f47"
+    },
+    {
+      "path": "叠影铃腹观测蛇王_档案卡.png",
+      "bytes": 3342279,
+      "sha256": "4d3ab9df031496bca02e9139fb637bb2a16e55bbcf6d2cff27c635daee50245b"
+    },
+    {
+      "path": "叠影铃腹观测蛇王_正面设定图.png",
+      "bytes": 3102384,
+      "sha256": "c3449bab0bc1c02015afaf32bd96c640878b1d670d4908f8ed2f6998dbf0cc9e"
+    },
+    {
+      "path": "古堡断章缝合鸦_档案卡.png",
+      "bytes": 3283020,
+      "sha256": "6df1a816a6584dbcdb57a3f2ec596b4a7d994d5accd4d622cbf5c2f0fa9d8ed7"
+    },
+    {
+      "path": "古堡断章缝合鸦_正面设定图.png",
+      "bytes": 2993181,
+      "sha256": "9727957b00b0d6d05b8013d6d8a44a1abfded54a29be86cbda551332360044c7"
+    },
+    {
+      "path": "古神燃脊蜗_档案卡.png",
+      "bytes": 3256213,
+      "sha256": "fb4914d1650ebdfe90e392ba199ebf836d9496838c350b250a03526c15d4ebac"
+    },
+    {
+      "path": "古神燃脊蜗_正面设定图.png",
+      "bytes": 2425605,
+      "sha256": "677fba33b6047851be78966eaff05165554090177455c9ab9feeaa028a80dc14"
+    },
+    {
+      "path": "古神薄翼门卫兽_档案卡.png",
+      "bytes": 3456328,
+      "sha256": "0cf00da69bc656af452a22061b80820640c81780ff5c636a298e80d59a44cc6c"
+    },
+    {
+      "path": "古神薄翼门卫兽_正面设定图.png",
+      "bytes": 3085908,
+      "sha256": "729014bd1f31b51cbbebaa504debe122c34b468b89be3d031b0d8dff52f75248"
+    },
+    {
+      "path": "吞声梦泡蛾_档案卡.png",
+      "bytes": 3190409,
+      "sha256": "fc376e074f03ed2cd2e9f48aab2457b28eae46d23b46372c5d0b1b402599becf"
+    },
+    {
+      "path": "吞声梦泡蛾_正面设定图.png",
+      "bytes": 2990757,
+      "sha256": "8bb6eb323ba6125207505133c2058ccc83c2f3986d173686cfaf18c898931920"
+    },
+    {
+      "path": "吞声碎梦蛾_档案卡.png",
+      "bytes": 3551739,
+      "sha256": "90f83827a82414f45ae27e8dfa8eceb7dc4139e0e8b2ab83f7f0cf2b827c4e6b"
+    },
+    {
+      "path": "吞声碎梦蛾_正面设定图.png",
+      "bytes": 3189441,
+      "sha256": "a9f66957f861901ae58832a9483f270c690696f03c3570b4ba75c0fc7e68a8c4"
+    },
+    {
+      "path": "命线根蛛_档案卡.png",
+      "bytes": 3418125,
+      "sha256": "4e1a84876ad0144ed2d3168ff2d927f3234eb49faf49d5f4b11eb926faee2d9b"
+    },
+    {
+      "path": "命线根蛛_正面设定图.png",
+      "bytes": 3196429,
+      "sha256": "df45a0a99db63a2564bac1cafd2fc28d4a73b3b181a357fd2613c4b67179e1bf"
+    },
+    {
+      "path": "器官仓裂壳螺_档案卡.png",
+      "bytes": 3423378,
+      "sha256": "3ee4966b6d1f8bc8f8bf1c3eb5dbc797e0037aa9e5b5e0898abf0aa592e2e20b"
+    },
+    {
+      "path": "器官仓裂壳螺_正面设定图.png",
+      "bytes": 3025325,
+      "sha256": "b61c7eef4a21a3f31249ce5cce9c6de806111f3d7afc786d96c48aaec3c7bb8b"
+    },
+    {
+      "path": "器官仓黑边螺_档案卡.png",
+      "bytes": 3386151,
+      "sha256": "b4adad6667f1bf4b8998044b6225c228778dd94afc794e61ccca2e163b1e28ea"
+    },
+    {
+      "path": "器官仓黑边螺_正面设定图.png",
+      "bytes": 2900584,
+      "sha256": "8f8c5e615783dc270cf0c472bc732daf8d61c32676a533c187a9f90a452db17e"
+    },
+    {
+      "path": "器官花慈悲鼠_档案卡.png",
+      "bytes": 3451850,
+      "sha256": "46403656d12a7aa5658a29ddc2aba908b905c3bf3f3f886c6e56e2fea5380cd6"
+    },
+    {
+      "path": "器官花慈悲鼠_正面设定图.png",
+      "bytes": 3172419,
+      "sha256": "5c26f195359c2a77a318189aa14de9977bf979e19f501893bb7bc2e34ab41f6e"
+    },
+    {
+      "path": "回声折光小蜥_档案卡.png",
+      "bytes": 3282397,
+      "sha256": "b05c53580e734226a821f60c87f455e6997fc5620a9cba9b149318be66102194"
+    },
+    {
+      "path": "回声折光小蜥_正面设定图.png",
+      "bytes": 3244526,
+      "sha256": "3d761787b3de668d09dd20b61210d0bc3fd3a24897c0b8a3ce3a348435ad9b9f"
+    },
+    {
+      "path": "回声空腔小蜥_档案卡.png",
+      "bytes": 3218187,
+      "sha256": "5551bbde2d03e2ad82423ba7f91cb33c2f5f77329a76b6823fd3bd499505f422"
+    },
+    {
+      "path": "回声空腔小蜥_正面设定图.png",
+      "bytes": 2970611,
+      "sha256": "4efc54734eedf193c6a543ea6330d95c8e5e68193c0fbc75de31e06cce7faa76"
+    },
+    {
+      "path": "圣肉纸骨蟾_档案卡.png",
+      "bytes": 3074011,
+      "sha256": "c909daf44db4c9c7fa7ecace51cebd8809ec750c67f4c745aea7b974b210946e"
+    },
+    {
+      "path": "圣肉纸骨蟾_正面设定图.png",
+      "bytes": 2486345,
+      "sha256": "8595d5094383c4f7bb3fbe09002be17eaa756142c2099f8f5adf91ef63e80019"
+    },
+    {
+      "path": "圣肉虹尘炉主_档案卡.png",
+      "bytes": 3254623,
+      "sha256": "63a9c692a94824f41ae436f4c03dfee670e5bda34619dbf458d4f8dc44c53fb0"
+    },
+    {
+      "path": "圣肉虹尘炉主_正面设定图.png",
+      "bytes": 3050532,
+      "sha256": "4845968d0e48a132490c638c1bcc98c054cafbab03c969611913ee5ac6d57bb4"
+    },
+    {
+      "path": "圣银钉鹿_档案卡.png",
+      "bytes": 3194969,
+      "sha256": "5d9a922bb168f0e0cbcaa12df8d9dda93fa0808b29785b06e5c00a2ee1a81de7"
+    },
+    {
+      "path": "圣银钉鹿_正面设定图.png",
+      "bytes": 2857034,
+      "sha256": "53b658e724c3c780bc871aefd30e632683178480c4f27483ce25de4792d0a539"
+    },
+    {
+      "path": "圣骸流明刃翅虫_档案卡.png",
+      "bytes": 3309601,
+      "sha256": "757734b0fdf3cf012d5c5b11841ce6fe03d5b3b651eba31c0a76f2796ff5b5c2"
+    },
+    {
+      "path": "圣骸流明刃翅虫_正面设定图.png",
+      "bytes": 2844923,
+      "sha256": "5a4738706f0f474e951379996d6dcdcb6cdfcbf29c46ac8714688ba6551efcba"
+    },
+    {
+      "path": "地下舞台白瞳鼠_档案卡.png",
+      "bytes": 3364383,
+      "sha256": "fc907146e22350c0449e3a091065ba216653ffce67b3a37b710d3dd2d2de4951"
+    },
+    {
+      "path": "地下舞台白瞳鼠_正面设定图.png",
+      "bytes": 2736491,
+      "sha256": "2ff42f7acb3f5beb7840b9dcbc0b7a4d286b00dd4d1e69f6e8e45d09e36e3fdc"
+    },
+    {
+      "path": "地下舞台铃腹鼠_档案卡.png",
+      "bytes": 3377236,
+      "sha256": "236e5f0a8c810dc10c22dd671b6536b300ca20408db7d6d6d58af7a1a1b0a58c"
+    },
+    {
+      "path": "地下舞台铃腹鼠_正面设定图.png",
+      "bytes": 2920291,
+      "sha256": "9019247fc27e631f2b8c331a3c25c2b3400f63b67be3364e2f697c67ec59033b"
+    },
+    {
+      "path": "坠星回声纸鸟_档案卡.png",
+      "bytes": 3396914,
+      "sha256": "78c2e06605a73c4fb4e494d9cd324780835d9f431d13a287b2374c1477be5660"
+    },
+    {
+      "path": "坠星回声纸鸟_正面设定图.png",
+      "bytes": 2784714,
+      "sha256": "167951ad0033545f8f6ee81a8ca776447de5e0118029f08442414ea34dd058f5"
+    },
+    {
+      "path": "坠星漂盐纸鸟_档案卡.png",
+      "bytes": 3365692,
+      "sha256": "971360c0ea661768b6f13fbd4b7a8f462c15babf40751c0eefc187c188520344"
+    },
+    {
+      "path": "坠星漂盐纸鸟_正面设定图.png",
+      "bytes": 2731907,
+      "sha256": "196924268d4a262b20450b56c5d60a898c94ced050be0465acb85cc27e12cd81"
+    },
+    {
+      "path": "基底风格审阅/亮度提升版/幽紫王权_风格样张_亮度提升.png",
+      "bytes": 2884387,
+      "sha256": "06d1f6a71904e2a4237c341faca299006c9a2f9841958cf859d76328f998ef23"
+    },
+    {
+      "path": "基底风格审阅/亮度提升版/暗金_风格样张_亮度提升.png",
+      "bytes": 2742513,
+      "sha256": "fb2eae151d7c9b84d1491b13762aa35b688cbb3080139bbfffd5533e793e309d"
+    },
+    {
+      "path": "基底风格审阅/亮度提升版/月白青墨_风格样张_亮度提升.png",
+      "bytes": 2705392,
+      "sha256": "d998ad8fb71e4210a8610c78019f035ccfd7909d41331b1128a8832e3b248c6c"
+    },
+    {
+      "path": "基底风格审阅/亮度提升版/深黑不可名状_风格样张_亮度提升.png",
+      "bytes": 2561036,
+      "sha256": "5704046b352f3311d890a6a23a3aa91da4c318c1caa39cd642a045fd8b193bec"
+    },
+    {
+      "path": "基底风格审阅/亮度提升版/血红_风格样张_亮度提升.png",
+      "bytes": 2847010,
+      "sha256": "5179f3333b630772e924a096b85a9c82e0ae03aabfac12bdc5a3dcf90396a6ea"
+    },
+    {
+      "path": "基底风格审阅/亮度提升版/钻石白_风格样张_亮度提升.png",
+      "bytes": 2853651,
+      "sha256": "6f23e7f06da114fce65608cc9a67012b4ef68ab6f554e4beb9a6538fda4458bb"
+    },
+    {
+      "path": "基底风格审阅/亮度提升版/锈黑_风格样张_亮度提升.png",
+      "bytes": 2762482,
+      "sha256": "733e831fe21c7d907157b59f98ad83fe8717dbe4f83f58692425e0399dc6ef1c"
+    },
+    {
+      "path": "基底风格审阅/亮度提升版/雾绿腐生_风格样张_亮度提升.png",
+      "bytes": 2857634,
+      "sha256": "4d5f6213e34d05dac2426b137023a223a06bdb829179b79606b4526b7443eddd"
+    },
+    {
+      "path": "基底风格审阅/亮度提升版/骨白灰_风格样张_亮度提升.png",
+      "bytes": 2925196,
+      "sha256": "565a3b429b2acba021d0fadc576113da688e0752e378f6c8dc8ea87d492952fa"
+    },
+    {
+      "path": "基底风格审阅/幽紫王权_风格样张.png",
+      "bytes": 2477506,
+      "sha256": "a2b1c4730d6ad515b6f39f052c9443c232b144d9be4b21815d7b37cc7e932ae0"
+    },
+    {
+      "path": "基底风格审阅/暗金_风格样张.png",
+      "bytes": 2322219,
+      "sha256": "9707bb2a51f1d3349c20bbdca201409847e50b639d2a48b9e4cc9ceef92cc9c8"
+    },
+    {
+      "path": "基底风格审阅/暗金_风格样张_v2.png",
+      "bytes": 2527671,
+      "sha256": "4a787aa44155c9be48a9fefa74e3e61ae7b6fe814c9d7cc1d8c5ac8d3d0306b9"
+    },
+    {
+      "path": "基底风格审阅/暗金_风格样张_v3.png",
+      "bytes": 2754931,
+      "sha256": "b632bbd346231da0f6d0059cbc982dde9f3ba0c131c041a3f47c2f8e5401dc49"
+    },
+    {
+      "path": "基底风格审阅/月白青墨_风格样张.png",
+      "bytes": 2688572,
+      "sha256": "49a5888d2797b7cd2f782c2c9f5675aa7d3fb2e147c74a13ba72994ce8d2d6e0"
+    },
+    {
+      "path": "基底风格审阅/深黑不可名状_风格样张.png",
+      "bytes": 2090681,
+      "sha256": "c823159dc5df391ba034fd057c7db61a5befff3239746e4b54b66362d51bcf79"
+    },
+    {
+      "path": "基底风格审阅/血红_风格样张.png",
+      "bytes": 2440967,
+      "sha256": "2acfbf84e522655fc4d9b3d195810b00e9f6268c0d957be51b8ec68687fcd5c9"
+    },
+    {
+      "path": "基底风格审阅/钻石白_风格样张.png",
+      "bytes": 2680133,
+      "sha256": "b10d1724f38d14e0b06d8ee3b3cf73cc16f2a81df3ea9ab0d3dabf58c78b25fc"
+    },
+    {
+      "path": "基底风格审阅/锈黑_风格样张.png",
+      "bytes": 2343538,
+      "sha256": "0a8ec593c376f3b5219eb35b3fb2d2214517e79881d02ad9399521d443f65582"
+    },
+    {
+      "path": "基底风格审阅/雾绿腐生_风格样张.png",
+      "bytes": 2477691,
+      "sha256": "0c5cd8b69f74f141eca47aaba55b02323b4e3e2e3a72b6e53dde49b14d9d81c3"
+    },
+    {
+      "path": "基底风格审阅/骨白灰_风格样张.png",
+      "bytes": 2658022,
+      "sha256": "b21a419933afc4e87f729afcec484bf0edbad8c9aaa6532527b965a97dd80b07"
+    },
+    {
+      "path": "塔灯书蛾_档案卡.png",
+      "bytes": 3329212,
+      "sha256": "834a88a081b90271bb2451b35ce59c8dc49d02db8eeb7b9a0a11296631c0e25b"
+    },
+    {
+      "path": "塔灯书蛾_正面设定图.png",
+      "bytes": 3308346,
+      "sha256": "bb53edd7fed2a52c20b14fa8dd24e1d3aa959d18de012f0458784d5f24dca4b6"
+    },
+    {
+      "path": "夜剧薄翼灵鳞蛟_档案卡.png",
+      "bytes": 3522734,
+      "sha256": "b1e2853af46b8c62f8bbe74a86ddf1806e3459ed0511643273cbfdafda52ca14"
+    },
+    {
+      "path": "夜剧薄翼灵鳞蛟_正面设定图.png",
+      "bytes": 3061842,
+      "sha256": "7dabc23e06b77a25ef3f7d49c625da01423f6827684d648033cd1447add62e10"
+    },
+    {
+      "path": "夜剧黑边犬_档案卡.png",
+      "bytes": 3286698,
+      "sha256": "4d8d7e29cabe7e3c219dc18d9dbf5517c979403682dea218b1b449ec4a965b45"
+    },
+    {
+      "path": "夜剧黑边犬_正面设定图.png",
+      "bytes": 3207636,
+      "sha256": "af7af4f9eb08043df5fb26ec890699e17728ba436419559e3050de6c25f8235f"
+    },
+    {
+      "path": "失名旧誓翼蛇_档案卡.png",
+      "bytes": 3208958,
+      "sha256": "99b1da20c8f77250c5397f676f8fb36e8cb8d3f192dc93fbc4020c4decc56669"
+    },
+    {
+      "path": "失名旧誓翼蛇_正面设定图.png",
+      "bytes": 3098284,
+      "sha256": "dc9fecc6f691fca9d12e4cabe7c09cd9451675ecb60924936c55076a4b695536"
+    },
+    {
+      "path": "契约棘尾纸鸟_档案卡.png",
+      "bytes": 3461410,
+      "sha256": "be7fdd47a6339c0112f91f52dd18830677f61eb141a933b6bb603b0ad5b074dd"
+    },
+    {
+      "path": "契约棘尾纸鸟_正面设定图.png",
+      "bytes": 3035830,
+      "sha256": "4de4597b3a58e255a2f1cebae638f3239b726f3ffb9b6aa459a4b68c30f50ce9"
+    },
+    {
+      "path": "契约空腔缝合鸦_档案卡.png",
+      "bytes": 3441209,
+      "sha256": "a64384d998462cd6f549aaad3b2f057368ca6558b2276f914215855fc459a837"
+    },
+    {
+      "path": "契约空腔缝合鸦_正面设定图.png",
+      "bytes": 3217519,
+      "sha256": "9e785cbd7dc3d0d07996f28ac11e018f928694b61a794cc8cd75c0b361f349e0"
+    },
+    {
+      "path": "契约贝折光刃翅虫_档案卡.png",
+      "bytes": 3362443,
+      "sha256": "57588394e471fb0f7b6e22f8241ad03a8fc0868d0d85ab271c1df41f601384e2"
+    },
+    {
+      "path": "契约贝折光刃翅虫_正面设定图.png",
+      "bytes": 2821193,
+      "sha256": "4dc8edd67f65db874c752a3eaaa1fd377402c5c9095dd5c085aa04060c9d2f3a"
+    },
+    {
+      "path": "娱乐温炉蜗_档案卡.png",
+      "bytes": 3388368,
+      "sha256": "0928035fb19eaa10972b90020a69e8b9ec89a3d17982c4afd3c867245709de5b"
+    },
+    {
+      "path": "娱乐温炉蜗_正面设定图.png",
+      "bytes": 2942315,
+      "sha256": "c1da986cf577e4adfd33356519471f5c72e46ec8107ca0ecdf2e4b2b73ca7b8d"
+    },
+    {
+      "path": "孢雾巡猎者_档案卡.png",
+      "bytes": 3484430,
+      "sha256": "211dc0f41e1800125786ada16df74742138d7f487b7e010cd5d6e0cbb30eba5e"
+    },
+    {
+      "path": "孢雾巡猎者_概念展示.png",
+      "bytes": 2911521,
+      "sha256": "c4486caa0465de61fbe97a9ae39355736df00e7aa425b29ff2f25e9a1cd30b69"
+    },
+    {
+      "path": "孢雾巡猎者_正面设定图.png",
+      "bytes": 3289326,
+      "sha256": "7897920598b9ea7004f9ced04a73cc01549304010993eca6f0ab93efb0d9d571"
+    },
+    {
+      "path": "孢雾巡猎者_节点正面.png",
+      "bytes": 973465,
+      "sha256": "39d8e42cb3570af5e01f9e929ba39b341667958c18c29bc9e0d0834c139ee1ca"
+    },
+    {
+      "path": "封言静脉幼虫_档案卡.png",
+      "bytes": 3451771,
+      "sha256": "ffbd788c8abf96224ad684df4eb1d81bd0535b12338c0fc37d43fd264ded8614"
+    },
+    {
+      "path": "封言静脉幼虫_正面设定图.png",
+      "bytes": 3233968,
+      "sha256": "1d9a05d6633a5065af30802a41cee1d5afe1db655d9179d081292a93e5e2e932"
+    },
+    {
+      "path": "屏光灰舌蜉蝣_档案卡.png",
+      "bytes": 3363942,
+      "sha256": "0b92dd101d51be8f850e65e049ee2f6beb7d0bfaadd012e3fd07b6fe7a88fc26"
+    },
+    {
+      "path": "屏光灰舌蜉蝣_正面设定图.png",
+      "bytes": 2978802,
+      "sha256": "7f04115caa0c5565eb6ecb6f56e9f617e7b35567a46d347fb227c9b24d928f3e"
+    },
+    {
+      "path": "屏光脉冲蚁_档案卡.png",
+      "bytes": 3316577,
+      "sha256": "65533f9f53168b9f3b63bf552aa12a03c95f313f3404d38e95b09b23029eb1a5"
+    },
+    {
+      "path": "屏光脉冲蚁_正面设定图.png",
+      "bytes": 2842855,
+      "sha256": "860d44bd11433d5182f4c424230b0c65e09f11cb5c275bcc1dae37d26f018ba4"
+    },
+    {
+      "path": "屏光蓝焰灾厄环_档案卡.png",
+      "bytes": 3453359,
+      "sha256": "0d2fd6a0aeac2e5ad98953839a5f16b14fff3b6ae668ca9d2f46678d2c2ef34a"
+    },
+    {
+      "path": "屏光蓝焰灾厄环_正面设定图.png",
+      "bytes": 3215506,
+      "sha256": "d6f3663e29d74891288a6d490ce486ad042b1640fbb4a45b79e564083477f052"
+    },
+    {
+      "path": "屏幕晶背幼虫_档案卡.png",
+      "bytes": 3164063,
+      "sha256": "7aafcf5064e75262e21353004a7debf70c19741ca16196a0ed5080d04509f5d1"
+    },
+    {
+      "path": "屏幕晶背幼虫_正面设定图.png",
+      "bytes": 2620372,
+      "sha256": "afae554c95b355ef5bd76bd619f2c01ede627e8e817a65bed496f3116b751174"
+    },
+    {
+      "path": "屏幕酸泪幼虫_档案卡.png",
+      "bytes": 3297012,
+      "sha256": "130240e9af1aa734574c42dd59c52a25d95569d462c39117c161ad8831931051"
+    },
+    {
+      "path": "屏幕酸泪幼虫_正面设定图.png",
+      "bytes": 3010275,
+      "sha256": "ea4258d9d622d4498dde7bb54b38168ed4402831394db314487cb2b36576e79e"
+    },
+    {
+      "path": "广告月粉门卫兽_档案卡.png",
+      "bytes": 3442038,
+      "sha256": "3b4a0f37e335f11cc8a310a71dd5a04aee36e91b9f26d99362e0ec60fe5cf9d1"
+    },
+    {
+      "path": "广告月粉门卫兽_正面设定图.png",
+      "bytes": 3112513,
+      "sha256": "aa76fb976b9f6d2e3ebc97d10db74961784f094d9da7ef71928035d569a0d2a2"
+    },
+    {
+      "path": "广告铃腹巡礼蛛_档案卡.png",
+      "bytes": 3295037,
+      "sha256": "ad14074d87493d36513f972998eef10c05e4d3d924ddc67a5218a5d627e37193"
+    },
+    {
+      "path": "广告铃腹巡礼蛛_正面设定图.png",
+      "bytes": 2912508,
+      "sha256": "c9f1a62f252fa672cbc32c71ee6f4e6848cc0d787e9c1571b46ef5ea0831ce83"
+    },
+    {
+      "path": "废酸小蟾_档案卡.png",
+      "bytes": 3360998,
+      "sha256": "9814a5969ea4b900d942b6c749f9a40bf6773dec7377335aafa6db0de96ab20d"
+    },
+    {
+      "path": "废酸小蟾_正面设定图.png",
+      "bytes": 2729685,
+      "sha256": "804e191eea336c67b7d60da9d16dc8389b14081b958239bac781351033475e32"
+    },
+    {
+      "path": "废铁琥珀仓主兽_档案卡.png",
+      "bytes": 3330720,
+      "sha256": "b9449b422952a49dc8593240931bd1c433f00ad87d5452a8498d0f70866882f8"
+    },
+    {
+      "path": "废铁琥珀仓主兽_正面设定图.png",
+      "bytes": 3192194,
+      "sha256": "1eb4f2679781d4c449e176a42c65fca7d236d4989833ce37bb246a00bd857130"
+    },
+    {
+      "path": "延迟影残响门卫兽_档案卡.png",
+      "bytes": 3436629,
+      "sha256": "cb87587faa731fb1933c5a9b97375bf1b3364a3fb35d9c27184d575e4b91ecec"
+    },
+    {
+      "path": "延迟影残响门卫兽_正面设定图.png",
+      "bytes": 2950566,
+      "sha256": "f2eb4dd2a7218f3efdcc9e623fdb64e7a08b8f950da2b2dae37ab61973144942"
+    },
+    {
+      "path": "彩虹断章仓主兽_档案卡.png",
+      "bytes": 3485269,
+      "sha256": "884e8cf8c990642f02b94c1c6425f7e00f72953c82061816507884f64002c493"
+    },
+    {
+      "path": "彩虹断章仓主兽_正面设定图.png",
+      "bytes": 3226759,
+      "sha256": "e7ccf730099b206ac674ca7c718bf8571b4ddd8d7298d96cd9f3fa7f28fb329e"
+    },
+    {
+      "path": "彩虹棘尾牧者_档案卡.png",
+      "bytes": 3258346,
+      "sha256": "11cc74192b3c048b3c5031e177ff2f50c6350bf05d79ca34531301a959ccf70f"
+    },
+    {
+      "path": "彩虹棘尾牧者_正面设定图.png",
+      "bytes": 2831601,
+      "sha256": "ec0db1c01bda530aec25a356990fe5f44a974ef93b8544628fe3992a208e8fa5"
+    },
+    {
+      "path": "影角线虫_档案卡.png",
+      "bytes": 3380852,
+      "sha256": "0b484c17418a46a3b4a2b05483fcacf97d880895b6e5682860f13c87897f1275"
+    },
+    {
+      "path": "影角线虫_正面设定图.png",
+      "bytes": 2534492,
+      "sha256": "5ceb6a23bcfeb5b583920ed1731bac4dcdab05cd6b0f1269ee910c59e6fc33ad"
+    },
+    {
+      "path": "成瘾余温鹿_档案卡.png",
+      "bytes": 3200197,
+      "sha256": "f868535c6c065207385f9388419888fda3f082b00f09c237369ce7dc97ff3a9d"
+    },
+    {
+      "path": "成瘾余温鹿_正面设定图.png",
+      "bytes": 2785726,
+      "sha256": "646593b01a3a3d3acd3ac5f6d3b908dabfdc19dafe3d6e4d5e82d2747d523ce3"
+    },
+    {
+      "path": "成瘾琥珀鹿_档案卡.png",
+      "bytes": 3030681,
+      "sha256": "50c958951da5c8ebf7e1ecdd0c6c1bd1da36a4843b2353402c56d1e63bac58d2"
+    },
+    {
+      "path": "成瘾琥珀鹿_正面设定图.png",
+      "bytes": 2601725,
+      "sha256": "edfb3d5022734e12ac7fc8c523257649ddd123bffb5c3f43d6cc23a2d0861e34"
+    },
+    {
+      "path": "折光环眼盾龟_档案卡.png",
+      "bytes": 3259303,
+      "sha256": "ae60b1cc11fdb263cfc24a7fa2462cf5d26f398c6c14c168e992d360097968ec"
+    },
+    {
+      "path": "折光环眼盾龟_正面设定图.png",
+      "bytes": 2893932,
+      "sha256": "ef35dd10d083ae3099e2c91359b3474d1fdf2fcd2ecbaa0a194409b5b36d45b7"
+    },
+    {
+      "path": "折光雾鳞灯虫_档案卡.png",
+      "bytes": 3266470,
+      "sha256": "9d51995e514a6db181a96f9b2e9ae1ff59b928b0f48cbde333e6b01551a216df"
+    },
+    {
+      "path": "折光雾鳞灯虫_正面设定图.png",
+      "bytes": 2822600,
+      "sha256": "1231c7ed918b7177d94f22462dced3fd63b9462bc7899eba333942b3efba986c"
+    },
+    {
+      "path": "折角噬名菌毯_档案卡.png",
+      "bytes": 3434338,
+      "sha256": "b885443502fca3adb4894b9c871be6a6e4cd1f9405f916c0a3c2a71fc2690379"
+    },
+    {
+      "path": "折角噬名菌毯_正面设定图.png",
+      "bytes": 3033315,
+      "sha256": "7cee535b609fddb992eab42e8449e71151d21ba85f1e496d30db05ea78aff0da"
+    },
+    {
+      "path": "折角蜡纹菌毯_档案卡.png",
+      "bytes": 3244668,
+      "sha256": "6396471d1bf6af1ecc88aade80d55d41bba5d98494979bdb16840f00808f28df"
+    },
+    {
+      "path": "折角蜡纹菌毯_正面设定图.png",
+      "bytes": 2679192,
+      "sha256": "dfb83e1a5e8c0c46014b3c85315f84cdf152f6c7abe494662acd934570e003fb"
+    },
+    {
+      "path": "拆解银线仓主兽_档案卡.png",
+      "bytes": 3486435,
+      "sha256": "708bdf4e8e510d1b621542f8e67efdebde06eab106b05b48bc884ab7d319b58c"
+    },
+    {
+      "path": "拆解银线仓主兽_正面设定图.png",
+      "bytes": 3178484,
+      "sha256": "b2079a6aae77c4bbb5f105ffb4d4497baedcd931a223d2f1048b300258963c22"
+    },
+    {
+      "path": "拆解齿轮刃翅虫_档案卡.png",
+      "bytes": 3392440,
+      "sha256": "39c537c40d4e9dddeb9f766d6ac95d3a1e332880351d27546ba646d4e1e03d94"
+    },
+    {
+      "path": "拆解齿轮刃翅虫_正面设定图.png",
+      "bytes": 3146902,
+      "sha256": "1d9bceec3a900750dbf5ab34b84108ee836a3378bb10202c04f7f8c18164a2a2"
+    },
+    {
+      "path": "拾眼骨鸦_档案卡.png",
+      "bytes": 3454505,
+      "sha256": "7637977a5361eb6b4627b61c9d59b2102bb019323f78a4def2c87a170ccb8c8c"
+    },
+    {
+      "path": "拾眼骨鸦_概念展示.png",
+      "bytes": 2635718,
+      "sha256": "e21ea5bb0fd74bca785ce28015db7ead655f515ddb045b4d238cfb904237813b"
+    },
+    {
+      "path": "拾眼骨鸦_正面设定图.png",
+      "bytes": 3162313,
+      "sha256": "369ea747759e407d64b4048195cfe7d55e83f99ceaa3b45f767b0396cbda320d"
+    },
+    {
+      "path": "接口余温纸鸟_档案卡.png",
+      "bytes": 3228883,
+      "sha256": "d51791ab18da60e251d605c2d6e5eb8f93db2e1f5e95b1da03532404c9c61b16"
+    },
+    {
+      "path": "接口余温纸鸟_正面设定图.png",
+      "bytes": 2730083,
+      "sha256": "d78c3223a7ea57712b145f333e82bf51bc76fbd756233009eaee3c167c3be939"
+    },
+    {
+      "path": "接口回声君王_档案卡.png",
+      "bytes": 3388359,
+      "sha256": "52d4c57004d4506a234fb4820377919081919256806b5ffe918002e23f1c5a86"
+    },
+    {
+      "path": "接口回声君王_正面设定图.png",
+      "bytes": 3181722,
+      "sha256": "b5b8a5252394b0273cfc17f6ed8663d891c1dc72736c39d0ea1339f936f14b36"
+    },
+    {
+      "path": "数据污银蚁_档案卡.png",
+      "bytes": 3424444,
+      "sha256": "f02b2bd9314f9a2b66aace8ac45c876567816b263810dbd8da8025067115a505"
+    },
+    {
+      "path": "数据污银蚁_正面设定图.png",
+      "bytes": 2767101,
+      "sha256": "aa0ec8098343bbf461a085dc1ae0a20202fc91c746ea37cf9ba105a5060bf6e3"
+    },
+    {
+      "path": "数据银线蚁_档案卡.png",
+      "bytes": 3405404,
+      "sha256": "498357fe66c053370f280b54a5c450532648a0d909296214f9398bacdd281c60"
+    },
+    {
+      "path": "数据银线蚁_正面设定图.png",
+      "bytes": 2935654,
+      "sha256": "3bb746dbeb041fd1d84f6bd096d36c0894a845f3430af3af84471dc681a06032"
+    },
+    {
+      "path": "无口油膜幼虫_档案卡.png",
+      "bytes": 3353156,
+      "sha256": "11571320bff2099f7d7e6775a870cd8476d3ebc5116c54f876d81810d0672945"
+    },
+    {
+      "path": "无口油膜幼虫_正面设定图.png",
+      "bytes": 3202436,
+      "sha256": "89d181e56a79fc095b7d0b8cb20b6c4dd97e3cf1977b27e910d058fadfba6405"
+    },
+    {
+      "path": "无口细足幼虫_档案卡.png",
+      "bytes": 3348424,
+      "sha256": "b6b42927bf6e425ad847c06105ac1311b93e6bf79178a8b905a58e64a111461e"
+    },
+    {
+      "path": "无口细足幼虫_正面设定图.png",
+      "bytes": 2793755,
+      "sha256": "85a07a0a3754a2de30c3fa9daaf61b789fe7c6b79450810d7b0f3ad6dfa75684"
+    },
+    {
+      "path": "无面蜡纹回廊兽_档案卡.png",
+      "bytes": 3234309,
+      "sha256": "80e6394c73cbb3a68e8237887c28fabef6e8a1a7876f891ffdc542784ea741ac"
+    },
+    {
+      "path": "无面蜡纹回廊兽_正面设定图.png",
+      "bytes": 3012498,
+      "sha256": "9ba60d50900e81a0ad5c1b26701ea98462b6735faf7e351a1e2e84f2afa0c6ba"
+    },
+    {
+      "path": "无面酸泪鱼_档案卡.png",
+      "bytes": 3181616,
+      "sha256": "e39f357a1ed06bddc2d5ce4094b214da0861a0332d13cec3675fd1f1c8eb0613"
+    },
+    {
+      "path": "无面酸泪鱼_正面设定图.png",
+      "bytes": 2887839,
+      "sha256": "0a1e8da6975c57cf3a1ac200a85ff5136921d0bb335f1117e97008e8c14293b5"
+    },
+    {
+      "path": "旧电缆断章妖主_档案卡.png",
+      "bytes": 3265610,
+      "sha256": "4c67b52eca6e3f1f21dea79371f3d773a9525402dcf09d8d1bb250c2e78593e3"
+    },
+    {
+      "path": "旧电缆断章妖主_正面设定图.png",
+      "bytes": 3121521,
+      "sha256": "798a8ca7317d1746f1ae287c5bbfd88a54548439a5a25cf5a312620a27783971"
+    },
+    {
+      "path": "旧电缆棘尾幼虫_档案卡.png",
+      "bytes": 3283748,
+      "sha256": "602b33bc80fcfc91fcb44ee95736052435ece1168b835dd8b003f782b52aa45a"
+    },
+    {
+      "path": "旧电缆棘尾幼虫_正面设定图.png",
+      "bytes": 2942230,
+      "sha256": "b43d76eda34fe1f15f87a24ac6c69e7e6cd9fc4e947b3fc10699c17ed148ad99"
+    },
+    {
+      "path": "星历暗核折角兽_档案卡.png",
+      "bytes": 3331551,
+      "sha256": "316ee8c23af7af59f61be4527625a00442080d43338d14dc407863e152601d4a"
+    },
+    {
+      "path": "星历暗核折角兽_正面设定图.png",
+      "bytes": 2964965,
+      "sha256": "6211f365773fc3de4388a3fd529beed7f35c78923564f1ca71991f612e16058a"
+    },
+    {
+      "path": "星尘晶背菌毯_档案卡.png",
+      "bytes": 3290562,
+      "sha256": "84359e4dc4f55de7fe05bda0ff16159de8acae60a1bbc9903c89d64d3391b819"
+    },
+    {
+      "path": "星尘晶背菌毯_正面设定图.png",
+      "bytes": 3155981,
+      "sha256": "226bb5f1849f6adea407bfdcc5ea35155f664dc89994301070cc9c917e3c2ef0"
+    },
+    {
+      "path": "星尘酸泪眠鲸_档案卡.png",
+      "bytes": 3188772,
+      "sha256": "7616a2b16177e19e7088927940d2b3fd6dd047152f73e7e6a4cb216f169863d0"
+    },
+    {
+      "path": "星尘酸泪眠鲸_正面设定图.png",
+      "bytes": 2616564,
+      "sha256": "e912fafaf5bd4084425bdadaf147138f0275b3863362dd4da8842b7af8970b2f"
+    },
+    {
+      "path": "星序塔脊折角兽_档案卡.png",
+      "bytes": 3480581,
+      "sha256": "2d83201fc314d50d94b3c44e7181e5fa06a1844bbc0f2c2b9df4a793c87ce582"
+    },
+    {
+      "path": "星序塔脊折角兽_正面设定图.png",
+      "bytes": 3081921,
+      "sha256": "8a50bb885db51616ec6a4179cc7be535784aee45c9a5c794770af84b9b6580e5"
+    },
+    {
+      "path": "星序银喉母机_档案卡.png",
+      "bytes": 3245361,
+      "sha256": "8b53aeaf531fb84e52a2d687e1a2844d89f207f6d56fd292fb62f1df132bd198"
+    },
+    {
+      "path": "星序银喉母机_正面设定图.png",
+      "bytes": 2929677,
+      "sha256": "8f760ac76292b9127e73a84f483706a186687f966fa5ef449562e44fd2e0c644"
+    },
+    {
+      "path": "星瘤银线灵鳞蛟_档案卡.png",
+      "bytes": 3211487,
+      "sha256": "ae90715a3b7d3f2e5005c8b75ea9722b3738b5db38a1138672e9c99e172dd42b"
+    },
+    {
+      "path": "星瘤银线灵鳞蛟_正面设定图.png",
+      "bytes": 2806594,
+      "sha256": "272c7be2cbe7b497e03868eda0e6bbdabfa0068c1a669207a10f9a2b3b6e1f96"
+    },
+    {
+      "path": "星瘤齿轮蚁_档案卡.png",
+      "bytes": 3364153,
+      "sha256": "abaf4609660f43eb7cfecf921df6f406d154fcad5e4471bb5e432e51135e24d8"
+    },
+    {
+      "path": "星瘤齿轮蚁_正面设定图.png",
+      "bytes": 2825122,
+      "sha256": "04eec4e6c83258c7e4d6c2825e3a3bfafbf10821300f1a1452d74815cfa96446"
+    },
+    {
+      "path": "星盘瞳雀_档案卡.png",
+      "bytes": 3264413,
+      "sha256": "665d5e4bde459ef42d9fd4ef95ecbc2248926f5a16f4b28a078d72335d4a92cd"
+    },
+    {
+      "path": "星盘瞳雀_正面设定图.png",
+      "bytes": 2876848,
+      "sha256": "5171e00b3b47ff18e490449e809519f5e556915b3cb118f4ad3b90fa7ebfdcf8"
+    },
+    {
+      "path": "星舰净翼猫_档案卡.png",
+      "bytes": 3301104,
+      "sha256": "272547fc4c54f3eec4fe7c3874c08a04f1128cd380d8778b9200cf4694cb07ed"
+    },
+    {
+      "path": "星舰净翼猫_正面设定图.png",
+      "bytes": 2653569,
+      "sha256": "6fbc6b2b1ea0a016f372a638bb65739390b6b87f4b6dc376d3dc19b96d957533"
+    },
+    {
+      "path": "星舰赤纹猫_档案卡.png",
+      "bytes": 3196798,
+      "sha256": "bd57a6a32bc5726c8081f8f79ec2e207c3749aaa400fa60d0133d1e84bcdc1ba"
+    },
+    {
+      "path": "星舰赤纹猫_正面设定图.png",
+      "bytes": 2644427,
+      "sha256": "2e4b4c2bd40421a9108ac7b0860b485cace4352fc453cddbe47c461768780ba1"
+    },
+    {
+      "path": "星遗净盐虱_档案卡.png",
+      "bytes": 3283336,
+      "sha256": "003d43d091d0ac5c5f1a3bca67cbc1ea712db4e2a89baea8cffbd5efec5d2d96"
+    },
+    {
+      "path": "星遗净盐虱_正面设定图.png",
+      "bytes": 2943902,
+      "sha256": "e149e55e93c3ac3777bbe3846a6976f6de1936c22200dc3ed1ab0f8420d113fb"
+    },
+    {
+      "path": "星遗喉灯虱_档案卡.png",
+      "bytes": 3339395,
+      "sha256": "b2dd1ad135c5218c428202f673684e0fa7e74561c54afa91d6574d7a99aea1c7"
+    },
+    {
+      "path": "星遗喉灯虱_正面设定图.png",
+      "bytes": 2874814,
+      "sha256": "7e4eabcd2be3009ce7408f00fad8631aaeaaa7ee5f1e84ec5380ba1f318305e9"
+    },
+    {
+      "path": "星霜小蛇_档案卡.png",
+      "bytes": 3108065,
+      "sha256": "5f6176d8c117ceeab95f836016493dcf9a5cc6c96fe227bbb56b4fcd63d73db2"
+    },
+    {
+      "path": "星霜小蛇_正面设定图.png",
+      "bytes": 2696395,
+      "sha256": "a14228875609b55571581e0d380d30363da036d4b4e3637e04e99cce224916c2"
+    },
+    {
+      "path": "暗渠雾鳞猎犬_档案卡.png",
+      "bytes": 3249525,
+      "sha256": "dc678dab216d7b956769f06f16e25fa3d9b7cc10c6a1fdb63818b9d10e86c581"
+    },
+    {
+      "path": "暗渠雾鳞猎犬_正面设定图.png",
+      "bytes": 3201183,
+      "sha256": "a2b14cd2d3cead5c52b52aa17fe75f799042a6baf59e2e31af8bcbfbc2b161cf"
+    },
+    {
+      "path": "月井蟾仆_档案卡.png",
+      "bytes": 3350252,
+      "sha256": "30f8c8d536d1396cb5e064f0f83ea333e32ec3025404a090ab92e35cb0648462"
+    },
+    {
+      "path": "月井蟾仆_正面设定图.png",
+      "bytes": 3246542,
+      "sha256": "6fa925367d25a5a0a32f777ffc4464447d4870f1121b006c026ea8e747c7c089"
+    },
+    {
+      "path": "月鳞热雾鱼_档案卡.png",
+      "bytes": 3346208,
+      "sha256": "53b30b867706016cebc447441047a9841fe85151f9e1e39948c10520f39e30e8"
+    },
+    {
+      "path": "月鳞热雾鱼_正面设定图.png",
+      "bytes": 3022240,
+      "sha256": "7ed97a43ddf3a6110b3b070af92cf9bda6d97a156dbe43e4bb6aa747b01013a3"
+    },
+    {
+      "path": "服务器碎冠猫_档案卡.png",
+      "bytes": 3318568,
+      "sha256": "a8b723e6e177ef52b58caf98ea55e4bba80b5a5610baebdf2b22bc7e9a7c0fcc"
+    },
+    {
+      "path": "服务器碎冠猫_正面设定图.png",
+      "bytes": 3077755,
+      "sha256": "0457d65c0acfdd0aed6d9c429502a347f0284d25eb6da81e3922c10ef084190f"
+    },
+    {
+      "path": "末日长吻雀_档案卡.png",
+      "bytes": 3358335,
+      "sha256": "241c5e8617e59892000f603ea511b841146793c7591ac4b934610d42a644476e"
+    },
+    {
+      "path": "末日长吻雀_正面设定图.png",
+      "bytes": 3088204,
+      "sha256": "d7a40c5573578d0aff7a8c861de83658a5f24fac2ae27e9bad89cf86b9cb5845"
+    },
+    {
+      "path": "末日骨铃雀_档案卡.png",
+      "bytes": 3213747,
+      "sha256": "2c97babd5fd5fba747b6e6de30645e53a50da5d1709b8093d2d3160ab1626858"
+    },
+    {
+      "path": "末日骨铃雀_正面设定图.png",
+      "bytes": 3076398,
+      "sha256": "7b49d65b1b6530953018b93042fe51339c702e52c4a30f76d4335ff7bf3f4a81"
+    },
+    {
+      "path": "机械污染回声盾龟_档案卡.png",
+      "bytes": 3396743,
+      "sha256": "0c5322384d2e088367c31bb8570d8e13b9415cedd1702703a5959ec7cf49baa3"
+    },
+    {
+      "path": "机械污染回声盾龟_正面设定图.png",
+      "bytes": 3075535,
+      "sha256": "9b648c238648a68a9e9bf48c029e89ab3416b3ed991249bb15af8cda1c6a3cdf"
+    },
+    {
+      "path": "机械污染漂盐蜉蝣_档案卡.png",
+      "bytes": 3326468,
+      "sha256": "2b6724a65fc06d84e9fbc30e20bfc1d186affd10d00037e3993017407d135617"
+    },
+    {
+      "path": "机械污染漂盐蜉蝣_正面设定图.png",
+      "bytes": 3045842,
+      "sha256": "28393786973eae6ea969f6ea2679dd0fccac38605735bb2821c7dc04a5dc9002"
+    },
+    {
+      "path": "梦壳裂梦小蛇_档案卡.png",
+      "bytes": 3419307,
+      "sha256": "f0c39c1b375ad2050c5efbeec9a655ca7240014cc31ab368b34881f2b95b1762"
+    },
+    {
+      "path": "梦壳裂梦小蛇_正面设定图.png",
+      "bytes": 2895803,
+      "sha256": "1b5962f7b7a64d4e80f1944e4d2392e165e8ef356218c2509918def2bc75ddb2"
+    },
+    {
+      "path": "梦壳雾灯小蛇_档案卡.png",
+      "bytes": 3330410,
+      "sha256": "228b2992e836d7072bf505face778e47f35d46d97d21d74e69f6a740d5b6c63f"
+    },
+    {
+      "path": "梦壳雾灯小蛇_正面设定图.png",
+      "bytes": 3048441,
+      "sha256": "89ebaa7783d772ff3ed9f915aaf531fa1d9156d40f911001e7600687220af076"
+    },
+    {
+      "path": "梦潮错位刃翅虫_档案卡.png",
+      "bytes": 3381757,
+      "sha256": "cac1582311058b01856fd35f11c5e6a1c6f5421ddee821c4305c86165471c616"
+    },
+    {
+      "path": "梦潮错位刃翅虫_正面设定图.png",
+      "bytes": 2787264,
+      "sha256": "1313d9fe10f6f0720d80fb38e032ccc8ef95abff6abe81791e78af1b4baeb3ae"
+    },
+    {
+      "path": "梦粉燃脊犬_档案卡.png",
+      "bytes": 3255111,
+      "sha256": "e0334ce800fc0da1d59d461e6c5b5c25b17d9db60250e6cd8f5b9193d69f0220"
+    },
+    {
+      "path": "梦粉燃脊犬_正面设定图.png",
+      "bytes": 3007329,
+      "sha256": "fb81652721d98ce7b9ad84819a99185a50c204cbf49648a65ddd928010ae03a8"
+    },
+    {
+      "path": "梦粉薄翼合唱体_档案卡.png",
+      "bytes": 3316441,
+      "sha256": "2ff4429c802ebd2aebe79521ce7ff15dea54af87b27cbdeca8560acfad783b48"
+    },
+    {
+      "path": "梦粉薄翼合唱体_正面设定图.png",
+      "bytes": 3120251,
+      "sha256": "3595fc523b2649ab329e0e2b1608021f22f208008d7e559a64c4ef68306f27ba"
+    },
+    {
+      "path": "梦蛹眠光观测蛇王_档案卡.png",
+      "bytes": 3270606,
+      "sha256": "1188a7215a68fbc7f7f34e8018fbd0221125fc63bde1c063ba14287122d17c38"
+    },
+    {
+      "path": "梦蛹眠光观测蛇王_正面设定图.png",
+      "bytes": 3143103,
+      "sha256": "b89948bf331c7f382a7131ade57eab8578b6ae261c14592c446cdf9c656304f3"
+    },
+    {
+      "path": "梦蛹脊灯小蛇_档案卡.png",
+      "bytes": 3400439,
+      "sha256": "7ccec3d48272e06a662bc75c01fe6d01a9be71c01936f503d25f4fbeed1fc0ae"
+    },
+    {
+      "path": "梦蛹脊灯小蛇_正面设定图.png",
+      "bytes": 2778252,
+      "sha256": "990e29ade426b0aeb0a4116494bc1ab52c8b622d24e56a679308888b52a39336"
+    },
+    {
+      "path": "棱光空腔豹_档案卡.png",
+      "bytes": 3416534,
+      "sha256": "cebe9382deadb96b9db0bed5693e23cb2d5d489992c169967f640338ae1ba9de"
+    },
+    {
+      "path": "棱光空腔豹_正面设定图.png",
+      "bytes": 3009160,
+      "sha256": "084157cd10f1f87458ed01e27d38d9a62965d65262caf6ad0a0e2f0c2df9b89c"
+    },
+    {
+      "path": "概率温炉小蛇_档案卡.png",
+      "bytes": 3143471,
+      "sha256": "197945072e13d979d4fb5a2858d621a7280c1e1540c37090897262b1dd0d547a"
+    },
+    {
+      "path": "概率温炉小蛇_正面设定图.png",
+      "bytes": 2780921,
+      "sha256": "976b8b23f615954be1438851a965fe87693a981543b64f0cf878f105ca42a49a"
+    },
+    {
+      "path": "概率白瞳小蛇_档案卡.png",
+      "bytes": 3316974,
+      "sha256": "f307505493a6328d933caf950717ebf8135bad9bd4f85049b1a3b64c00994d2d"
+    },
+    {
+      "path": "概率白瞳小蛇_正面设定图.png",
+      "bytes": 2616624,
+      "sha256": "ab87a8f365184240b2a8233b4d78ba0ecffae231cdeb70b1a4b7d9f74c0598e7"
+    },
+    {
+      "path": "殉光秘纹鱼_档案卡.png",
+      "bytes": 3227241,
+      "sha256": "c8f96e5b7d5c7cdd0f5ec2ea948c2fa72afd919a9d291e100f6d1ccb6be2d493"
+    },
+    {
+      "path": "殉光秘纹鱼_正面设定图.png",
+      "bytes": 2891629,
+      "sha256": "0a2dbb5a6f77d256542d6d53640a3964ae04d522c8d6d26335778786cb0a3956"
+    },
+    {
+      "path": "殉光错位鱼_档案卡.png",
+      "bytes": 3113069,
+      "sha256": "1b9f98083fe031bcdbbde507ef9d0f882c6961e957e5d68e20f0dcb8d8384066"
+    },
+    {
+      "path": "殉光错位鱼_正面设定图.png",
+      "bytes": 2936287,
+      "sha256": "64aae02c8fe5753776feaccb635136fdba551ea93702d7dc057bfa8bb844d354"
+    },
+    {
+      "path": "油膜跳蚤_档案卡.png",
+      "bytes": 3245307,
+      "sha256": "d292a260f911c3b2016a2aa120599b5ee6bb980be305f0f601276b23a3510b93"
+    },
+    {
+      "path": "油膜跳蚤_正面设定图.png",
+      "bytes": 2862080,
+      "sha256": "fed22485aae2e729e3fec898882d672e6e6b10fc94f37325da9ef5e58a99e923"
+    },
+    {
+      "path": "油血油膜幼虫_档案卡.png",
+      "bytes": 3389670,
+      "sha256": "a73103e2966217ccc2141193d7109045b3aedc026b86629f85efc062b3370efd"
+    },
+    {
+      "path": "油血油膜幼虫_正面设定图.png",
+      "bytes": 2737933,
+      "sha256": "dfc2413c3e2238aaf6d665c3e4fafa8421623c0f0f1c4008c68c67b00a598d35"
+    },
+    {
+      "path": "油血细足幼虫_档案卡.png",
+      "bytes": 3468181,
+      "sha256": "45a3bb0737543c0dcc03bf972d7ad254897e48f46817f5907577685799ebf3e4"
+    },
+    {
+      "path": "油血细足幼虫_正面设定图.png",
+      "bytes": 3090170,
+      "sha256": "24be3ad8f062f1208ccda76a232d068d6399ba336bf9e53b94529d52817e934b"
+    },
+    {
+      "path": "活体接口热雾天体胎_档案卡.png",
+      "bytes": 3298999,
+      "sha256": "2405c8c3cd3dc6a6433fa706e7cb4830cb4c2a83b186dd20b4b6c9fb0c9b671d"
+    },
+    {
+      "path": "活体接口热雾天体胎_正面设定图.png",
+      "bytes": 3127172,
+      "sha256": "938412461abfa529528259c9283a3915e35069f1f5792e7da5b8d2f270dc1d04"
+    },
+    {
+      "path": "活体接口秘纹猫_档案卡.png",
+      "bytes": 3439248,
+      "sha256": "2b36c4ca5a3c76f0aa77643b162d6b75f131aaa31872e64619c1bcf9bae2e4bf"
+    },
+    {
+      "path": "活体接口秘纹猫_正面设定图.png",
+      "bytes": 2921910,
+      "sha256": "6719a998b5a80d6e15a2ddfda7b6d2d36a13585266ac49dd2a1cdedda9f3c153"
+    },
+    {
+      "path": "活燃梦泡蛾_档案卡.png",
+      "bytes": 3246631,
+      "sha256": "49cfe279940374ed558eece7f5da8a4ebac3f13ff91d06c91625e15993321895"
+    },
+    {
+      "path": "活燃梦泡蛾_正面设定图.png",
+      "bytes": 2957560,
+      "sha256": "9cd8e6548014ce4db6cdd3ab737815a2dd5f88fbeeadc89b4bd14abb3dd6ee24"
+    },
+    {
+      "path": "活燃流明蛾_档案卡.png",
+      "bytes": 3444232,
+      "sha256": "94c3a03702ee0fc19e799918663aad9c16ae7d3635be29e6d8d12a17833599d8"
+    },
+    {
+      "path": "活燃流明蛾_正面设定图.png",
+      "bytes": 3189930,
+      "sha256": "6afbce0097602192acbd2c2ff3f98e2cf3ddd651ff0af1511d2167dbccf3e3fd"
+    },
+    {
+      "path": "海沟燃脊蜗_档案卡.png",
+      "bytes": 3246317,
+      "sha256": "ff708dabf1675da7544240aa5f7b9d483792e05da292a30fdd2534dff711a11e"
+    },
+    {
+      "path": "海沟燃脊蜗_正面设定图.png",
+      "bytes": 2744491,
+      "sha256": "70af506277cb629b6687833c0a05e4123acc54e0222c5d871ec347b3ac0e1cfd"
+    },
+    {
+      "path": "海沟裂壳折角兽_档案卡.png",
+      "bytes": 3440294,
+      "sha256": "6cb2529e6aa70e3d93658ffb8ab7816987f33e69663858cec3774d40a3c36a8b"
+    },
+    {
+      "path": "海沟裂壳折角兽_正面设定图.png",
+      "bytes": 2902800,
+      "sha256": "74258c0803ec324dfe2b1ced0a6344bcae47221b4650ca0980725ae523cd92ac"
+    },
+    {
+      "path": "海烛幼虫_档案卡.png",
+      "bytes": 3140883,
+      "sha256": "53c6503eb120e7f753a9d1e554404e3d20ec98a0cd0e33b3cb0b04ac9f3fe917"
+    },
+    {
+      "path": "海烛幼虫_正面设定图.png",
+      "bytes": 2633773,
+      "sha256": "a34806d6efe3fb37175ab9a749ff359d730847cb31c04157b8e5a46e0640c277"
+    },
+    {
+      "path": "海血盐霜蟾_档案卡.png",
+      "bytes": 3413755,
+      "sha256": "04966937625568430adfe85de5e0a94f7c1ff7553888854452833c6c8a5dfcb7"
+    },
+    {
+      "path": "海血盐霜蟾_正面设定图.png",
+      "bytes": 3136206,
+      "sha256": "f23441e5404787d8d5d3a792012dc54c3147430e730d2171b0829676afa15959"
+    },
+    {
+      "path": "海血盲鳃蟾_档案卡.png",
+      "bytes": 3295033,
+      "sha256": "060531d04b3d0eaf9defecdcf6dd0c76afb44dabfd8eadd176c895fcad92f04b"
+    },
+    {
+      "path": "海血盲鳃蟾_正面设定图.png",
+      "bytes": 3050069,
+      "sha256": "2a69b6d57214dd2d4791d799a788f4fe114942e0737cd8ad29351bfd420ae177"
+    },
+    {
+      "path": "深眠裂壳蜗_档案卡.png",
+      "bytes": 3373013,
+      "sha256": "967f1893654bd6fe86b505e095d4879997c92471a679f23ef71aa3508256a3fb"
+    },
+    {
+      "path": "深眠裂壳蜗_正面设定图.png",
+      "bytes": 2603562,
+      "sha256": "3b6f0659cd7570051b7b2626c9f14a6f32f41780794978bc5a5cb9725862b7ce"
+    },
+    {
+      "path": "深眠黑边蜗_档案卡.png",
+      "bytes": 3117709,
+      "sha256": "f96ae972621969b8b5ed09d9447839ab77fd8355d6bdd50503e467d3b1c63ca7"
+    },
+    {
+      "path": "深眠黑边蜗_正面设定图.png",
+      "bytes": 2726171,
+      "sha256": "aa2be2d17d4de1131e2e7dd95bcf87f079bdf0ab46021fdecdf760e1cd010cec"
+    },
+    {
+      "path": "渊眠热雾门卫兽_档案卡.png",
+      "bytes": 3300296,
+      "sha256": "5b67d12dbbab0a5939a2f121bbe39cc9fcf4677fb580563d63c5c1d1a3a04ff0"
+    },
+    {
+      "path": "渊眠热雾门卫兽_正面设定图.png",
+      "bytes": 3215388,
+      "sha256": "b0a38eeadc5fafbbcaf6697b836778fea6a956417fcf9f2ad61e2fa78fea2419"
+    },
+    {
+      "path": "渊眠秘纹灾厄环_档案卡.png",
+      "bytes": 3251948,
+      "sha256": "21ae9d2301b1d49219cc3a94e2af4bfa764682ae347ddf8003f33739df2a12a2"
+    },
+    {
+      "path": "渊眠秘纹灾厄环_正面设定图.png",
+      "bytes": 2985887,
+      "sha256": "09bab3356e8706f947324fe07741353b6c0c617352162241f0dd494f4db8d868"
+    },
+    {
+      "path": "游牧冷焰巢主_档案卡.png",
+      "bytes": 3210224,
+      "sha256": "7376cf81634cd7d741b62ee48951bc530b942f77c1ca84e9996fdffa4f4fca03"
+    },
+    {
+      "path": "游牧冷焰巢主_正面设定图.png",
+      "bytes": 3141949,
+      "sha256": "009e0ca35523e2ad5363fa0b1fa1f88c2380f924f520dc1dd9f4e140a50e81a7"
+    },
+    {
+      "path": "游牧净翼折角兽_档案卡.png",
+      "bytes": 3172832,
+      "sha256": "3b515baa66bfdd20917ba68b6467ce9c44450cbc26f813433f66d17ac9a9e120"
+    },
+    {
+      "path": "游牧净翼折角兽_正面设定图.png",
+      "bytes": 2890600,
+      "sha256": "3db73625297c0b9a682fa8b5d2c7b43d8f73072842a3ee91c3a10ab467d540b1"
+    },
+    {
+      "path": "溺湾环眼蟾_档案卡.png",
+      "bytes": 3286196,
+      "sha256": "c8e3cf028b89f77ac5ab0f0a8f8982734f7598b66cefe0c8ef5dccf9c3fb1cbd"
+    },
+    {
+      "path": "溺湾环眼蟾_正面设定图.png",
+      "bytes": 3184792,
+      "sha256": "b13ffe9e253ef1a95d85e9b877fe316627a82321f938a6c23ee7a1f268518045"
+    },
+    {
+      "path": "溺湾雾鳞炉主_档案卡.png",
+      "bytes": 3126218,
+      "sha256": "e07152aad900cfcf41b8a423e6444560e3a1328f2350e972b501c083b3ff963a"
+    },
+    {
+      "path": "溺湾雾鳞炉主_正面设定图.png",
+      "bytes": 3016019,
+      "sha256": "8784af67a50cbaa42fd08d7d93d2708a93b9ac6932fa2e1c37e3f11f697f6193"
+    },
+    {
+      "path": "潮汐环眼蟾_档案卡.png",
+      "bytes": 3386161,
+      "sha256": "2e04eeca2de7004da10f01fdd9ed22c9734cb9c74c6de2254c4b3263779b5c1f"
+    },
+    {
+      "path": "潮汐环眼蟾_正面设定图.png",
+      "bytes": 3248183,
+      "sha256": "7a0ee1bcc0853263c5f2b8bc82dd68f66724dad590d1177550bf6023c91f24f1"
+    },
+    {
+      "path": "潮汐盲鳃铁爪兽_档案卡.png",
+      "bytes": 3305430,
+      "sha256": "528cd980084f28bf1a5cd62500a97a7a0e4d2dc58144f688ac095ac4d080ce2d"
+    },
+    {
+      "path": "潮汐盲鳃铁爪兽_正面设定图.png",
+      "bytes": 3133670,
+      "sha256": "dbe3db657803fd3b193c38f718c208d985ee8805996421026a92d7514838591e"
+    },
+    {
+      "path": "火花油膜翼蛇_档案卡.png",
+      "bytes": 3207879,
+      "sha256": "e20c9115c9663baa8b1e518c35b4d70933c1f7a4bccb3d6d81266abebc11a756"
+    },
+    {
+      "path": "火花油膜翼蛇_正面设定图.png",
+      "bytes": 2945398,
+      "sha256": "f7b2d948f7436acf950c112f52f774ada6b5962448c500bfce3981c84191f144"
+    },
+    {
+      "path": "火花青火幼虫_档案卡.png",
+      "bytes": 3295005,
+      "sha256": "586f330abbe2fea36c66ea2026dd949f417ead0190bc416023f200df9ce36915"
+    },
+    {
+      "path": "火花青火幼虫_正面设定图.png",
+      "bytes": 3149064,
+      "sha256": "d50a3f6f0eeecaab1c25486336550250462cf98161ddea5c8f353dc0de3d7c8e"
+    },
+    {
+      "path": "火苗银喉巡礼蛛_档案卡.png",
+      "bytes": 3230769,
+      "sha256": "c0eaf60800d789035c9dc3dc3c651133b1276d410120be2f7fe64d60992dbf0d"
+    },
+    {
+      "path": "火苗银喉巡礼蛛_正面设定图.png",
+      "bytes": 2783471,
+      "sha256": "525e8f8e3f68adc03252e5a6075a698697135754a006aa884738ba46722db3fb"
+    },
+    {
+      "path": "灯尘裂壳灵鳞蛟_档案卡.png",
+      "bytes": 3261390,
+      "sha256": "fd568490f482a8c8aa053c9454528c43fa3b5b825e7ad1a193419c689517444d"
+    },
+    {
+      "path": "灯尘裂壳灵鳞蛟_正面设定图.png",
+      "bytes": 3132200,
+      "sha256": "052e245e547f076ddf3e99f31bb3c7ddf4fb1d0e654dcd75069c7670dc28f2de"
+    },
+    {
+      "path": "灰渣指虫_档案卡.png",
+      "bytes": 3091141,
+      "sha256": "5f92c2c8d395dd0bdcd6b4aba6adda4305a0e5bf87df03d9ffe4894c9d1c4eb1"
+    },
+    {
+      "path": "灰渣指虫_正面设定图.png",
+      "bytes": 2557220,
+      "sha256": "4da7cb1f9132be679dd68d5f8ccd5933fab0137296d301a35569b0ea18c2db72"
+    },
+    {
+      "path": "灰烬星霜猫_档案卡.png",
+      "bytes": 3365459,
+      "sha256": "783f7abe09c39f0e34da122f33ebef6db47f0457b6ad035fec73ec7106e9793c"
+    },
+    {
+      "path": "灰烬星霜猫_正面设定图.png",
+      "bytes": 3074726,
+      "sha256": "c967c0dbd8e4c204092a62f6afe04528d46f1c3e70522590a4ccb4132209ab57"
+    },
+    {
+      "path": "灰皮细足鼠_档案卡.png",
+      "bytes": 3297715,
+      "sha256": "892f32e95d75f886a667739ed04b4b6948c546095412f2d8c54f31afc6a1e82a"
+    },
+    {
+      "path": "灰皮细足鼠_正面设定图.png",
+      "bytes": 2765338,
+      "sha256": "3ddbdb089cc3d7e35acd8803ed2ce217891b2914474dcb0c5c863a7fa603cb89"
+    },
+    {
+      "path": "灾后细足猎犬_档案卡.png",
+      "bytes": 3203722,
+      "sha256": "ca33c1d3da068451b4e1a81999ee16e977d9287c1117b422398dc6ab19f21cb3"
+    },
+    {
+      "path": "灾后细足猎犬_正面设定图.png",
+      "bytes": 2839081,
+      "sha256": "9662a3c1ebe9736997d0edc323346f077137e243eb88970f56fa0964e05b6db5"
+    },
+    {
+      "path": "炉心青火幼虫_档案卡.png",
+      "bytes": 3461643,
+      "sha256": "fdea3fa3311e325cb39dc46355148506b719e0693db82b283bc39dde91e728e8"
+    },
+    {
+      "path": "炉心青火幼虫_正面设定图.png",
+      "bytes": 3092268,
+      "sha256": "a90ab267353c7513ab0383f5c775ab84cb4b34a8fe6795a69647bf80967da195"
+    },
+    {
+      "path": "炉心静脉母虫_档案卡.png",
+      "bytes": 3417781,
+      "sha256": "c4b3f0b96571f119474104398004c52912895a23ea65f17d01ebbd411cd199f9"
+    },
+    {
+      "path": "炉心静脉母虫_正面设定图.png",
+      "bytes": 3004744,
+      "sha256": "ecd0223a6acdff8ba2c00a20a79039b8e64d754a0875dcb015ed02527109b2f3"
+    },
+    {
+      "path": "炉灰酸泪缝合鸦_档案卡.png",
+      "bytes": 3436704,
+      "sha256": "a2fe506faac6c98461d49b00e146c21c6d2fba12e75ea5e1d2fdd525c594c33a"
+    },
+    {
+      "path": "炉灰酸泪缝合鸦_正面设定图.png",
+      "bytes": 3329008,
+      "sha256": "f5a07ece50b5ced2be1eedd9e779bd120730d66e3b013b9b0babe709b905dc38"
+    },
+    {
+      "path": "炉烟噬名鱼_档案卡.png",
+      "bytes": 3208615,
+      "sha256": "f82c16cbeb757926ccd8eb3e31d9040f15b6436c1388536b9d907edafc9235a2"
+    },
+    {
+      "path": "炉烟噬名鱼_正面设定图.png",
+      "bytes": 3078634,
+      "sha256": "42158600dd0d771b2e567d52393b365751df8b02e066a56ccbeff1503f06367d"
+    },
+    {
+      "path": "炉烟晶背鱼_档案卡.png",
+      "bytes": 3343057,
+      "sha256": "5e7f48a12860aacf5dd994afbc296679a450e93f12edc3021d52f489909e6812"
+    },
+    {
+      "path": "炉烟晶背鱼_正面设定图.png",
+      "bytes": 3249131,
+      "sha256": "84f68f8444dbf872a3f7a5bd0a03fe99f36d0b9f32751afe51c63b8a3300ab6c"
+    },
+    {
+      "path": "炉牙火豚_档案卡.png",
+      "bytes": 3347860,
+      "sha256": "b8f00dc747d4bcf278c3ce405e599723538d07355905587af746740626664679"
+    },
+    {
+      "path": "炉牙火豚_正面设定图.png",
+      "bytes": 2934418,
+      "sha256": "c5a4d8af22ef4d796bbc14d1cedb97e5d3b97aec45c65953eea5f6a36de59777"
+    },
+    {
+      "path": "炼油星霜世界树_档案卡.png",
+      "bytes": 3471476,
+      "sha256": "b63904573d6cf7ab1cada80c3690df2808a16662e05bceb2b078e994a6eef98f"
+    },
+    {
+      "path": "炼油星霜世界树_正面设定图.png",
+      "bytes": 3110968,
+      "sha256": "d96e369ff954648bad2b0c7dc024d2df16c7c45a40748e581b12a3d2ac44cae1"
+    },
+    {
+      "path": "炼油流明母虫_档案卡.png",
+      "bytes": 3344377,
+      "sha256": "63957168365744692c3b4712e9ea251b6a389cbe78de8f8b26f1f09889aeb697"
+    },
+    {
+      "path": "炼油流明母虫_正面设定图.png",
+      "bytes": 3103999,
+      "sha256": "f23446f7f31a10141eae38d69ba536c124cb299eeec42ec7faf09f9379668e63"
+    },
+    {
+      "path": "烛契躁动蝠_档案卡.png",
+      "bytes": 3083299,
+      "sha256": "c0993df385f9572aa062cb755793863d6202168014667d26a3b8bbf932d9872f"
+    },
+    {
+      "path": "烛契躁动蝠_正面设定图.png",
+      "bytes": 2791647,
+      "sha256": "fad8fcb2b1c41029bee02a4dfb253857618a3b35d63410147d9f7c4dd71135b0"
+    },
+    {
+      "path": "烛契逆鳞蝠_档案卡.png",
+      "bytes": 3230740,
+      "sha256": "9c476397beaaaee62e16f3363d5d731663d5546482d8cab8458155dab04e0544"
+    },
+    {
+      "path": "烛契逆鳞蝠_正面设定图.png",
+      "bytes": 2752718,
+      "sha256": "a85fe0e8382ecac4fb1e6023b2955b8809ff22bf342173fdc424024788cda56b"
+    },
+    {
+      "path": "烛骨空腹巨蟹_档案卡.png",
+      "bytes": 3304012,
+      "sha256": "f11ef332f7bd3c57f952bbbe81ab687799caa8a6bea27734cd330326b560e521"
+    },
+    {
+      "path": "烛骨空腹巨蟹_正面设定图.png",
+      "bytes": 3107494,
+      "sha256": "a3f36fe397053a04e5de70405209641f66463a20b36110276950c21149f26d79"
+    },
+    {
+      "path": "烛骨逆鳞猎犬_档案卡.png",
+      "bytes": 3252614,
+      "sha256": "1f0b976b24a5c374f8db26ae2a283feb90bd114c8682eb2d7808f95e7b17cd7a"
+    },
+    {
+      "path": "烛骨逆鳞猎犬_正面设定图.png",
+      "bytes": 2821964,
+      "sha256": "f829af4e2b6c763cca5d47a935339f5a8796c72f52b3920ad6db90c49d9f1fe6"
+    },
+    {
+      "path": "烟囱噬名回廊兽_档案卡.png",
+      "bytes": 3443320,
+      "sha256": "9e44b386ee8e0c3c6a880fdd05f07f6ecd9d596e3b9c4f8e7942d7fcc056078e"
+    },
+    {
+      "path": "烟囱噬名回廊兽_正面设定图.png",
+      "bytes": 3202087,
+      "sha256": "91ecbf9ea4ad4a78d06d19daa282d84c9df8c423347f09ee93e15f5e87b2fbf5"
+    },
+    {
+      "path": "烟囱蜡纹鱼_档案卡.png",
+      "bytes": 3264161,
+      "sha256": "c6e8b8391e8a81813658e746d5224798e045d570d917f210a8ea6b1a8e13c052"
+    },
+    {
+      "path": "烟囱蜡纹鱼_正面设定图.png",
+      "bytes": 3169061,
+      "sha256": "8dc1a9a78a4facd4671f1598a7c2577c9d29af055841c031b2b29106a373646f"
+    },
+    {
+      "path": "烟骨净盐犬_档案卡.png",
+      "bytes": 3388302,
+      "sha256": "7dd24133466d26df119c65d5e2a09633db855e66b0812d25bc275d9163d87276"
+    },
+    {
+      "path": "烟骨净盐犬_正面设定图.png",
+      "bytes": 3168106,
+      "sha256": "7d02937db0821dcf472bbf1768402488ba8f45ce0e0a6983b713292504dbe1e6"
+    },
+    {
+      "path": "烟骨喉灯妖主_档案卡.png",
+      "bytes": 3516030,
+      "sha256": "075684cd24c091133b7429ff67b80e05423a4d9e0d123929ffa55bc513960013"
+    },
+    {
+      "path": "烟骨喉灯妖主_正面设定图.png",
+      "bytes": 3247869,
+      "sha256": "78873f64927c55a6c2e618e5123d772b05a323e8a9067b95d8a74f764d37119d"
+    },
+    {
+      "path": "燃油碎梦鹿_档案卡.png",
+      "bytes": 3235556,
+      "sha256": "5e20f0d5f1ee869254279714d1688dfcb8ae7f13db2af905e6069a6b4b2fa175"
+    },
+    {
+      "path": "燃油碎梦鹿_正面设定图.png",
+      "bytes": 2952300,
+      "sha256": "2595b7036c215c27665f5b0e4936e0e9fddf5b92690ea43c3c503ae1293f1549"
+    },
+    {
+      "path": "狼灾眠光盾龟_档案卡.png",
+      "bytes": 3359697,
+      "sha256": "739303517df688a2cf455ef8854a460dbc4acd4855a66b8f4dd840cbcf90ac7b"
+    },
+    {
+      "path": "狼灾眠光盾龟_正面设定图.png",
+      "bytes": 3030656,
+      "sha256": "94e27a75aa581cf1b646e017a87110b434b5817fde6670d5ab255f1507aec18c"
+    },
+    {
+      "path": "现实晶背眠鲸_档案卡.png",
+      "bytes": 3350610,
+      "sha256": "783efc290787f7c1c406db9d942123addc26efc708624c9dd1289c88479821dc"
+    },
+    {
+      "path": "现实晶背眠鲸_正面设定图.png",
+      "bytes": 3027066,
+      "sha256": "30c753af2e944a388c1e3349e0bbb5ec696792100fcdd25780359e1cd4e2e030"
+    },
+    {
+      "path": "现实酸泪豹_档案卡.png",
+      "bytes": 3349063,
+      "sha256": "1377b61a20fa026acaec6672ca43042904b2b5c6718dca5a2121ad86c112dfca"
+    },
+    {
+      "path": "现实酸泪豹_正面设定图.png",
+      "bytes": 3045370,
+      "sha256": "9eb185434d1bc97b81fb2c954ad33843b0e68a1db70944957c3135c8af7c98ca"
+    },
+    {
+      "path": "电瘾漂盐纸鸟_档案卡.png",
+      "bytes": 3228669,
+      "sha256": "1dd8e0714e9e4b58c90e9306d9e50cf3517f4db5ea7d751dba611943b636c30f"
+    },
+    {
+      "path": "电瘾漂盐纸鸟_正面设定图.png",
+      "bytes": 2815237,
+      "sha256": "ce8a96a5c19d0816de7bd513d173ac0d2e265997c21200bf3d73b7a8e6a5390d"
+    },
+    {
+      "path": "电瘾琥珀纸鸟_档案卡.png",
+      "bytes": 3300981,
+      "sha256": "9ac2d47f217f21b47e463652bde386276223f116a8b4fa451ba547a6976352f2"
+    },
+    {
+      "path": "电瘾琥珀纸鸟_正面设定图.png",
+      "bytes": 2570939,
+      "sha256": "c7eb136104d87d27d1a3e00e2e14a62ecdd5cedf02c88d1c0f0adb684848a16b"
+    },
+    {
+      "path": "界隙噬名菌毯_档案卡.png",
+      "bytes": 3249515,
+      "sha256": "247a371a4c52243fb89b115bbcdadba62b473783e991b6d2c2d41005a3a7093b"
+    },
+    {
+      "path": "界隙噬名菌毯_正面设定图.png",
+      "bytes": 2844242,
+      "sha256": "6e8c9d1ec8d6890f00679ea193c27d1941de85f5696d7e454173df84b4c7d135"
+    },
+    {
+      "path": "白械油膜眠鲸_档案卡.png",
+      "bytes": 3329261,
+      "sha256": "5a90323982c6a9dbc226a73ff7c8ffa8b5225a6a4e35a5bb5bb1cc34dcb745b9"
+    },
+    {
+      "path": "白械油膜眠鲸_正面设定图.png",
+      "bytes": 3019969,
+      "sha256": "3fc0fd18290464018ad08686bf501a2efecee18cb4b1c5bb96afb86283bfeb51"
+    },
+    {
+      "path": "白械细足菌毯_档案卡.png",
+      "bytes": 3335299,
+      "sha256": "c5524d7e0503b404c754b22b1c69345fbea0d83eb4d52b9625cf01ca91821210"
+    },
+    {
+      "path": "白械细足菌毯_正面设定图.png",
+      "bytes": 3033997,
+      "sha256": "659071f9fdd036cac4f87b5b3726995311ce7215b074e4f940357ef3da595e65"
+    },
+    {
+      "path": "白盐晶背鹿_档案卡.png",
+      "bytes": 3258641,
+      "sha256": "a4c63e93580d43b93113a2176876d631c4d003eacc114d2a849f519155f30bfe"
+    },
+    {
+      "path": "白盐晶背鹿_正面设定图.png",
+      "bytes": 3021769,
+      "sha256": "526db3e2cb5a227b305068071002b95fcbdaf6d50b38cc082e82139eb2999e82"
+    },
+    {
+      "path": "白盐酸泪鱼_档案卡.png",
+      "bytes": 3254770,
+      "sha256": "9eacd56b356234ef5018c222c8b5cc8ac79939649c10347b6dcc08f67ba20d18"
+    },
+    {
+      "path": "白盐酸泪鱼_正面设定图.png",
+      "bytes": 2956706,
+      "sha256": "e5d096ec3d3ddc7065c3814ab82d5d37f41f742f80b0216f2e180930c605fe7c"
+    },
+    {
+      "path": "盐壳噬名鱼_档案卡.png",
+      "bytes": 3306296,
+      "sha256": "ce13844d04c40f54b4578bf893e1d8d3979e6fd1d78ff22dffde409663dc9158"
+    },
+    {
+      "path": "盐壳噬名鱼_正面设定图.png",
+      "bytes": 2984588,
+      "sha256": "36cfba02615b1770e41d27798664a7e3e2c47417f156de688c832bee7501e9fd"
+    },
+    {
+      "path": "盐壳晶背鱼_档案卡.png",
+      "bytes": 3314301,
+      "sha256": "d1608d73a12555b2debe5b341aaf43f0d6bb0dc4b820f39dfe2322304e7ab0b5"
+    },
+    {
+      "path": "盐壳晶背鱼_正面设定图.png",
+      "bytes": 3016799,
+      "sha256": "94bfe535371b112c045f919773f5448c8e8250af3a8d05cc9493e19b36a893a4"
+    },
+    {
+      "path": "盐沫浮虱_档案卡.png",
+      "bytes": 3160840,
+      "sha256": "d90c727b24719de76ba5a4517594bb10aa994397e4a06717347e165252821bc3"
+    },
+    {
+      "path": "盐沫浮虱_正面设定图.png",
+      "bytes": 2790954,
+      "sha256": "113cd8723166bb887d52a3f256711bafacd78bbfff59ccf85aabd76724b0f6ed"
+    },
+    {
+      "path": "盐潮棘尾炉主_档案卡.png",
+      "bytes": 3490173,
+      "sha256": "6ad0d447c079e429255b119154cfe3652b86f6e98b385240f352e72481fb8a70"
+    },
+    {
+      "path": "盐潮棘尾炉主_正面设定图.png",
+      "bytes": 2941763,
+      "sha256": "86e3dca8b366dde5fe66d3fbadf2892a33d52f60131d47d26c9d6348824dca64"
+    },
+    {
+      "path": "盐潮空腔螺_档案卡.png",
+      "bytes": 3344190,
+      "sha256": "ea4f2ff6afcd358bb232c25dbe22a561c2f60224f27fb0ad96314da6d4f17343"
+    },
+    {
+      "path": "盐潮空腔螺_正面设定图.png",
+      "bytes": 2955990,
+      "sha256": "30bf4cd2bcd237ffbe7568e2d252861549d32b235b36092b4f4417a968e44789"
+    },
+    {
+      "path": "盐雾喉灯犬_档案卡.png",
+      "bytes": 3164351,
+      "sha256": "aab48b5a4c79c450c176efdc9ae89e3042239cbabef84d5bf52e8da18cdbf67a"
+    },
+    {
+      "path": "盐雾喉灯犬_正面设定图.png",
+      "bytes": 2967784,
+      "sha256": "c8ce41a2bbd72d4ffaa72ab3dda02147a7742d8af3c9d74f6b76d5ba6dbb17e2"
+    },
+    {
+      "path": "盐雾残响犬_档案卡.png",
+      "bytes": 3263793,
+      "sha256": "662135854e98c8c28969c6a17ce460eb3da075b125b3e8810ac5f8e0cc35c846"
+    },
+    {
+      "path": "盐雾残响犬_正面设定图.png",
+      "bytes": 2817516,
+      "sha256": "d249e2ad33fffe5ce084c256610cca64ad1d1dab221cbb2aac707f27ea9b494d"
+    },
+    {
+      "path": "真相塔脊尘蛹_档案卡.png",
+      "bytes": 3260417,
+      "sha256": "1954a9635b2fe57101d1005dbdea354c9e60a0d6a3ac0a61d48147971e5b0dc2"
+    },
+    {
+      "path": "真相塔脊尘蛹_正面设定图.png",
+      "bytes": 2662168,
+      "sha256": "4486a3b6b494acca3ab6cffeeb5ea444a8d7197e6c7bc478083b6346e39caf06"
+    },
+    {
+      "path": "真相短角尘蛹_档案卡.png",
+      "bytes": 3144431,
+      "sha256": "51019be0ff89ff9786bbb3d09e69c08d15f56e50576e34ab4a7097e4f6dde9cc"
+    },
+    {
+      "path": "真相短角尘蛹_正面设定图.png",
+      "bytes": 2865493,
+      "sha256": "2b2dcb62c9922f021c77072d7b332f108796be0800b17746dad4677f4d2baae4"
+    },
+    {
+      "path": "眠室长吻鹤_档案卡.png",
+      "bytes": 3264861,
+      "sha256": "bf99e4f41fd76c87b8f9c355b58cb4f391d36fac75572640e2e01027da3b5e1c"
+    },
+    {
+      "path": "眠室长吻鹤_正面设定图.png",
+      "bytes": 2735430,
+      "sha256": "e45fd87b897f4b7a455d330fa128ba0a190ac896c7e35875896ae0ff58629b6a"
+    },
+    {
+      "path": "睡眠脊灯小蛇_档案卡.png",
+      "bytes": 3245894,
+      "sha256": "b6c5226b54553332f4a63d7a102aa2ca3aa4456f60af9b692a177e6c00c3d021"
+    },
+    {
+      "path": "睡眠脊灯小蛇_正面设定图.png",
+      "bytes": 2977848,
+      "sha256": "aede938f4b4069becdab97e36351c5bf617f604f32f654144093770043f87217"
+    },
+    {
+      "path": "睡眠裂梦缝合鸦_档案卡.png",
+      "bytes": 3244221,
+      "sha256": "49be853ee61706415e59c9a2bcd0084beac31499fbe8e6c5a05639e14198b78b"
+    },
+    {
+      "path": "睡眠裂梦缝合鸦_正面设定图.png",
+      "bytes": 2964348,
+      "sha256": "a7844098bdaa916c5ee41f73b66c519311a4d1f2d6d062682516d32b609f0771"
+    },
+    {
+      "path": "瞳民暗核灵鳞蛟_档案卡.png",
+      "bytes": 3170069,
+      "sha256": "5c595a34c573ccd3a2e502a89ed3ce841d644f0cd9058e8e633ad6225011b374"
+    },
+    {
+      "path": "瞳民暗核灵鳞蛟_正面设定图.png",
+      "bytes": 3077881,
+      "sha256": "4feb9760a90797105e5436bb97ab36edc0d0da60be73e26d6b04fb595602fbbd"
+    },
+    {
+      "path": "瞳民短角灵鳞蛟_档案卡.png",
+      "bytes": 3181171,
+      "sha256": "0076bc97cc785d03f725e087b127453bfe31451fedf0e12eb6ae2bfd41adb5dc"
+    },
+    {
+      "path": "瞳民短角灵鳞蛟_正面设定图.png",
+      "bytes": 2953588,
+      "sha256": "7d982f5e7b9d670eaba1dc82dc8b55557e357148a079aa3a93b6086ebec2f8e7"
+    },
+    {
+      "path": "矿泪小蜥_档案卡.png",
+      "bytes": 3195635,
+      "sha256": "d4ed5bbd4df94163537b99fb0d1e74225f12fa264aac2acb801349bfb5591978"
+    },
+    {
+      "path": "矿泪小蜥_正面设定图.png",
+      "bytes": 2935456,
+      "sha256": "9e8e014eae6e806d7520ac5dc12deaa7535ab7dba5101a19f012dd8c38ec14e9"
+    },
+    {
+      "path": "碑苔巡游圣骸_档案卡.png",
+      "bytes": 3401712,
+      "sha256": "5d6e971d4cadbba9028e89215f6d065cb2728ad7cd4709a537be04b14890ca8e"
+    },
+    {
+      "path": "碑苔巡游圣骸_正面设定图.png",
+      "bytes": 3169931,
+      "sha256": "b76bf0158ea9ae4da281bb6d0e5dbe52cafddefe4e4d73bc459e201d4c9bf693"
+    },
+    {
+      "path": "碑苔缠根盾龟_档案卡.png",
+      "bytes": 3391985,
+      "sha256": "cd442b660f68686b1bdfb1d2bfba7e09ffa3d70bd629736e67e8baadf41eb0c6"
+    },
+    {
+      "path": "碑苔缠根盾龟_正面设定图.png",
+      "bytes": 3239231,
+      "sha256": "505be7ef4da1b53fe635e1a268260bc16305555d59b16be737b612f5fab97d32"
+    },
+    {
+      "path": "祖债盐霜阵龟_档案卡.png",
+      "bytes": 3425708,
+      "sha256": "9d264bab7f4d49a4a1da69fbc94d8ee4af92ee9b7db61293c597c5afd41507fd"
+    },
+    {
+      "path": "祖债盐霜阵龟_正面设定图.png",
+      "bytes": 3238858,
+      "sha256": "eacf09c854a9663ccac4deced025ceacbc8b5ff37e02bd2d86fc37524b14567c"
+    },
+    {
+      "path": "祖债盲鳃鹤_档案卡.png",
+      "bytes": 3320141,
+      "sha256": "0fa69751f8d739333124289fa99bb3ec826c16140cc8d8a0ce06296ea584099c"
+    },
+    {
+      "path": "祖债盲鳃鹤_正面设定图.png",
+      "bytes": 2991380,
+      "sha256": "6123792a35339d61a3d1cacc33ce4dcf8b1577357811b897d3741156673f54e1"
+    },
+    {
+      "path": "祖灵小冠鼠_档案卡.png",
+      "bytes": 3395143,
+      "sha256": "5e00b89a6a338fbce8f86a33f98a092272bec0b1a1b79a98391d02bc8e648db2"
+    },
+    {
+      "path": "祖灵小冠鼠_正面设定图.png",
+      "bytes": 2924363,
+      "sha256": "32325b2cbcd668ff5e9b9a554a1802f236be117aa247c2f2e81812018e2fb0ff"
+    },
+    {
+      "path": "祖灵缠根鼠_档案卡.png",
+      "bytes": 3411475,
+      "sha256": "b0c93e244c3d1995c21d14a935a175b4ac670a0a675f38fe821efdf9f2b88e6d"
+    },
+    {
+      "path": "祖灵缠根鼠_正面设定图.png",
+      "bytes": 3150159,
+      "sha256": "89d7e1a054b90cc8299dae04af03f3c6ad2b24dd351f0c47106effd59317af94"
+    },
+    {
+      "path": "神灾油膜鼠_档案卡.png",
+      "bytes": 3380508,
+      "sha256": "475a01f92d894bbef668ec41177d1069416bd30ad78fb16767d417cf87743617"
+    },
+    {
+      "path": "神灾油膜鼠_正面设定图.png",
+      "bytes": 2973613,
+      "sha256": "80981d1346ffd8e1ad8856ec3eb22e78e2a41c8d6fbf0513bbff438fde04b58b"
+    },
+    {
+      "path": "神经齿轮翼蛇_档案卡.png",
+      "bytes": 3243867,
+      "sha256": "13c463651f4ca9b294d52453ae4dbb41c0a3638e2049d83eccf2c884a05b93c0"
+    },
+    {
+      "path": "神经齿轮翼蛇_正面设定图.png",
+      "bytes": 3130975,
+      "sha256": "d6b4be80cd0b774461c79e0d253f38cb87fc4b1decb408229cc2b9b13c54eade"
+    },
+    {
+      "path": "秘密星霜缝合鸦_档案卡.png",
+      "bytes": 3453030,
+      "sha256": "188c0a717067e11dcf4386e3b72d44d673f468f00a4565587c90fa56df1a2f5c"
+    },
+    {
+      "path": "秘密星霜缝合鸦_正面设定图.png",
+      "bytes": 3357803,
+      "sha256": "b0f3d979cf43b28de410820ad67f7e8359c03045510b014c535043eae5eca796"
+    },
+    {
+      "path": "秘密碎梦母虫_档案卡.png",
+      "bytes": 3464542,
+      "sha256": "1292b1d3dc5b574986f5eab07ec4cfe85c32c2f165078102e55faf2205fe76ca"
+    },
+    {
+      "path": "秘密碎梦母虫_正面设定图.png",
+      "bytes": 3316016,
+      "sha256": "3f703f10d00e56f934b5fc9cd633fde09a33f78af6a3dfb34c8abe0d1d61bb10"
+    },
+    {
+      "path": "童话伏行鹤_档案卡.png",
+      "bytes": 3328694,
+      "sha256": "5b4a75c8f43c3f3b936d19a092396dd58c7abbf1086e825047a68a77dc9ecdf1"
+    },
+    {
+      "path": "童话伏行鹤_正面设定图.png",
+      "bytes": 2929582,
+      "sha256": "eb8e218db5038fa60eeb8c98210aacff9359361187c48c4ad1ea637063fed31b"
+    },
+    {
+      "path": "童话骨铃妖主_档案卡.png",
+      "bytes": 3382124,
+      "sha256": "b333d49c5f0800b4361f595a553f9336605ad7f4c483fd190229cd484e4b838c"
+    },
+    {
+      "path": "童话骨铃妖主_正面设定图.png",
+      "bytes": 3240738,
+      "sha256": "e436eaa8c1656d631a90fdaee51eb5ee2c8f2580c08efa90d7b3979060b82bdc"
+    },
+    {
+      "path": "符芯傀犬_档案卡.png",
+      "bytes": 3379894,
+      "sha256": "13efec878afb09f699d4276a7d98cf2ff98a3cee7040853f54b21096397ee294"
+    },
+    {
+      "path": "符芯傀犬_概念展示.png",
+      "bytes": 2419630,
+      "sha256": "fd241e6bc14be118da3e4e1fcb2827932ec983360aabe8b78cbb0139ea9ed912"
+    },
+    {
+      "path": "符芯傀犬_正面设定图.png",
+      "bytes": 2988331,
+      "sha256": "fa6305ab30e78c072c53db73a6b582f4d68050fdbddb1f01a8e9a98cca57f7b2"
+    },
+    {
+      "path": "符芯傀犬_节点正面.png",
+      "bytes": 1000709,
+      "sha256": "9eda300607ea12d55ad01cdc7428c4d9fc7ebdc8a9d9dc4175657848d206a86c"
+    },
+    {
+      "path": "管巢环眼灯虫_档案卡.png",
+      "bytes": 3207879,
+      "sha256": "06b052f1c08c536ff5194eca7936357845efd69139418f4ce29cde07895a8336"
+    },
+    {
+      "path": "管巢环眼灯虫_正面设定图.png",
+      "bytes": 2931782,
+      "sha256": "2bf0a191d76c6430e5cffe4e4eaac0f2ed97f24d1f459f12f37dfc3d9b0332a3"
+    },
+    {
+      "path": "管巢盲鳃灯虫_档案卡.png",
+      "bytes": 3278485,
+      "sha256": "17ee09924eb0ffc2d0f56527e185487520989d1be3e2016fa4473885a16162cf"
+    },
+    {
+      "path": "管巢盲鳃灯虫_正面设定图.png",
+      "bytes": 2876412,
+      "sha256": "aaeafa1ba7b931c4765967e03027738265d047577ed00e38c181ff5db94a7476"
+    },
+    {
+      "path": "管道棘尾巡礼蛛_档案卡.png",
+      "bytes": 3397033,
+      "sha256": "6b684e6da8a0b8a92f5435c6c8bac489add1493eaad7ee2cd59a4c52547203f8"
+    },
+    {
+      "path": "管道棘尾巡礼蛛_正面设定图.png",
+      "bytes": 3207272,
+      "sha256": "709d201cca82eeda94f518913a28795e202874be626df262ebe8b42f84594f89"
+    },
+    {
+      "path": "管道空腔仓主兽_档案卡.png",
+      "bytes": 3480338,
+      "sha256": "1adf75db1bf53f6af8657aa9ed98db761cb96d86266632af1172a2d3cee50a86"
+    },
+    {
+      "path": "管道空腔仓主兽_正面设定图.png",
+      "bytes": 3114603,
+      "sha256": "f64bf558fd554f58c7e7efc0e052d28cc93131da9ec3e5323fa1e9e9865c5a9b"
+    },
+    {
+      "path": "管露蜗_档案卡.png",
+      "bytes": 3214082,
+      "sha256": "11d6e5907524f7879b9bd1f8690e43a9e8872a8dfab4263e0affb4b870cd9001"
+    },
+    {
+      "path": "管露蜗_正面设定图.png",
+      "bytes": 2750628,
+      "sha256": "b2b87e70025c1293090761ffe692a092949a2fae21846c822086479a48f3e872"
+    },
+    {
+      "path": "线缝鼠_档案卡.png",
+      "bytes": 3433570,
+      "sha256": "24d82ab2033c7612404705d22ccf04d92242919a0a98ece720d99798756e9952"
+    },
+    {
+      "path": "线缝鼠_正面设定图.png",
+      "bytes": 2693463,
+      "sha256": "ebab8bccf2c6b14143a9184888c13f1e168a7bb207cbc6df8ddfe334c115f063"
+    },
+    {
+      "path": "缄口星霜蛾_档案卡.png",
+      "bytes": 3308828,
+      "sha256": "af19c9016340b36d093bd8dbc7f6501542b9541e685fc59fe1bee5190a761407"
+    },
+    {
+      "path": "缄口星霜蛾_正面设定图.png",
+      "bytes": 2988920,
+      "sha256": "73ceeeb4a262987cd8cc4bc7d92887be211aad009a8a6b34b5781ffdb95d6253"
+    },
+    {
+      "path": "缄口流明文明胃_档案卡.png",
+      "bytes": 3403555,
+      "sha256": "a6d00ce3f3bc759c3089536f8eae83773f5de44edca22d08371f01da7046e411"
+    },
+    {
+      "path": "缄口流明文明胃_正面设定图.png",
+      "bytes": 3477768,
+      "sha256": "abd7506704158f6c10ef578b16000b0d7f6d429a7259511e12cdb9728ae3609d"
+    },
+    {
+      "path": "缆皮盐霜灯虫_档案卡.png",
+      "bytes": 3355614,
+      "sha256": "fe3afff379af0a73e0fe7db0214216a124ab50239217f08768487832736aed98"
+    },
+    {
+      "path": "缆皮盐霜灯虫_正面设定图.png",
+      "bytes": 2987536,
+      "sha256": "08235b208e65c0cd4a8c4b8b4e2e59bedb172e28214fb6f6a53adfaf9fd774d3"
+    },
+    {
+      "path": "缆皮盲鳃仓主兽_档案卡.png",
+      "bytes": 3252723,
+      "sha256": "160083ef18864ae6c7714732464fc9f93f1cbcb930be21b5fefcd96223ffb559"
+    },
+    {
+      "path": "缆皮盲鳃仓主兽_正面设定图.png",
+      "bytes": 3148752,
+      "sha256": "4afc6a46cc6b32205c95af7548d78ac16c4c6a6f4d57739eef5a77e1f4796de6"
+    },
+    {
+      "path": "缓存潮纹螺_档案卡.png",
+      "bytes": 3302154,
+      "sha256": "d703b86ff6041413d7b374b97b182eb44fe2e9141cee9850d1a9efaedf1cedfc"
+    },
+    {
+      "path": "缓存潮纹螺_正面设定图.png",
+      "bytes": 3006172,
+      "sha256": "0fc9af70a43701c4f040c30e6e56fe0672682da2c40ee9c1f6c91f6ebc9ec877"
+    },
+    {
+      "path": "缓存镜皮螺_档案卡.png",
+      "bytes": 3255876,
+      "sha256": "e5b528e1de8b5439c7cab52ba5f48ae9666bc4479069fd3445ed8424de1db880"
+    },
+    {
+      "path": "缓存镜皮螺_正面设定图.png",
+      "bytes": 2990832,
+      "sha256": "229247456eb22c70a75f52d200fd50e5809afabccdc6ce9f18ce03e90d3e60c9"
+    },
+    {
+      "path": "缝合薄翼蜗_档案卡.png",
+      "bytes": 3357126,
+      "sha256": "71f6561ebb2cc7388154c0f14624488e0bfe36de1f386add5d701fa182e8d159"
+    },
+    {
+      "path": "缝合薄翼蜗_正面设定图.png",
+      "bytes": 2697777,
+      "sha256": "1042033de914c10ba92623852aaa51bbcd114ab6477433c877c5d68b417cb83d"
+    },
+    {
+      "path": "缝合黑边门卫兽_档案卡.png",
+      "bytes": 3293389,
+      "sha256": "e23c5d79891036b19aa71e472a44c9b9109a2c04d27285ecad062e68c39bf495"
+    },
+    {
+      "path": "缝合黑边门卫兽_正面设定图.png",
+      "bytes": 2853915,
+      "sha256": "52109dcf613ae33fc251a4fe9a3342bea523cf9d86277b9d3a697e8f8f5a7512"
+    },
+    {
+      "path": "缝隙净盐虱_档案卡.png",
+      "bytes": 3344892,
+      "sha256": "793c5c2c7e721d853b78a4c10f2f6c44467e37b07201264e24d19115701a5941"
+    },
+    {
+      "path": "缝隙净盐虱_正面设定图.png",
+      "bytes": 3071247,
+      "sha256": "f221a3a2fe43fcae3fccc3b76a7f8084a5151e42874bf2a6fc05cbb7991b4133"
+    },
+    {
+      "path": "缝隙喉灯灾兽_档案卡.png",
+      "bytes": 3321882,
+      "sha256": "5ebf1c04d0bfef1b0a9c78c5af2f7906d9fffff0a5a9b141ec8db41c007aeb32"
+    },
+    {
+      "path": "缝隙喉灯灾兽_正面设定图.png",
+      "bytes": 3145267,
+      "sha256": "03d167f313dfcb89b86b69580a30d1c9edc75a068f4f7c826a4f7a9cdb337634"
+    },
+    {
+      "path": "肉圣低语螺_档案卡.png",
+      "bytes": 3407679,
+      "sha256": "e7ea8ebd39c8986555d96738d5b7ef637340bb927e338337ab77fc10d523954b"
+    },
+    {
+      "path": "肉圣低语螺_正面设定图.png",
+      "bytes": 3038417,
+      "sha256": "fb91740375e2e185e2cde8dbe0ff8c5d3b50989ba997c1c15dcad30261b36758"
+    },
+    {
+      "path": "脑晶纸骨蟾_档案卡.png",
+      "bytes": 3352713,
+      "sha256": "a52242f7854bd3b849670ab6223ed8afadebbc77101502eb86d05945fec38b8d"
+    },
+    {
+      "path": "脑晶纸骨蟾_正面设定图.png",
+      "bytes": 3158282,
+      "sha256": "15ab64421b4888860d2691711856b053b7474deb841b247a0cf34f6b367f7573"
+    },
+    {
+      "path": "脑晶虹尘蟾_档案卡.png",
+      "bytes": 3280031,
+      "sha256": "0e9d21915bac737e5d4e45a0fa8ada084c125287d2e78ffc2e03117ad7d637d0"
+    },
+    {
+      "path": "脑晶虹尘蟾_正面设定图.png",
+      "bytes": 3064411,
+      "sha256": "e04761109df972fa73e519c4ff2b64958395c1b992c91cc93ba7986be07cdce8"
+    },
+    {
+      "path": "腐叶盲蚁_档案卡.png",
+      "bytes": 3444560,
+      "sha256": "40bfb7df0cbc71831f441efc282be5d4144d915db207784f3c272016dc9ad293"
+    },
+    {
+      "path": "腐叶盲蚁_正面设定图.png",
+      "bytes": 2675703,
+      "sha256": "2896e9a4ac22e65cc2bcfa75929245b8fde1907b86a9cc7d9037b5106f18c70f"
+    },
+    {
+      "path": "膜翼碎冠蟾_档案卡.png",
+      "bytes": 3163336,
+      "sha256": "4bf5f86100a1c883fefd96bdade4d361799712306dad775ccf6f8491a6afe24d"
+    },
+    {
+      "path": "膜翼碎冠蟾_正面设定图.png",
+      "bytes": 2707516,
+      "sha256": "a9d436eaa707358aae75ec5e699212486badeb2f7d8e965ccda6fc3186bd907e"
+    },
+    {
+      "path": "膜翼虹尘蟾_档案卡.png",
+      "bytes": 3286795,
+      "sha256": "d37039466d4cd39b82770d72281511fb72358d3682df6702e962faae604b48cb"
+    },
+    {
+      "path": "膜翼虹尘蟾_正面设定图.png",
+      "bytes": 3018812,
+      "sha256": "1ad7d09fc704ff07e8c2d789b81ee587124d71f803eb4dbc55a622e8f9798fbe"
+    },
+    {
+      "path": "膜鳃小螺_档案卡.png",
+      "bytes": 3294873,
+      "sha256": "dc94fb5cd65ec6bccccb02ba384a80381bd704b35dcfbb1ba1f589edf99a15bb"
+    },
+    {
+      "path": "膜鳃小螺_正面设定图.png",
+      "bytes": 3230282,
+      "sha256": "2df5ce374e9bfac93f87e88cf94a53bff2d1e41ea34ee6a9e2d08255550845f4"
+    },
+    {
+      "path": "航道小冠鼠_档案卡.png",
+      "bytes": 3304110,
+      "sha256": "f6333ce9b92c43de68efa5b2012b73a903d53889f96587b70021d3b711b664c4"
+    },
+    {
+      "path": "航道小冠鼠_正面设定图.png",
+      "bytes": 2759902,
+      "sha256": "6312f01caf87b19db6d5eaec2e1bd32a0c4864a007be97ca99d30cd9bef54fb9"
+    },
+    {
+      "path": "航道阈限鼠_档案卡.png",
+      "bytes": 3255178,
+      "sha256": "9697fd1453fb0a6b21be793d0e0d17d97afb1c344e50988ec9a7b9cc1e59b872"
+    },
+    {
+      "path": "航道阈限鼠_正面设定图.png",
+      "bytes": 2604677,
+      "sha256": "b01fdf6b534bfcc51d5f12dabc1e1b9977363c2bb5832669eec0ba0cc403c209"
+    },
+    {
+      "path": "舰壳缝线猫_档案卡.png",
+      "bytes": 3243629,
+      "sha256": "e334928eddaa09d6122a77f197909f2e22b90d606f3d743e9ac8c2e80428a935"
+    },
+    {
+      "path": "舰壳缝线猫_正面设定图.png",
+      "bytes": 3035178,
+      "sha256": "e3a7d95c496ed59e8d2b823667cab2def2b9076c711184a819647bd59ab33a0f"
+    },
+    {
+      "path": "菌灯蜉蝣_档案卡.png",
+      "bytes": 3087183,
+      "sha256": "f1f706610032b9ef3fddead144fdbd628de8860bdbfee783c62e1acac7ccd54a"
+    },
+    {
+      "path": "菌灯蜉蝣_正面设定图.png",
+      "bytes": 2796738,
+      "sha256": "ae3023f6a560d8566642a77011fffee2e1fcdb3d5c1814d7799022432f64fc30"
+    },
+    {
+      "path": "葬声缝线猫_档案卡.png",
+      "bytes": 3357873,
+      "sha256": "f9d1a24fe16577b9e41695ea04e71340989de8b1962cea053fa86c6b62ddebc2"
+    },
+    {
+      "path": "葬声缝线猫_正面设定图.png",
+      "bytes": 3036670,
+      "sha256": "44cabb53b2a515e7a5fb951c333b4069bee8b7e068ac33019b464faa64cf07ca"
+    },
+    {
+      "path": "蒸魂瓶俑_档案卡.png",
+      "bytes": 3329263,
+      "sha256": "06a15278e42614982070d9a898cef50ce4b2419011983228ecef2671c3661d50"
+    },
+    {
+      "path": "蒸魂瓶俑_正面设定图.png",
+      "bytes": 3011542,
+      "sha256": "478e512544d7fd15d085a28483542d9c6dd172bbc8855c3aa35c327c17124275"
+    },
+    {
+      "path": "藤露蜗_档案卡.png",
+      "bytes": 3200734,
+      "sha256": "bb6b29829f3f32d650c8f77c4c6d4c5d4c1f1444f7aded901f502be9e4d34cc8"
+    },
+    {
+      "path": "藤露蜗_正面设定图.png",
+      "bytes": 2837604,
+      "sha256": "24fe39a34c6e1abc93b8f26c63cdd185d0d1cbc6643bcb94473751f97c6c0dea"
+    },
+    {
+      "path": "虚舟缠根鼠_档案卡.png",
+      "bytes": 3316652,
+      "sha256": "0121d8e564c49e1dd0fa031d252c1c97b84c458117fd733661820554a887d6a8"
+    },
+    {
+      "path": "虚舟缠根鼠_正面设定图.png",
+      "bytes": 2637579,
+      "sha256": "ff8c7de3ee1578a8684f9b26c6943ac416d03fd9a86aecf8799cd10a60733039"
+    },
+    {
+      "path": "蛇环断章螺_档案卡.png",
+      "bytes": 3233360,
+      "sha256": "d19ac1ba6f98fdb992ca69c6a9ba22444ffabe4e7a2e7ce8fb68522052e3c249"
+    },
+    {
+      "path": "蛇环断章螺_正面设定图.png",
+      "bytes": 3185876,
+      "sha256": "a83a7c52eb1fb084469d7d8d9db493fb9eb9b5e474497324dbe87e90834b55b8"
+    },
+    {
+      "path": "蛇环棘尾螺_档案卡.png",
+      "bytes": 3452064,
+      "sha256": "f1cd54a4e2a3f6ecad4eac3f5e32ee0912f0390e9b19138d88deb55b6e69fe13"
+    },
+    {
+      "path": "蛇环棘尾螺_正面设定图.png",
+      "bytes": 3041316,
+      "sha256": "741cd3c351163bb13be3718fcf1c6bf8969db4b0f43f0aa27c6b7bb7cf296682"
+    },
+    {
+      "path": "蛾民悬骨回廊兽_档案卡.png",
+      "bytes": 3416963,
+      "sha256": "028756ed3c97c71f095f1bf2b64efa8d62f3432bcff9587fe8ec6c4a9a1d9b71"
+    },
+    {
+      "path": "蛾民悬骨回廊兽_正面设定图.png",
+      "bytes": 3318202,
+      "sha256": "04dfa2fb624cce7f9c5d6de3a5e0e3154077e421ffe8cb01e541dfb8beef282f"
+    },
+    {
+      "path": "蛾民错位铁爪兽_档案卡.png",
+      "bytes": 3309473,
+      "sha256": "e33bac56099a84c5a406852f6ea98713e3c61da6c1e9eb854e836809ad370f7f"
+    },
+    {
+      "path": "蛾民错位铁爪兽_正面设定图.png",
+      "bytes": 3175090,
+      "sha256": "729e1fd2b563dd5f5d075d3f49a1a42e5f861fbdf549f5d658fd011738ccddde"
+    },
+    {
+      "path": "蜡泪塔脊雀_档案卡.png",
+      "bytes": 3246396,
+      "sha256": "d8f57e0e0ff7f78d37dfd6b0882fbc2e73662255bc7f9adc6bef089e528aee65"
+    },
+    {
+      "path": "蜡泪塔脊雀_正面设定图.png",
+      "bytes": 2612912,
+      "sha256": "bfb1aaee57c6ae9043cf98ea250dfb90c21c471c712d3c6cbd0d14e7c1b1c570"
+    },
+    {
+      "path": "蜡泪短角母机_档案卡.png",
+      "bytes": 3249543,
+      "sha256": "cc5769bb5c7cd7bc1de6edeb9e70eb30f771149b1c1adb35bdaa38a9d4025b31"
+    },
+    {
+      "path": "蜡泪短角母机_正面设定图.png",
+      "bytes": 3130927,
+      "sha256": "b54be1463d13099735bd1541ad73566d6d484c927f2eeab3aac0e7b4d2af858a"
+    },
+    {
+      "path": "蜡骨暗核雀_档案卡.png",
+      "bytes": 3265748,
+      "sha256": "95119a9c34235e70a246f0bd50838f7243b8d3995bf48058630eec697c4de5ea"
+    },
+    {
+      "path": "蜡骨暗核雀_正面设定图.png",
+      "bytes": 2995652,
+      "sha256": "315e31d3be8da9e48779b9aef95d8505eccdb4659eb5acf69eba3877a416220e"
+    },
+    {
+      "path": "蜡骨短角巡礼蛛_档案卡.png",
+      "bytes": 3280877,
+      "sha256": "77e6de896dbc0ce7d9af0ee6797c05b6ea504653833247157dbf221550c7a0c6"
+    },
+    {
+      "path": "蜡骨短角巡礼蛛_正面设定图.png",
+      "bytes": 3109064,
+      "sha256": "fe131546280a6ef5388a057c7ab4b77eed9d7dad83600bbc4b0eb2f8910cc452"
+    },
+    {
+      "path": "螺栓脉冲灯虫_档案卡.png",
+      "bytes": 3444210,
+      "sha256": "11b22349ddf6042d82b1e5416cc7bb1698ba5da25d6803680f5e2066440e748b"
+    },
+    {
+      "path": "螺栓脉冲灯虫_正面设定图.png",
+      "bytes": 3004891,
+      "sha256": "f75b4e654257992b38e308989b064d14d9b122e4bba4a57851f80b9b9b59a37a"
+    },
+    {
+      "path": "螺栓齿轮灯虫_档案卡.png",
+      "bytes": 3333197,
+      "sha256": "53415cd77ff1ab2389d999faf0b2026657392f2795bea2d68be1f283c056ea4b"
+    },
+    {
+      "path": "螺栓齿轮灯虫_正面设定图.png",
+      "bytes": 2919318,
+      "sha256": "1674d8f5cf0e09c04fec328d002e43f1b2325810f9e24fbda0d74e81b909e754"
+    },
+    {
+      "path": "血印折光纸鸟_档案卡.png",
+      "bytes": 3135113,
+      "sha256": "f7c4452b04e95bea449610f9990b607eda34dde2bcbbcf15d143165b39c202f9"
+    },
+    {
+      "path": "血印折光纸鸟_正面设定图.png",
+      "bytes": 2867597,
+      "sha256": "c51e100bb1eff60b204cd7ec04879bdc1dfa33154728ed5c56ee6f7d2bf81e48"
+    },
+    {
+      "path": "血嗅裂梦巨蟹_档案卡.png",
+      "bytes": 3454792,
+      "sha256": "042c210f521090a6fe368fa0db520d9f8a718364748930ab021fad0c8ff1a468"
+    },
+    {
+      "path": "血嗅裂梦巨蟹_正面设定图.png",
+      "bytes": 3335153,
+      "sha256": "da81721027758f13f9edc68736d7e117ce6732c478c0d645fd87d5fcbfb7338f"
+    },
+    {
+      "path": "血嗅雾灯蝠_档案卡.png",
+      "bytes": 3287514,
+      "sha256": "60ea2f05b08e0eb6a1059eab93e3b63506aed5e5efcf5db190976661d5c32fc2"
+    },
+    {
+      "path": "血嗅雾灯蝠_正面设定图.png",
+      "bytes": 2667179,
+      "sha256": "5d11a087ed1cea16f626d508f4261781416b97c60b2f5da4f1390718596156a4"
+    },
+    {
+      "path": "血契环眼蚁_档案卡.png",
+      "bytes": 3484243,
+      "sha256": "becfe1338966e9b4c8ff3af1d433d8edfde6d01f88d4bcb55e376d5f392bbcf2"
+    },
+    {
+      "path": "血契环眼蚁_正面设定图.png",
+      "bytes": 2953056,
+      "sha256": "fe0715fb883691bae879dfbec0ba82ea1b24db2483baf82272befc0ecaae9625"
+    },
+    {
+      "path": "血契盲鳃蚁_档案卡.png",
+      "bytes": 3349511,
+      "sha256": "de22d77e664c060cf6e515dd6521660f6e2e298d608f7fb57f05c82346158e9c"
+    },
+    {
+      "path": "血契盲鳃蚁_正面设定图.png",
+      "bytes": 3022756,
+      "sha256": "47edf47937ba320945e98d5959fb47b518eaec114fe17812a84ebd6e37f7fe28"
+    },
+    {
+      "path": "裂瞳旧誓盾龟_档案卡.png",
+      "bytes": 3346743,
+      "sha256": "0f0cd7b5f6a45600784141f556b7bca57908e5f80079cc9b903d95ae629b2af5"
+    },
+    {
+      "path": "裂瞳旧誓盾龟_正面设定图.png",
+      "bytes": 2984105,
+      "sha256": "6d04100f8b512612c3582fd6b974da7a341eaed4237b7a5548de0cc289729540"
+    },
+    {
+      "path": "裂缝蜡纹菌毯_档案卡.png",
+      "bytes": 3192470,
+      "sha256": "52cbbb64aac1fa5a0f0127c86a74af5db67b96e501e2c0924a4985e22ee59e0a"
+    },
+    {
+      "path": "裂缝蜡纹菌毯_正面设定图.png",
+      "bytes": 2790165,
+      "sha256": "2abd56ed4793a605665815fd3c2a55f52aec1832d37e45223733bf55e0f345db"
+    },
+    {
+      "path": "裂缝酸泪菌毯_档案卡.png",
+      "bytes": 3311347,
+      "sha256": "6677898637a07fa5cb739830a5276d937fdff215bca436ad77f7da457f291c0f"
+    },
+    {
+      "path": "裂缝酸泪菌毯_正面设定图.png",
+      "bytes": 2778033,
+      "sha256": "3aaed7e5a7f83d0a30b038901550423ab243309dccd7123eb14c31015d106747"
+    },
+    {
+      "path": "裂隙尘蛹_档案卡.png",
+      "bytes": 3268117,
+      "sha256": "86beedd4b8e2d99cd68beef363c82e7d54fe9b45ac56fb0d4f7a83bd7f313569"
+    },
+    {
+      "path": "裂隙尘蛹_正面设定图.png",
+      "bytes": 2598229,
+      "sha256": "a841873985069ce1a57568e085ea86ffd306ddbc204268523c73f77270d0afae"
+    },
+    {
+      "path": "裂隙残响猎犬_档案卡.png",
+      "bytes": 3144861,
+      "sha256": "df0df5d4127f88840479e768825e8217f1741e8c63641e96b929df1cda510781"
+    },
+    {
+      "path": "裂隙残响猎犬_正面设定图.png",
+      "bytes": 2940078,
+      "sha256": "4ebb8f7f6365a6aae38775feba7887ecebf9ac9499a7629c774f2c19bea12e38"
+    },
+    {
+      "path": "观测喉灯盾龟_档案卡.png",
+      "bytes": 3282889,
+      "sha256": "e846a1655759cbd141ec3b1c86ad38695698a9458de85c8497ecba36ff7296f2"
+    },
+    {
+      "path": "观测喉灯盾龟_正面设定图.png",
+      "bytes": 2900869,
+      "sha256": "0cf3237c4d79cc6ff5133294a63a9ce6b9f3540b34c184ec409d4b264218ce63"
+    },
+    {
+      "path": "观测残响虱_档案卡.png",
+      "bytes": 3375881,
+      "sha256": "76bdba835986e9e3449326cc083b8da1252c041d21818353fd18cd672e49b6eb"
+    },
+    {
+      "path": "观测残响虱_正面设定图.png",
+      "bytes": 2963414,
+      "sha256": "bc5cd0b13a580d0d236e5e9ab7c27bec25de13ee188ef4448ceda69d1dd1844d"
+    },
+    {
+      "path": "视线暗核尘蛹_档案卡.png",
+      "bytes": 3157044,
+      "sha256": "e6254f59a35ed71e9068d627e6433a0af3b1bd096ee5163e9d7c26300875a686"
+    },
+    {
+      "path": "视线暗核尘蛹_正面设定图.png",
+      "bytes": 2674845,
+      "sha256": "c82faf4092001bf22b4b7a57f8c614f27f51abedcd05c199f04cf865a0d71eb0"
+    },
+    {
+      "path": "视线银喉合唱体_档案卡.png",
+      "bytes": 3438989,
+      "sha256": "1d199867b6fcae061c5e7bb63d70aada0938b3017f43d97407225e3d6f048afd"
+    },
+    {
+      "path": "视线银喉合唱体_正面设定图.png",
+      "bytes": 3237304,
+      "sha256": "7b1b727e17263ccc5ed259f7e231b7414ea55b1ce40b9cc310d59b6596a84837"
+    },
+    {
+      "path": "记忆腺悬骨蟾_档案卡.png",
+      "bytes": 3348635,
+      "sha256": "dbe984998bc69626b8dfac3363078caf26e23f9988d19b557c66e8444f321724"
+    },
+    {
+      "path": "记忆腺悬骨蟾_正面设定图.png",
+      "bytes": 2893672,
+      "sha256": "1fd854182c4af976683faeec61d70a9cb29be2e178884e19ebcd6499dbb1b6c5"
+    },
+    {
+      "path": "记忆腺错位蟾_档案卡.png",
+      "bytes": 3450033,
+      "sha256": "dfcb884725831f59320890a7b3f4d15293fb916221e824644f0799a679562def"
+    },
+    {
+      "path": "记忆腺错位蟾_正面设定图.png",
+      "bytes": 2880611,
+      "sha256": "00fdfe0a4c2b86bfc1982858108dab0a10a0dbd89e1cc627c1cfee52dd6ef4d5"
+    },
+    {
+      "path": "诅咒裂梦蝠_档案卡.png",
+      "bytes": 3125204,
+      "sha256": "f5d78686bf145cb2cb6d047aa4cb2c0cc24d683cd7e327744ede5c2196d4cfa2"
+    },
+    {
+      "path": "诅咒裂梦蝠_正面设定图.png",
+      "bytes": 2926471,
+      "sha256": "808bcf0b398135638b745fc052bf7c2d919bf47bb88a93427f2159bb73b35030"
+    },
+    {
+      "path": "轨道熔泪蝠_档案卡.png",
+      "bytes": 3001028,
+      "sha256": "2f211eb3fe0b51cb32255389f5aefbd3acba3f40de5a782d6abbb09c89398de5"
+    },
+    {
+      "path": "轨道熔泪蝠_正面设定图.png",
+      "bytes": 2763785,
+      "sha256": "f8485f91b7a387fb411866b12a8e65c5eadf02f33ee7e7244f8cf3d1594080be"
+    },
+    {
+      "path": "轨道躁动蝠_档案卡.png",
+      "bytes": 3225632,
+      "sha256": "ac5475bba91367c40e22f697ccb0122d9c39a1d952ee8b87ba1d434b59e41ac2"
+    },
+    {
+      "path": "轨道躁动蝠_正面设定图.png",
+      "bytes": 2807665,
+      "sha256": "7ff50cf99954dd50fa9ce33a02879b334ee9fc517bb495ffe99df0868b34d019"
+    },
+    {
+      "path": "进化腺低语巢主_档案卡.png",
+      "bytes": 3255874,
+      "sha256": "f835d29155ab22bd96780667fcf659fc45af7b591073a633c154d1b561bb37cf"
+    },
+    {
+      "path": "进化腺低语巢主_正面设定图.png",
+      "bytes": 3140368,
+      "sha256": "136f3ebd154bc84aeccef540af60335408a1742582a00d7b127a99a8806c28dc"
+    },
+    {
+      "path": "重力余温债主_档案卡.png",
+      "bytes": 3419316,
+      "sha256": "6424078f3eeb6730da62663fd4d46d33fc4a8aab8a82f9c8bb9848d5eff86507"
+    },
+    {
+      "path": "重力余温债主_正面设定图.png",
+      "bytes": 3006218,
+      "sha256": "c1e526ec020da19b9024134b91e086636d47479b0dba9b2ecd4fc0e5ccfeb7be"
+    },
+    {
+      "path": "重力回声铁爪兽_档案卡.png",
+      "bytes": 3510607,
+      "sha256": "8afcc3eb6466814fa59d110319ccb83e63c1ed641262d0e77b28715ad7e44fd3"
+    },
+    {
+      "path": "重力回声铁爪兽_正面设定图.png",
+      "bytes": 3276198,
+      "sha256": "50ec79e0518105da009e91592356cd2b21cc58596ce1715915a8091ccb3f1e5b"
+    },
+    {
+      "path": "重载旧誓犬_档案卡.png",
+      "bytes": 3241676,
+      "sha256": "ce58390d7b5abece52f40400e4f95adc44f72a93c4686eb625014f59f37f0d1e"
+    },
+    {
+      "path": "重载旧誓犬_正面设定图.png",
+      "bytes": 2729512,
+      "sha256": "b55333fd1bff4a5e0cc539c5dfbdbefff52523d4adcd76e4d1e4cd3660b59565"
+    },
+    {
+      "path": "重载残响犬_档案卡.png",
+      "bytes": 3373769,
+      "sha256": "37ce0c1edb29c92be8da8ca6986e2c27999349fd745cc9d91945515c97701d90"
+    },
+    {
+      "path": "重载残响犬_正面设定图.png",
+      "bytes": 2969982,
+      "sha256": "20dd9a128bf675ca146931a3c746060db56fd354525c8bb08a73f2c20282b1f8"
+    },
+    {
+      "path": "量子月粉小蛇_档案卡.png",
+      "bytes": 3311528,
+      "sha256": "32e3bc84c84c7af15fd5d13e6c1f722f3f784b1fe40d01a0d575eaaed92af0c8"
+    },
+    {
+      "path": "量子月粉小蛇_正面设定图.png",
+      "bytes": 3130463,
+      "sha256": "927d10291ff9ad96d425992998b18c44bd512aa2d83608e132973415bb222e4e"
+    },
+    {
+      "path": "钉环祈虫_档案卡.png",
+      "bytes": 3298342,
+      "sha256": "09ba923591283254907d3c461fe901e48473affbea8fd28efbc20a1d216971e6"
+    },
+    {
+      "path": "钉环祈虫_正面设定图.png",
+      "bytes": 2678496,
+      "sha256": "a284de998fe0d8884e5f85d02ffe706f18394899692a7c792cdee6cb80bd444f"
+    },
+    {
+      "path": "锈皮污银灯虫_档案卡.png",
+      "bytes": 3422754,
+      "sha256": "e9cca0e3c8634390b35610a809f0dd036648ff6fe4597d835eaa74835f6285cb"
+    },
+    {
+      "path": "锈皮污银灯虫_正面设定图.png",
+      "bytes": 3108359,
+      "sha256": "14c4afb5f984f4ab9293dc94a586f94fa441dd157f2d4210bfee8fac7b20ed7e"
+    },
+    {
+      "path": "锈舌泥鳅_档案卡.png",
+      "bytes": 3149514,
+      "sha256": "282acdf374d0e05e87889e808866a39e4067d7395e27f5a215f805acf52d21fa"
+    },
+    {
+      "path": "锈舌泥鳅_正面设定图.png",
+      "bytes": 2599031,
+      "sha256": "7fe43c8269ba53fc72111d39c28a2dee2549cc6b80c6eccb005283ce33b3a72d"
+    },
+    {
+      "path": "锈裔回声牧者_档案卡.png",
+      "bytes": 3434649,
+      "sha256": "41973b9fac220241b0e81655afbc6eed6838123bb8eaa1850c909f837218156b"
+    },
+    {
+      "path": "锈裔回声牧者_正面设定图.png",
+      "bytes": 3060203,
+      "sha256": "62e7659d2f156642718d047c2bfe39be9001072f95ffed3e8ec7e30214d1f462"
+    },
+    {
+      "path": "错位双相翼蛇_档案卡.png",
+      "bytes": 3343910,
+      "sha256": "b8ae8c3bf2bb745b5fb0ab2c1d40b9bf37a7b7932ed975863e402dd743a56e46"
+    },
+    {
+      "path": "错位双相翼蛇_正面设定图.png",
+      "bytes": 3163485,
+      "sha256": "59312f10d39d8c89446c394a4321428285d04670b54d0cd3374c5a255b5e37e0"
+    },
+    {
+      "path": "错位无影尘蛹_档案卡.png",
+      "bytes": 3230591,
+      "sha256": "e126232d32a0ead1ead84246e448f51a2782226910f405b4adee47db82b6212f"
+    },
+    {
+      "path": "错位无影尘蛹_正面设定图.png",
+      "bytes": 2979708,
+      "sha256": "634e04b9ae24871dbe6a3a7673cbbbc1176d85e07c0bbab859c85b6059019e7c"
+    },
+    {
+      "path": "镜棱环眼灯虫_档案卡.png",
+      "bytes": 3171068,
+      "sha256": "4dc577f06ab97e5c025e88819f0a3bd93229d6e6aebd546926c76f95d30db1be"
+    },
+    {
+      "path": "镜棱环眼灯虫_正面设定图.png",
+      "bytes": 2778723,
+      "sha256": "34bff8159f320a3e6b7043722beb5a6c5fa8f204f47d3f08329aa8e3cb0a5bf0"
+    },
+    {
+      "path": "镜棱盲鳃灯虫_档案卡.png",
+      "bytes": 3095574,
+      "sha256": "3b3c28f33a343db15b729e38ccc88632bb2babdfc39cb40c24fc63504b48a3fa"
+    },
+    {
+      "path": "镜棱盲鳃灯虫_正面设定图.png",
+      "bytes": 2782741,
+      "sha256": "f337d7edb35983cd792d7c8fea130d7a30622139e0a2b92fc3f6df32833e78a0"
+    },
+    {
+      "path": "镜裔噬名母虫_档案卡.png",
+      "bytes": 3399932,
+      "sha256": "17a5de1526e79e53ab5dcb475feb89ffa21d64679ca23165b738cba8ebc57708"
+    },
+    {
+      "path": "镜裔噬名母虫_正面设定图.png",
+      "bytes": 3082219,
+      "sha256": "43bc72862eb0f196c5cb161bf6b20cf26a4048e9fc3361b6ff8737e77ad5d072"
+    },
+    {
+      "path": "镜裔晶背灵鳞蛟_档案卡.png",
+      "bytes": 3401205,
+      "sha256": "35df9b61839621c299b8019f39f816a6c9443d6c17bda8cd6b4846962e197261"
+    },
+    {
+      "path": "镜裔晶背灵鳞蛟_正面设定图.png",
+      "bytes": 3067232,
+      "sha256": "9282b9f6cebbeb178bc60332e890b4c17859b2b34eac28ddc7f0770fa82dd891"
+    },
+    {
+      "path": "镜面净盐世界树_档案卡.png",
+      "bytes": 3588033,
+      "sha256": "5aea458ca1e34ca39900cdae1f5f79fddce2ad993bda112c775bd5470d80f638"
+    },
+    {
+      "path": "镜面净盐世界树_正面设定图.png",
+      "bytes": 3253726,
+      "sha256": "da925b184918bbda446e056b3b1fef366f32bd13b06230e1d12bfcd9ef030c57"
+    },
+    {
+      "path": "镜面旧誓蛾_档案卡.png",
+      "bytes": 3290067,
+      "sha256": "b6cc49bccb96ec6718b47a2bc480cf2c78b9ede6eaaf4dbe14691fb969f461d9"
+    },
+    {
+      "path": "镜面旧誓蛾_正面设定图.png",
+      "bytes": 2869117,
+      "sha256": "7d668c64980e3a5546b02e47a499f381d45f089860f1418bc8c99d8e0434d9a6"
+    },
+    {
+      "path": "陨星噬名巡礼蛛_档案卡.png",
+      "bytes": 3369127,
+      "sha256": "000d166bc3dae6fabdc24e6ba132430459761dfa1f6469278427d2029207ad39"
+    },
+    {
+      "path": "陨星噬名巡礼蛛_正面设定图.png",
+      "bytes": 3172758,
+      "sha256": "4548dce77b51018f720c6233e329bbe93209632469a6fcb70bbf157ea70a4ca3"
+    },
+    {
+      "path": "陨星晶背菌毯_档案卡.png",
+      "bytes": 3287545,
+      "sha256": "36cee02c148d737a6dcf1f54c34121665668c2258819a96e334469520f8f15d7"
+    },
+    {
+      "path": "陨星晶背菌毯_正面设定图.png",
+      "bytes": 2988408,
+      "sha256": "3c59b8e71074a3bf46e1bf97c3bc5c3c5bdaf2a3aead3863ba5f94405ea06a9e"
+    },
+    {
+      "path": "陶瓷流明虱_档案卡.png",
+      "bytes": 3216783,
+      "sha256": "5ab5a1e236db726390cd9f200eac5548275796a6f769bfaba44337f9da50646a"
+    },
+    {
+      "path": "陶瓷流明虱_正面设定图.png",
+      "bytes": 3145744,
+      "sha256": "8e3cc51cc9e09196c2bc3ddbc597e5d1f60291822f6e9cfdfcc8a8559be9ec74"
+    },
+    {
+      "path": "雾鳞环蛇_档案卡.png",
+      "bytes": 3329885,
+      "sha256": "a3d9433827473ad90239152282a3c180ec4b83925d34480c478edcb13c01459b"
+    },
+    {
+      "path": "雾鳞环蛇_正面设定图.png",
+      "bytes": 2793916,
+      "sha256": "8c48269098e097ae1dec91140a1ec4f19d7e3caa65f0be56f27a9673ae3b5e2d"
+    },
+    {
+      "path": "霓尘蛾_档案卡.png",
+      "bytes": 3444609,
+      "sha256": "2bcadd27df53e6975811bd23bed0ba7e09e4b73032f2c2f2c7f923d9a1de4f00"
+    },
+    {
+      "path": "霓尘蛾_正面设定图.png",
+      "bytes": 2860198,
+      "sha256": "59f62bd529e97733b272f0308ad11c57b25259239cc61bd5b6c9644e5c919168"
+    },
+    {
+      "path": "霓虹双相蜉蝣_档案卡.png",
+      "bytes": 3296214,
+      "sha256": "661b0333dd66420dd98ed1d2581a427cd97654b7cf1a251f07d76833370f063b"
+    },
+    {
+      "path": "霓虹双相蜉蝣_正面设定图.png",
+      "bytes": 2919520,
+      "sha256": "335252cea34ffe1f4b05cf3d98f866d1d82f1d8b7aa8eb6bf7e20f85d0bc14f4"
+    },
+    {
+      "path": "霓虹蓝焰猎犬_档案卡.png",
+      "bytes": 3480508,
+      "sha256": "6028aaa401db777fd0dbb9b51ded7330c40eac0504870746dad6023190dc36b3"
+    },
+    {
+      "path": "霓虹蓝焰猎犬_正面设定图.png",
+      "bytes": 3065789,
+      "sha256": "f564d7625ddfd869ee79b5b10ecee9759363ccdde8b662ffb4508fdf582c4190"
+    },
+    {
+      "path": "非欧脉冲阵龟_档案卡.png",
+      "bytes": 3110205,
+      "sha256": "aa7b46de07c408c9c79af41a6c2ccd9f7907b8fb16987d416f51d5eac31d8019"
+    },
+    {
+      "path": "非欧脉冲阵龟_正面设定图.png",
+      "bytes": 2790110,
+      "sha256": "8e84c16b9090bdc1897ca70cc3ead11076a81f36ae84b0d91f65d2a18586e1d4"
+    },
+    {
+      "path": "非欧齿轮蚁_档案卡.png",
+      "bytes": 3191138,
+      "sha256": "51c650e3d940598060870c241a81ace5c4ef0347abf1117d82de18fab63b5e7c"
+    },
+    {
+      "path": "非欧齿轮蚁_正面设定图.png",
+      "bytes": 3113611,
+      "sha256": "0e259aebcdd75259240f57eb56694dda00665801f50ebcaa71c41656fc89bad3"
+    },
+    {
+      "path": "面皮净盐合唱体_档案卡.png",
+      "bytes": 3296530,
+      "sha256": "effc2bda20552aed2174678c1ab073e385fee6098690d90fcdc956da0730ed69"
+    },
+    {
+      "path": "面皮净盐合唱体_正面设定图.png",
+      "bytes": 3244301,
+      "sha256": "09d9c5f0650b6d594b643d825bd0c5581deab52a3f007151f28b98bc14e63660"
+    },
+    {
+      "path": "预言塔脊雀_档案卡.png",
+      "bytes": 3234399,
+      "sha256": "fd4456189f0d7962c504c651d9f021840f3caee811a3011c5bcffa959502d81d"
+    },
+    {
+      "path": "预言塔脊雀_正面设定图.png",
+      "bytes": 2960410,
+      "sha256": "6ca733b7d8057d2e6065109286306f4b028e9f2cf13d03330f024c3db45c4b57"
+    },
+    {
+      "path": "预言短角雀_档案卡.png",
+      "bytes": 3288544,
+      "sha256": "40c5929e78fdd73cf33ae1d6ef81f7f837452f8cc5aef8f62ae857363da610c2"
+    },
+    {
+      "path": "预言短角雀_正面设定图.png",
+      "bytes": 2992423,
+      "sha256": "642074c0f62e9ab51e4a93d72402880f21f1bbfbd5ee0a0ff9b20cfae074a089"
+    },
+    {
+      "path": "预言空腹小蛇_档案卡.png",
+      "bytes": 3279411,
+      "sha256": "84d96e6f77972cddbec895b6dbc1c49df59f4a9ad65836d4851b48b0c76a90d3"
+    },
+    {
+      "path": "预言空腹小蛇_正面设定图.png",
+      "bytes": 2975125,
+      "sha256": "b397595413b9ed4169c4e632429e0d84bbf207beb2e4d913b0ea9834f621259e"
+    },
+    {
+      "path": "预言逆鳞观测蛇王_档案卡.png",
+      "bytes": 3253944,
+      "sha256": "7da241c43481b4b180716253a20b15aa7ed56a45fa0fa6cd7db9876237d78cb0"
+    },
+    {
+      "path": "预言逆鳞观测蛇王_正面设定图.png",
+      "bytes": 3058490,
+      "sha256": "39f2a25e5df314f659c50616d3abc11307517916f31c2c82af3d935bbfb87238"
+    },
+    {
+      "path": "饥月伏行雀_档案卡.png",
+      "bytes": 3383942,
+      "sha256": "cc00206a764a03d9a1f86031e7a965f7f3aadf8665dd9b741e40d16420a4cf2e"
+    },
+    {
+      "path": "饥月伏行雀_正面设定图.png",
+      "bytes": 3162142,
+      "sha256": "5668b17bb7aedb2b0ee01dbb10aa176249885ac8e04e42d2b2b85f03b7ea82c2"
+    },
+    {
+      "path": "饥月碑背牧者_档案卡.png",
+      "bytes": 3126123,
+      "sha256": "dbb965ec9ecfc612fbad291cc55364de8e0a9de289e0fddd82904cd2a928388e"
+    },
+    {
+      "path": "饥月碑背牧者_正面设定图.png",
+      "bytes": 2613065,
+      "sha256": "aabbfdead529d13a68ded0c2cfb674a3fc98a5c94b0943183afefac544dec39a"
+    },
+    {
+      "path": "骨煤净盐鹤_档案卡.png",
+      "bytes": 3236235,
+      "sha256": "080273f7f873a4da4adc1ecf64d5f577d9e09d51fb4fdbbafa63dc2072bbdf5a"
+    },
+    {
+      "path": "骨煤净盐鹤_正面设定图.png",
+      "bytes": 3004088,
+      "sha256": "b4c54804ddf0e467dc1cbef2bacccab1cefb2078e6a5e8f099d3937d9fde2fe3"
+    },
+    {
+      "path": "骨煤旧誓鹤_档案卡.png",
+      "bytes": 3301426,
+      "sha256": "928357639c5fbc78264b5cb36edb2f32336941ae12c3498982027593ead8b7a5"
+    },
+    {
+      "path": "骨煤旧誓鹤_正面设定图.png",
+      "bytes": 2974141,
+      "sha256": "6a533aa81ba21e83d4f4e25376176fc17e547b91a7aba23994b3ecaf7ac8ba75"
+    },
+    {
+      "path": "骨粉螨_档案卡.png",
+      "bytes": 3267096,
+      "sha256": "8c71499662bb202263172a7311a3c87873ebef292e159f0dbc24e7cb8e7ef306"
+    },
+    {
+      "path": "骨粉螨_正面设定图.png",
+      "bytes": 2825061,
+      "sha256": "962c59d9961efba3e1ab5ba9dc9cd5abe75c3b93c2c676099f1fb329bf1b1857"
+    },
+    {
+      "path": "骨蜡熔泪蝠_档案卡.png",
+      "bytes": 3238742,
+      "sha256": "c174cd47cb74384acdf19320f2ba82814cf22bb9080b1b0cb293750af2099d1b"
+    },
+    {
+      "path": "骨蜡熔泪蝠_正面设定图.png",
+      "bytes": 2907191,
+      "sha256": "ec6152a42401ea7e3667514c20b42cb36b33f270088eb65ab6cd938aa89fe9e1"
+    },
+    {
+      "path": "魂灯纸吏_档案卡.png",
+      "bytes": 3317805,
+      "sha256": "7bae9e45de3ff91acbfa1ef4b4019a0e01a4402458987942c16abbcc5c2ceaac"
+    },
+    {
+      "path": "魂灯纸吏_正面设定图.png",
+      "bytes": 2904102,
+      "sha256": "9d083e75addea30937de8623f97574a0f47e670ac2aee87d05dac7b03dadfe07"
+    },
+    {
+      "path": "黑水热雾蜉蝣_档案卡.png",
+      "bytes": 2882187,
+      "sha256": "9998076d05f212de05eb3fa6ad9b094e536944823cd40328c3ccdb1ff8d1cb5d"
+    },
+    {
+      "path": "黑水热雾蜉蝣_正面设定图.png",
+      "bytes": 2541274,
+      "sha256": "dc4ccc9d1b43c4ed697b041feef9358cc467b8de3163ad038c11536924614629"
+    },
+    {
+      "path": "黑礼冷焰猫_档案卡.png",
+      "bytes": 3533979,
+      "sha256": "7551c6ad738a177d0575dc683cf40a791f9377a6c95768691dc2274380555fec"
+    },
+    {
+      "path": "黑礼冷焰猫_正面设定图.png",
+      "bytes": 3240273,
+      "sha256": "21d3a363f6f7ebd8c296cedfa93d27faa3edf7476c31232a862b7446130decc6"
+    },
+    {
+      "path": "黑礼缝线豹_档案卡.png",
+      "bytes": 3383014,
+      "sha256": "54ccc2f0dfaa1c0fcdb8f59368f60b0679118ce58731bea2ff9cf15a39048197"
+    },
+    {
+      "path": "黑礼缝线豹_正面设定图.png",
+      "bytes": 3175472,
+      "sha256": "d4feab94a3282d47ebd660af49da2110a897c40f5488c01c139273bd7210d84c"
+    },
+    {
+      "path": "黑陨污银蚁_档案卡.png",
+      "bytes": 3317298,
+      "sha256": "c1bf4b379784577add6b6c529144bd5d02d6b29f1a2c790c681cee0a6effd2a1"
+    },
+    {
+      "path": "黑陨污银蚁_正面设定图.png",
+      "bytes": 2983670,
+      "sha256": "b13d578d130244be37ea1ec9f2b9bc4218dbc599c6b2f23cbee49ce2c8cb2e4a"
+    },
+    {
+      "path": "黑陨银线蚁_档案卡.png",
+      "bytes": 3262957,
+      "sha256": "967016e62858127642360a3d28b321a5ba678703060313991e18f22e067f55a8"
+    },
+    {
+      "path": "黑陨银线蚁_正面设定图.png",
+      "bytes": 2938679,
+      "sha256": "52d33132a9c2d4d9df3c7f0297fcac387ce939eacb24b10934f5ba90eda4c772"
+    },
+    {
+      "path": "黑页书虱_档案卡.png",
+      "bytes": 3455740,
+      "sha256": "1882e9d080cda1f972664c0f1e8119933aa77ea7760f61d0a07b32ededd77ee2"
+    },
+    {
+      "path": "黑页书虱_正面设定图.png",
+      "bytes": 3187275,
+      "sha256": "c63945ea3ff3a41423087f16a9d4262c4362a0107ff49f18c7b547482dd3223f"
+    }
+  ]
+}

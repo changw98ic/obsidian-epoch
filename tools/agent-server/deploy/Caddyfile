@@ -1,0 +1,27 @@
+{$AGENT_PUBLIC_HOST} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	@install_artifacts {
+		path /epoch/install /api/epoch/install-manifest /api/epoch/install-status /api/epoch/package/*
+	}
+
+	handle @install_artifacts {
+		reverse_proxy obsidian-epoch-agent-server:8787 {
+			transport http {
+				max_conns_per_host 4
+				response_header_timeout 30s
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy obsidian-epoch-agent-server:8787
+	}
+}

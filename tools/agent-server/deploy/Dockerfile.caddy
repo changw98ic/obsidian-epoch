@@ -1,0 +1,56 @@
+FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
+
+ARG CADDY_VERSION=v2.11.4
+ARG SOURCE_DATE_EPOCH
+ARG OCI_IMAGE_VERSION
+ARG OCI_IMAGE_REVISION
+ARG OCI_IMAGE_SOURCE
+
+RUN case "$SOURCE_DATE_EPOCH" in ''|*[!0-9]*) exit 1 ;; esac \
+  && test "$CADDY_VERSION" = "v2.11.4" \
+  && test -n "$OCI_IMAGE_VERSION" \
+  && test "${#OCI_IMAGE_REVISION}" -eq 40 \
+  && case "$OCI_IMAGE_REVISION" in *[!0-9a-f]*) exit 1 ;; esac \
+  && case "$OCI_IMAGE_SOURCE" in https://*|http://*) ;; *) exit 1 ;; esac
+
+RUN CGO_ENABLED=0 go install -trimpath \
+  -ldflags="-s -w -buildid= -X github.com/caddyserver/caddy/v2.CustomVersion=${CADDY_VERSION}" \
+  github.com/caddyserver/caddy/v2/cmd/caddy@${CADDY_VERSION}
+COPY tools/agent-server/deploy/caddy-healthcheck.go /src/caddy-healthcheck.go
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -buildid=" -o /out/caddy-healthcheck /src/caddy-healthcheck.go \
+  && cp /go/bin/caddy /out/caddy \
+  && /out/caddy version \
+  && mkdir -p /runtime-dirs/data /runtime-dirs/config /runtime-dirs/srv
+
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:d29e660cc75a5b6b1334e03c5c81ccf9bc0884a002c6000dbf0fb96034814478
+
+ARG SOURCE_DATE_EPOCH
+ARG OCI_IMAGE_VERSION
+ARG OCI_IMAGE_REVISION
+ARG OCI_IMAGE_SOURCE
+
+LABEL org.opencontainers.image.title="Obsidian Epoch Caddy Edge" \
+  org.opencontainers.image.description="Minimal non-root TLS reverse proxy for Obsidian Epoch" \
+  org.opencontainers.image.version="${OCI_IMAGE_VERSION}" \
+  org.opencontainers.image.revision="${OCI_IMAGE_REVISION}" \
+  org.opencontainers.image.source="${OCI_IMAGE_SOURCE}" \
+  org.opencontainers.image.base.name="gcr.io/distroless/static-debian13:nonroot" \
+  org.opencontainers.image.base.digest="sha256:d29e660cc75a5b6b1334e03c5c81ccf9bc0884a002c6000dbf0fb96034814478"
+
+ENV XDG_CONFIG_HOME=/config
+ENV XDG_DATA_HOME=/data
+ENV SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
+
+COPY --from=build --chown=65532:65532 /out/caddy /usr/bin/caddy
+COPY --from=build --chown=65532:65532 /out/caddy-healthcheck /usr/bin/caddy-healthcheck
+COPY --from=build --chown=65532:65532 /runtime-dirs/data /data
+COPY --from=build --chown=65532:65532 /runtime-dirs/config /config
+COPY --from=build --chown=65532:65532 /runtime-dirs/srv /srv
+
+WORKDIR /srv
+USER 65532:65532
+EXPOSE 80 443 443/udp
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD ["/usr/bin/caddy-healthcheck"]
+ENTRYPOINT ["/usr/bin/caddy"]
+CMD ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
