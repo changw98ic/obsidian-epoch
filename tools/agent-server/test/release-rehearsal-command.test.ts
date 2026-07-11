@@ -10,6 +10,7 @@ import test from "node:test";
 const repoRoot = path.resolve(import.meta.dirname, "../../..");
 const graphAppRoot = path.resolve(repoRoot, "tools/graph-react-app");
 const AGENT_SERVER_PROCESS_HEALTH_TIMEOUT_MS = 30_000;
+const SUPPORTS_PROCESS_GROUP_SIGNALS = process.platform !== "win32";
 
 async function runNpmScript(args: readonly string[], env: NodeJS.ProcessEnv = {}) {
   const child = spawn("npm", args, {
@@ -65,11 +66,26 @@ async function waitForHealthyServer(baseUrl: string, childOutput: () => string) 
 
 async function stopChildProcess(child: ReturnType<typeof spawn>) {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  child.kill();
-  await Promise.race([
-    once(child, "exit"),
-    new Promise((resolve) => setTimeout(resolve, 2_000)),
+
+  const signalProcessTree = (signal: NodeJS.Signals) => {
+    if (SUPPORTS_PROCESS_GROUP_SIGNALS && child.pid) {
+      try {
+        process.kill(-child.pid, signal);
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+        throw error;
+      }
+    }
+    child.kill(signal);
+  };
+
+  signalProcessTree("SIGTERM");
+  const exited = await Promise.race([
+    once(child, "exit").then(() => true),
+    new Promise<false>((resolve) => setTimeout(() => resolve(false), 2_000)),
   ]);
+  if (!exited) signalProcessTree("SIGKILL");
 }
 
 test("graph app package exposes the release rehearsal command", async () => {
@@ -91,6 +107,7 @@ test("release rehearsal command proves install backup restore and recovery evide
   const imageReference = "registry.example/obsidian-epoch-agent-server:0.1.0-alpha";
   const child = spawn("npm", ["run", "agent:server"], {
     cwd: graphAppRoot,
+    detached: SUPPORTS_PROCESS_GROUP_SIGNALS,
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
