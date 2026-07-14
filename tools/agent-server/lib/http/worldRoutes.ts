@@ -49,7 +49,7 @@ export async function handleEpochWorldRoutes(context: EpochHttpRouteContext): Pr
   if (method === "GET" && pathname.startsWith("/epoch/agent/")) {
     const agentId = finalPathSegment(pathname);
     const briefing = runtime.epochAgentBriefing({ agentId, limit: 30 });
-    if (!briefing.progress.identity) {
+    if (briefing.identityExists !== true || briefing.canonicalAgentId !== agentId) {
       context.sendHtml(request, response, 404, "<!doctype html><title>Agent not found</title><p>agent_not_found</p>", allowedOrigins);
       return true;
     }

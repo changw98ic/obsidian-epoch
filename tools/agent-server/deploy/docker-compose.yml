@@ -52,6 +52,8 @@ services:
       AGENT_SERVER_REGISTRATION_DEVICE_CHALLENGE_TTL_SECONDS: ${AGENT_SERVER_REGISTRATION_DEVICE_CHALLENGE_TTL_SECONDS:-86400}
       AGENT_SERVER_REGISTRATION_INVITES_FILE: /run/secrets/obsidian_epoch_registration_invites
       AGENT_PACKAGE_SIGNING_PRIVATE_KEY_PEM_FILE: /run/secrets/obsidian_epoch_package_signing_private_key
+      AGENT_RUNTIME_ACTION_SIGNING_PRIVATE_KEY_PEM_FILE: /run/secrets/obsidian_epoch_runtime_action_signing_private_key
+      AGENT_RUNTIME_ACTION_VERIFICATION_PUBLIC_KEYS_FILE: /run/secrets/obsidian_epoch_runtime_action_verification_public_keys
       AGENT_SERVER_MAINTENANCE_ENABLED: ${AGENT_SERVER_MAINTENANCE_ENABLED:-1}
       AGENT_SERVER_MAINTENANCE_INTERVAL_MS: ${AGENT_SERVER_MAINTENANCE_INTERVAL_MS:-900000}
       AGENT_SERVER_MAINTENANCE_NPC_REGION_ID: ${AGENT_SERVER_MAINTENANCE_NPC_REGION_ID:-}
@@ -88,6 +90,10 @@ services:
         target: obsidian_epoch_registration_actor_hash_secret
       - source: obsidian_epoch_package_signing_private_key
         target: obsidian_epoch_package_signing_private_key
+      - source: obsidian_epoch_runtime_action_signing_private_key
+        target: obsidian_epoch_runtime_action_signing_private_key
+      - source: obsidian_epoch_runtime_action_verification_public_keys
+        target: obsidian_epoch_runtime_action_verification_public_keys
       - source: obsidian_epoch_registration_invites
         target: obsidian_epoch_registration_invites
       - source: obsidian_epoch_attested_runners
@@ -256,6 +262,10 @@ secrets:
     file: ${AGENT_SERVER_REGISTRATION_ACTOR_HASH_SECRET_FILE:?set path to actor hash secret file}
   obsidian_epoch_package_signing_private_key:
     file: ${AGENT_PACKAGE_SIGNING_PRIVATE_KEY_PEM_FILE:?set path to package signing private key file}
+  obsidian_epoch_runtime_action_signing_private_key:
+    file: ${AGENT_RUNTIME_ACTION_SIGNING_PRIVATE_KEY_PEM_FILE:?set path to independent runtime action signing private key file}
+  obsidian_epoch_runtime_action_verification_public_keys:
+    file: ${AGENT_RUNTIME_ACTION_VERIFICATION_PUBLIC_KEYS_FILE:?set path to runtime action verification public-key ring file}
   obsidian_epoch_registration_invites:
     file: ${AGENT_SERVER_REGISTRATION_INVITES_FILE:-./registration-invites.empty}
   obsidian_epoch_attested_runners:

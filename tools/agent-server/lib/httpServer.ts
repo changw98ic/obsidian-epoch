@@ -47,6 +47,8 @@ import {
   PERMISSIVE_PUBLIC_REGISTRATION_PROTECTION,
 } from "./publicRegistrationProtection.ts";
 import { epochEventsForPersistence } from "./epoch/runtimePublicProjectionRules.ts";
+import { journeyEventsForPersistence } from "./epoch/journeyPersistence.ts";
+import { createMcpHttpSessionRegistry } from "./mcpHttpTransport.ts";
 import {
   createEpochMutationCoordinator,
   createEpochPersistenceGuard,
@@ -260,6 +262,7 @@ async function serverHealth(
   publicRegistrationProtection: PublicRegistrationProtectionConfig,
   playerMcpAccessTokens: PlayerMcpAccessTokenStore | undefined,
   recoveryCache: ReturnType<typeof createRecoveryHealthCache>,
+  mcpMetrics?: unknown,
 ) {
   const store = storeHealth(health?.store, persistJsonl);
   const maintenance = maintenanceHealth(health?.maintenance);
@@ -279,6 +282,7 @@ async function serverHealth(
       recovery,
       publicRegistration,
       persistence,
+      mcp: mcpMetrics,
     },
   };
 }
@@ -409,42 +413,140 @@ async function recordRejectedHttpCommand(
       input: sourceInput,
     });
   } catch {
+    // Preserve the original rejected-command response if its secondary audit record cannot be built.
     return;
   }
   await persistEpochResult(result);
 }
 
-async function persistEpochResultPage(persistJsonl: typeof appendJsonl | null, result: unknown) {
-  const record = recordValue(result);
-  if (!persistJsonl || record.duplicate || !record.page) return;
-  await persistJsonl("result-pages.jsonl", { type: "epoch_result_page", page: record.page });
+function resultPageRevisionIdentity(page: AnyRecord) {
+  return `${String(page.pageId)}:${typeof page.shareVersion === "number" ? page.shareVersion : 1}`;
+}
+
+async function persistEpochResultPage(
+  persistJsonl: typeof appendJsonl | null,
+  result: unknown,
+  persistenceGuard?: EpochPersistenceGuard,
+) {
+  const input = recordValue(result);
+  const commandPersistence = recordValue(input.commandPersistence);
+  const pageResult = recordValue(commandPersistence.pageResult ?? result);
+  if (!persistJsonl || pageResult.duplicate || !pageResult.page) return;
+  const command = optionalString(commandPersistence.command);
+  if (!command) throw new Error("result_page_command_envelope_required");
+  const sourceResult = commandPersistence.sourceResult ?? pageResult;
+  const journeyEvents = [...new Map(journeyEventsForPersistence(sourceResult)
+    .map((event) => [event.eventId, event] as const)).values()];
+  const epochEvents = [...new Map(epochEventsForPersistence(sourceResult)
+    .map((event) => [event.eventId, event] as const)).values()];
+  const page = recordValue(pageResult.page);
+  const commandId = `${command}:${journeyEvents[0]?.eventId || epochEvents[0]?.eventId || resultPageRevisionIdentity(page)}`;
+  persistenceGuard?.assertHealthy();
+  try {
+    await persistJsonl("command-events.jsonl", {
+      type: "agent_command_commit",
+      version: 1,
+      command,
+      commandId,
+      journeyEvents,
+      epochEvents,
+      resultPages: [page],
+    });
+  } catch (error) {
+    throw persistenceGuard ? persistenceGuard.trip(error) : error;
+  }
+}
+
+export function parseMcpToolResultPayload(toolResult: unknown) {
+  const content = recordValue(toolResult).content;
+  if (!Array.isArray(content) || content.length === 0) throw new Error("mcp_tool_result_content_invalid");
+  const first = recordValue(content[0]);
+  if (first.type !== "text" || typeof first.text !== "string") {
+    throw new Error("mcp_tool_result_content_invalid");
+  }
+  try {
+    return JSON.parse(first.text) as unknown;
+  } catch {
+    throw new Error("mcp_tool_result_content_invalid");
+  }
+}
+
+function embeddedResultPages(payload: unknown) {
+  const record = recordValue(payload);
+  const pages: AnyRecord[] = [];
+  const directPage = recordValue(record.page);
+  if (typeof directPage.pageId === "string") pages.push(directPage);
+  if (typeof record.pageId === "string") pages.push(record);
+  for (const key of ["verification", "departureVerification", "finalVerification"] as const) {
+    const page = recordValue(recordValue(record[key]).page);
+    if (typeof page.pageId === "string") pages.push(page);
+  }
+  const returned = record.returnedJourneyVerifications;
+  if (Array.isArray(returned)) {
+    for (const verification of returned) {
+      const page = recordValue(recordValue(verification).page);
+      if (typeof page.pageId === "string") pages.push(page);
+    }
+  }
+  return [...new Map(pages.map((page) => [String(page.pageId), page] as const)).values()];
 }
 
 async function persistMcpToolPayload(
   persistJsonl: typeof appendJsonl | null,
   persistEpochResult: PersistEpochResult,
+  persistenceGuard: EpochPersistenceGuard,
   toolName: string,
   toolResult: unknown,
+  payloadShape: "mcp_tool_result" | "raw_internal_partial" = "mcp_tool_result",
 ) {
   const toolResultRecord = recordValue(toolResult);
-  if (Array.isArray(toolResultRecord.events)) {
-    await persistEpochResult(toolResultRecord);
-    if (toolName !== "obsidian_epoch.create_result_page") return;
+  const payload = payloadShape === "raw_internal_partial"
+    ? toolResult
+    : parseMcpToolResultPayload(toolResult);
+  const resultPages = embeddedResultPages(payload);
+  const journeyEvents = [...new Map(journeyEventsForPersistence(toolResult)
+    .map((event) => [event.eventId, event] as const)).values()];
+  const epochEvents = [...new Map(epochEventsForPersistence(toolResult)
+    .map((event) => [event.eventId, event] as const)).values()];
+  const requiresCommandEnvelope = journeyEvents.length > 0 || resultPages.length > 0;
+  if (persistJsonl && requiresCommandEnvelope) {
+    const resultPageRevisionSetIdentity = resultPages
+      .map(resultPageRevisionIdentity)
+      .sort()
+      .join(",");
+    persistenceGuard.assertHealthy();
+    try {
+      await persistJsonl("command-events.jsonl", {
+        type: "agent_command_commit",
+        version: 1,
+        command: toolName,
+        commandId: `${toolName}:${journeyEvents[0]?.eventId || epochEvents[0]?.eventId || resultPageRevisionSetIdentity}`,
+        journeyEvents,
+        epochEvents,
+        resultPages,
+      });
+    } catch (error) {
+      throw persistenceGuard.trip(error);
+    }
+  } else if (!requiresCommandEnvelope) {
+    if (epochEvents.length) await persistEpochResult(toolResult);
   }
-  const content = Array.isArray(toolResultRecord.content) ? toolResultRecord.content : [];
-  const firstContent = recordValue(content[0]);
-  const text = firstContent.text;
-  if (typeof text !== "string") return;
-  let payload: unknown;
-  try {
-    payload = JSON.parse(text);
-  } catch {
-    return;
+  if (Array.isArray(toolResultRecord.events) || epochEvents.length) {
+    if (toolName !== "obsidian_epoch.create_result_page" && toolName !== "obsidian_epoch.start_journey") return;
   }
   if (toolName === "agent_world.context_package") {
     await persistContextSnapshot(persistJsonl, payload);
     return;
   }
+  if (requiresCommandEnvelope) return;
+  for (const key of ["verification", "departureVerification", "finalVerification"] as const) {
+    await persistEpochResultPage(persistJsonl, recordValue(recordValue(payload)[key]));
+  }
+  const returnedVerifications = recordValue(payload).returnedJourneyVerifications;
+  if (Array.isArray(returnedVerifications)) {
+    for (const verification of returnedVerifications) await persistEpochResultPage(persistJsonl, verification);
+  }
+  if (toolName === "obsidian_epoch.start_journey") return;
   if (
     toolName === "obsidian_epoch.create_result_page"
     || toolName === "obsidian_epoch.revoke_result_page"
@@ -461,6 +563,7 @@ async function persistMcpToolPayload(
 async function persistMcpJsonRpcPayload(
   persistJsonl: typeof appendJsonl | null,
   persistEpochResult: PersistEpochResult,
+  persistenceGuard: EpochPersistenceGuard,
   requestBody: AnyRecord,
   jsonRpcResult: unknown,
 ) {
@@ -469,7 +572,7 @@ async function persistMcpJsonRpcPayload(
   const params = recordValue(requestBody.params);
   const toolName = typeof params.name === "string" ? params.name : "";
   if (!toolName || !resultRecord.result) return;
-  await persistMcpToolPayload(persistJsonl, persistEpochResult, toolName, resultRecord.result);
+  await persistMcpToolPayload(persistJsonl, persistEpochResult, persistenceGuard, toolName, resultRecord.result);
 }
 
 export function createAgentHttpServer({
@@ -499,6 +602,7 @@ export function createAgentHttpServer({
     recordRejectedCommands: false,
     authoritativeIdentityIssuance: true,
   });
+  const mcpHttpSessions = createMcpHttpSessionRegistry();
   const recoveryCache = createRecoveryHealthCache(
     health?.recovery,
     storeHealth(health?.store, persistJsonl),
@@ -522,6 +626,7 @@ export function createAgentHttpServer({
         publicRegistrationProtection,
         playerMcpAccessTokens,
         recoveryCache,
+        mcpHttpSessions.metricsSnapshot(),
       );
       sendJson(
         request,
@@ -542,19 +647,21 @@ export function createAgentHttpServer({
       allowedOrigins,
       maxBodyBytes,
       persistEpochEvents: persistEpochResult,
-      persistEpochResultPage: (result) => persistEpochResultPage(persistJsonl, result),
+      persistEpochResultPage: (result) => persistEpochResultPage(persistJsonl, result, persistenceGuard),
       readJsonBody,
       sendJson,
       sendHtml,
       queryParams,
       mcpRuntime,
+      mcpHttpSessions,
+      mcpMutationCoordinator: mutationCoordinator,
       mcpBearerToken,
       playerMcpAccessTokens,
       publicServerBase: publicServerBase(request, canonicalPublicServerBase),
       persistMcpJsonRpcPayload: (requestBody, jsonRpcResult) =>
-        persistMcpJsonRpcPayload(persistJsonl, persistEpochResult, requestBody, jsonRpcResult),
-      persistMcpToolPayload: (toolName, toolResult) =>
-        persistMcpToolPayload(persistJsonl, persistEpochResult, toolName, toolResult),
+        persistMcpJsonRpcPayload(persistJsonl, persistEpochResult, persistenceGuard, requestBody, jsonRpcResult),
+      persistMcpToolPayload: (toolName, toolResult, payloadShape) =>
+        persistMcpToolPayload(persistJsonl, persistEpochResult, persistenceGuard, toolName, toolResult, payloadShape),
       sendEmpty,
     })) {
       return;
@@ -589,7 +696,7 @@ export function createAgentHttpServer({
       allowedOrigins,
       maxBodyBytes,
       persistEpochEvents: persistEpochResult,
-      persistEpochResultPage: (result) => persistEpochResultPage(persistJsonl, result),
+      persistEpochResultPage: (result) => persistEpochResultPage(persistJsonl, result, persistenceGuard),
       readJsonBody,
       sendJson,
       sendHtml,
@@ -889,7 +996,9 @@ export function createAgentHttpServer({
 
   return http.createServer((request, response) => {
     const run = () => handleWithErrorResponse(request, response);
-    const task = request.method === "POST" ? mutationCoordinator.run(run) : run();
+    const pathname = new URL(request.url || "/", "http://127.0.0.1").pathname;
+    const isMcpTransport = pathname === "/mcp" || pathname === "/api/epoch/mcp";
+    const task = request.method === "POST" && !isMcpTransport ? mutationCoordinator.run(run) : run();
     void task.catch((error: unknown) => {
       if (response.headersSent) {
         response.destroy(error instanceof Error ? error : new Error(String(error)));

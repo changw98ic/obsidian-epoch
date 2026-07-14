@@ -60,6 +60,11 @@ export const EPOCH_ACTIVE_IDENTITY_TOOL_NAMES = [
   "obsidian_epoch.npc_note",
   "obsidian_epoch.submit_npc_candidate",
   "obsidian_epoch.submit_attested_action",
+  "obsidian_epoch.prepare_journey",
+  "obsidian_epoch.start_journey",
+  "obsidian_epoch.propose_journey_step",
+  "obsidian_epoch.commit_journey_action",
+  "obsidian_epoch.recall_journey",
 ] as const;
 
 export const EPOCH_ACTIVE_IDENTITY_RECOMMENDED_TOOLS = [

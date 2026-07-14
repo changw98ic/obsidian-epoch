@@ -7,11 +7,12 @@ import test from "node:test";
 import { gunzipSync } from "node:zlib";
 import { createEpochGameCore } from "../lib/epoch/gameCore.ts";
 import { createSequentialEpochIdFactory, type EpochClock } from "../lib/epoch/protocol.ts";
-import { createAgentHttpServer } from "../lib/httpServer.ts";
+import { createAgentHttpServer, parseMcpToolResultPayload } from "../lib/httpServer.ts";
 import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
 import { obsidianEpochInstallSurface } from "../lib/packageArchive.ts";
 import { renderEpochRegionPublicPageHtml } from "../lib/publicWorldPageHtml.ts";
 import { unavailableRecoveryManifest } from "../lib/recovery.ts";
+import { appendSqliteJsonl, loadAgentRuntimeOptionsFromSqlite } from "../lib/sqliteStore.ts";
 import { hydrateAgentRuntimeOptions } from "../lib/store.ts";
 import { EPOCH_CONTEXT_PACK_VERSION } from "../lib/worldContextVersions.ts";
 
@@ -507,6 +508,7 @@ async function postMcpJsonRpc(baseUrl: string, pathName: string, body: unknown, 
   return {
     status: response.status,
     contentType: response.headers.get("content-type") || "",
+    headers: response.headers,
     text,
     body: text ? JSON.parse(text) : undefined,
   };
@@ -827,11 +829,16 @@ test("HTTP exposes a Streamable MCP JSON-RPC endpoint", async () => {
     assert.equal(initialized.body.id, 1);
     assert.equal(initialized.body.result.protocolVersion, "2025-06-18");
     assert.equal(initialized.body.result.serverInfo.name, "obsidian-epoch-agent-world");
+    const sessionHeaders = {
+      "mcp-session-id": initialized.headers.get("mcp-session-id") || "",
+      "mcp-protocol-version": "2025-06-18",
+    };
+    assert.ok(sessionHeaders["mcp-session-id"]);
 
     const notification = await postMcpJsonRpc(baseUrl, "/mcp", {
       jsonrpc: "2.0",
       method: "notifications/initialized",
-    });
+    }, sessionHeaders);
     assert.equal(notification.status, 202);
     assert.equal(notification.text, "");
 
@@ -839,7 +846,7 @@ test("HTTP exposes a Streamable MCP JSON-RPC endpoint", async () => {
       jsonrpc: "2.0",
       id: 2,
       method: "tools/list",
-    });
+    }, sessionHeaders);
     assert.equal(listed.status, 200);
     assert.ok(listed.body.result.tools.some((tool: { name: string }) => tool.name === "obsidian_epoch.quickstart"));
 
@@ -851,16 +858,20 @@ test("HTTP exposes a Streamable MCP JSON-RPC endpoint", async () => {
         name: "obsidian_epoch.quickstart",
         arguments: { host: "Remote MCP" },
       },
-    });
+    }, sessionHeaders);
     assert.equal(called.status, 200);
     const quickstart = JSON.parse(called.body.result.content[0].text);
     assert.equal(quickstart.serverName, "obsidian-epoch-agent-world");
     assert.equal(quickstart.serverBase, baseUrl);
 
+    const streamController = new AbortController();
     const stream = await fetch(`${baseUrl}/mcp`, {
-      headers: { accept: "text/event-stream" },
+      headers: { accept: "text/event-stream", ...sessionHeaders },
+      signal: streamController.signal,
     });
-    assert.equal(stream.status, 405);
+    assert.equal(stream.status, 200);
+    assert.match(stream.headers.get("content-type") || "", /text\/event-stream/);
+    streamController.abort();
 
     const invalidOrigin = await postMcpJsonRpc(baseUrl, "/mcp", {
       jsonrpc: "2.0",
@@ -868,6 +879,7 @@ test("HTTP exposes a Streamable MCP JSON-RPC endpoint", async () => {
       method: "tools/list",
     }, {
       origin: "https://evil.example",
+      ...sessionHeaders,
     });
     assert.equal(invalidOrigin.status, 403);
     assert.equal(invalidOrigin.body.error.message, "origin_not_allowed");
@@ -877,6 +889,15 @@ test("HTTP exposes a Streamable MCP JSON-RPC endpoint", async () => {
     assert.equal(installManifest.body.transport.streamableHttp.endpoint, `${baseUrl}/mcp`);
     assert.equal(installManifest.body.transport.streamableHttp.protocolVersion, "2025-06-18");
     assert.equal(installManifest.body.transport.stdio.command, "node obsidian-epoch/bin/mcp-proxy.ts");
+
+    const deleted = await fetch(`${baseUrl}/mcp`, { method: "DELETE", headers: sessionHeaders });
+    assert.equal(deleted.status, 204);
+    const afterDelete = await postMcpJsonRpc(baseUrl, "/mcp", {
+      jsonrpc: "2.0",
+      id: 5,
+      method: "tools/list",
+    }, sessionHeaders);
+    assert.equal(afterDelete.status, 404);
   });
 });
 
@@ -5383,13 +5404,11 @@ test("HTTP renders public agent, region and NPC world pages", async () => {
     assert.equal(agentPage.status, 200);
     assert.match(agentPage.contentType, /text\/html/);
     assert.match(agentPage.text, /公开页巡游者/);
-    assert.match(agentPage.text, /寿命/);
-    assert.match(agentPage.text, /钱币/);
-    assert.match(agentPage.text, /身份槽/);
-    assert.match(agentPage.text, /下一槽还差 3 传说/);
+    assert.match(agentPage.text, /公开验证投影/);
+    assert.match(agentPage.text, /我是公开页巡游者，在棱镜水域留下可公开验证的经历/);
+    assert.match(agentPage.text, /仅向拥有者的对话提供/);
+	    assert.doesNotMatch(agentPage.text, /下一槽还差 3 传说|钱币/);
 	    assert.match(agentPage.text, /行动简报/);
-    assert.match(agentPage.text, /行动权限/);
-    assert.match(agentPage.text, /可行动/);
     assert.match(agentPage.text, /下一步/);
     assert.match(agentPage.text, /区域新闻/);
     assert.match(agentPage.text, /区域留言/);
@@ -6596,13 +6615,11 @@ test("HTTP archives ended identities, reincarnates lineage, and renders death ar
 
     const archivedBriefing = await getJson(baseUrl, `/api/epoch/agent-briefing?agentId=${encodeURIComponent(identity.body.value.agentId)}`);
     assert.equal(archivedBriefing.status, 200);
-    assert.equal(archivedBriefing.body.progress.identity.status, "archived");
-    assert.equal(archivedBriefing.body.progress.actionEligibility.canUseActiveTools, false);
-    assert.ok(archivedBriefing.body.progress.actionEligibility.blockedTools.length > 0);
+    assert.equal(archivedBriefing.body.progress, undefined);
+    assert.equal(archivedBriefing.body.explorerId, undefined);
     assert.equal(archivedBriefing.body.publicPages.agent, `/epoch/agent/${encodeURIComponent(identity.body.value.agentId)}`);
     assert.equal(archivedBriefing.body.publicPages.archive, `/epoch/archive/${encodeURIComponent(identity.body.value.agentId)}`);
-    assert.ok(archivedBriefing.body.pendingActions.some((action: { toolName: string }) =>
-      ["obsidian_epoch.identity_archive", "obsidian_epoch.reincarnate", "obsidian_epoch.result_page"].includes(action.toolName)));
+    assert.equal(archivedBriefing.body.pendingActions, undefined);
 
     const archivePage = await getText(baseUrl, `/epoch/archive/${encodeURIComponent(identity.body.value.agentId)}`);
     assert.equal(archivePage.status, 200);
@@ -7058,7 +7075,7 @@ test("HTTP exposes operator-gated Epoch moderation queue and resolution", async 
   });
 });
 
-test("HTTP exposes unified agent briefing with progress and regional context", async () => {
+test("HTTP exposes the public agent projection without owner progress or regional internals", async () => {
   const runtime = createAgentWorldRuntime({
     epoch: {
       idFactory: createSequentialEpochIdFactory("http_agent_briefing"),
@@ -7101,24 +7118,35 @@ test("HTTP exposes unified agent briefing with progress and regional context", a
     );
     assert.equal(briefing.status, 200);
     assert.equal(briefing.body.agentId, agentId);
-    assert.equal(briefing.body.progress.identity.agentId, agentId);
-    assert.equal(briefing.body.regionId, "region_salt_gate");
+    assert.equal(briefing.body.canonicalAgentId, agentId);
+    assert.equal(briefing.body.identityExists, true);
+    assert.equal(briefing.body.progress, undefined);
+    assert.equal(briefing.body.explorerId, undefined);
+    assert.equal(briefing.body.regionId, undefined);
     assert.match(briefing.body.agentSelfStatement, /简报巡游者/);
-    assert.match(briefing.body.agentSelfStatement, /region_salt_gate/);
+    assert.match(briefing.body.agentSelfStatement, /盐门/);
+    assert.doesNotMatch(briefing.body.agentSelfStatement, /region_salt_gate/);
     assert.doesNotMatch(briefing.body.agentSelfStatement, /prompt|system|系统|规则|模型|提示/i);
-    assert.equal(briefing.body.regionalContext.messages[0].body, "盐门简报出现新的巡查留言。");
-    assert.equal(briefing.body.regionalContext.news[0].newsId, generatedNews.body.value.newsId);
-    assert.ok(briefing.body.pendingActions.some((action: { toolName: string }) => action.toolName === "obsidian_epoch.turn_card"));
+    assert.deepEqual(Object.keys(briefing.body.regionalContext).sort(), ["commissions", "messages", "news"]);
+    assert.deepEqual(briefing.body.regionalContext.messages, [{
+      body: "盐门简报出现新的巡查留言。",
+      postedAt: posted.body.value.postedAt,
+    }]);
+    assert.ok(briefing.body.regionalContext.news.length > 0);
+    assert.deepEqual(Object.keys(briefing.body.regionalContext.news[0]).sort(), ["body", "createdAt", "headline"]);
+    assert.doesNotMatch(JSON.stringify(briefing.body.regionalContext), /region_salt_gate|messageId|newsId|sourceEventId|agentId|explorerId/);
+    assert.equal(briefing.body.pendingActions, undefined);
     assert.equal(briefing.body.publicPages.agent, `/epoch/agent/${encodeURIComponent(agentId)}`);
-    assert.equal(briefing.body.publicPages.region, "/epoch/region/region_salt_gate");
-    assert.equal(briefing.body.world.publicPages.console, "/epoch/console");
+    assert.equal(briefing.body.publicPages.region, undefined);
+    assert.equal(briefing.body.publicPages.console, "/epoch/console");
+    assert.equal(briefing.body.world, undefined);
 
     const invalidLimitBriefing = await getJson(
       baseUrl,
       `/api/epoch/agent-briefing?agentId=${encodeURIComponent(agentId)}&regionId=region_salt_gate&limit=abc`,
     );
     assert.equal(invalidLimitBriefing.status, 200);
-    assert.equal(invalidLimitBriefing.body.world.news[0].newsId, generatedNews.body.value.newsId);
+    assert.equal(invalidLimitBriefing.body.identityExists, true);
 
     const publicAgentPage = await getText(baseUrl, `/epoch/agent/${encodeURIComponent(agentId)}`);
     assert.equal(publicAgentPage.status, 200);
@@ -7126,7 +7154,30 @@ test("HTTP exposes unified agent briefing with progress and regional context", a
     assert.match(publicAgentPage.text, /简报巡游者/);
     assert.doesNotMatch(publicAgentPage.text, /根据系统提示|模型规则|prompt/);
     assertNoForbiddenPublicVisibleText(publicAgentPage.text);
+
+    const unknownPublicAgentPage = await getText(baseUrl, "/epoch/agent/agent_request_echo_only");
+    assert.equal(unknownPublicAgentPage.status, 404);
+    assert.doesNotMatch(unknownPublicAgentPage.text, /agent_request_echo_only/);
   });
+});
+
+test("MCP persistence parser rejects every malformed final content envelope", () => {
+  const invalidResults = [
+    {},
+    { content: null },
+    { content: {} },
+    { content: [] },
+    { content: [{ type: "image", data: "ignored" }] },
+    { content: [{ text: "{}" }] },
+    { content: [{ type: "text", text: "{" }] },
+  ];
+  for (const result of invalidResults) {
+    assert.throws(() => parseMcpToolResultPayload(result), /mcp_tool_result_content_invalid/);
+  }
+  assert.deepEqual(
+    parseMcpToolResultPayload({ content: [{ type: "text", text: JSON.stringify({ ok: true }) }] }),
+    { ok: true },
+  );
 });
 
 test("HTTP renders public world overview with news, result pages and archives", async () => {
@@ -9079,6 +9130,162 @@ test("HTTP MCP proxy persists high-value confirmation requests without exposing 
   assert.ok(epochWriteTypes.includes("identity_issued"), JSON.stringify(epochWriteTypes));
   assert.ok(epochWriteTypes.includes("high_value_confirmation_requested"), JSON.stringify(epochWriteTypes));
   assert.doesNotMatch(JSON.stringify(writes), /confirmationToken|recoveryCode/);
+});
+
+test("HTTP MCP persists Agent-native three-phase Journey events and final verification for restart hydration", async () => {
+  const writes: { fileName: string; record: Record<string, any> }[] = [];
+  let realNow = "2026-07-12T00:00:00.000Z";
+  let worldNow = "2026-01-01T08:00:00.000Z";
+  const runtime = createAgentWorldRuntime({
+    epoch: { idFactory: createSequentialEpochIdFactory("http_mcp_journey_persist") },
+    journey: {
+      now: () => realNow,
+      worldNow: () => worldNow,
+    },
+  });
+  let recovery = "";
+  let journeyId = "";
+  let verificationPageId = "";
+  let verificationUrl = "";
+  let canonicalEpisodeEventIds: string[] = [];
+  await withHttpServer(runtime, async (baseUrl) => {
+    const registration = await postJson(baseUrl, "/api/epoch/pairing/register", {
+      idempotencyKey: "register-http-mcp-journey-persist-1",
+    });
+    assert.equal(registration.status, 201);
+    recovery = registration.body.recoveryCode;
+
+    const preparedTool = await postJson(baseUrl, "/api/epoch/mcp/tools/call", {
+      name: "obsidian_epoch.prepare_journey",
+      arguments: {
+        agentId: registration.body.agentId,
+        destinationRegionId: "region_gray_harbor",
+        recoveryCode: recovery,
+        idempotencyKey: "prepare-http-mcp-journey-persist-1",
+      },
+    });
+    assert.equal(preparedTool.status, 200);
+    const prepared = JSON.parse(preparedTool.body.content[0].text);
+    journeyId = prepared.journey.journeyId;
+
+    const startedTool = await postJson(baseUrl, "/api/epoch/mcp/tools/call", {
+      name: "obsidian_epoch.start_journey",
+      arguments: {
+        journeyId,
+        expectedVersion: prepared.journey.version,
+        recoveryCode: recovery,
+        idempotencyKey: "start-http-mcp-journey-persist-1",
+      },
+    });
+    assert.equal(startedTool.status, 200);
+    const started = JSON.parse(startedTool.body.content[0].text);
+    assert.equal(started.journey.status, "awaiting_agent");
+    assert.equal(started.episodes.length, 1);
+    const proposedTool = await postJson(baseUrl, "/api/epoch/mcp/tools/call", {
+      name: "obsidian_epoch.propose_journey_step",
+      arguments: {
+        journeyId,
+        expectedVersion: started.journey.version,
+        recoveryCode: recovery,
+        idempotencyKey: "propose-http-mcp-journey-persist-1",
+      },
+    });
+    assert.equal(proposedTool.status, 200);
+    const proposed = JSON.parse(proposedTool.body.content[0].text);
+    const selected = proposed.proposal.sceneContract.actionOptions[0];
+    const committedTool = await postJson(baseUrl, "/api/epoch/mcp/tools/call", {
+      name: "obsidian_epoch.commit_journey_action",
+      arguments: {
+        journeyId,
+        sceneId: proposed.proposal.sceneContract.sceneId,
+        episodeId: proposed.proposal.episode.episodeId,
+        expectedVersion: proposed.proposal.expectedVersion,
+        actionOptionId: selected.actionOptionId,
+        signature: selected.signature,
+        recoveryCode: recovery,
+        idempotencyKey: "commit-http-mcp-journey-persist-1",
+      },
+    });
+    assert.equal(committedTool.status, 200);
+    const committed = JSON.parse(committedTool.body.content[0].text);
+    assert.deepEqual([committed.mainEpisode.phase, committed.returnEpisode.phase], ["main", "return"]);
+
+    realNow = "2026-07-12T00:45:00.000Z";
+    worldNow = "2026-01-01T09:30:00.000Z";
+    const settledTool = await postJson(baseUrl, "/api/epoch/mcp/tools/call", {
+      name: "obsidian_epoch.journey_status",
+      arguments: { journeyId, recoveryCode: recovery },
+    });
+    assert.equal(settledTool.status, 200);
+    const settled = JSON.parse(settledTool.body.content[0].text);
+    assert.equal(settled.journey.status, "settled");
+    assert.equal(settled.finalVerification.page.payload.journey.status, "settled");
+    assert.ok(settled.episodes.every((episode: { serverFacts?: unknown; narrative?: unknown }) =>
+      episode.serverFacts && episode.narrative));
+    canonicalEpisodeEventIds = settled.episodes.flatMap((episode: {
+      serverFacts?: { sourceEventIds?: readonly string[] };
+    }) => episode.serverFacts?.sourceEventIds || []);
+    assert.equal(canonicalEpisodeEventIds.length, 3);
+    assert.deepEqual(
+      settled.finalVerification.page.payload.journey.episodes.map((episode: { narrative: unknown }) => episode.narrative),
+      settled.episodes.map((episode: { narrative: unknown }) => episode.narrative),
+    );
+    verificationPageId = settled.finalVerification.page.pageId;
+    verificationUrl = settled.finalVerification.page.urlPath;
+    assert.equal(settled.journey.verification.urlPath, verificationUrl);
+    const publicPage = await getText(baseUrl, verificationUrl);
+    assert.equal(publicPage.status, 200);
+    assert.match(publicPage.text, /灰港探索历程/);
+    assert.match(publicPage.text, /到达：灰港|返程：灰港/);
+    assert.match(publicPage.text, /从旅途中寄来/);
+  }, {
+    persistJsonl: async (fileName, record) => {
+      writes.push({ fileName, record: record as Record<string, any> });
+      if (fileName === "journey-events.jsonl" || fileName === "result-pages.jsonl") {
+        throw new Error("simulated_legacy_midpoint_failure");
+      }
+    },
+  });
+
+  assert.equal(
+    writes.filter((write) => write.fileName === "journey-events.jsonl").length,
+    0,
+    "a logical Journey command must never be split into per-event appends",
+  );
+  assert.equal(
+    writes.filter((write) => write.fileName === "result-pages.jsonl").length,
+    0,
+    "a Journey verification page must be committed in the same command envelope",
+  );
+  const verificationCommit = writes
+    .filter((write) => write.fileName === "command-events.jsonl")
+    .map((write) => write.record)
+    .find((record) => Array.isArray(record.resultPages)
+      && record.resultPages.some((page: { pageId?: string }) => page.pageId === verificationPageId));
+  assert.ok(verificationCommit, "final Journey event and verification page need one durable append");
+  assert.ok(verificationCommit.journeyEvents.length > 0);
+  const commandEpochEventIds = writes
+    .filter((write) => write.fileName === "command-events.jsonl")
+    .flatMap((write) => Array.isArray(write.record.epochEvents) ? write.record.epochEvents : [])
+    .map((event) => event.eventId);
+  assert.ok(canonicalEpisodeEventIds.every((eventId) => commandEpochEventIds.includes(eventId)));
+  assert.equal(new Set(commandEpochEventIds).size, commandEpochEventIds.length);
+
+  const loaded = hydrateAgentRuntimeOptions({
+    epochEvents: writes.filter((write) => write.fileName === "epoch-events.jsonl").map((write) => write.record),
+    journeyEvents: writes.filter((write) => write.fileName === "journey-events.jsonl").map((write) => write.record),
+    commandEvents: writes.filter((write) => write.fileName === "command-events.jsonl").map((write) => write.record),
+    resultPages: writes.filter((write) => write.fileName === "result-pages.jsonl").map((write) => write.record),
+  });
+  assert.ok(loaded.journeyEvents.length >= 3);
+  assert.equal(loaded.resultPages.length, 1);
+  assert.ok(canonicalEpisodeEventIds.every((eventId) =>
+    loaded.epochEvents.some((event) => event.eventId === eventId)));
+  const restored = createAgentWorldRuntime(loaded);
+  const status = restored.epochJourneyStatus({ journeyId, recoveryCode: recovery });
+  assert.equal(status.journey.verification?.urlPath, verificationUrl);
+  assert.ok(status.episodes.every((episode) => episode.serverFacts && episode.narrative));
+  assert.equal(restored.epochGetResultPage({ pageId: verificationPageId })?.urlPath, verificationUrl);
 });
 
 test("HTTP context package and legacy run ticket expose signed envelopes", async () => {
@@ -11212,6 +11419,7 @@ test("HTTP Epoch routes persist canonical events and hydrate progress", async ()
 
     const duplicatePage = await postJson(baseUrl, "/api/epoch/result-page/create", {
       agentId,
+      recoveryCode: explorerRecoveryCode,
       idempotencyKey: "result-page-http-1",
     });
     assert.equal(duplicatePage.status, 200);
@@ -11735,7 +11943,9 @@ test("HTTP Epoch routes persist canonical events and hydrate progress", async ()
   }
 
   const epochWrites = writes.filter((write) => write.fileName === "epoch-events.jsonl");
-  const resultPageWrites = writes.filter((write) => write.fileName === "result-pages.jsonl");
+  const commandWrites = writes.filter((write) => write.fileName === "command-events.jsonl");
+  const resultPageWrites = commandWrites.flatMap((write) =>
+    (write.record.resultPages || []).map((page: Record<string, any>) => ({ page })));
   assert.ok(epochWrites.some((write) => write.record.event?.eventType === "identity_issued"));
   assert.ok(epochWrites.some((write) => write.record.event?.eventType === "downtime_claimed"));
   assert.ok(epochWrites.some((write) => write.record.event?.eventType === "downtime_tick_resolved"));
@@ -11754,14 +11964,14 @@ test("HTTP Epoch routes persist canonical events and hydrate progress", async ()
   assert.ok(epochWrites.some((write) => write.record.event?.eventType === "retaliation_resolved"));
   assert.equal(epochWrites.filter((write) => write.record.event?.eventType === "identity_issued").length, 4);
   assert.equal(resultPageWrites.length, 4);
-  assert.ok(resultPageWrites.some((write) => write.record.page?.payload?.focusTurnCard));
-  assert.ok(resultPageWrites.some((write) => write.record.page?.payload?.focusHostedSession?.channelClass === "browser_copy_paste"));
-  assert.ok(resultPageWrites.some((write) => write.record.page?.status === "revoked"));
+  assert.ok(resultPageWrites.some((write) => write.page?.payload?.focusTurnCard));
+  assert.ok(resultPageWrites.some((write) => write.page?.payload?.focusHostedSession?.channelClass === "browser_copy_paste"));
+  assert.ok(resultPageWrites.some((write) => write.page?.status === "revoked"));
 
   const hydratedRuntime = createAgentWorldRuntime({
     ...hydrateAgentRuntimeOptions({
       epochEvents: epochWrites.map((write) => write.record),
-      resultPages: resultPageWrites.map((write) => write.record),
+      commandEvents: commandWrites.map((write) => write.record),
     }),
     epoch: { clock: time.clock },
   });
@@ -12122,16 +12332,18 @@ test("HTTP delete result page persists only a tombstone summary", async () => {
     },
   });
 
-  const pageWrites = writes.filter((write) => write.fileName === "result-pages.jsonl");
+  const pageWrites = writes
+    .filter((write) => write.fileName === "command-events.jsonl")
+    .flatMap((write) => (write.record.resultPages || []).map((page: Record<string, any>) => ({ page })));
   assert.equal(pageWrites.length, 2);
-  assert.equal(pageWrites[0].record.page.status, "active");
-  assert.equal(pageWrites[0].record.page.payload.progress.identity.identityName, "HTTP 删除归档测试员");
-  assert.equal(pageWrites[1].record.page.status, "deleted");
-  assert.equal(pageWrites[1].record.page.payload, undefined);
-  assert.equal(pageWrites[1].record.page.deletionSummary.ownerExplorerId, "explorer_http_delete_result_page");
-  assert.equal(pageWrites[1].record.page.deletionSummary.deletionRequest.selectedCategory, "hide_body");
-  assert.deepEqual(pageWrites[1].record.page.deletionSummary.canonicalEventIds, []);
-  assert.deepEqual(pageWrites[1].record.page.deletionSummary.minimalReference.removedBodyClasses, [
+  assert.equal(pageWrites[0].page.status, "active");
+  assert.equal(pageWrites[0].page.payload.progress.identity.identityName, "HTTP 删除归档测试员");
+  assert.equal(pageWrites[1].page.status, "deleted");
+  assert.equal(pageWrites[1].page.payload, undefined);
+  assert.equal(pageWrites[1].page.deletionSummary.ownerExplorerId, "explorer_http_delete_result_page");
+  assert.equal(pageWrites[1].page.deletionSummary.deletionRequest.selectedCategory, "hide_body");
+  assert.deepEqual(pageWrites[1].page.deletionSummary.canonicalEventIds, []);
+  assert.deepEqual(pageWrites[1].page.deletionSummary.minimalReference.removedBodyClasses, [
     "result_page_payload",
     "public_safe_summary_text",
     "progress_snapshot",
@@ -12139,7 +12351,143 @@ test("HTTP delete result page persists only a tombstone summary", async () => {
     "event_bodies",
     "long_summaries",
   ]);
-  assert.doesNotMatch(JSON.stringify(pageWrites[1].record), /HTTP 删除归档测试员/);
+  assert.doesNotMatch(JSON.stringify(pageWrites[1].page), /HTTP 删除归档测试员/);
+});
+
+test("MCP result-page mutations persist every revision across JSONL and SQLite restart", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "mcp-result-page-revisions-"));
+  const dbPath = path.join(tempDir, "agent-world.sqlite");
+  const writes: Array<{ fileName: string; record: Record<string, any> }> = [];
+  try {
+    const runtime = createAgentWorldRuntime({
+      epoch: { idFactory: createSequentialEpochIdFactory("mcp_result_page_revision") },
+    });
+    let explorerRecoveryCode = "";
+    let agentId = "";
+    let pageId = "";
+    let revisions: Record<number, Record<string, any>> = {};
+
+    await withHttpServer(runtime, async (baseUrl) => {
+      const explorerId = "explorer_mcp_result_page_revision";
+      explorerRecoveryCode = recoveryCode(explorerId, "local_mcp_result_page_revision_secret");
+      const identity = await postJson(baseUrl, "/api/epoch/identity/issue", {
+        explorerId,
+        identityName: "MCP 结果页恢复测试员",
+        recoveryCode: explorerRecoveryCode,
+        idempotencyKey: "identity-mcp-result-page-revision-1",
+      });
+      assert.equal(identity.status, 200);
+      agentId = identity.body.value.agentId;
+      const preview = await getJson(baseUrl, `/api/epoch/result-page?agentId=${encodeURIComponent(agentId)}`);
+      assert.equal(preview.status, 200);
+
+      const call = async (name: string, args: Record<string, unknown>) => {
+        const response = await postJson(baseUrl, "/api/epoch/mcp/tools/call", { name, arguments: args });
+        assert.equal(response.status, 200);
+        return parseMcpToolResultPayload(response.body) as Record<string, any>;
+      };
+      const created = await call("obsidian_epoch.create_result_page", {
+        agentId,
+        publishToken: preview.body.publishToken,
+        recoveryCode: explorerRecoveryCode,
+        idempotencyKey: "create-mcp-result-page-revision-1",
+      });
+      pageId = created.page.pageId;
+      const unauthorizedCreateReplay = await postJson(baseUrl, "/api/epoch/mcp/tools/call", {
+        name: "obsidian_epoch.create_result_page",
+        arguments: { agentId, idempotencyKey: "create-mcp-result-page-revision-1" },
+      });
+      assert.equal(unauthorizedCreateReplay.status, 401);
+      assert.equal(unauthorizedCreateReplay.body.error, "explorer_auth_required");
+      assert.equal(unauthorizedCreateReplay.body.page, undefined);
+      assert.doesNotMatch(JSON.stringify(unauthorizedCreateReplay.body), /epoch_result_share_/);
+      const revokedA = await call("obsidian_epoch.revoke_result_page", {
+        pageId,
+        recoveryCode: explorerRecoveryCode,
+        idempotencyKey: "revoke-mcp-result-page-revision-a",
+      });
+      const unauthorizedRevokeReplay = await postJson(baseUrl, "/api/epoch/mcp/tools/call", {
+        name: "obsidian_epoch.revoke_result_page",
+        arguments: { pageId, idempotencyKey: "revoke-mcp-result-page-revision-a" },
+      });
+      assert.equal(unauthorizedRevokeReplay.status, 401);
+      assert.equal(unauthorizedRevokeReplay.body.error, "explorer_auth_required");
+      assert.equal(unauthorizedRevokeReplay.body.page, undefined);
+      const revokedB = await call("obsidian_epoch.revoke_result_page", {
+        pageId,
+        recoveryCode: explorerRecoveryCode,
+        idempotencyKey: "revoke-mcp-result-page-revision-b",
+      });
+      const deleted = await call("obsidian_epoch.delete_result_page", {
+        pageId,
+        recoveryCode: explorerRecoveryCode,
+        idempotencyKey: "delete-mcp-result-page-revision-1",
+      });
+      const unauthorizedDeleteReplay = await postJson(baseUrl, "/api/epoch/mcp/tools/call", {
+        name: "obsidian_epoch.delete_result_page",
+        arguments: { pageId, idempotencyKey: "delete-mcp-result-page-revision-1" },
+      });
+      assert.equal(unauthorizedDeleteReplay.status, 401);
+      assert.equal(unauthorizedDeleteReplay.body.error, "explorer_auth_required");
+      assert.equal(unauthorizedDeleteReplay.body.page, undefined);
+      revisions = {
+        1: created.page,
+        2: revokedA.page,
+        3: revokedB.page,
+        4: deleted.page,
+      };
+      assert.deepEqual(Object.values(revisions).map((page) => page.shareVersion), [1, 2, 3, 4]);
+    }, {
+      persistJsonl: async (fileName, record) => {
+        writes.push({ fileName, record: record as Record<string, any> });
+      },
+    });
+
+    const commandWrites = writes
+      .filter((write) => write.fileName === "command-events.jsonl")
+      .map((write) => write.record)
+      .filter((record) => record.resultPages?.some((page: Record<string, any>) => page.pageId === pageId));
+    assert.deepEqual(commandWrites.map((record) => record.commandId), [
+      `obsidian_epoch.create_result_page:${pageId}:1`,
+      `obsidian_epoch.revoke_result_page:${pageId}:2`,
+      `obsidian_epoch.revoke_result_page:${pageId}:3`,
+      `obsidian_epoch.delete_result_page:${pageId}:4`,
+    ]);
+
+    const assertRestart = (loaded: ReturnType<typeof hydrateAgentRuntimeOptions>) => {
+      const restarted = createAgentWorldRuntime(loaded);
+      assert.equal(restarted.epochGetResultPage({ pageId })?.shareVersion, 4);
+      assert.deepEqual(restarted.epochCreateResultPage({
+        agentId,
+        recoveryCode: explorerRecoveryCode,
+        idempotencyKey: "create-mcp-result-page-revision-1",
+      }), { page: revisions[1], duplicate: true });
+      assert.deepEqual(restarted.epochRevokeResultPage({
+        pageId,
+        recoveryCode: explorerRecoveryCode,
+        idempotencyKey: "revoke-mcp-result-page-revision-a",
+      }), { page: revisions[2], duplicate: true });
+      assert.deepEqual(restarted.epochRevokeResultPage({
+        pageId,
+        recoveryCode: explorerRecoveryCode,
+        idempotencyKey: "revoke-mcp-result-page-revision-b",
+      }), { page: revisions[3], duplicate: true });
+      assert.deepEqual(restarted.epochDeleteResultPage({
+        pageId,
+        recoveryCode: explorerRecoveryCode,
+        idempotencyKey: "delete-mcp-result-page-revision-1",
+      }), { page: revisions[4], duplicate: true });
+    };
+
+    assertRestart(hydrateAgentRuntimeOptions({
+      epochEvents: writes.filter((write) => write.fileName === "epoch-events.jsonl").map((write) => write.record),
+      commandEvents: writes.filter((write) => write.fileName === "command-events.jsonl").map((write) => write.record),
+    }));
+    for (const write of writes) await appendSqliteJsonl(dbPath, write.fileName, write.record);
+    assertRestart(await loadAgentRuntimeOptionsFromSqlite(dbPath));
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("HTTP result pages expose continuation actions and regional context", async () => {
@@ -12396,6 +12744,128 @@ test("HTTP one-shot exploration run completes a multi-node journey and publishes
     );
     assert.match(recentRunPage.run.finalOutcome?.summary || "", /完整历程已结算/);
   });
+});
+
+test("HTTP exploration and result-page lifecycle persist one recoverable command envelope per mutation", async () => {
+  const writes: { readonly fileName: string; readonly record: Record<string, unknown> }[] = [];
+  const runtime = createAgentWorldRuntime({
+    epoch: { idFactory: createSequentialEpochIdFactory("http_atomic_result") },
+  });
+  const explorerId = "explorer_http_atomic_result";
+  const explorerRecoveryCode = recoveryCode(explorerId, "local_http_atomic_result_secret");
+
+  await withHttpServer(runtime, async (baseUrl) => {
+    const identity = await postJson(baseUrl, "/api/epoch/identity/issue", {
+      explorerId,
+      recoveryCode: explorerRecoveryCode,
+      identityName: "事务边界测试员",
+      idempotencyKey: "identity-http-atomic-result-1",
+    });
+    assert.equal(identity.status, 200);
+    writes.length = 0;
+
+    const run = await postJson(baseUrl, "/api/epoch/exploration/run", {
+      agentId: identity.body.value.agentId,
+      regionId: "region_gray_harbor",
+      mandate: "验证探索和页面同一持久化边界",
+      stepCount: 2,
+      recoveryCode: explorerRecoveryCode,
+      idempotencyKey: "run-http-atomic-result-1",
+    });
+    assert.equal(run.status, 200);
+
+    const preview = await getJson(baseUrl, `/api/epoch/result-page?agentId=${encodeURIComponent(identity.body.value.agentId)}`);
+    const created = await postJson(baseUrl, "/api/epoch/result-page/create", {
+      agentId: identity.body.value.agentId,
+      publishToken: preview.body.publishToken,
+      recoveryCode: explorerRecoveryCode,
+      idempotencyKey: "create-http-atomic-result-1",
+    });
+    assert.equal(created.status, 200);
+    const revoked = await postJson(baseUrl, "/api/epoch/result-page/revoke", {
+      pageId: created.body.page.pageId,
+      recoveryCode: explorerRecoveryCode,
+      idempotencyKey: "revoke-http-atomic-result-1",
+    });
+    assert.equal(revoked.status, 200);
+    const deleted = await postJson(baseUrl, "/api/epoch/result-page/delete", {
+      pageId: created.body.page.pageId,
+      recoveryCode: explorerRecoveryCode,
+      idempotencyKey: "delete-http-atomic-result-1",
+    });
+    assert.equal(deleted.status, 200);
+  }, {
+    persistJsonl: async (fileName, record) => {
+      writes.push({ fileName, record: record as Record<string, unknown> });
+    },
+  });
+
+  assert.deepEqual(new Set(writes.map((write) => write.fileName)), new Set(["command-events.jsonl"]));
+  const commands = writes.map((write) => write.record.command);
+  assert.deepEqual(commands, [
+    "POST /api/epoch/exploration/run",
+    "POST /api/epoch/result-page/create",
+    "POST /api/epoch/result-page/revoke",
+    "POST /api/epoch/result-page/delete",
+  ]);
+  const runCommit = writes[0]?.record;
+  assert.ok(Array.isArray(runCommit?.epochEvents) && runCommit.epochEvents.length > 0);
+  assert.equal((runCommit?.resultPages as readonly unknown[]).length, 1);
+  const loaded = hydrateAgentRuntimeOptions({ commandEvents: writes.map((write) => write.record) });
+  assert.ok(loaded.epochEvents.length > 0);
+  assert.equal(loaded.resultPages.length, 4);
+  const lifecyclePageId = (writes[1]?.record.resultPages as readonly { readonly pageId: string }[])[0]?.pageId;
+  assert.ok(lifecyclePageId);
+  assert.deepEqual(
+    loaded.resultPages
+      .filter((page) => page.pageId === lifecyclePageId)
+      .map((page) => page.shareVersion),
+    [1, 2, 3],
+  );
+});
+
+test("HTTP result-page command append failure leaves no partial page record for restart", async () => {
+  const writes: { readonly fileName: string; readonly record: Record<string, unknown> }[] = [];
+  let rejectCommandCommit = false;
+  const runtime = createAgentWorldRuntime({
+    epoch: { idFactory: createSequentialEpochIdFactory("http_atomic_result_failure") },
+  });
+  const explorerId = "explorer_http_atomic_result_failure";
+  const explorerRecoveryCode = recoveryCode(explorerId, "local_http_atomic_result_failure_secret");
+
+  await withHttpServer(runtime, async (baseUrl) => {
+    const identity = await postJson(baseUrl, "/api/epoch/identity/issue", {
+      explorerId,
+      recoveryCode: explorerRecoveryCode,
+      identityName: "事务失败测试员",
+      idempotencyKey: "identity-http-atomic-result-failure-1",
+    });
+    assert.equal(identity.status, 200);
+    const preview = await getJson(baseUrl, `/api/epoch/result-page?agentId=${encodeURIComponent(identity.body.value.agentId)}`);
+    rejectCommandCommit = true;
+    const failed = await postJson(baseUrl, "/api/epoch/result-page/create", {
+      agentId: identity.body.value.agentId,
+      publishToken: preview.body.publishToken,
+      recoveryCode: explorerRecoveryCode,
+      idempotencyKey: "create-http-atomic-result-failure-1",
+    });
+    assert.equal(failed.status, 503);
+    assert.equal(failed.body.error, "epoch_persistence_unavailable");
+  }, {
+    persistJsonl: async (fileName, record) => {
+      if (rejectCommandCommit && fileName === "command-events.jsonl") throw new Error("simulated_command_append_failure");
+      writes.push({ fileName, record: record as Record<string, unknown> });
+    },
+  });
+
+  assert.equal(writes.some((write) => write.fileName === "result-pages.jsonl"), false);
+  assert.equal(writes.some((write) => write.fileName === "command-events.jsonl"), false);
+  const loaded = hydrateAgentRuntimeOptions({
+    epochEvents: writes.filter((write) => write.fileName === "epoch-events.jsonl").map((write) => write.record),
+    commandEvents: writes.filter((write) => write.fileName === "command-events.jsonl").map((write) => write.record),
+    resultPages: writes.filter((write) => write.fileName === "result-pages.jsonl").map((write) => write.record),
+  });
+  assert.equal(loaded.resultPages.length, 0);
 });
 
 test("HTTP result pages expose server-settled regional conflict context", async () => {

@@ -148,13 +148,37 @@ test("result page runtime rules build create revoke and delete page records", ()
   assert.equal(active.status, "active");
   assert.equal(active.createdBy, "actor_explorer");
   assert.equal(active.idempotencyKey, "result_page:make-page");
+  assert.equal(active.idempotencySubjectHash, resultPageRequestHash({
+    idempotencyKey: " make-page ",
+    actorExplorerId: "actor_explorer",
+  }));
   assert.equal(active.expiresAt, "2026-07-07T00:00:00.000Z");
   assert.equal(active.urlPath, "/epoch/result/epoch_page_1?shareToken=share_token&shareVersion=1");
   assert.equal(active.shareTokenHash, resultPageShareTokenHash("share_token"));
 
+  const settledJourneyPage = resultPageActiveRecord({
+    request: { idempotencyKey: "settled-journey-page", actorExplorerId: "actor_explorer" },
+    payload: {
+      ...resultPayload,
+      journey: {
+        journeyId: "journey_1",
+        correlationId: "journey:journey_1",
+        status: "settled",
+        objective: "带回一年经历",
+        regionId: "region_gray_harbor",
+        episodes: [],
+        canonicalEventIds: [],
+      },
+    },
+    pageId: "epoch_page_journey_final",
+    shareToken: "journey_share_token",
+    createdAt: "2026-07-06T00:00:00.000Z",
+  });
+  assert.equal(settledJourneyPage.expiresAt, undefined);
+
   const revoked = resultPageRevokedRecord({
     page: active,
-    request: { reason: ` ${"用户撤回".repeat(80)} ` },
+    request: { idempotencyKey: "revoke-page", reason: ` ${"用户撤回".repeat(80)} ` },
     revokedAt: "2026-07-06T01:00:00.000Z",
     revokedBy: "operator",
   });
@@ -164,6 +188,7 @@ test("result page runtime rules build create revoke and delete page records", ()
   assert.equal(revoked.shareTokenHash, undefined);
   assert.equal(revoked.revokedAt, "2026-07-06T01:00:00.000Z");
   assert.equal(revoked.revokedBy, "operator");
+  assert.equal(revoked.lifecycleIdempotencyKey, "result_page_revoke:revoke-page");
   assert.equal(revoked.revokeReason?.length, 160);
 
   const deletionSummary = resultPageDeletionSummary(
@@ -174,7 +199,7 @@ test("result page runtime rules build create revoke and delete page records", ()
   );
   const deleted = resultPageDeletedRecord({
     page: revoked,
-    request: { reason: " 清理公开正文 " },
+    request: { idempotencyKey: "delete-page", reason: " 清理公开正文 " },
     deletedAt: "2026-07-06T02:00:00.000Z",
     deletedBy: "explorer_receipt",
     deletionSummary,
@@ -185,6 +210,7 @@ test("result page runtime rules build create revoke and delete page records", ()
   assert.equal(deleted.payload, undefined);
   assert.equal(deleted.publicSafeSummary, undefined);
   assert.equal(deleted.deleteReason, "清理公开正文");
+  assert.equal(deleted.lifecycleIdempotencyKey, "result_page_delete:delete-page");
   assert.equal(deleted.deletionSummary, deletionSummary);
 });
 
@@ -231,6 +257,10 @@ test("result page runtime rules use stable json for hashes", () => {
   assert.equal(
     stableResultPageJson({ b: 1, a: { d: 2, c: [3, { b: true, a: false }] } }),
     '{"a":{"c":[3,{"a":false,"b":true}],"d":2},"b":1}',
+  );
+  assert.equal(
+    stableResultPageJson({ omitted: undefined, values: [undefined, 1] }),
+    '{"values":[null,1]}',
   );
 });
 
@@ -326,10 +356,10 @@ test("result page runtime rules focus progress events and hash publish requests"
   );
 });
 
-test("result page runtime rules identify page owners from payloads or deleted summaries", () => {
-  assert.equal(resultPagePayloadOwnerExplorerId(payload()), "explorer_receipt");
+test("result page runtime rules identify page owners from hashed progress or deleted summaries", () => {
+  assert.equal(resultPagePayloadOwnerExplorerId(payload()), "explorer_progress");
   assert.equal(resultPagePayloadOwnerExplorerId(payload({ receipt: receipt({ explorerId: undefined }) })), "explorer_progress");
-  assert.equal(resultPageOwnerExplorerId(page()), "explorer_receipt");
+  assert.equal(resultPageOwnerExplorerId(page()), "explorer_progress");
   assert.equal(resultPageOwnerExplorerId(page({
     payload: undefined,
     deletionSummary: { ownerExplorerId: "explorer_deleted" } as EpochResultPageDeletionSummary,
@@ -362,7 +392,7 @@ test("result page runtime rules summarize deletion without carrying the page bod
   );
 
   assert.equal(summary.pageId, "epoch_page_1");
-  assert.equal(summary.ownerExplorerId, "explorer_receipt");
+  assert.equal(summary.ownerExplorerId, "explorer_progress");
   assert.equal(summary.receiptPayloadHash, "sha256:payload_hash");
   assert.equal(summary.fullPayloadHash, `sha256:${sha256Hex(stableResultPageJson(sourcePage.payload))}`);
   assert.deepEqual(summary.canonicalEventIds, []);

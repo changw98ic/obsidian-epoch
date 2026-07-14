@@ -1,4 +1,9 @@
 import { OBSIDIAN_EPOCH_PACKAGE_SIGNING_ENV_VAR } from "./packageArchive.ts";
+import {
+  RUNTIME_ACTION_SIGNING_ENV_VAR,
+  RUNTIME_ACTION_VERIFICATION_KEYS_ENV_VAR,
+  parseRuntimeActionVerificationPublicKeys,
+} from "./runtimeActionSigning.ts";
 import { attestedRunnersFromEnv } from "./attestedRunnerConfig.ts";
 import { type EpochAttestedRunnerConfig } from "./epoch/runtime.ts";
 import { createHash, createPrivateKey, createPublicKey } from "node:crypto";
@@ -44,6 +49,7 @@ export interface AgentServerStartupConfig {
   readonly mcpPlayerTokenJsonlPath?: string;
   readonly mcpPlayerTokenTtlMs: number;
   readonly packageReleaseKeyId?: string;
+  readonly runtimeActionKeyId?: string;
   readonly operatorKey?: string;
   readonly registrationSecret?: string;
   readonly attestedRunners: readonly EpochAttestedRunnerConfig[];
@@ -168,6 +174,28 @@ function requireProductionPackageSigningKey(env: Env) {
   return {
     privateKeyPem,
     releaseKeyId: createHash("sha256").update(publicKeyDer).digest("hex"),
+  };
+}
+
+function requireProductionRuntimeActionSigningKey(env: Env) {
+  const configured = configuredSecret(env, RUNTIME_ACTION_SIGNING_ENV_VAR);
+  if (typeof configured !== "string" || !configured.trim()) {
+    throw new Error(`${RUNTIME_ACTION_SIGNING_ENV_VAR} must be set when NODE_ENV=production`);
+  }
+  const privateKeyPem = normalizedPackageSigningPrivateKey(configured);
+  let privateKey;
+  try {
+    privateKey = createPrivateKey(privateKeyPem);
+  } catch {
+    throw new Error(`${RUNTIME_ACTION_SIGNING_ENV_VAR} must contain a valid Ed25519 private key`);
+  }
+  if (privateKey.asymmetricKeyType !== "ed25519") {
+    throw new Error(`${RUNTIME_ACTION_SIGNING_ENV_VAR} must contain an Ed25519 private key`);
+  }
+  const publicKeyDer = createPublicKey(privateKeyPem).export({ type: "spki", format: "der" });
+  return {
+    privateKeyPem,
+    keyId: createHash("sha256").update(publicKeyDer).digest("hex"),
   };
 }
 
@@ -390,6 +418,14 @@ export function productionAgentServerConfigFromEnv(env: Env): AgentServerStartup
 
   if (env.NODE_ENV === "production") {
     const packageSigning = requireProductionPackageSigningKey(env);
+    const runtimeActionSigning = requireProductionRuntimeActionSigningKey(env);
+    const runtimeActionVerificationKeys = configuredSecret(env, RUNTIME_ACTION_VERIFICATION_KEYS_ENV_VAR);
+    if (runtimeActionVerificationKeys) {
+      parseRuntimeActionVerificationPublicKeys(runtimeActionVerificationKeys);
+    }
+    if (runtimeActionSigning.keyId === packageSigning.releaseKeyId) {
+      throw new Error(`${RUNTIME_ACTION_SIGNING_ENV_VAR} must be independent from ${OBSIDIAN_EPOCH_PACKAGE_SIGNING_ENV_VAR}`);
+    }
     const operatorKey = normalizedProductionOperatorKey(env);
     const mcpBearerToken = normalizedMcpBearerToken(env, true);
     const registrationSecret = normalizedRegistrationSecret(env, true);
@@ -401,12 +437,14 @@ export function productionAgentServerConfigFromEnv(env: Env): AgentServerStartup
       registrationSecret,
       operatorKey,
       packageSigning.privateKeyPem,
+      runtimeActionSigning.privateKeyPem,
     ]);
     requireIndependentOperatorKey(operatorKey, [
       { name: MCP_BEARER_TOKEN_ENV_VAR, value: mcpBearerToken },
       { name: REGISTRATION_SECRET_ENV_VAR, value: registrationSecret },
       { name: REGISTRATION_ACTOR_HASH_SECRET_ENV_VAR, value: publicRegistrationProtection.actorHashSecret },
       { name: OBSIDIAN_EPOCH_PACKAGE_SIGNING_ENV_VAR, value: packageSigning.privateKeyPem },
+      { name: RUNTIME_ACTION_SIGNING_ENV_VAR, value: runtimeActionSigning.privateKeyPem },
     ]);
     const protectedCredentials = new Set([
       mcpBearerToken,
@@ -414,6 +452,7 @@ export function productionAgentServerConfigFromEnv(env: Env): AgentServerStartup
       operatorKey,
       publicRegistrationProtection.actorHashSecret,
       packageSigning.privateKeyPem,
+      runtimeActionSigning.privateKeyPem,
     ]);
     const runnerIds = new Set<string>();
     const runnerSecrets = new Set<string>();
@@ -437,6 +476,7 @@ export function productionAgentServerConfigFromEnv(env: Env): AgentServerStartup
       mcpPlayerTokenJsonlPath: normalizedMcpPlayerTokenJsonlPath(env, true),
       mcpPlayerTokenTtlMs: normalizedMcpPlayerTokenTtlMs(env),
       packageReleaseKeyId: packageSigning.releaseKeyId,
+      runtimeActionKeyId: runtimeActionSigning.keyId,
       operatorKey,
       registrationSecret,
       attestedRunners,

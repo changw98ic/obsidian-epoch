@@ -8,6 +8,8 @@ import path from "node:path";
 import test from "node:test";
 import { createEpochGameCore } from "../lib/epoch/gameCore.ts";
 import { createSequentialEpochIdFactory } from "../lib/epoch/protocol.ts";
+import { buildEpochResultPagePayload } from "../lib/epoch/resultPagePayloadRules.ts";
+import { resultPageActiveRecord } from "../lib/epoch/resultPageRuntimeRules.ts";
 import {
   createRecoveryBackup,
   createJsonlRecoveryManifest,
@@ -168,6 +170,69 @@ test("recovery manifest gives matching JSONL and SQLite ledger proofs after migr
   }
 });
 
+test("recovery manifests count canonical events and pages embedded in command envelopes", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "epoch-command-envelope-recovery-"));
+  const sourceDir = path.join(tempDir, "jsonl");
+  const dbPath = path.join(tempDir, "agent-world.sqlite");
+  await mkdir(sourceDir, { recursive: true });
+  try {
+    const core = createEpochGameCore({
+      clock: () => new Date("2026-07-12T00:00:00.000Z"),
+      idFactory: createSequentialEpochIdFactory("command_recovery"),
+    });
+    const identity = core.issueIdentity({
+      explorerId: "explorer_command_recovery",
+      identityName: "命令信封恢复者",
+    }, {
+      actorExplorerId: "explorer_command_recovery",
+      trustClass: "untrusted_client",
+      idempotencyKey: "issue-command-recovery-1",
+    });
+    const page = resultPageActiveRecord({
+      request: {
+        agentId: identity.value.agentId,
+        actorExplorerId: "explorer_command_recovery",
+        idempotencyKey: "command-recovery-page-1",
+      },
+      payload: buildEpochResultPagePayload({
+        projection: core.project(),
+        input: { agentId: identity.value.agentId },
+        generatedAt: "2026-07-12T00:00:00.000Z",
+      }),
+      pageId: "page_command_recovery",
+      shareToken: "share-command-recovery",
+      createdAt: "2026-07-12T00:00:00.000Z",
+    });
+    await writeJsonl(path.join(sourceDir, "command-events.jsonl"), [{
+      type: "agent_command_commit",
+      version: 1,
+      command: "obsidian_epoch.test_recovery",
+      commandId: "command-recovery-1",
+      journeyEvents: [],
+      epochEvents: identity.events,
+      resultPages: [page],
+    }]);
+
+    const source = await createJsonlRecoveryManifest(sourceDir);
+    assert.equal(source.epochEvents.records, identity.events.length);
+    assert.equal(source.resultPages.records, 1);
+    await migrateJsonlDataDirToSqlite({ sourceDataDir: sourceDir, dbPath });
+    const target = await createSqliteRecoveryManifest(dbPath);
+    assert.equal(target.epochEvents.records, identity.events.length);
+    assert.equal(target.resultPages.records, 1);
+    const drill = await runJsonlToSqliteRecoveryDrill({
+      sourceDataDir: sourceDir,
+      sqlitePath: dbPath,
+      migrate: false,
+      expectedAgentId: identity.value.agentId,
+      expectedResultPageId: page.pageId,
+    });
+    assert.equal(drill.ok, true);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("recovery manifests give legacy records and batch envelopes the same logical epoch proof", async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "epoch-recovery-batch-proof-"));
   const legacyDir = path.join(tempDir, "legacy-jsonl");
@@ -239,6 +304,7 @@ test("recovery drill migrates ledgers and proves hydrated runtime state", async 
   await mkdir(sourceDir, { recursive: true });
   try {
     const core = createEpochGameCore({
+      clock: () => new Date("2026-06-26T00:01:00.000Z"),
       idFactory: createSequentialEpochIdFactory("recovery_drill"),
     });
     const identity = core.issueIdentity({
@@ -251,14 +317,21 @@ test("recovery drill migrates ledgers and proves hydrated runtime state", async 
     });
     const resultPage = {
       type: "epoch_result_page",
-      page: {
+      page: resultPageActiveRecord({
+        request: {
+          agentId: identity.value.agentId,
+          actorExplorerId: "explorer_recovery_drill",
+          idempotencyKey: "recovery_drill",
+        },
+        payload: buildEpochResultPagePayload({
+          projection: core.project(),
+          input: { agentId: identity.value.agentId },
+          generatedAt: "2026-06-26T00:02:00.000Z",
+        }),
         pageId: "page_recovery_drill",
+        shareToken: "share-recovery-drill",
         createdAt: "2026-06-26T00:02:00.000Z",
-        urlPath: "/epoch/result/page_recovery_drill",
-        payload: { pageType: "agent_result", generatedAt: "2026-06-26T00:02:00.000Z", progress: {} },
-        createdBy: "explorer_recovery_drill",
-        idempotencyKey: "result_page:recovery_drill",
-      },
+      }),
     };
 
     await writeJsonl(path.join(sourceDir, "epoch-events.jsonl"), identity.events.map((event) => ({

@@ -27,6 +27,8 @@ const composeEnv: NodeJS.ProcessEnv = {
   AGENT_SERVER_REGISTRATION_ACTOR_HASH_SECRET_FILE: "/tmp/actor-hash-secret.txt",
   AGENT_SERVER_REGISTRATION_TRUST_PROXY_HOPS: "1",
   AGENT_PACKAGE_SIGNING_PRIVATE_KEY_PEM_FILE: "/tmp/package-signing-key.pem",
+  AGENT_RUNTIME_ACTION_SIGNING_PRIVATE_KEY_PEM_FILE: "/tmp/runtime-action-signing-key.pem",
+  AGENT_RUNTIME_ACTION_VERIFICATION_PUBLIC_KEYS_FILE: "/tmp/runtime-action-verification-public-keys.json",
   AGENT_SERVER_BACKUP_SIGNING_PRIVATE_KEY_FILE: "/tmp/independent-backup-signing-key.pem",
   AGENT_SERVER_BACKUP_VERIFICATION_PUBLIC_KEY_FILE: "/tmp/independent-backup-public-key.txt",
   AGENT_SERVER_BACKUP_TRUSTED_CHECKPOINT_FILE: "/tmp/independent-backup-checkpoint.json",
@@ -91,6 +93,8 @@ test("compose renders constrained application, operations, and Caddy services", 
     "AGENT_SERVER_REGISTRATION_SECRET",
     "AGENT_SERVER_REGISTRATION_ACTOR_HASH_SECRET",
     "AGENT_PACKAGE_SIGNING_PRIVATE_KEY_PEM",
+    "AGENT_RUNTIME_ACTION_SIGNING_PRIVATE_KEY_PEM",
+    "AGENT_RUNTIME_ACTION_VERIFICATION_PUBLIC_KEYS",
     "AGENT_SERVER_REGISTRATION_INVITES",
     "AGENT_SERVER_ATTESTED_RUNNER_SECRET",
     "AGENT_SERVER_ATTESTED_RUNNERS",
@@ -99,6 +103,12 @@ test("compose renders constrained application, operations, and Caddy services", 
   }
   assert.equal(environment.AGENT_SERVER_OPERATOR_KEY_FILE, "/run/secrets/obsidian_epoch_operator_key");
   assert.equal(environment.AGENT_PACKAGE_SIGNING_PRIVATE_KEY_PEM_FILE, "/run/secrets/obsidian_epoch_package_signing_private_key");
+  assert.equal(environment.AGENT_RUNTIME_ACTION_SIGNING_PRIVATE_KEY_PEM_FILE,
+    "/run/secrets/obsidian_epoch_runtime_action_signing_private_key");
+  assert.equal(environment.AGENT_RUNTIME_ACTION_VERIFICATION_PUBLIC_KEYS_FILE,
+    "/run/secrets/obsidian_epoch_runtime_action_verification_public_keys");
+  assert.ok((app.secrets as readonly { readonly target: string }[]).some((secret) =>
+    secret.target === "obsidian_epoch_runtime_action_verification_public_keys"));
   assert.equal(environment.AGENT_SERVER_REGISTRATION_INVITES_FILE, "/run/secrets/obsidian_epoch_registration_invites");
   assert.equal(environment.AGENT_SERVER_ATTESTED_RUNNERS_FILE, "/run/secrets/obsidian_epoch_attested_runners");
 

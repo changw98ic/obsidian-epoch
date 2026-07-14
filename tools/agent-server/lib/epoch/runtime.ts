@@ -71,6 +71,7 @@ import {
   sourceEventsMentionAgent,
   traceConflictTemplateCatalog,
 } from "./gameCore.ts";
+import type { JourneySceneContractSeed } from "./journeySceneContractRules.ts";
 import {
   anomalyEventInputFromOperatorInput,
   anomalyEventInputFromTemplate,
@@ -210,6 +211,7 @@ import {
 import {
   createPublicWorldReadModelRuntime,
   type EpochAgentBriefingView,
+  type EpochAgentPublicRegionalContextView,
   type EpochHostedSessionWatchInfo,
   type EpochWorldOverviewInfo,
 } from "./publicWorldReadModel.ts";
@@ -377,6 +379,7 @@ export type {
 export type {
   EpochAgentBriefingView,
   EpochAgentBriefingWorldSummary,
+  EpochAgentPublicRegionalContextView,
   EpochHostedSessionWatchIdentity,
   EpochHostedSessionWatchInfo,
   EpochWorldOverviewInfo,
@@ -674,6 +677,36 @@ export interface EpochResultPagePayload {
   readonly regionalContext?: EpochResultPageRegionalContext;
   readonly focusTurnCard?: EpochTurnCard;
   readonly focusHostedSession?: EpochHostedSession;
+  readonly journey?: EpochResultPageJourney;
+}
+
+export interface EpochResultPageJourneyEpisode {
+  readonly episodeId: string;
+  readonly title: string;
+  readonly outcomeKey: string;
+  readonly participants: readonly { readonly id: string; readonly type: string; readonly label: string }[];
+  readonly sourceEventIds: readonly string[];
+  readonly serverFacts?: import("./journeyNarrativeRules.ts").ServerJourneyEpisodeFacts;
+  readonly narrative?: import("./journeyNarrativeRules.ts").PersistedJourneyNarrative;
+}
+
+export interface EpochResultPageJourney {
+  readonly journeyId: string;
+  readonly correlationId: string;
+  readonly status: string;
+  readonly objective: string;
+  readonly regionId: string;
+  readonly startedAtWorldTime?: string;
+  readonly dueAtWorldTime?: string;
+  readonly episodes: readonly EpochResultPageJourneyEpisode[];
+  readonly canonicalEventIds: readonly string[];
+  readonly stateDelta?: {
+    readonly outcomeSummary?: string;
+    readonly reward?: {
+      readonly resourceId?: string;
+      readonly amount?: number;
+    };
+  };
 }
 
 export interface EpochResultPageDraft extends EpochResultPagePayload {
@@ -759,6 +792,9 @@ export interface EpochSharedResultPage {
   readonly publicSafeSummary?: EpochPublicSafeSummary;
   readonly createdBy: string;
   readonly idempotencyKey: string;
+  readonly idempotencySubjectHash?: string;
+  /** Persisted on lifecycle revisions so restart replay can return that exact revision. */
+  readonly lifecycleIdempotencyKey?: string;
   readonly status?: EpochSharedResultPageStatus;
   readonly shareVersion?: number;
   readonly shareTokenHash?: string;
@@ -835,6 +871,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     clock,
     idFactory: options.idFactory,
     initialPages: options.initialResultPages || [],
+    canonicalEpochEvents: () => core.project().events,
     assertExplorerAuth: explorerAuthRuntime.assertExplorerAuth,
     assertOperatorKey,
     assertCreateAllowed: (input) => assertAbuseAllowed(input, { allowRestrictedScore: true }),
@@ -1120,6 +1157,10 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     return publicWorldReadModel.agentBriefing(input);
   }
 
+  function agentPublicIdentity(input: AnyRecord = {}) {
+    return publicWorldReadModel.agentPublicIdentity(input);
+  }
+
   function hostedSessionWatch(input: AnyRecord = {}): EpochHostedSessionWatchInfo {
     return publicWorldReadModel.hostedSessionWatch(input);
   }
@@ -1141,6 +1182,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     confirmAction: highValueConfirmationRuntime.confirm,
     confirmations: highValueConfirmationRuntime.list,
     events: (input: AnyRecord = {}) => eventsInfoView(core.project(), input),
+    interactionEvents: (offset = 0) => core.project().events.slice(offset),
     worldContextVersions: (): EpochWorldContextVersions => publicWorldReadModel.worldContextVersions(),
     worldOverview,
     loreContributions,
@@ -1196,6 +1238,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
       maxDowntimeSeconds: options.maxDowntimeSeconds,
     }),
     agentBriefing,
+    agentPublicIdentity,
     hostedSessionWatch,
     agentMemory: (input: AnyRecord = {}): EpochAgentMemoryInfo => agentMemoryInfoView(core.project(), input),
     personalMigrationSummary: (input: AnyRecord = {}): EpochPersonalMigrationSummary =>
@@ -2271,6 +2314,76 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
           regionId: resolveEpochCanonicalRegionId(assertNonEmptyString(input.regionId, "region_id")),
           mandate: typeof input.mandate === "string" ? input.mandate : undefined,
         }, ownerVerifiedContextFromInput(input, identity.explorerId)));
+      });
+    },
+    startJourneyHostedSession: (input: AnyRecord = {}): EpochRuntimeResult<EpochHostedSession> => {
+      const agentId = assertNonEmptyString(input.agentId, "agent_id");
+      const identity = requireRuntimeIdentity(agentId);
+      const journeyScene = input.journeyScene;
+      if (!journeyScene || typeof journeyScene !== "object" || Array.isArray(journeyScene)) {
+        throw new Error("journey_scene_contract_seed_required");
+      }
+      return idempotentlyAfterExplorerAuth("start_hosted_session", input, identity.explorerId, () => {
+        assertNoRequestSecretMaterialInPublicText(input, input.mandate);
+        return commandResult(core.startHostedSession({
+          agentId,
+          regionId: resolveEpochCanonicalRegionId(assertNonEmptyString(input.regionId, "region_id")),
+          mandate: typeof input.mandate === "string" ? input.mandate : undefined,
+          journeyScene: journeyScene as JourneySceneContractSeed,
+        }, ownerVerifiedContextFromInput(input, identity.explorerId)));
+      });
+    },
+    journeyHostedSession: (input: AnyRecord = {}): EpochHostedSession => {
+      const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
+      const journeyId = typeof input.journeyId === "string" ? input.journeyId.trim() : "";
+      const sceneId = typeof input.sceneId === "string" ? input.sceneId.trim() : "";
+      const episodeId = typeof input.episodeId === "string" ? input.episodeId.trim() : "";
+      const expectedVersion = Number(input.expectedVersion);
+      const session = sessionId
+        ? core.project().hostedSessions[sessionId]
+        : Object.values(core.project().hostedSessions).find((candidate) =>
+            candidate.sceneContract?.journeyId === journeyId
+            && (sceneId
+              ? candidate.sceneContract.sceneId === sceneId
+              : candidate.sceneContract.episodeId === episodeId
+                && candidate.sceneContract.expectedVersion === expectedVersion
+                && clock().getTime() <= Date.parse(candidate.sceneContract.expiresAt)));
+      if (!session?.sceneContract) throw new Error("journey_scene_contract_not_found");
+      explorerAuthRuntime.assertExplorerAuth(input, session.explorerId);
+      return session;
+    },
+    commitJourneyHostedAction: (input: AnyRecord = {}): EpochRuntimeResult<EpochHostedActionRecord> => {
+      const journeyId = assertNonEmptyString(input.journeyId, "journey_id");
+      const sceneId = assertNonEmptyString(input.sceneId, "journey_scene_id");
+      const session = Object.values(core.project().hostedSessions).find((candidate) =>
+        candidate.sceneContract?.journeyId === journeyId
+        && candidate.sceneContract.sceneId === sceneId);
+      if (!session?.sceneContract) throw new Error("journey_scene_contract_not_found");
+      const sessionId = session.sessionId;
+      const expectedVersion = Number(input.expectedVersion);
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+        throw new Error("journey_expected_version_invalid");
+      }
+      const episodeId = assertNonEmptyString(input.episodeId, "journey_episode_id");
+      if (journeyId !== session.sceneContract.journeyId
+        || episodeId !== session.sceneContract.episodeId
+        || expectedVersion !== session.sceneContract.expectedVersion) {
+        throw new Error("journey_scene_commit_binding_invalid");
+      }
+      const actionOptionId = assertNonEmptyString(input.actionOptionId, "action_option_id");
+      const signedAction = session.sceneContract.actionOptions.find((action) => action.actionOptionId === actionOptionId);
+      if (!signedAction) throw new Error("journey_scene_action_not_found");
+      if (assertNonEmptyString(input.signature, "journey_scene_action_signature") !== signedAction.signature) {
+        throw new Error("journey_scene_action_signature_invalid");
+      }
+      return idempotentlyAfterExplorerAuth("commit_journey_action", input, session.explorerId, () => {
+        assertNoRequestSecretMaterialInPublicText(input, input.visibleText);
+        return commandResult(core.submitHostedAction({
+          sessionId,
+          actionOptionId,
+          visibleText: typeof input.visibleText === "string" ? input.visibleText : undefined,
+          journeyValidation: { journeyId, episodeId, expectedVersion },
+        }, ownerVerifiedContextFromInput({ ...input, agentId: session.agentId }, session.explorerId)));
       });
     },
     submitHostedAction: (input: AnyRecord = {}): EpochRuntimeResult<EpochHostedActionRecord> => {

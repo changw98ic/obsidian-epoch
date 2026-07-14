@@ -15,11 +15,26 @@ import { createLoreLedger } from "./lore.ts";
 import { createEpochOperationSwitchRegistry, type EpochOperationGateInput } from "./operationSwitches.ts";
 import { createLegacyOutboxLedger, graphSyncFromOutboxEntries, type LegacyOutboxCreateInput } from "./outbox.ts";
 import { createEpochRuntime } from "./epoch/runtime.ts";
+import { createAgentCompanionRuntime } from "./epoch/agentCompanionRuntime.ts";
+import type { JourneyRuntimeEvent } from "./epoch/journeyReadModel.ts";
+import { journeyMetricsView } from "./epoch/journeyMetricsReadModel.ts";
+import {
+  buildPersistedJourneyNarrative,
+  buildServerJourneyEpisodeFacts,
+} from "./epoch/journeyNarrativeRules.ts";
+import { currentMcpRequestContext } from "./mcpRequestContext.ts";
 import {
   EPOCH_ACTIVE_IDENTITY_TOOL_NAMES,
   EPOCH_ARCHIVED_IDENTITY_RECOMMENDED_TOOLS,
 } from "./epoch/actionEligibilityReadModel.ts";
-import { epochEventsForPersistence } from "./epoch/runtimePublicProjectionRules.ts";
+import {
+  attachEpochEventsForPersistence,
+  epochEventsForPersistence,
+} from "./epoch/runtimePublicProjectionRules.ts";
+import {
+  journeyEventsForPersistence,
+  mergeJourneyEventsForPersistence,
+} from "./epoch/journeyPersistence.ts";
 import { createProgressionLedger } from "./progression.ts";
 import { assertPublicSafe } from "./safety.ts";
 import { createTicketRegistry, hashRunPayload } from "./tickets.ts";
@@ -165,6 +180,7 @@ type RuntimeOptions = AnyRecord & {
   contextSnapshots?: readonly object[];
   outbox?: object;
   outboxEvents?: readonly object[];
+  journeyEvents?: readonly object[];
 };
 type AgentWorldRuntime = ReturnType<typeof createAgentWorldRuntime>;
 type McpToolDefinition = {
@@ -207,6 +223,9 @@ const EPOCH_OWNER_RECOVERY_NON_ACTIVE_IDENTITY_TOOLS = [
   "obsidian_epoch.owner_trace_conflict_memories",
   "obsidian_epoch.revoke_result_page",
   "obsidian_epoch.delete_result_page",
+  "obsidian_epoch.agent_briefing",
+  "obsidian_epoch.journey_status",
+  "obsidian_epoch.journey_album",
 ] as const;
 
 const EPOCH_OPERATOR_TARGET_ACTIVE_IDENTITY_TOOLS = [
@@ -580,6 +599,52 @@ function epochQuickstart(input: AnyRecord = {}) {
         [EPOCH_CONTENT_POLICY_REGION_ENV_VAR]: contentPolicy.regionCode,
       },
     },
+    journeyFlow: [
+      {
+        step: "briefing",
+        tool: "obsidian_epoch.agent_briefing",
+        purpose: "恢复当前旅程、领取已返程经历并聚合待决事项。",
+      },
+      {
+        step: "prepare",
+        tool: "obsidian_epoch.prepare_journey",
+        purpose: "把一句自然语言意图转换为谨慎、均衡或探索预设的可读计划。",
+        requires: ["agentId", "destinationRegionId", "owner authorization", "idempotencyKey"],
+      },
+      {
+        step: "depart",
+        tool: "obsidian_epoch.start_journey",
+        purpose: "冻结现实/世界返程时间并记录到达段；默认暂停在 Agent 主事件决策。",
+        requires: ["journeyId", "expectedVersion", "owner authorization", "idempotencyKey"],
+      },
+      {
+        step: "propose_main_step",
+        tool: "obsidian_epoch.propose_journey_step",
+        purpose: "取得当前主事件的服务器签名 SceneContract，不产生结算。",
+        requires: ["journeyId", "expectedVersion", "owner authorization", "idempotencyKey"],
+      },
+      {
+        step: "commit_main_action",
+        tool: "obsidian_epoch.commit_journey_action",
+        purpose: "提交 Agent 选中的签名行动，并记录主事件与基于已确认路线的返程段。",
+        requires: ["journeyId", "sceneId", "episodeId", "actionOptionId", "signature", "expectedVersion", "owner authorization", "idempotencyKey"],
+      },
+      {
+        step: "wait_or_reconnect",
+        tool: "obsidian_epoch.journey_status",
+        purpose: "按 nextPollAt 读取状态；Host 离线不取消旅程，服务器在到期后幂等 catch-up。",
+      },
+      {
+        step: "safe_recall",
+        tool: "obsidian_epoch.recall_journey",
+        purpose: "请求安全返程，不瞬移且不回滚已经发生的服务器事件。",
+      },
+      {
+        step: "album",
+        tool: "obsidian_epoch.journey_album",
+        purpose: "读取长期身份的旅程与可验证 episode 收藏。",
+      },
+    ],
     oneTurnFlow: [
       {
         step: "inspect",
@@ -660,6 +725,54 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       : Array.isArray(epochOptions.initialResultPages)
         ? epochOptions.initialResultPages
         : [],
+  });
+  const journeyOptions = recordValue(options.journey);
+  const initialJourneyEvents = Array.isArray(options.journeyEvents)
+    ? options.journeyEvents as readonly JourneyRuntimeEvent[]
+    : Array.isArray(journeyOptions.initialEvents)
+      ? journeyOptions.initialEvents as readonly JourneyRuntimeEvent[]
+      : [];
+  let journeyIdSequence = initialJourneyEvents.reduce((highest, event) => {
+    const candidates = [event.eventId, event.journeyId];
+    for (const candidate of candidates) {
+      const suffix = /_(\d+)$/.exec(candidate)?.[1];
+      if (suffix) highest = Math.max(highest, Number(suffix));
+    }
+    return highest;
+  }, 0);
+  const configuredJourneyIdFactory = typeof journeyOptions.idFactory === "function"
+    ? journeyOptions.idFactory as (kind: "journey" | "event") => string
+    : undefined;
+  const configuredJourneyClock = typeof journeyOptions.now === "function"
+    ? journeyOptions.now as () => Date | string
+    : undefined;
+  const configuredWorldClock = typeof journeyOptions.worldNow === "function"
+    ? journeyOptions.worldNow as () => Date | string
+    : configuredJourneyClock;
+  const clockIso = (clock: (() => Date | string) | undefined) => {
+    const value = clock?.() ?? new Date();
+    return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+  };
+  const companionRuntime = createAgentCompanionRuntime({
+    epoch: {
+      progress: epochRuntime.progress,
+      verifyExplorerAuth: epochRuntime.verifyExplorerAuth,
+      regionInfo: epochRuntime.regionInfo,
+      agentBriefing: epochRuntime.agentBriefing,
+      publicIdentity: epochRuntime.agentPublicIdentity,
+      events: epochRuntime.events,
+      interactionEvents: epochRuntime.interactionEvents,
+    },
+    journeyOptions: {
+      idFactory: configuredJourneyIdFactory ?? ((kind) => `${kind}_${String(++journeyIdSequence).padStart(8, "0")}`),
+      nowReal: () => clockIso(configuredJourneyClock),
+      nowWorld: () => clockIso(configuredWorldClock),
+      initialEvents: initialJourneyEvents,
+      canonicalEpochEvents: () => epochRuntime.interactionEvents(0),
+      defaultRealDurationMs: positiveNumberValue(journeyOptions.defaultRealDurationMs, 30 * 60 * 1_000),
+      defaultWorldDurationMs: positiveNumberValue(journeyOptions.defaultWorldDurationMs, 60 * 60 * 1_000),
+      pollIntervalMs: positiveNumberValue(journeyOptions.pollIntervalMs, 5 * 60 * 1_000),
+    },
   });
   const transparencyLedger = createTransparencyLedger({
     initialEntries: cloneRecords(options.transparencyEntries),
@@ -1359,6 +1472,294 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     };
   }
 
+  function proposeJourneyStepRuntime(input: AnyRecord = {}) {
+    assertPublicSafe(input);
+    const proposed = companionRuntime.proposeStep(input);
+    const episode = proposed.episode;
+    let hostedSession;
+    let hostedEvents: readonly ReturnType<typeof epochEventsForPersistence>[number][] = [];
+    try {
+      hostedSession = epochRuntime.journeyHostedSession({
+        ...input,
+        sessionId: undefined,
+        sceneId: undefined,
+        journeyId: proposed.journey.journeyId,
+        episodeId: episode.episodeId,
+        expectedVersion: proposed.journey.version,
+      });
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "journey_scene_contract_not_found") throw error;
+      const hosted = epochRuntime.startJourneyHostedSession({
+        ...input,
+        correlationId: proposed.journey.correlationId,
+        causationId: proposed.journey.journeyId,
+        agentId: proposed.journey.agentId,
+        regionId: proposed.journey.destinationRegionId,
+        mandate: episode.title,
+        journeyScene: {
+          seed: `${proposed.journey.journeyId}:${episode.episodeId}`,
+          journeyId: proposed.journey.journeyId,
+          episodeId: episode.episodeId,
+          sceneType: episode.type,
+          phase: episode.phase ?? "main",
+          title: episode.title,
+          mandate: proposed.journey.mandate,
+          worldObjects: episode.worldObjectRefs.map((worldObject) => ({
+            ...worldObject,
+            regionId: proposed.journey.destinationRegionId,
+            sourceFactIds: episode.sourceFactIds,
+          })),
+          sourceFactIds: episode.sourceFactIds,
+          expectedVersion: proposed.journey.version,
+        },
+        idempotencyKey: `${String(input.idempotencyKey || "").trim()}:proposal:${episode.episodeId}`,
+      });
+      hostedSession = hosted.value;
+      hostedEvents = epochEventsForPersistence(hosted);
+    }
+    const result = {
+      ...proposed,
+      proposal: {
+        journeyId: proposed.journey.journeyId,
+        episode,
+        stepNumber: proposed.stepNumber,
+        totalSteps: proposed.totalSteps,
+        sceneContract: hostedSession.sceneContract,
+        actionOptions: hostedSession.actionOptions,
+        expectedVersion: proposed.journey.version,
+        nextAction: "obsidian_epoch.commit_journey_action",
+      },
+    };
+    return attachEpochEventsForPersistence(result, hostedEvents);
+  }
+
+  function commitSingleJourneyStepRuntime(input: AnyRecord = {}) {
+    assertPublicSafe(input);
+    const session = epochRuntime.journeyHostedSession(input);
+    const contract = session.sceneContract;
+    if (!contract) throw new Error("journey_scene_contract_not_found");
+    const status = companionRuntime.stepStatus(input);
+    const recordedEpisode = status.episodes.find((episode) => episode.episodeId === contract.episodeId);
+    const proposed = recordedEpisode ? undefined : companionRuntime.proposeStep({
+      ...input,
+      expectedVersion: contract.expectedVersion,
+    });
+    const episode = recordedEpisode ?? proposed?.episode;
+    if (!episode || episode.episodeId !== contract.episodeId) {
+      throw new Error("journey_scene_episode_binding_invalid");
+    }
+    const action = epochRuntime.commitJourneyHostedAction({
+      ...input,
+      correlationId: status.journey.correlationId,
+      causationId: contract.sceneId,
+      journeyId: contract.journeyId,
+      sceneId: contract.sceneId,
+      episodeId: contract.episodeId,
+      expectedVersion: contract.expectedVersion,
+      idempotencyKey: `${String(input.idempotencyKey || "").trim()}:hosted:${contract.episodeId}`,
+    });
+    const canonicalEventIds = recordedEpisode?.settlement?.canonicalEventIds
+      ?? epochEventsForPersistence(action).map((event) => event.eventId);
+    const agentProgress = recordValue(epochRuntime.progress({ agentId: status.journey.agentId }));
+    const agentIdentity = recordValue(agentProgress.identity);
+    const serverFacts = recordedEpisode?.serverFacts ?? buildServerJourneyEpisodeFacts({
+      journeyId: contract.journeyId,
+      episodeId: episode.episodeId,
+      phase: episode.phase ?? "main",
+      title: episode.title,
+      agent: {
+        id: status.journey.agentId,
+        ...(optionalString(agentIdentity.identityName) ? { displayName: optionalString(agentIdentity.identityName) } : {}),
+      },
+      worldObjectRefs: episode.worldObjectRefs,
+      action: {
+        optionLabel: action.value.optionLabel,
+        outcomeSummary: action.value.outcomeSummary,
+        ...(action.value.reward ? { reward: action.value.reward } : {}),
+      },
+      canonicalEventIds,
+    });
+    const narrative = recordedEpisode?.narrative ?? buildPersistedJourneyNarrative({
+      serverFacts,
+      ...(input.narrativeDraft !== undefined ? { samplingDraft: input.narrativeDraft } : {}),
+    }).value;
+    const committedEpisode = recordedEpisode ?? {
+      ...episode,
+      sourceFactIds: [...new Set([...episode.sourceFactIds, ...canonicalEventIds])],
+      settlement: {
+        canonicalEventIds,
+        outcomeSummary: action.value.outcomeSummary,
+        ...(action.value.reward ? { reward: {
+          resourceId: action.value.reward.resourceId,
+          amount: action.value.reward.amount,
+        } } : {}),
+      },
+      serverFacts,
+      narrative,
+    };
+    const committed = companionRuntime.commitEpisodes({
+      ...input,
+      journeyId: contract.journeyId,
+      expectedVersion: contract.expectedVersion,
+      episodes: [committedEpisode],
+      idempotencyKey: `${String(input.idempotencyKey || "").trim()}:journey:${contract.episodeId}`,
+    });
+    const result = {
+      ...committed,
+      episode: committedEpisode,
+      settledAction: action.value,
+      sceneContract: contract,
+      duplicate: Boolean(recordedEpisode),
+    };
+    attachEpochEventsForPersistence(result, epochEventsForPersistence(action));
+    return mergeJourneyEventsForPersistence(result, status, committed);
+  }
+
+  function commitJourneyActionRuntime(input: AnyRecord = {}) {
+    const session = epochRuntime.journeyHostedSession(input);
+    if (session.sceneContract?.phase !== "main") throw new Error("journey_main_scene_required");
+    const main = commitSingleJourneyStepRuntime(input);
+    const current = companionRuntime.status(input);
+    const existingReturn = current.episodes.find((episode) => episode.phase === "return");
+    if (existingReturn) {
+      return mergeJourneyEventsForPersistence({
+        ...current,
+        mainEpisode: main.episode,
+        returnEpisode: existingReturn,
+        settledAction: main.settledAction,
+        duplicate: true,
+      }, main, current);
+    }
+    const returning = companionRuntime.beginReturn({
+      ...input,
+      journeyId: current.journey.journeyId,
+      expectedVersion: current.journey.version,
+      idempotencyKey: `${String(input.idempotencyKey || "").trim()}:begin-return`,
+    });
+    const returnProposal = proposeJourneyStepRuntime({
+      ...input,
+      journeyId: returning.journey.journeyId,
+      expectedVersion: returning.journey.version,
+      idempotencyKey: `${String(input.idempotencyKey || "").trim()}:return`,
+    });
+    const returnAction = returnProposal.proposal.sceneContract?.actionOptions.find((action) =>
+      action.optionKey === "return_by_known_route");
+    if (!returnAction) throw new Error("journey_return_action_missing");
+    const returned = commitSingleJourneyStepRuntime({
+      ...input,
+      journeyId: returning.journey.journeyId,
+      sceneId: returnProposal.proposal.sceneContract?.sceneId,
+      episodeId: returnProposal.proposal.episode.episodeId,
+      expectedVersion: returning.journey.version,
+      actionOptionId: returnAction.actionOptionId,
+      signature: returnAction.signature,
+      visibleText: `沿已确认路线完成${returnProposal.proposal.episode.title}`,
+      idempotencyKey: `${String(input.idempotencyKey || "").trim()}:return`,
+    });
+    const result = {
+      ...returned,
+      mainEpisode: main.episode,
+      returnEpisode: returned.episode,
+      settledAction: main.settledAction,
+      returnAction: returned.settledAction,
+      nextAction: "obsidian_epoch.journey_status",
+    };
+    attachEpochEventsForPersistence(result, [
+      ...epochEventsForPersistence(main),
+      ...epochEventsForPersistence(returnProposal),
+      ...epochEventsForPersistence(returned),
+    ]);
+    return mergeJourneyEventsForPersistence(result, main, returning, returned);
+  }
+
+  function startJourneyAgentNativeRuntime(input: AnyRecord = {}) {
+    assertPublicSafe(input);
+    const started = companionRuntime.start(input);
+    let current = companionRuntime.status({ ...input, journeyId: started.journey.journeyId });
+    let arrivalProposal: ReturnType<typeof proposeJourneyStepRuntime> | undefined;
+    let arrival: ReturnType<typeof commitSingleJourneyStepRuntime> | undefined;
+    if (!current.episodes.some((episode) => episode.phase === "arrival")) {
+      arrivalProposal = proposeJourneyStepRuntime({
+        ...input,
+        journeyId: current.journey.journeyId,
+        expectedVersion: current.journey.version,
+        idempotencyKey: `${String(input.idempotencyKey || "").trim()}:arrival`,
+      });
+      const arrivalAction = arrivalProposal.proposal.sceneContract?.actionOptions.find((action) =>
+        action.optionKey === "enter_gray_harbor");
+      if (!arrivalAction) throw new Error("journey_arrival_action_missing");
+      arrival = commitSingleJourneyStepRuntime({
+        ...input,
+        journeyId: current.journey.journeyId,
+        sceneId: arrivalProposal.proposal.sceneContract?.sceneId,
+        episodeId: arrivalProposal.proposal.episode.episodeId,
+        expectedVersion: current.journey.version,
+        actionOptionId: arrivalAction.actionOptionId,
+        signature: arrivalAction.signature,
+        visibleText: `沿登记路线完成${arrivalProposal.proposal.episode.title}`,
+        idempotencyKey: `${String(input.idempotencyKey || "").trim()}:arrival`,
+      });
+      current = companionRuntime.status({ ...input, journeyId: current.journey.journeyId });
+    }
+    const awaiting = current.journey.status === "traveling"
+      ? companionRuntime.awaitAgent({
+          ...input,
+          journeyId: current.journey.journeyId,
+          expectedVersion: current.journey.version,
+          idempotencyKey: `${String(input.idempotencyKey || "").trim()}:await-agent`,
+        })
+      : current;
+    const result = {
+      ...started,
+      ...awaiting,
+      episodes: companionRuntime.status({ ...input, journeyId: started.journey.journeyId }).episodes,
+      arrivalEpisode: arrival?.episode ?? current.episodes.find((episode) => episode.phase === "arrival"),
+      nextAction: awaiting.journey.status === "awaiting_agent"
+        ? "obsidian_epoch.propose_journey_step"
+        : "obsidian_epoch.journey_status",
+    };
+    attachEpochEventsForPersistence(result, [
+      ...(arrivalProposal ? epochEventsForPersistence(arrivalProposal) : []),
+      ...(arrival ? epochEventsForPersistence(arrival) : []),
+    ]);
+    return mergeJourneyEventsForPersistence(result, started, arrival, awaiting);
+  }
+
+  function recallJourneyRuntime(input: AnyRecord = {}) {
+    const current = companionRuntime.status(input);
+    const phases = new Set(current.episodes.map((episode) => episode.phase));
+    if (current.journey.status === "awaiting_agent" && phases.has("arrival") && !phases.has("main")) {
+      const proposal = proposeJourneyStepRuntime({
+        ...input,
+        expectedVersion: current.journey.version,
+        idempotencyKey: `${String(input.idempotencyKey || "").trim()}:safe-main`,
+      });
+      const contract = proposal.proposal.sceneContract;
+      const safeAction = contract?.actionOptions.find((action) =>
+        action.actionOptionId === contract.safeFallbackActionOptionId);
+      if (!contract || !safeAction) throw new Error("journey_safe_recall_action_missing");
+      const recalled = commitJourneyActionRuntime({
+        ...input,
+        sceneId: contract.sceneId,
+        episodeId: contract.episodeId,
+        expectedVersion: proposal.proposal.expectedVersion,
+        actionOptionId: safeAction.actionOptionId,
+        signature: safeAction.signature,
+        visibleText: `提前召回：${safeAction.label}`,
+        idempotencyKey: `${String(input.idempotencyKey || "").trim()}:safe-commit`,
+      });
+      const result = {
+        ...recalled,
+        episodes: companionRuntime.status({ ...input, journeyId: recalled.journey.journeyId }).episodes,
+        recalled: true,
+        recallMode: "server_safe_return",
+      };
+      attachEpochEventsForPersistence(result, epochEventsForPersistence(recalled));
+      return mergeJourneyEventsForPersistence(result, recalled);
+    }
+    return companionRuntime.recall(input);
+  }
+
   return {
     getContext,
     contextSnapshots: (input: AnyRecord = {}) => contextSnapshotsView(input),
@@ -1491,7 +1892,53 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     },
     epochAgentBriefing: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
-      return epochRuntime.agentBriefing(input);
+      return companionRuntime.briefing(input) as unknown as ReturnType<typeof epochRuntime.agentBriefing> & {
+        readonly identityExists: boolean;
+        readonly canonicalAgentId?: string;
+        readonly publicIdentity?: { readonly label: string; readonly status?: "active" | "archived" };
+        readonly regionLabel?: string;
+        readonly currentJourney?: unknown;
+        readonly returnedJourneys: readonly unknown[];
+        readonly recentEpisodes: readonly unknown[];
+        readonly pendingDecisions: readonly unknown[];
+        readonly interactionInbox: readonly unknown[];
+        readonly interactionInboxFeatured?: unknown;
+        readonly interactionInboxSummaries?: readonly unknown[];
+        readonly interactionInboxTotal?: number;
+        readonly agentWishes: readonly string[];
+        readonly nextPollAt?: string;
+      };
+    },
+    epochPrepareJourney: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return companionRuntime.prepare(input);
+    },
+    epochStartJourney: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return companionRuntime.start(input);
+    },
+    epochStartJourneyAgentNative: (input: AnyRecord = {}) => startJourneyAgentNativeRuntime(input),
+    epochProposeJourneyStep: (input: AnyRecord = {}) => proposeJourneyStepRuntime(input),
+    epochCommitJourneyAction: (input: AnyRecord = {}) => commitJourneyActionRuntime(input),
+    epochCommitJourneyEpisodes: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return companionRuntime.commitEpisodes(input);
+    },
+    epochJourneyStatus: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return companionRuntime.status(input);
+    },
+    epochRecallJourney: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return recallJourneyRuntime(input);
+    },
+    epochLinkJourneyVerification: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return companionRuntime.linkVerification(input);
+    },
+    epochJourneyAlbum: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return companionRuntime.album(input);
     },
     epochAgentMemory: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
@@ -1515,7 +1962,16 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     },
     epochOperatorOverview: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
-      return epochRuntime.operatorOverview(input);
+      const overview = epochRuntime.operatorOverview(input);
+      const epochEventsValue = epochRuntime.events({ limit: 1_000 });
+      const epochEvents = recordValue(epochEventsValue).events;
+      return {
+        ...overview,
+        companion: journeyMetricsView(
+          companionRuntime.journeyRuntime().projection(),
+          Array.isArray(epochEvents) ? epochEvents : [],
+        ),
+      };
     },
     epochRunMaintenance: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
@@ -1980,6 +2436,10 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       assertPublicSafe(input);
       return epochRuntime.startHostedSession(input);
     },
+    epochStartJourneyHostedSession: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return epochRuntime.startJourneyHostedSession(input);
+    },
     epochSubmitHostedAction: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
       return epochRuntime.submitHostedAction(input);
@@ -2288,13 +2748,110 @@ export const AGENT_WORLD_TOOLS = [
   {
     name: "obsidian_epoch.agent_briefing",
     title: "Agent briefing",
-    description: "Read a unified server-authored briefing for an agent: identity, resources, lifetime, region messages/news, open commissions, and recommended next tools.",
+    description: "Read the owner-authorized companion briefing: identity, current journey, returned journeys, pending decisions, recent episodes and server world context.",
     inputSchema: objectSchema({
       explorerId: { type: "string" },
       agentId: { type: "string" },
       regionId: { type: "string" },
       limit: { type: "number" },
+      recoveryCode: { type: "string" },
+      localSecret: { type: "string" },
     }),
+  },
+  {
+    name: "obsidian_epoch.prepare_journey",
+    title: "Prepare journey",
+    description: "Owner-authorized safe journey preview. Applies a cautious, balanced, or explorer preset without starting or locking resources.",
+    inputSchema: objectSchema({
+      agentId: { type: "string" },
+      originRegionId: { type: "string" },
+      destinationRegionId: { type: "string" },
+      mandate: { type: "object" },
+      presetId: { type: "string", enum: ["cautious", "balanced", "explorer"] },
+      policy: { type: "object" },
+      expectedReturn: { type: "string" },
+      recoveryCode: { type: "string" },
+      localSecret: { type: "string" },
+      idempotencyKey: { type: "string" },
+    }, ["agentId", "destinationRegionId", "idempotencyKey"]),
+  },
+  {
+    name: "obsidian_epoch.start_journey",
+    title: "Start journey",
+    description: "Owner-authorized journey departure. Records a grounded arrival, pauses at the main event for the Agent, and does not require Sampling.",
+    inputSchema: objectSchema({
+      journeyId: { type: "string" },
+      expectedVersion: { type: "number" },
+      realDurationMs: { type: "number" },
+      worldDurationMs: { type: "number" },
+      episodeCount: { type: "number" },
+      decisionMode: { type: "string", enum: ["agent_native", "host_sampling"] },
+      recoveryCode: { type: "string" },
+      localSecret: { type: "string" },
+      idempotencyKey: { type: "string" },
+    }, ["journeyId", "expectedVersion", "idempotencyKey"]),
+  },
+  {
+    name: "obsidian_epoch.propose_journey_step",
+    title: "Propose journey step",
+    description: "Owner-authorized Agent-native proposal for the current journey step. Returns a server-signed SceneContract and concrete action options without committing an outcome.",
+    inputSchema: objectSchema({
+      journeyId: { type: "string" },
+      expectedVersion: { type: "number" },
+      recoveryCode: { type: "string" },
+      localSecret: { type: "string" },
+      idempotencyKey: { type: "string" },
+    }, ["journeyId", "expectedVersion", "idempotencyKey"]),
+  },
+  {
+    name: "obsidian_epoch.commit_journey_action",
+    title: "Commit journey action",
+    description: "Commit one server-signed main journey action. Validates owner, journey version, scene binding, signature, expiry and idempotency before recording the main event and grounded return.",
+    inputSchema: objectSchema({
+      journeyId: { type: "string" },
+      sceneId: { type: "string" },
+      episodeId: { type: "string" },
+      actionOptionId: { type: "string" },
+      expectedVersion: { type: "number" },
+      signature: { type: "string" },
+      visibleText: { type: "string" },
+      recoveryCode: { type: "string" },
+      localSecret: { type: "string" },
+      idempotencyKey: { type: "string" },
+    }, ["journeyId", "sceneId", "episodeId", "actionOptionId", "expectedVersion", "signature", "idempotencyKey"]),
+  },
+  {
+    name: "obsidian_epoch.journey_status",
+    title: "Journey status",
+    description: "Read an owner-authorized journey, grounded episodes, pending state and next recommended poll time; due journeys catch up server-side.",
+    inputSchema: objectSchema({
+      journeyId: { type: "string" },
+      recoveryCode: { type: "string" },
+      localSecret: { type: "string" },
+    }, ["journeyId"]),
+  },
+  {
+    name: "obsidian_epoch.recall_journey",
+    title: "Recall journey",
+    description: "Request an owner-authorized safe return. Recall preserves prior events and does not teleport or roll back the journey.",
+    inputSchema: objectSchema({
+      journeyId: { type: "string" },
+      expectedVersion: { type: "number" },
+      recoveryCode: { type: "string" },
+      localSecret: { type: "string" },
+      idempotencyKey: { type: "string" },
+    }, ["journeyId", "expectedVersion", "idempotencyKey"]),
+  },
+  {
+    name: "obsidian_epoch.journey_album",
+    title: "Journey album",
+    description: "Read owner-authorized journey history and grounded episode cards for one persistent identity.",
+    inputSchema: objectSchema({
+      agentId: { type: "string" },
+      recoveryCode: { type: "string" },
+      localSecret: { type: "string" },
+      year: { type: "number" },
+    }, ["agentId"]),
   },
   {
     name: "obsidian_epoch.agent_memory",
@@ -4004,6 +4561,13 @@ function toolResult(value: unknown) {
       enumerable: false,
     });
   }
+  const journeyEvents = journeyEventsForPersistence(value);
+  if (journeyEvents.length) {
+    Object.defineProperty(result, "journeyEvents", {
+      value: journeyEvents,
+      enumerable: false,
+    });
+  }
   return result as McpToolResult;
 }
 
@@ -4089,6 +4653,11 @@ const REJECTED_COMMAND_AUDIT_TOOLS = new Set([
   "obsidian_epoch.tick_npc_lifecycle",
   "obsidian_epoch.update_agent_npc_bond",
   "obsidian_epoch.create_result_page",
+  "obsidian_epoch.prepare_journey",
+  "obsidian_epoch.start_journey",
+  "obsidian_epoch.propose_journey_step",
+  "obsidian_epoch.commit_journey_action",
+  "obsidian_epoch.recall_journey",
 ]);
 
 function errorCodeForRejectedCommand(error: unknown) {
@@ -4115,6 +4684,218 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
   const assertLegacyMutationEnabled = () => {
     if (process.env.NODE_ENV === "production") throw new Error(LEGACY_MUTATION_DISABLED_ERROR);
   };
+  async function startJourneyWithSampling(args: AnyRecord) {
+    const requestContext = currentMcpRequestContext();
+    const samplingRequested = args.decisionMode === "host_sampling";
+    const baseIdempotencyKey = String(args.idempotencyKey || "").trim();
+    const partialPersistence = requestContext?.persistPartial as (((toolName: string, result: unknown) => Promise<void>) & {
+      readonly runMutation?: <T>(operation: () => Promise<T> | T) => Promise<T>;
+    }) | undefined;
+    const runStage = partialPersistence?.runMutation || (async <T>(operation: () => Promise<T> | T) => operation());
+    const started = samplingRequested && requestContext?.sampling
+      ? await runStage(async () => {
+        const result = runtime.epochStartJourneyAgentNative(args);
+        await partialPersistence?.("obsidian_epoch.start_journey", result);
+        return result;
+      })
+      : runtime.epochStartJourneyAgentNative(args);
+    if (!samplingRequested || !requestContext?.sampling) {
+      const result = {
+        ...started,
+        sampling: {
+          ok: false,
+          source: "sampling_advice",
+          trust: "untrusted_client",
+          fallback: samplingRequested ? "capability_absent" : "agent_native",
+        },
+        nextAction: "obsidian_epoch.propose_journey_step",
+      };
+      attachEpochEventsForPersistence(result, epochEventsForPersistence(started));
+      return mergeJourneyEventsForPersistence(result, started);
+    }
+
+    const proposal = await runStage(async () => {
+      const result = runtime.epochProposeJourneyStep({
+        ...args,
+        journeyId: started.journey.journeyId,
+        expectedVersion: started.journey.version,
+        idempotencyKey: `${baseIdempotencyKey}:main-proposal`,
+      });
+      await partialPersistence?.("obsidian_epoch.propose_journey_step", result);
+      return result;
+    });
+    const contract = proposal.proposal.sceneContract;
+    if (!contract) throw new Error("journey_scene_contract_not_found");
+    const actionOptions = proposal.proposal.actionOptions.map((option) => ({
+      actionOptionId: option.actionOptionId,
+      label: option.label,
+      risk: option.risk,
+    }));
+    await requestContext.notifyProgress?.(0, "正在请求 Host 为灰港主事件选择服务器签发的行动。");
+    const sampling = await requestContext.sampling.createMessage({
+      systemPrompt: "Choose exactly one server-issued actionOptionId. Return strict JSON with actionOptionId, rationale, confidence, and optional userFacingMessage. Do not invent outcomes, rewards, people, or world facts.",
+      messages: [{
+        role: "user",
+        text: JSON.stringify({
+          journeyId: started.journey.journeyId,
+          episodeId: proposal.proposal.episode.episodeId,
+          episodeTitle: proposal.proposal.episode.title,
+          scene: {
+            phase: contract.phase,
+            premise: contract.premise,
+            location: contract.location,
+            participants: contract.participants,
+            confirmedFactIds: contract.confirmedFactIds,
+          },
+          actionOptions,
+        }),
+      }],
+      maxTokens: 384,
+    }, {
+      activeClientRequest: true,
+      absoluteTimeoutMs: 60_000,
+      softTimeoutMs: 30_000,
+    });
+    await requestContext.notifyProgress?.(1, sampling.ok
+      ? "Host 选择已校验。"
+      : "Host 选择不可用；保留提案，由 Agent 正常调用 commit_journey_action。");
+    const selected = sampling.ok
+      ? contract.actionOptions.find((option) => option.actionOptionId === sampling.decision.actionOptionId)
+      : undefined;
+    const samplingMessage = sampling.ok ? sampling.decision.userFacingMessage : undefined;
+    if (!selected) {
+      const result = {
+        ...started,
+        proposal: proposal.proposal,
+        sampling: sampling.ok ? {
+          ok: false,
+          source: "sampling_advice",
+          trust: "untrusted_client",
+          fallback: "invalid_action_option",
+        } : sampling,
+        nextAction: "obsidian_epoch.commit_journey_action",
+      };
+      attachEpochEventsForPersistence(result, []);
+      return mergeJourneyEventsForPersistence(result);
+    }
+
+    const committed = await runStage(async () => {
+      const result = runtime.epochCommitJourneyAction({
+        ...args,
+        journeyId: started.journey.journeyId,
+        sceneId: contract.sceneId,
+        episodeId: contract.episodeId,
+        expectedVersion: contract.expectedVersion,
+        actionOptionId: selected.actionOptionId,
+        signature: selected.signature,
+        visibleText: samplingMessage || `旅程主事件：${proposal.proposal.episode.title}`,
+        idempotencyKey: `${baseIdempotencyKey}:main-commit`,
+      });
+      await partialPersistence?.("obsidian_epoch.commit_journey_action", result);
+      return result;
+    });
+    const result = {
+      ...started,
+      ...committed,
+      proposal: proposal.proposal,
+      sampling,
+      nextAction: "obsidian_epoch.journey_status",
+    };
+    attachEpochEventsForPersistence(result, partialPersistence ? [] : epochEventsForPersistence(committed));
+    return partialPersistence ? mergeJourneyEventsForPersistence(result) : mergeJourneyEventsForPersistence(result, committed);
+  }
+
+  function ensureSettledJourneyVerification(
+    status: ReturnType<typeof runtime.epochJourneyStatus>,
+    args: AnyRecord,
+  ) {
+    if (status.journey.status !== "settled") return { status };
+    const existingPage = status.journey.verification
+      ? runtime.epochGetResultPage({ pageId: status.journey.verification.pageId })
+      : undefined;
+    if (existingPage?.payload?.journey?.status === "settled") {
+      return { status, finalVerification: { page: existingPage, duplicate: true } };
+    }
+    const canonicalEventIds = [...new Set(status.episodes.flatMap((episode) => episode.settlement?.canonicalEventIds || []))];
+    const latestSettlement = status.episodes.map((episode) => episode.settlement).filter(Boolean).at(-1);
+    const pageInput = {
+      ...args,
+      correlationId: status.journey.correlationId,
+      agentId: status.journey.agentId,
+      regionId: status.journey.destinationRegionId,
+      journeyVerification: {
+        journeyId: status.journey.journeyId,
+        correlationId: status.journey.correlationId,
+        status: status.journey.status,
+        objective: status.journey.mandate.objective,
+        regionId: status.journey.destinationRegionId,
+        startedAtWorldTime: status.journey.startedAtWorldTime,
+        dueAtWorldTime: status.journey.dueAtWorldTime,
+        episodes: status.episodes.map((episode) => ({
+          episodeId: episode.episodeId,
+          title: episode.title,
+          outcomeKey: episode.outcomeKey,
+          participants: episode.worldObjectRefs
+            .filter((ref) => ref.type === "agent" || ref.type === "npc")
+            .map((ref) => ({ id: ref.id, type: ref.type, label: ref.label })),
+          sourceEventIds: [...new Set([...episode.sourceFactIds, ...(episode.settlement?.canonicalEventIds || [])])],
+          ...(episode.serverFacts ? { serverFacts: episode.serverFacts } : {}),
+          ...(episode.narrative ? { narrative: episode.narrative } : {}),
+        })),
+        canonicalEventIds,
+        ...(latestSettlement ? { stateDelta: {
+          ...(latestSettlement.outcomeSummary ? { outcomeSummary: latestSettlement.outcomeSummary } : {}),
+          ...(latestSettlement.reward ? { reward: latestSettlement.reward } : {}),
+        } } : {}),
+      },
+    };
+    const draft = runtime.epochResultPage(pageInput);
+    const finalVerification = runtime.epochCreateResultPage({
+      ...pageInput,
+      publishToken: draft.publishToken,
+      idempotencyKey: `${status.journey.journeyId}:final-verification`,
+    });
+    const linked = runtime.epochLinkJourneyVerification({
+      ...args,
+      journeyId: status.journey.journeyId,
+      expectedVersion: status.journey.version,
+      pageId: finalVerification.page.pageId,
+      urlPath: finalVerification.page.urlPath,
+      createdAt: finalVerification.page.createdAt,
+      idempotencyKey: `${status.journey.journeyId}:link-final-verification`,
+    });
+    const linkedStatus = { ...linked, episodes: status.episodes };
+    return {
+      status: mergeJourneyEventsForPersistence(linkedStatus, status, linked),
+      finalVerification,
+    };
+  }
+
+  function journeyStatusWithFinalVerification(args: AnyRecord) {
+    const initial = runtime.epochJourneyStatus(args);
+    const finalized = ensureSettledJourneyVerification(initial, args);
+    return finalized.finalVerification
+      ? mergeJourneyEventsForPersistence({
+          ...finalized.status,
+          finalVerification: finalized.finalVerification,
+        }, initial, finalized.status)
+      : initial;
+  }
+
+  function agentBriefingWithFinalVerification(args: AnyRecord) {
+    const briefing = runtime.epochAgentBriefing({ ...args, deferReturnDelivery: true });
+    const finalizations = briefing.returnedJourneys.map((journeyValue) => {
+      const journey = recordValue(journeyValue);
+      return ensureSettledJourneyVerification(runtime.epochJourneyStatus({ ...args, journeyId: journey.journeyId }), args);
+    });
+    const result = {
+      ...briefing,
+      returnedJourneys: finalizations.map((finalized) => finalized.status.journey),
+      returnedJourneyVerifications: finalizations.flatMap((finalized) =>
+        finalized.finalVerification ? [finalized.finalVerification] : []),
+    };
+    return mergeJourneyEventsForPersistence(result, briefing, ...finalizations.map((finalized) => finalized.status));
+  }
   const handlers = new Map<string, (args: AnyRecord) => unknown>([
     ["agent_world.context_package", (args) => runtime.getContext(args)],
     ["agent_world.context_snapshots", (args) => runtime.contextSnapshots(args)],
@@ -4147,7 +4928,14 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     }],
     ["obsidian_epoch.rotate_recovery", (args) => runtime.epochRotateRecovery(args)],
     ["obsidian_epoch.progress", (args) => runtime.epochProgress(args)],
-    ["obsidian_epoch.agent_briefing", (args) => runtime.epochAgentBriefing(args)],
+    ["obsidian_epoch.agent_briefing", (args) => agentBriefingWithFinalVerification(args)],
+    ["obsidian_epoch.prepare_journey", (args) => runtime.epochPrepareJourney(args)],
+    ["obsidian_epoch.start_journey", startJourneyWithSampling],
+    ["obsidian_epoch.propose_journey_step", (args) => runtime.epochProposeJourneyStep(args)],
+    ["obsidian_epoch.commit_journey_action", (args) => runtime.epochCommitJourneyAction(args)],
+    ["obsidian_epoch.journey_status", (args) => journeyStatusWithFinalVerification(args)],
+    ["obsidian_epoch.recall_journey", (args) => runtime.epochRecallJourney(args)],
+    ["obsidian_epoch.journey_album", (args) => runtime.epochJourneyAlbum(args)],
     ["obsidian_epoch.agent_memory", (args) => runtime.epochAgentMemory(args)],
     ["obsidian_epoch.personal_migration_summary", (args) => runtime.epochPersonalMigrationSummary(args)],
     ["obsidian_epoch.confirm_personality_drift", (args) => runtime.epochConfirmPersonalityDrift(args)],

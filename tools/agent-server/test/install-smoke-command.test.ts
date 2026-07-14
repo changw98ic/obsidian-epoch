@@ -94,7 +94,7 @@ function assertStreamableMcpSmoke(result: Record<string, any>) {
   assert.equal(result.streamableMcpProtocolVersion, "2025-06-18");
   assert.equal(result.streamableMcpServerName, "obsidian-epoch-agent-world");
   assert.equal(result.streamableMcpInitializedStatus, 202);
-  assert.equal(result.streamableMcpGetStatus, 405);
+  assert.equal(result.streamableMcpGetStatus, 400);
   assert.ok(result.streamableMcpToolCount >= 1);
   assert.equal(result.streamableMcpWorldOverviewListed, true);
   assert.equal(result.streamableMcpQuickstartServerBase, result.serverBase);

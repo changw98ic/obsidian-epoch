@@ -316,6 +316,13 @@ import {
   turnOptionTemplate,
 } from "./turnHostedActionRules.ts";
 import {
+  buildJourneySceneContract,
+  journeySceneHostedActionOptions,
+  type JourneySceneContract,
+  type JourneySceneContractSeed,
+  verifyJourneySceneActionSignature,
+} from "./journeySceneContractRules.ts";
+import {
   planServerHostedJobCompletedEvents,
   planServerHostedJobQueuedEvents,
   planServerHostedJobSkippedEvents,
@@ -1613,6 +1620,7 @@ export interface EpochHostedSession {
   readonly deliveryTrust: EpochTrustClass;
   readonly status: EpochHostedSessionStatus;
   readonly actionOptions: readonly HostedActionOptionPayload[];
+  readonly sceneContract?: JourneySceneContract;
   readonly actions: readonly EpochHostedActionRecord[];
   readonly startedAt: string;
   readonly completedAt?: string;
@@ -2433,12 +2441,18 @@ export interface StartHostedSessionInput {
   readonly regionId: string;
   readonly mandate?: string;
   readonly channelClass?: EpochChannelClass;
+  readonly journeyScene?: JourneySceneContractSeed;
 }
 
 export interface SubmitHostedActionInput {
   readonly sessionId: string;
   readonly actionOptionId: string;
   readonly visibleText?: string;
+  readonly journeyValidation?: {
+    readonly journeyId: string;
+    readonly episodeId: string;
+    readonly expectedVersion: number;
+  };
   readonly attestation?: {
     readonly attestationId: string;
     readonly runnerId: string;
@@ -5377,6 +5391,7 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
         deliveryTrust: event.payload.deliveryTrust || event.trustClass,
         status: "active",
         actionOptions: event.payload.actionOptions,
+        sceneContract: event.payload.sceneContract,
         actions: [],
         startedAt: event.payload.startedAt,
       };
@@ -9200,14 +9215,21 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       .filter(Boolean)
       .filter((hook) => !consumedSocialHookIds.has(hook.hookId))
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.hookId.localeCompare(right.hookId));
-    const actionOptions = hostedActionOptions({
-      sessionId,
-      idFactory,
-      socialHooks: regionSocialHooks,
-      includeHighRisk: includeHighRiskOptions(current, agentId),
-      current,
+    const sceneContract = input.journeyScene ? buildJourneySceneContract({
+      ...input.journeyScene,
       agentId,
-    });
+      expiresAt: new Date(Date.parse(startedAt) + 15 * 60 * 1_000).toISOString(),
+    }) : undefined;
+    const actionOptions = sceneContract
+      ? journeySceneHostedActionOptions(sceneContract)
+      : hostedActionOptions({
+          sessionId,
+          idFactory,
+          socialHooks: regionSocialHooks,
+          includeHighRisk: includeHighRiskOptions(current, agentId),
+          current,
+          agentId,
+        });
     const nextEvents = planHostedSessionStartEvents({
       makeEvent: eventFactory(clock, idFactory, { ...context, trustClass: eventTrustClass }),
       sessionId,
@@ -9218,6 +9240,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       channelClass,
       deliveryTrust,
       actionOptions,
+      sceneContract,
       startedAt,
     });
     const nextProjection = applyEvents(current, nextEvents);
@@ -9238,6 +9261,27 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     const actionOptionId = assertNonEmptyString(input.actionOptionId, "hosted_action_option_id");
     const option = session.actionOptions.find((candidate) => candidate.actionOptionId === actionOptionId);
     if (!option) throw new Error("hosted_action_option_not_found");
+    if (session.sceneContract) {
+      const validation = input.journeyValidation;
+      if (!validation) throw new Error("journey_scene_commit_required");
+      if (validation.journeyId !== session.sceneContract.journeyId
+        || validation.episodeId !== session.sceneContract.episodeId
+        || validation.expectedVersion !== session.sceneContract.expectedVersion) {
+        throw new Error("journey_scene_commit_binding_invalid");
+      }
+      if (clock().getTime() > Date.parse(session.sceneContract.expiresAt)) {
+        throw new Error("journey_scene_contract_expired");
+      }
+      const signedAction = session.sceneContract.actionOptions.find((candidate) =>
+        candidate.actionOptionId === actionOptionId);
+      if (!signedAction || !verifyJourneySceneActionSignature({
+        agentId: session.agentId,
+        contract: session.sceneContract,
+        action: signedAction,
+      })) {
+        throw new Error("journey_scene_action_signature_invalid");
+      }
+    }
     const settlement = settlementPolicy(current, session.agentId, {
       risk: option.risk,
       reward: option.reward,

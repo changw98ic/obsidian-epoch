@@ -1,184 +1,294 @@
+import http from "node:http";
+import https from "node:https";
 import readline from "node:readline";
 import { pathToFileURL } from "node:url";
 
 type AnyRecord = Record<string, unknown>;
 
-interface JsonRpcMessage {
+interface JsonRpcMessage extends AnyRecord {
   readonly jsonrpc?: string;
   readonly id?: unknown;
   readonly method?: string;
   readonly params?: AnyRecord;
 }
 
-interface McpTool {
-  readonly name: string;
-  readonly description?: string;
-  readonly inputSchema: AnyRecord;
+interface RemoteResponse {
+  readonly status: number;
+  readonly headers: http.IncomingHttpHeaders;
+  readonly body?: AnyRecord;
 }
 
 const protocolVersion = "2025-06-18";
-const serverInfo = {
-  name: "obsidian-epoch-agent-world",
-  version: "0.1.0",
-};
 const serverBase = (process.env.AGENT_WORLD_SERVER || "http://127.0.0.1:8787").replace(/\/+$/, "");
+const endpoint = new URL("/mcp", `${serverBase}/`);
 const mcpToken = (process.env.AGENT_WORLD_MCP_TOKEN || "").trim();
-let cachedTools: readonly McpTool[] | null = null;
+let remoteSessionId = "";
+let remoteProtocolVersion = protocolVersion;
+let lastEventId = "";
+let eventStreamRequest: http.ClientRequest | undefined;
+let eventStreamReady: Promise<void> | undefined;
+let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+let remoteClosing = false;
+let writeTail: Promise<void> = Promise.resolve();
+let clientMessageTail: Promise<void> = Promise.resolve();
 
-function authorizationHeaders(): Record<string, string> {
+function transportFor(url: URL) {
+  return url.protocol === "https:" ? https : http;
+}
+
+function authorizationHeaders() {
   return mcpToken ? { authorization: `Bearer ${mcpToken}` } : {};
+}
+
+function sessionHeaders() {
+  return remoteSessionId ? {
+    "mcp-session-id": remoteSessionId,
+    "mcp-protocol-version": remoteProtocolVersion,
+  } : {};
 }
 
 function response(id: unknown, result: unknown) {
   return { jsonrpc: "2.0", id, result };
 }
 
-function errorResponse(id: unknown, code: number, message: string, data: unknown = null) {
+function errorResponse(id: unknown, code: number, message: string, data?: unknown) {
   return {
     jsonrpc: "2.0",
     id: id ?? null,
-    error: {
-      code,
-      message,
-      ...(data ? { data } : {}),
-    },
+    error: { code, message, ...(data === undefined ? {} : { data }) },
   };
 }
 
-async function readJson(response: Response): Promise<AnyRecord> {
-  const payload = await response.json();
-  return payload && typeof payload === "object" && !Array.isArray(payload) ? payload as AnyRecord : {};
+function writeJson(message: AnyRecord) {
+  const line = `${JSON.stringify(message)}\n`;
+  const write = () => new Promise<void>((resolve, reject) => {
+    process.stdout.write(line, (error) => error ? reject(error) : resolve());
+  });
+  const queued = writeTail.then(write, write);
+  writeTail = queued.catch(() => undefined);
+  return queued;
 }
 
-function toolsFromManifest(payload: AnyRecord): readonly McpTool[] {
-  const names = Array.isArray(payload.tools) ? payload.tools : [];
-  return names
-    .filter((name): name is string => typeof name === "string" && Boolean(name))
-    .map((name) => ({
-      name,
-      description: "Remote Obsidian Epoch tool. Use the packaged Skill instructions for arguments and trust rules.",
-      inputSchema: {
-        type: "object",
-        additionalProperties: true,
+function requestRemote(method: string, body?: AnyRecord, extraHeaders: Record<string, string> = {}) {
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  return new Promise<RemoteResponse>((resolve, reject) => {
+    const request = transportFor(endpoint).request({
+      protocol: endpoint.protocol,
+      hostname: endpoint.hostname,
+      port: endpoint.port,
+      path: `${endpoint.pathname}${endpoint.search}`,
+      method,
+      agent: false,
+      headers: {
+        accept: "application/json, text/event-stream",
+        ...authorizationHeaders(),
+        ...sessionHeaders(),
+        ...extraHeaders,
+        ...(payload === undefined ? {} : {
+          "content-type": "application/json",
+          "content-length": String(Buffer.byteLength(payload)),
+        }),
       },
-    }));
+    }, (remote) => {
+      let text = "";
+      remote.setEncoding("utf8");
+      remote.on("data", (chunk: string) => { text += chunk; });
+      remote.once("end", () => {
+        let parsed: AnyRecord | undefined;
+        if (text.trim()) {
+          try {
+            const value = JSON.parse(text) as unknown;
+            if (value && typeof value === "object" && !Array.isArray(value)) parsed = value as AnyRecord;
+          } catch {
+            reject(new Error("remote_mcp_invalid_json"));
+            return;
+          }
+        }
+        resolve({ status: remote.statusCode || 0, headers: remote.headers, body: parsed });
+      });
+    });
+    request.once("error", reject);
+    request.end(payload);
+  });
 }
 
-async function listTools(): Promise<readonly McpTool[]> {
-  if (cachedTools) return cachedTools;
-  const listResponse = await fetch(`${serverBase}/api/epoch/mcp/tools/list`, {
-    headers: authorizationHeaders(),
-  });
-  if (listResponse.ok) {
-    const payload = await readJson(listResponse);
-    const tools = Array.isArray(payload.tools) ? payload.tools as McpTool[] : [];
-    if (tools.length) {
-      cachedTools = tools;
-      return tools;
+function remoteError(result: RemoteResponse) {
+  const error = result.body?.error;
+  if (error && typeof error === "object" && !Array.isArray(error)) {
+    const message = (error as AnyRecord).message;
+    if (typeof message === "string") return message;
+  }
+  return `remote_mcp_request_failed_${result.status}`;
+}
+
+async function postRemote(message: JsonRpcMessage) {
+  const result = await requestRemote("POST", message);
+  if (result.status < 200 || result.status >= 300) throw new Error(remoteError(result));
+  return result;
+}
+
+function consumeSseChunk(state: { buffer: string }, chunk: string) {
+  state.buffer += chunk;
+  let boundary = state.buffer.indexOf("\n\n");
+  while (boundary >= 0) {
+    const frame = state.buffer.slice(0, boundary);
+    state.buffer = state.buffer.slice(boundary + 2);
+    const lines = frame.split("\n");
+    const idLine = lines.find((line) => line.startsWith("id: "));
+    if (idLine) lastEventId = idLine.slice(4);
+    const data = lines.filter((line) => line.startsWith("data: ")).map((line) => line.slice(6)).join("\n");
+    if (data) {
+      try {
+        const parsed = JSON.parse(data) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) void writeJson(parsed as AnyRecord);
+      } catch {
+        void writeJson(errorResponse(null, -32700, "remote_sse_parse_error"));
+      }
     }
+    boundary = state.buffer.indexOf("\n\n");
   }
-  if (listResponse.status === 401 || listResponse.status === 403) {
-    const payload = await readJson(listResponse);
-    throw new Error(String(payload.error || payload.message || `remote_mcp_tools_list_auth_failed_${listResponse.status}`));
-  }
-
-  const manifestResponse = await fetch(`${serverBase}/api/epoch/install-manifest`);
-  if (!manifestResponse.ok) {
-    throw new Error(`remote_mcp_tools_list_failed_${manifestResponse.status}`);
-  }
-  cachedTools = toolsFromManifest(await readJson(manifestResponse));
-  return cachedTools;
 }
 
-async function callTool(name: string, args: AnyRecord = {}) {
-  const forwardedArgs = name === "obsidian_epoch.quickstart" ? { serverBase, ...args } : args;
-  const toolResponse = await fetch(`${serverBase}/api/epoch/mcp/tools/call`, {
-    method: "POST",
+function openEventStream(): Promise<void> {
+  if (!remoteSessionId) return Promise.reject(new Error("remote_mcp_session_missing"));
+  if (eventStreamReady) return eventStreamReady;
+  const state = { buffer: "" };
+  let resolveReady!: () => void;
+  let rejectReady!: (error: Error) => void;
+  eventStreamReady = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  const request = transportFor(endpoint).request({
+    protocol: endpoint.protocol,
+    hostname: endpoint.hostname,
+    port: endpoint.port,
+    path: `${endpoint.pathname}${endpoint.search}`,
+    method: "GET",
+    agent: false,
     headers: {
-      "content-type": "application/json",
+      accept: "text/event-stream",
+      connection: "keep-alive",
       ...authorizationHeaders(),
+      ...sessionHeaders(),
+      ...(lastEventId ? { "last-event-id": lastEventId } : {}),
     },
-    body: JSON.stringify({ name, arguments: forwardedArgs }),
+  }, (remote) => {
+    if (remote.statusCode !== 200) {
+      eventStreamRequest = undefined;
+      eventStreamReady = undefined;
+      remote.resume();
+      rejectReady(new Error(`remote_mcp_sse_failed_${remote.statusCode}`));
+      return;
+    }
+    resolveReady();
+    remote.setEncoding("utf8");
+    remote.on("data", (chunk: string) => consumeSseChunk(state, chunk));
+    remote.once("close", () => {
+      eventStreamRequest = undefined;
+      eventStreamReady = undefined;
+      scheduleEventStreamReconnect();
+    });
   });
-  const payload = await readJson(toolResponse);
-  if (!toolResponse.ok) {
-    throw new Error(String(payload.error || payload.message || `remote_mcp_request_failed_${toolResponse.status}`));
+  request.once("error", (error) => {
+    eventStreamRequest = undefined;
+    eventStreamReady = undefined;
+    rejectReady(error);
+    scheduleEventStreamReconnect();
+  });
+  request.end();
+  eventStreamRequest = request;
+  return eventStreamReady;
+}
+
+function scheduleEventStreamReconnect() {
+  if (remoteClosing || !remoteSessionId || reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = undefined;
+    void openEventStream().catch(() => scheduleEventStreamReconnect());
+  }, 250);
+}
+
+async function closeRemoteSession() {
+  remoteClosing = true;
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = undefined;
+  eventStreamRequest?.destroy();
+  eventStreamRequest = undefined;
+  eventStreamReady = undefined;
+  if (!remoteSessionId) return;
+  try {
+    await requestRemote("DELETE");
+  } catch {
+    // The local Host is already disconnecting; remote cleanup is best effort.
   }
-  return payload;
+  remoteSessionId = "";
+}
+
+function isJsonRpcResponse(message: JsonRpcMessage) {
+  return message.jsonrpc === "2.0"
+    && typeof message.method !== "string"
+    && Object.prototype.hasOwnProperty.call(message, "id")
+    && (Object.prototype.hasOwnProperty.call(message, "result") || Object.prototype.hasOwnProperty.call(message, "error"));
+}
+
+function isPriorityClientMessage(message: JsonRpcMessage) {
+  return isJsonRpcResponse(message)
+    || message.method === "notifications/cancelled"
+    || message.method === "notifications/progress";
 }
 
 export async function handleJsonRpcMessage(message: JsonRpcMessage) {
-  if (!message || message.jsonrpc !== "2.0") {
-    return errorResponse(message?.id, -32600, "Invalid Request");
+  if (!message || message.jsonrpc !== "2.0") return errorResponse(message?.id, -32600, "Invalid Request");
+  if (isJsonRpcResponse(message)) {
+    await postRemote(message);
+    return null;
   }
-
-  const { id, method, params } = message;
-  if (method === "notifications/initialized") return null;
-
-  try {
-    if (method === "initialize") {
-      return response(id, {
-        protocolVersion,
-        capabilities: { tools: {} },
-        serverInfo,
-      });
-    }
-    if (method === "tools/list") {
-      return response(id, { tools: await listTools() });
-    }
-    if (method === "tools/call") {
-      const toolName = params?.name;
-      if (typeof toolName !== "string" || !toolName) {
-        return errorResponse(id, -32602, "tools/call requires params.name");
-      }
-      const toolArgs = params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments)
-        ? params.arguments as AnyRecord
-        : {};
-      return response(id, await callTool(toolName, toolArgs));
-    }
-    return errorResponse(id, -32601, `Method not found: ${method || ""}`);
-  } catch (error) {
-    const messageText = error instanceof Error ? error.message : "internal_error";
-    if (messageText === "mcp_auth_required" || messageText === "authentication_required") {
-      return errorResponse(id, -32001, messageText);
-    }
-    const validationErrors = [
-      "ticket_not_found",
-      "ticket_payload_mismatch",
-      "ticket_identity_required",
-      "ticket_identity_mismatch",
-      "agent_identity_archived",
-      "agent_identity_not_found",
-      "downtime_mode_invalid",
-      "downtime_not_active",
-      "hosted_session_not_active",
-      "idempotency_key_required",
-      "resource_insufficient",
-    ];
-    if (messageText.startsWith("unknown_tool:") || validationErrors.includes(messageText)) {
-      return errorResponse(id, -32602, messageText);
-    }
-    return errorResponse(id, -32603, "internal_error", { message: messageText });
+  if (message.method === "initialize") {
+    remoteClosing = false;
+    const remote = await requestRemote("POST", message);
+    if (remote.status !== 200 || !remote.body) throw new Error(remoteError(remote));
+    const sessionHeader = remote.headers["mcp-session-id"];
+    remoteSessionId = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader || "";
+    const versionHeader = remote.headers["mcp-protocol-version"];
+    remoteProtocolVersion = (Array.isArray(versionHeader) ? versionHeader[0] : versionHeader) || protocolVersion;
+    if (!remoteSessionId) throw new Error("remote_mcp_session_missing");
+    return remote.body;
   }
+  if (!remoteSessionId) return errorResponse(message.id, -32002, "mcp_session_not_initialized");
+  const remote = await postRemote(message);
+  if (message.method === "notifications/initialized") {
+    await openEventStream();
+    return null;
+  }
+  return remote.body || (Object.prototype.hasOwnProperty.call(message, "id")
+    ? errorResponse(message.id, -32603, "remote_mcp_empty_response")
+    : null);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
-  const lines = readline.createInterface({
-    input: process.stdin,
-    crlfDelay: Infinity,
-  });
-
-  lines.on("line", async (line) => {
+  const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+  lines.on("line", (line) => {
     if (!line.trim()) return;
     let parsed: JsonRpcMessage;
     try {
       parsed = JSON.parse(line) as JsonRpcMessage;
     } catch {
-      process.stdout.write(`${JSON.stringify(errorResponse(null, -32700, "Parse error"))}\n`);
+      void writeJson(errorResponse(null, -32700, "Parse error"));
       return;
     }
-
-    const result = await handleJsonRpcMessage(parsed);
-    if (result) process.stdout.write(`${JSON.stringify(result)}\n`);
+    const handle = () => handleJsonRpcMessage(parsed)
+      .then((result) => result ? writeJson(result) : undefined)
+      .catch((error: unknown) => writeJson(errorResponse(
+        parsed.id,
+        error instanceof Error && /auth|401|403/.test(error.message) ? -32001 : -32603,
+        error instanceof Error ? error.message : "internal_error",
+      )));
+    if (isPriorityClientMessage(parsed)) {
+      void handle();
+    } else {
+      const queued = clientMessageTail.then(handle, handle);
+      clientMessageTail = queued.then(() => undefined, () => undefined);
+    }
   });
+  lines.once("close", () => { void closeRemoteSession().finally(() => { void writeTail; }); });
+  process.once("SIGTERM", () => { void closeRemoteSession().finally(() => process.exit(0)); });
+  process.once("SIGINT", () => { void closeRemoteSession().finally(() => process.exit(0)); });
 }

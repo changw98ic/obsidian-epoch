@@ -4,6 +4,7 @@ import type {
   EpochWorldOverviewRecentResult,
 } from "./runtime.ts";
 import { buildEpochGameRunReadModelForResultPage } from "./gameRunReadModel.ts";
+import { storedResultPageShareVersion } from "./resultPageRuntimeRules.ts";
 
 export interface EpochResultPageReadModel {
   readonly size: number;
@@ -24,11 +25,16 @@ function hasResultPagePayload(
 
 export function createEpochResultPageReadModel(
   initialPages: readonly EpochSharedResultPage[] = [],
+  assertPage: (page: EpochSharedResultPage) => void = () => undefined,
 ): EpochResultPageReadModel {
   const pagesById = new Map<string, EpochSharedResultPage>();
 
   for (const page of initialPages) {
-    if (page?.pageId) pagesById.set(page.pageId, page);
+    assertPage(page);
+    const current = pagesById.get(page.pageId);
+    if (!current || storedResultPageShareVersion(page) > storedResultPageShareVersion(current)) {
+      pagesById.set(page.pageId, page);
+    }
   }
 
   return {
@@ -39,7 +45,8 @@ export function createEpochResultPageReadModel(
       return pagesById.get(pageId);
     },
     set(pageId, page) {
-      if (!pageId) return;
+      if (!pageId || pageId !== page.pageId) throw new Error("result_page_page_id_mismatch");
+      assertPage(page);
       pagesById.set(pageId, page);
     },
     values() {
@@ -47,7 +54,7 @@ export function createEpochResultPageReadModel(
     },
     recentResults({ limit, isExpired }) {
       return [...pagesById.values()]
-        .filter((page) => (page.status || "active") === "active")
+        .filter((page) => (page.status ?? "active") === "active")
         .filter(hasResultPagePayload)
         .filter((page) => !isExpired(page))
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.pageId.localeCompare(left.pageId))

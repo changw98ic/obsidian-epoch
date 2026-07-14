@@ -1,6 +1,7 @@
 import {
   type EpochAuditInfo,
   type EpochAgentBriefingView,
+  type EpochAgentPublicRegionalContextView,
   type EpochDirectTradeView,
   type EpochExplorerProfileInfo,
   type EpochHostedSessionWatchInfo,
@@ -987,17 +988,30 @@ function eventItems(progress: EpochProgressView) {
     `<b>${escapeHtml(eventTypeLabel(event.eventType))}</b><em>${dateLabel(event.createdAt)}</em>`);
 }
 
-function nextActionItems(briefing: EpochAgentBriefingView) {
-  return briefing.pendingActions.slice(0, 6).map((action) =>
+type EpochAgentPublicBriefingView = Omit<EpochAgentBriefingView, "progress" | "pendingActions" | "regionalContext"> & {
+  readonly identityExists?: boolean;
+  readonly canonicalAgentId?: string;
+  readonly publicIdentity?: {
+    readonly label: string;
+    readonly status?: "active" | "archived";
+  };
+  readonly regionLabel?: string;
+  readonly progress?: EpochProgressView;
+  readonly pendingActions?: EpochAgentBriefingView["pendingActions"];
+  readonly regionalContext?: EpochAgentPublicRegionalContextView;
+};
+
+function nextActionItems(briefing: EpochAgentPublicBriefingView) {
+  return (briefing.pendingActions || []).slice(0, 6).map((action) =>
     `<b>${escapeHtml(publicText(action.label))}</b><em>${escapeHtml(publicText(action.reason))}</em>`);
 }
 
-function briefingNewsItems(briefing: EpochAgentBriefingView) {
+function briefingNewsItems(briefing: EpochAgentPublicBriefingView) {
   return (briefing.regionalContext?.news || []).slice(0, 6).map((news) =>
     `<b>${escapeHtml(publicText(news.headline))}</b><em>${escapeHtml(publicText(news.body))} · ${dateLabel(news.createdAt)}</em>`);
 }
 
-function briefingMessageItems(briefing: EpochAgentBriefingView) {
+function briefingMessageItems(briefing: EpochAgentPublicBriefingView) {
   return (briefing.regionalContext?.messages || []).slice(0, 6).map((message) =>
     `<b>行动身份发言</b><em>${escapeHtml(publicText(message.body))} · ${dateLabel(message.postedAt)}</em>`);
 }
@@ -1006,44 +1020,27 @@ function commissionSecretRevealBudgetLabel(commission: { secretRevealBudget: { c
   return publicCommissionSecretRevealLabel(commission);
 }
 
-function briefingCommissionItems(briefing: EpochAgentBriefingView) {
+function briefingCommissionItems(briefing: EpochAgentPublicBriefingView) {
   return (briefing.regionalContext?.commissions || []).slice(0, 6).map((commission) =>
     `<b>${escapeHtml(publicText(commission.title))}</b><em>${escapeHtml(secretTierLabel(commission.secretExposureTier))} · ${escapeHtml(commissionSecretRevealBudgetLabel(commission))} · ${escapeHtml(publicActionLabel(commission.actionLabel))} · ${escapeHtml(publicText(commission.summary))}</em>`);
 }
 
-export function renderEpochAgentPublicPageHtml(briefing: EpochAgentBriefingView) {
+export function renderEpochAgentPublicPageHtml(briefing: EpochAgentPublicBriefingView) {
   const progress = briefing.progress;
-  const identity = progress.identity || progress.identities.at(-1);
+  const identity = progress?.identity || progress?.identities.at(-1);
   const lifetime = identity?.lifetime;
   const lifetimeText = lifetime ? `${lifetime.remaining}/${lifetime.max}` : "未记录";
-  const title = identityLabel(identity?.identityName);
-  const summary = `行动身份 · 寿命 ${lifetimeText}`;
-  const identitySlotText = progress.identitySlots ? `${progress.identitySlots.active}/${progress.identitySlots.max}` : "未记录";
-  const identitySlotProgress = progress.identitySlots
+  const title = identity
+    ? identityLabel(identity.identityName)
+    : briefing.publicIdentity?.label || "行动身份";
+  const summary = progress ? `行动身份 · 寿命 ${lifetimeText}` : "行动身份 · 公开验证投影";
+  const identitySlotText = progress?.identitySlots ? `${progress.identitySlots.active}/${progress.identitySlots.max}` : "未记录";
+  const identitySlotProgress = progress?.identitySlots
     ? progress.identitySlots.capped
       ? "已达上限"
       : `下一槽还差 ${progress.identitySlots.legendToNextSlot ?? 0} 传说`
     : "未记录";
-  return pageShell(title, "黑曜纪元 / 行动身份", summary, `
-    <div class="grid">
-      ${section("自述", `<p>${escapeHtml(publicText(briefing.agentSelfStatement))}</p>`)}
-      ${section("身份", `<div class="tiles">
-        <div class="tile"><em>身份名</em><b>${escapeHtml(identityLabel(identity?.identityName))}</b></div>
-        <div class="tile"><em>归属</em><b>玩家档案已记录</b></div>
-        <div class="tile"><em>状态</em><b>${escapeHtml(statusLabel(identity?.status))}</b></div>
-        <div class="tile"><em>寿命</em><b>${escapeHtml(lifetimeText)}</b></div>
-      </div>`)}
-      ${section("行动简报", `<div class="tiles">
-        <a class="tile" href="${escapeHtml(briefing.publicPages.console)}"><em>控制台</em><b>打开行动身份控制台</b><span>安装后可在这里继续操作。</span></a>
-        <a class="tile" href="${escapeHtml(briefing.publicPages.world)}"><em>世界</em><b>世界总览</b><span>公开世界总览。</span></a>
-        <div class="tile"><em>区域</em><b>${escapeHtml(regionLabel(briefing.regionId))}</b><span>${briefing.publicPages.region ? "区域公开页可查看" : "暂无区域页"}</span></div>
-        <div class="tile"><em>行动权限</em><b>${briefing.progress.actionEligibility.canUseActiveTools ? "可行动" : "已阻断"}</b><span>${escapeHtml(publicText(briefing.progress.actionEligibility.reason))}</span></div>
-        <div class="tile"><em>同步</em><b>${dateLabel(briefing.generatedAt)}</b><span>${escapeHtml(briefing.pendingActions.length)} 个服务器推荐下一步</span></div>
-      </div>`)}
-      ${section("下一步", list(nextActionItems(briefing), "暂无推荐行动"))}
-      ${section("区域新闻", list(briefingNewsItems(briefing), "暂无区域新闻"))}
-      ${section("区域留言", list(briefingMessageItems(briefing), "暂无区域留言"))}
-      ${section("开放委托", list(briefingCommissionItems(briefing), "暂无开放委托"))}
+  const ownerOnlySections = progress ? `
       ${section("资源", resourceTiles(progress.resources, progress.resourceMedia))}
       ${section("背包", list(inventoryItems(progress), "暂无服务器发放物品"))}
       ${section("托管", `<div class="tiles">
@@ -1051,7 +1048,28 @@ export function renderEpochAgentPublicPageHtml(briefing: EpochAgentBriefingView)
         <div class="tile"><em>模式</em><b>${escapeHtml(downtimeModeLabel(progress.downtime?.mode))}</b></div>
         <div class="tile"><em>身份槽</em><b>${escapeHtml(identitySlotText)}</b><small>${escapeHtml(identitySlotProgress)}</small></div>
       </div>`)}
-      ${section("最近事件", list(eventItems(progress), "暂无公开事件"))}
+      ${section("最近事件", list(eventItems(progress), "暂无公开事件"))}` : "";
+  return pageShell(title, "黑曜纪元 / 行动身份", summary, `
+    <div class="grid">
+      ${section("自述", `<p>${escapeHtml(publicText(briefing.agentSelfStatement))}</p>`)}
+      ${progress ? section("身份", `<div class="tiles">
+        <div class="tile"><em>身份名</em><b>${escapeHtml(identityLabel(identity?.identityName))}</b></div>
+        <div class="tile"><em>归属</em><b>玩家档案已记录</b></div>
+        <div class="tile"><em>状态</em><b>${escapeHtml(statusLabel(identity?.status))}</b></div>
+        <div class="tile"><em>寿命</em><b>${escapeHtml(lifetimeText)}</b></div>
+      </div>`) : section("验证边界", "<p>此页面只展示可公开验证的世界信息；身份进度、资源、背包、托管和最近事件仅向拥有者的对话提供。</p>")}
+      ${section("行动简报", `<div class="tiles">
+        <a class="tile" href="${escapeHtml(briefing.publicPages.console)}"><em>控制台</em><b>打开行动身份控制台</b><span>安装后可在这里继续操作。</span></a>
+        <a class="tile" href="${escapeHtml(briefing.publicPages.world)}"><em>世界</em><b>世界总览</b><span>公开世界总览。</span></a>
+        <div class="tile"><em>区域</em><b>${escapeHtml(briefing.regionLabel || regionLabel(briefing.regionId))}</b><span>${briefing.publicPages.region ? "区域公开页可查看" : "暂无区域页"}</span></div>
+        ${progress ? `<div class="tile"><em>行动权限</em><b>${progress.actionEligibility.canUseActiveTools ? "可行动" : "已阻断"}</b><span>${escapeHtml(publicText(progress.actionEligibility.reason))}</span></div>` : ""}
+        <div class="tile"><em>同步</em><b>${dateLabel(briefing.generatedAt)}</b><span>${escapeHtml((briefing.pendingActions || []).length)} 个公开推荐下一步</span></div>
+      </div>`)}
+      ${section("下一步", list(nextActionItems(briefing), "暂无推荐行动"))}
+      ${section("区域新闻", list(briefingNewsItems(briefing), "暂无区域新闻"))}
+      ${section("区域留言", list(briefingMessageItems(briefing), "暂无区域留言"))}
+      ${section("开放委托", list(briefingCommissionItems(briefing), "暂无开放委托"))}
+      ${ownerOnlySections}
     </div>
   `, pageSceneMedia("agent_status"));
 }

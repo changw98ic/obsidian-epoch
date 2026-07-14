@@ -44,8 +44,9 @@ export function publicHostedAction(action: EpochHostedActionRecord): EpochHosted
 }
 
 export function publicHostedSession(session: EpochHostedSession): EpochHostedSession {
+  const { sceneContract: _sceneContract, ...publicSession } = session;
   return {
-    ...session,
+    ...publicSession,
     actionOptions: [],
     actions: session.status === "completed" ? session.actions.map(publicHostedAction) : [],
   };

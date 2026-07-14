@@ -74,7 +74,8 @@ function publicIdentityName(payload: ResultPagePayload) {
 }
 
 function focusRegionId(payload: ResultPagePayload) {
-  return payload.focusHostedSession?.regionId
+  return payload.journey?.regionId
+    || payload.focusHostedSession?.regionId
     || payload.focusTurnCard?.regionId
     || payload.regionalContext?.regionId;
 }
@@ -93,7 +94,8 @@ function heroSummary(payload: ResultPagePayload) {
   const region = publicRegionLabel(focusRegionId(payload));
   const latestHostedAction = payload.focusHostedSession?.actions.at(-1);
   const outcome = payload.focusTurnCard?.resolution?.outcomeSummary
-    || latestHostedAction?.outcomeSummary;
+    || latestHostedAction?.outcomeSummary
+    || payload.journey?.stateDelta?.outcomeSummary;
   if (outcome && outcome !== payload.publicSafeSummary.text) {
     return `${region} · ${publicText(outcome)}`;
   }
@@ -114,6 +116,18 @@ function eventBody(event: ResultPagePayload["progress"]["latestEvents"][number],
 }
 
 function eventTimeline(payload: ResultPagePayload): readonly PublicResultTimelineItem[] {
+  if (payload.journey?.episodes.length) {
+    return payload.journey.episodes.map((episode, index) => ({
+      title: publicText(episode.title),
+      body: episode.narrative
+        ? publicText(episode.narrative.kind === "grounded_narrative" && episode.narrative.postcard
+            ? episode.narrative.postcard.text
+            : episode.narrative.confirmedFacts.map((fact) => fact.text).join("；"))
+        : `${publicRegionLabel(payload.journey?.regionId)} · 服务器记录结果：${publicText(episode.outcomeKey)}`,
+      marker: `第 ${index + 1} 段`,
+      meta: payload.journey?.startedAtWorldTime || payload.generatedAt,
+    }));
+  }
   const entries = payload.progress.latestEvents.slice(0, 12).map((event, index) => ({
     title: publicEventTypeLabel(event.eventType),
     body: eventBody(event, index),
@@ -130,6 +144,8 @@ function eventTimeline(payload: ResultPagePayload): readonly PublicResultTimelin
 }
 
 function consequences(payload: ResultPagePayload): readonly PublicResultConsequence[] {
+  const journeyOutcome = payload.journey?.stateDelta?.outcomeSummary;
+  if (journeyOutcome) return [{ label: "旅程结果", value: publicText(journeyOutcome), note: "来自服务器结算的共同事实。" }];
   const resources = Object.entries(payload.progress.resources)
     .filter(([, amount]) => Number(amount || 0) !== 0)
     .map(([resourceId, amount]) => ({

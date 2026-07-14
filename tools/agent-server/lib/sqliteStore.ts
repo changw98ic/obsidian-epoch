@@ -20,6 +20,8 @@ export const KNOWN_JSONL_FILES = [
   "experience.jsonl",
   "transparency.jsonl",
   "epoch-events.jsonl",
+  "journey-events.jsonl",
+  "command-events.jsonl",
   "result-pages.jsonl",
   "context-snapshots.jsonl",
   "outbox.jsonl",
@@ -41,6 +43,7 @@ async function ensureSqliteDir(dbPath: string) {
 
 function openSqlite(dbPath: string) {
   const db = new DatabaseSync(dbPath);
+  db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   return db;
@@ -133,20 +136,13 @@ function insertJsonlRecord(
   fileName: string,
   lineNumber: number,
   record: JsonRecord,
-  strict = false,
 ) {
   const recordJson = JSON.stringify(record);
-  const insertSql = strict
-    ? `INSERT INTO jsonl_records(file_name, line_number, record_type, record_json, inserted_at)
-       VALUES (?, ?, ?, ?, ?)`
-    : `INSERT OR IGNORE INTO jsonl_records(file_name, line_number, record_type, record_json, inserted_at)
-       VALUES (?, ?, ?, ?, ?)`;
-  db.prepare(insertSql).run(fileName, lineNumber, recordType(record), recordJson, nowIso());
-  if (strict) return lastInsertId(db);
-  const existing = db.prepare(`
-    SELECT id FROM jsonl_records WHERE file_name = ? AND line_number = ?
-  `).get(fileName, lineNumber) as { id: number } | undefined;
-  return existing?.id || lastInsertId(db);
+  db.prepare(`
+    INSERT INTO jsonl_records(file_name, line_number, record_type, record_json, inserted_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(fileName, lineNumber, recordType(record), recordJson, nowIso());
+  return lastInsertId(db);
 }
 
 function indexEpochEvent(db: DatabaseSync, recordId: number, event: EpochEvent, strict: boolean) {
@@ -306,20 +302,23 @@ export async function migrateJsonlDataDirToSqlite({
 export async function appendSqliteJsonl(dbPath: string, fileName: string, record: unknown) {
   await ensureSqliteDir(dbPath);
   const db = openSqlite(dbPath);
+  let transactionStarted = false;
   try {
     initializeSqliteSchema(db);
+    db.exec("BEGIN IMMEDIATE");
+    transactionStarted = true;
     const row = db.prepare(`
       SELECT COALESCE(MAX(line_number), 0) + 1 AS nextLine
       FROM jsonl_records
       WHERE file_name = ?
     `).get(fileName) as { nextLine: number };
-    db.exec("BEGIN");
     const jsonRecord = recordValue(record);
     const recordId = insertJsonlRecord(db, fileName, Number(row.nextLine), jsonRecord);
-    indexKnownRecord(db, recordId, jsonRecord);
+    indexKnownRecord(db, recordId, jsonRecord, true);
     db.exec("COMMIT");
+    transactionStarted = false;
   } catch (error) {
-    db.exec("ROLLBACK");
+    if (transactionStarted) db.exec("ROLLBACK");
     throw error;
   } finally {
     db.close();
@@ -348,7 +347,6 @@ export async function appendSqliteEpochEventBatch(dbPath: string, events: readon
       "epoch-events.jsonl",
       Number(row.nextLine),
       jsonRecord,
-      true,
     );
     indexKnownRecord(db, recordId, jsonRecord, true);
     db.exec("COMMIT");
@@ -395,6 +393,8 @@ export async function loadAgentRuntimeOptionsFromSqlite(dbPath: string) {
     experience: files["experience.jsonl"],
     transparency: files["transparency.jsonl"],
     epochEvents: files["epoch-events.jsonl"],
+    journeyEvents: files["journey-events.jsonl"],
+    commandEvents: files["command-events.jsonl"],
     resultPages: files["result-pages.jsonl"],
     contextSnapshots: files["context-snapshots.jsonl"],
     outbox: files["outbox.jsonl"],

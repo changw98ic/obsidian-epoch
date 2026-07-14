@@ -427,6 +427,21 @@ function journeyTimelineEntries(payload: ResultPagePayload) {
   };
   payload.progress.latestEvents.forEach((event) => addEntry(journeyEventEntry(event)));
   payload.focusHostedSession?.actions.forEach((action) => addEntry(hostedActionEntry(action)));
+  payload.journey?.episodes.forEach((episode, index) => addEntry({
+    entryId: episode.episodeId,
+    occurredAt: payload.journey?.startedAtWorldTime || payload.generatedAt,
+    title: `第 ${index + 1} 段：${publicNarrativeText(episode.title)}`,
+    body: episode.narrative
+      ? publicNarrativeText(episode.narrative.kind === "grounded_narrative" && episode.narrative.postcard
+          ? episode.narrative.postcard.text
+          : episode.narrative.confirmedFacts.map((fact) => fact.text).join("；"))
+      : payload.journey?.status === "settled"
+        ? `${shortRegionLabel(payload.journey?.regionId)} · 服务器记录结果：${publicNarrativeText(episode.outcomeKey)}`
+      : `${shortRegionLabel(payload.journey?.regionId)} · 已验证的出发阶段记录：${publicNarrativeText(episode.outcomeKey)}`,
+    meta: episode.participants.length
+      ? `共同参与：${episode.participants.map((participant) => publicIdentityLabel(participant.label)).join("、")}`
+      : undefined,
+  }));
   return [...entries.values()]
     .sort((left, right) => left.occurredAt.localeCompare(right.occurredAt) || left.entryId.localeCompare(right.entryId))
     .slice(-24);
@@ -459,7 +474,7 @@ function journeyTimelineSection(payload: ResultPagePayload) {
         ${entries.map((entry) => {
           const display = journeyTimelineDisplay(entry);
           return `
-            <li>
+            <li id="episode-${escapeHtml(encodeURIComponent(entry.entryId))}">
               <time>${escapeHtml(display.marker)}</time>
               <b>${escapeHtml(display.title)}</b>
               <span>${escapeHtml(entry.body)}</span>

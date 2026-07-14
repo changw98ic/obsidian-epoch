@@ -51,6 +51,7 @@ import { messagesView } from "./regionActivityReadModel.ts";
 import { regionLeaderboardView } from "./regionLeaderboardReadModel.ts";
 import { regionNewsView, type EpochRegionNewsView } from "./regionNewsReadModel.ts";
 import { seasonsView, type EpochSeasonCampaignView } from "./seasonReadModel.ts";
+import { publicRegionLabel, publicText } from "./publicVocabulary.ts";
 
 type AnyRecord = Readonly<Record<string, unknown>>;
 
@@ -159,6 +160,31 @@ export interface EpochAgentBriefingWorldSummary {
   readonly news: readonly EpochRegionNewsView[];
   readonly regionHighlights: readonly EpochWorldOverviewRegionHighlight[];
   readonly activeSeasons: readonly EpochSeasonCampaignView[];
+}
+
+export interface EpochAgentPublicIdentityView {
+  readonly identityExists: boolean;
+  readonly generatedAt: string;
+  readonly canonicalAgentId?: string;
+  readonly identityLabel?: string;
+  readonly identityStatus?: EpochAgentIdentity["status"];
+  readonly regionLabel: string;
+  readonly regionalContext?: EpochAgentPublicRegionalContextView;
+  readonly publicPages: {
+    readonly world: string;
+    readonly console: string;
+    readonly agent?: string;
+    readonly archive?: string;
+  };
+}
+
+export interface EpochAgentPublicRegionalContextView {
+  readonly messages: readonly Pick<EpochResultPageRegionalContext["messages"][number], "body" | "postedAt">[];
+  readonly news: readonly Pick<EpochResultPageRegionalContext["news"][number], "headline" | "body" | "createdAt">[];
+  readonly commissions: readonly Pick<
+    EpochResultPageRegionalContext["commissions"][number],
+    "title" | "summary" | "secretExposureTier" | "secretRevealBudget" | "actionLabel"
+  >[];
 }
 
 export interface EpochAgentBriefingView {
@@ -332,6 +358,66 @@ export function createPublicWorldReadModelRuntime(options: EpochPublicWorldReadM
     };
   }
 
+  function agentPublicIdentity(input: AnyRecord = {}): EpochAgentPublicIdentityView {
+    const requestedAgentId = typeof input.agentId === "string" ? input.agentId.trim() : "";
+    const projection = options.project();
+    const identity = requestedAgentId ? projection.identities[requestedAgentId] : undefined;
+    const publicRegionIds = identity
+      ? [...new Set(messagesView(projection, { agentId: identity.agentId, limit: 100 }).regionMessages
+        .flatMap((message) => message.regionId ? [message.regionId] : []))]
+      : [];
+    const regionId = publicRegionIds[0];
+    const regionalContexts = publicRegionIds.slice(0, 3)
+      .flatMap((publicRegionId) => {
+        const context = resultPageRegionalContext(projection, publicRegionId);
+        return context ? [context] : [];
+      });
+    const publicMessages = [...new Map(regionalContexts.flatMap((context) => context.messages)
+      .map((message) => [`${message.postedAt}:${message.body}`, message] as const)).values()]
+      .sort((left, right) => right.postedAt.localeCompare(left.postedAt))
+      .slice(0, 6);
+    const publicNews = [...new Map(regionalContexts.flatMap((context) => context.news)
+      .map((news) => [`${news.createdAt}:${news.headline}:${news.body}`, news] as const)).values()]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, 6);
+    const publicCommissions = [...new Map(regionalContexts.flatMap((context) => context.commissions)
+      .map((commission) => [`${commission.title}:${commission.summary}`, commission] as const)).values()]
+      .slice(0, 6);
+    return {
+      identityExists: Boolean(identity),
+      generatedAt: serverIsoTime(options.clock),
+      ...(identity ? {
+        canonicalAgentId: identity.agentId,
+        identityLabel: publicText(identity.identityName),
+        identityStatus: identity.status,
+      } : {}),
+      regionLabel: regionId ? publicRegionLabel(regionId) : "黑曜纪元",
+      ...(identity && regionalContexts.length ? {
+        regionalContext: {
+          messages: publicMessages.map(({ body, postedAt }) => ({ body: publicText(body), postedAt })),
+          news: publicNews.map(({ headline, body, createdAt }) => ({
+            headline: publicText(headline),
+            body: publicText(body),
+            createdAt,
+          })),
+          commissions: publicCommissions.map((commission) => ({
+            title: publicText(commission.title),
+            summary: publicText(commission.summary),
+            secretExposureTier: commission.secretExposureTier,
+            secretRevealBudget: commission.secretRevealBudget,
+            actionLabel: publicText(commission.actionLabel),
+          })),
+        },
+      } : {}),
+      publicPages: {
+        world: "/epoch/world",
+        console: "/epoch/console",
+        ...(identity ? { agent: `/epoch/agent/${encodeURIComponent(identity.agentId)}` } : {}),
+        ...(identity?.status === "archived" ? { archive: `/epoch/archive/${encodeURIComponent(identity.agentId)}` } : {}),
+      },
+    };
+  }
+
   function hostedSessionWatch(input: AnyRecord = {}): EpochHostedSessionWatchInfo {
     const sessionId = assertNonEmptyString(input.sessionId, "hosted_session_id");
     if (sessionId.length > 160) throw new Error("hosted_session_id_invalid");
@@ -434,6 +520,7 @@ export function createPublicWorldReadModelRuntime(options: EpochPublicWorldReadM
 
   return {
     agentBriefing,
+    agentPublicIdentity,
     hostedSessionWatch,
     loreContributions,
     loreTargets,

@@ -47,6 +47,7 @@ import type {
   TraceConflictRumorMemory,
   TraceConflictServerEffect,
 } from "./traceConflictRules.ts";
+import type { JourneySceneContract } from "./journeySceneContractRules.ts";
 
 export interface EpochEventEnvelope<TType extends EpochEventType, TPayload> {
   readonly eventId: string;
@@ -1458,6 +1459,7 @@ export interface HostedSessionStartedPayload {
   readonly channelClass: EpochChannelClass;
   readonly deliveryTrust: EpochTrustClass;
   readonly actionOptions: readonly HostedActionOptionPayload[];
+  readonly sceneContract?: JourneySceneContract;
   readonly startedAt: string;
 }
 

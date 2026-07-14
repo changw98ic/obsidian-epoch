@@ -11,6 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { epochEventsFromPersistenceRecord } from "./epochPersistence.ts";
 import { createAgentWorldRuntime } from "./mcpTools.ts";
+import { hydrateAgentRuntimeOptions } from "./store.ts";
 import {
   validatePlayerMcpAccessTokenLedgerContent,
 } from "./playerMcpAccessTokenStore.ts";
@@ -626,11 +627,17 @@ function buildManifest(input: {
     fileSummary(fileName, input.files[fileName] || []),
   ])) as Record<KnownJsonlFileName, RecoveryFileSummary>;
   const records = Object.values(fileSummaries).reduce((total, file) => total + file.records, 0);
-  const epochEventRecords = logicalFileRecords("epoch-events.jsonl", input.files["epoch-events.jsonl"] || []);
+  const hydrated = hydrateAgentRuntimeOptions({
+    epochEvents: input.files["epoch-events.jsonl"] || [],
+    journeyEvents: input.files["journey-events.jsonl"] || [],
+    commandEvents: input.files["command-events.jsonl"] || [],
+    resultPages: input.files["result-pages.jsonl"] || [],
+  });
+  const epochEventRecords = hydrated.epochEvents.map((event) => ({ type: "epoch_event", event }));
   const latestEpochRecord = [...epochEventRecords]
     .reverse()
     .find((record) => epochEventIdFromRecord(record));
-  const resultPageRecords = input.files["result-pages.jsonl"] || [];
+  const resultPageRecords = hydrated.resultPages.map((page) => ({ type: "epoch_result_page", page }));
   const latestResultPage = [...resultPageRecords]
     .reverse()
     .find((record) => resultPageIdFromRecord(record));
@@ -684,6 +691,8 @@ function emptyRecoveryFileMap(): Record<KnownJsonlFileName, readonly JsonRecord[
     "experience.jsonl": [],
     "transparency.jsonl": [],
     "epoch-events.jsonl": [],
+    "journey-events.jsonl": [],
+    "command-events.jsonl": [],
     "result-pages.jsonl": [],
     "context-snapshots.jsonl": [],
     "outbox.jsonl": [],

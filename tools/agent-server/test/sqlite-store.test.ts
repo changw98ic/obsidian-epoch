@@ -6,6 +6,8 @@ import path from "node:path";
 import test from "node:test";
 import { createEpochGameCore } from "../lib/epoch/gameCore.ts";
 import { createSequentialEpochIdFactory } from "../lib/epoch/protocol.ts";
+import { buildEpochResultPagePayload } from "../lib/epoch/resultPagePayloadRules.ts";
+import { resultPageActiveRecord } from "../lib/epoch/resultPageRuntimeRules.ts";
 import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
 import {
   appendSqliteEpochEventBatch,
@@ -26,6 +28,7 @@ test("migrateJsonlDataDirToSqlite preserves canonical epoch events and result pa
   await mkdir(sourceDir, { recursive: true });
   try {
     const core = createEpochGameCore({
+      clock: () => new Date("2026-06-25T00:00:00.000Z"),
       idFactory: createSequentialEpochIdFactory("sqlite"),
       defaultLifetime: 12,
     });
@@ -37,26 +40,21 @@ test("migrateJsonlDataDirToSqlite preserves canonical epoch events and result pa
       trustClass: "untrusted_client",
       idempotencyKey: "issue-sqlite-1",
     });
-    const page = {
-      pageId: "page_sqlite_1",
-      createdAt: "2026-06-25T00:00:00.000Z",
-      urlPath: "/epoch/result/page_sqlite_1",
-      payload: {
-        pageType: "agent_result",
-        generatedAt: "2026-06-25T00:00:00.000Z",
-        progress: {
-          agentId: identity.value.agentId,
-          explorerId: "explorer_sqlite",
-          lineage: [identity.value.agentId],
-          identities: [identity.value],
-          resources: {},
-          downtime: null,
-          latestEvents: identity.events,
-        },
+    const page = resultPageActiveRecord({
+      request: {
+        agentId: identity.value.agentId,
+        actorExplorerId: "explorer_sqlite",
+        idempotencyKey: "sqlite",
       },
-      createdBy: "explorer_sqlite",
-      idempotencyKey: "result_page:sqlite",
-    };
+      payload: buildEpochResultPagePayload({
+        projection: core.project(),
+        input: { agentId: identity.value.agentId },
+        generatedAt: "2026-06-25T00:00:00.000Z",
+      }),
+      pageId: "page_sqlite_1",
+      shareToken: "share-sqlite-1",
+      createdAt: "2026-06-25T00:00:00.000Z",
+    });
 
     await writeJsonl(path.join(sourceDir, "epoch-events.jsonl"), identity.events.map((event) => ({
       type: "epoch_event",

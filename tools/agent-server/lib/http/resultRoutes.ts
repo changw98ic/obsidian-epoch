@@ -26,10 +26,15 @@ export async function handleEpochResultRoutes(context: EpochHttpRouteContext): P
 
   if (method === "POST" && pathname === "/api/epoch/exploration/run") {
     const result = runtime.epochRunExploration(await context.readJsonBody(request, maxBodyBytes));
-    await context.persistEpochEvents(result);
     await context.persistEpochResultPage({
-      page: result.value.resultPage,
-      duplicate: result.duplicate,
+      commandPersistence: {
+        command: "POST /api/epoch/exploration/run",
+        sourceResult: result,
+        pageResult: {
+          page: result.value.resultPage,
+          duplicate: result.duplicate,
+        },
+      },
     });
     context.sendJson(request, response, 200, result, allowedOrigins);
     return true;
@@ -49,21 +54,39 @@ export async function handleEpochResultRoutes(context: EpochHttpRouteContext): P
 
   if (method === "POST" && pathname === "/api/epoch/result-page/create") {
     const result = runtime.epochCreateResultPage(await context.readJsonBody(request, maxBodyBytes));
-    await context.persistEpochResultPage(result);
+    await context.persistEpochResultPage({
+      commandPersistence: {
+        command: "POST /api/epoch/result-page/create",
+        sourceResult: result,
+        pageResult: result,
+      },
+    });
     context.sendJson(request, response, 200, result, allowedOrigins);
     return true;
   }
 
   if (method === "POST" && pathname === "/api/epoch/result-page/revoke") {
     const result = runtime.epochRevokeResultPage(await context.readJsonBody(request, maxBodyBytes));
-    await context.persistEpochResultPage(result);
+    await context.persistEpochResultPage({
+      commandPersistence: {
+        command: "POST /api/epoch/result-page/revoke",
+        sourceResult: result,
+        pageResult: result,
+      },
+    });
     context.sendJson(request, response, 200, result, allowedOrigins);
     return true;
   }
 
   if (method === "POST" && pathname === "/api/epoch/result-page/delete") {
     const result = runtime.epochDeleteResultPage(await context.readJsonBody(request, maxBodyBytes));
-    await context.persistEpochResultPage(result);
+    await context.persistEpochResultPage({
+      commandPersistence: {
+        command: "POST /api/epoch/result-page/delete",
+        sourceResult: result,
+        pageResult: result,
+      },
+    });
     context.sendJson(request, response, 200, result, allowedOrigins);
     return true;
   }

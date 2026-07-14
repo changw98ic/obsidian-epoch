@@ -1520,9 +1520,15 @@ test("Obsidian Epoch downloadable package runs its bundled MCP proxy from the ex
     createAgentWorldMcpRuntime,
     createSequentialEpochIdFactory,
   } = await loadRuntimeHelpers();
+  let realNow = "2026-07-12T00:00:00.000Z";
+  let worldNow = "2026-01-01T08:00:00.000Z";
   const backing = createAgentWorldMcpRuntime({
     epoch: {
       idFactory: createSequentialEpochIdFactory("package_proxy"),
+    },
+    journey: {
+      now: () => realNow,
+      worldNow: () => worldNow,
     },
   });
   const bearerToken = "package-proxy-mcp-token-at-least-32-characters";
@@ -1534,6 +1540,13 @@ test("Obsidian Epoch downloadable package runs its bundled MCP proxy from the ex
   const address = server.address();
   assert.ok(address && typeof address === "object");
   const baseUrl = `http://127.0.0.1:${address.port}`;
+  const registrationResponse = await fetch(`${baseUrl}/api/epoch/pairing/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ idempotencyKey: "package-proxy-register" }),
+  });
+  assert.equal(registrationResponse.status, 201);
+  const registration = await registrationResponse.json() as Record<string, string>;
   const unauthenticatedChild = spawn("node", ["obsidian-epoch/bin/mcp-proxy.ts"], {
     cwd: packageRoot,
     stdio: ["pipe", "pipe", "pipe"],
@@ -1569,8 +1582,8 @@ test("Obsidian Epoch downloadable package runs its bundled MCP proxy from the ex
       undefined,
       () => Buffer.concat(unauthenticatedStderr).toString("utf8").trim(),
     );
-    assert.equal(unauthenticatedList.error?.code, -32001);
-    assert.equal(unauthenticatedList.error?.message, "mcp_auth_required");
+    assert.equal(unauthenticatedList.error?.code, -32002);
+    assert.equal(unauthenticatedList.error?.message, "mcp_session_not_initialized");
 
     const initialized = await requestJsonRpc(lines, child, 1, "initialize", {
       protocolVersion: "2025-06-18",
@@ -1578,9 +1591,13 @@ test("Obsidian Epoch downloadable package runs its bundled MCP proxy from the ex
       capabilities: {},
     }, childOutput);
     assert.equal(initialized.result.serverInfo.name, "obsidian-epoch-agent-world");
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
 
     const listed = await requestJsonRpc(lines, child, 2, "tools/list", undefined, childOutput);
     assert.ok(listed.result.tools.some((tool: { name: string }) => tool.name === "obsidian_epoch.quickstart"));
+    for (const toolName of ["obsidian_epoch.propose_journey_step", "obsidian_epoch.commit_journey_action"]) {
+      assert.ok(listed.result.tools.some((tool: { name: string }) => tool.name === toolName), toolName);
+    }
 
     const quickstart = await requestJsonRpc(lines, child, 3, "tools/call", {
       name: "obsidian_epoch.quickstart",
@@ -1590,6 +1607,67 @@ test("Obsidian Epoch downloadable package runs its bundled MCP proxy from the ex
     const payload = JSON.parse(quickstart.result.content[0].text);
     assert.equal(payload.serverBase, baseUrl);
     assert.equal(payload.hostConfig.cwd, ".");
+
+    const preparedCall = await requestJsonRpc(lines, child, 4, "tools/call", {
+      name: "obsidian_epoch.prepare_journey",
+      arguments: {
+        agentId: registration.agentId,
+        destinationRegionId: "region_gray_harbor",
+        recoveryCode: registration.recoveryCode,
+        idempotencyKey: "package-proxy-prepare",
+      },
+    }, childOutput);
+    const prepared = JSON.parse(preparedCall.result.content[0].text);
+    const startedCall = await requestJsonRpc(lines, child, 5, "tools/call", {
+      name: "obsidian_epoch.start_journey",
+      arguments: {
+        journeyId: prepared.journey.journeyId,
+        expectedVersion: prepared.journey.version,
+        recoveryCode: registration.recoveryCode,
+        idempotencyKey: "package-proxy-start",
+      },
+    }, childOutput);
+    const started = JSON.parse(startedCall.result.content[0].text);
+    assert.equal(started.journey.status, "awaiting_agent");
+    assert.equal(started.sampling.fallback, "agent_native");
+    const proposedCall = await requestJsonRpc(lines, child, 6, "tools/call", {
+      name: "obsidian_epoch.propose_journey_step",
+      arguments: {
+        journeyId: prepared.journey.journeyId,
+        expectedVersion: started.journey.version,
+        recoveryCode: registration.recoveryCode,
+        idempotencyKey: "package-proxy-propose",
+      },
+    }, childOutput);
+    const proposed = JSON.parse(proposedCall.result.content[0].text);
+    const selected = proposed.proposal.sceneContract.actionOptions[0];
+    const committedCall = await requestJsonRpc(lines, child, 7, "tools/call", {
+      name: "obsidian_epoch.commit_journey_action",
+      arguments: {
+        journeyId: prepared.journey.journeyId,
+        sceneId: proposed.proposal.sceneContract.sceneId,
+        episodeId: proposed.proposal.episode.episodeId,
+        expectedVersion: proposed.proposal.expectedVersion,
+        actionOptionId: selected.actionOptionId,
+        signature: selected.signature,
+        recoveryCode: registration.recoveryCode,
+        idempotencyKey: "package-proxy-commit",
+      },
+    }, childOutput);
+    const committed = JSON.parse(committedCall.result.content[0].text);
+    assert.deepEqual([committed.mainEpisode.phase, committed.returnEpisode.phase], ["main", "return"]);
+    realNow = "2026-07-12T00:45:00.000Z";
+    worldNow = "2026-01-01T09:30:00.000Z";
+    const statusCall = await requestJsonRpc(lines, child, 8, "tools/call", {
+      name: "obsidian_epoch.journey_status",
+      arguments: { journeyId: prepared.journey.journeyId, recoveryCode: registration.recoveryCode },
+    }, childOutput);
+    const status = JSON.parse(statusCall.result.content[0].text);
+    assert.equal(status.journey.status, "settled");
+    assert.equal(status.episodes.length, 3);
+    const publicResult = await fetch(`${baseUrl}${status.finalVerification.page.urlPath}`);
+    assert.equal(publicResult.status, 200);
+    assert.match(await publicResult.text(), /从旅途中寄来/);
   } finally {
     unauthenticatedLines.close();
     unauthenticatedChild.stdin.destroy();
@@ -1605,6 +1683,7 @@ test("Obsidian Epoch downloadable package runs its bundled MCP proxy from the ex
       once(child, "exit"),
       new Promise((resolve) => setTimeout(resolve, 1_000)),
     ]);
+    (server as { closeAllConnections?: () => void }).closeAllConnections?.();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     await rm(packageRoot, { recursive: true, force: true });
   }

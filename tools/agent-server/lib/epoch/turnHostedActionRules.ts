@@ -27,6 +27,7 @@ import {
   buildSignedTurnResolutionEnvelope,
 } from "./turnActionEnvelopeRules.ts";
 import { resourceGrantedEvent } from "./resourceLedgerEvents.ts";
+import type { JourneySceneContract } from "./journeySceneContractRules.ts";
 
 export const TURN_OPTION_TEMPLATES: readonly Omit<HostedActionOptionPayload, "actionOptionId">[] = [
   {
@@ -538,6 +539,7 @@ export interface HostedSessionStartedPayloadInput {
   readonly channelClass: EpochChannelClass;
   readonly deliveryTrust: EpochTrustClass;
   readonly actionOptions: readonly HostedActionOptionPayload[];
+  readonly sceneContract?: JourneySceneContract;
   readonly startedAt: string;
 }
 
@@ -551,6 +553,7 @@ export function hostedSessionStartedPayload(input: HostedSessionStartedPayloadIn
     channelClass: input.channelClass,
     deliveryTrust: input.deliveryTrust,
     actionOptions: input.actionOptions,
+    ...(input.sceneContract ? { sceneContract: input.sceneContract } : {}),
     startedAt: input.startedAt,
   };
 }

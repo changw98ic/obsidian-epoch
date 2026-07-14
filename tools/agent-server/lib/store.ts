@@ -8,6 +8,7 @@ import {
 } from "./epochPersistence.ts";
 import { LEGACY_AGENT_WORLD_CHANNEL_CLASS, LEGACY_AGENT_WORLD_DELIVERY_TRUST } from "./legacyTrust.ts";
 import { hashRunPayload } from "./tickets.ts";
+import type { JourneyRuntimeEvent } from "./epoch/journeyReadModel.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -63,6 +64,142 @@ function stringValue(value: unknown) {
   return typeof value === "string" ? value : undefined;
 }
 
+function nonEmptyString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .filter((key) => value[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function dedupeCanonicalRecords<T>(
+  values: readonly T[],
+  idOf: (value: T) => unknown,
+  idField: string,
+  conflictCode: string,
+) {
+  const byId = new Map<string, { readonly value: T; readonly canonical: string }>();
+  for (const value of values) {
+    const id = nonEmptyString(idOf(value));
+    if (!id) throw new Error(`${conflictCode.replace("_recovery_conflict", "")}_${idField}_required`);
+    const canonical = canonicalJson(value);
+    const existing = byId.get(id);
+    if (existing && existing.canonical !== canonical) throw new Error(conflictCode);
+    if (!existing) byId.set(id, { value, canonical });
+  }
+  return [...byId.values()].map((entry) => entry.value);
+}
+
+function dedupeCanonicalResultPages(values: readonly JsonRecord[]) {
+  const revisions = new Map<string, {
+    readonly page: JsonRecord;
+    readonly canonical: string;
+    readonly version: number;
+    readonly pageOrder: number;
+  }>();
+  const pageOrder = new Map<string, number>();
+  for (const page of values) {
+    const pageId = nonEmptyString(page.pageId);
+    if (!pageId) throw new Error("result_page_page_id_required");
+    if (!pageOrder.has(pageId)) pageOrder.set(pageId, pageOrder.size);
+    const version = typeof page.shareVersion === "number"
+      && Number.isSafeInteger(page.shareVersion)
+      && page.shareVersion > 0
+      ? page.shareVersion
+      : 1;
+    const revisionId = `${pageId}:${version}`;
+    const canonical = canonicalJson(page);
+    const existing = revisions.get(revisionId);
+    if (existing && existing.canonical !== canonical) throw new Error("result_page_recovery_conflict");
+    if (!existing) revisions.set(revisionId, {
+      page,
+      canonical,
+      version,
+      pageOrder: pageOrder.get(pageId) || 0,
+    });
+  }
+  return [...revisions.values()]
+    .sort((left, right) => left.pageOrder - right.pageOrder || left.version - right.version)
+    .map((entry) => entry.page);
+}
+
+interface AgentCommandCommitRecord extends JsonRecord {
+  readonly type: "agent_command_commit";
+  readonly version: 1;
+  readonly command: string;
+  readonly commandId: string;
+  readonly journeyEvents: readonly JsonRecord[];
+  readonly epochEvents: readonly JsonRecord[];
+  readonly resultPages: readonly JsonRecord[];
+}
+
+const JOURNEY_SNAPSHOT_EVENT_TYPES = new Set([
+  "journey_prepared",
+  "journey_started",
+  "journey_episode_recorded",
+  "journey_verification_linked",
+  "journey_status_changed",
+]);
+
+function assertRecordArray(record: JsonRecord, key: string) {
+  const value = record[key];
+  if (!Array.isArray(value)) throw new Error(`agent_command_commit_${key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}_required`);
+  if (!value.every(isRecord)) throw new Error(`agent_command_commit_${key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}_invalid`);
+  return value;
+}
+
+function assertAgentCommandCommit(record: JsonRecord): AgentCommandCommitRecord {
+  if (record.type !== "agent_command_commit") throw new Error("agent_command_commit_type_required");
+  if (record.version !== 1) throw new Error("agent_command_commit_version_unsupported");
+  if (!nonEmptyString(record.command)) throw new Error("agent_command_commit_command_required");
+  if (!nonEmptyString(record.commandId)) throw new Error("agent_command_commit_command_id_required");
+  const journeyEvents = assertRecordArray(record, "journeyEvents");
+  const epochEvents = assertRecordArray(record, "epochEvents");
+  const resultPages = assertRecordArray(record, "resultPages");
+  for (const event of journeyEvents) {
+    const invalidBase = !nonEmptyString(event.eventId)
+      || !nonEmptyString(event.eventType)
+      || !nonEmptyString(event.journeyId)
+      || !nonEmptyString(event.agentId)
+      || !nonEmptyString(event.explorerId)
+      || !nonEmptyString(event.occurredAt);
+    const validPayload = event.eventType === "journey_return_delivered"
+      ? nonEmptyString(event.deliveredAt) && event.journey === undefined
+      : JOURNEY_SNAPSHOT_EVENT_TYPES.has(String(event.eventType))
+        && isRecord(event.journey)
+        && event.deliveredAt === undefined;
+    if (invalidBase || !validPayload) {
+      throw new Error("agent_command_commit_journey_event_invalid");
+    }
+  }
+  epochEventsFromPersistenceRecord({ type: "epoch_event_batch", events: epochEvents });
+  for (const page of resultPages) {
+    if (!nonEmptyString(page.pageId)
+      || !nonEmptyString(page.createdAt)
+      || !nonEmptyString(page.urlPath)) {
+      throw new Error("agent_command_commit_result_page_invalid");
+    }
+  }
+  return {
+    ...record,
+    type: "agent_command_commit",
+    version: 1,
+    command: record.command as string,
+    commandId: record.commandId as string,
+    journeyEvents,
+    epochEvents,
+    resultPages,
+  };
+}
+
 export async function readJsonl(fileName: string): Promise<JsonRecord[]> {
   try {
     const raw = await readFile(join(dataDir, fileName), "utf8");
@@ -107,6 +244,8 @@ export function hydrateAgentRuntimeOptions({
   experience = [],
   transparency = [],
   epochEvents = [],
+  journeyEvents = [],
+  commandEvents = [],
   resultPages = [],
   contextSnapshots = [],
   outbox = [],
@@ -120,6 +259,8 @@ export function hydrateAgentRuntimeOptions({
   experience?: readonly object[];
   transparency?: readonly object[];
   epochEvents?: readonly object[];
+  journeyEvents?: readonly object[];
+  commandEvents?: readonly object[];
   resultPages?: readonly object[];
   contextSnapshots?: readonly object[];
   outbox?: readonly object[];
@@ -134,6 +275,13 @@ export function hydrateAgentRuntimeOptions({
   const experienceRecords = experience.map(recordValue);
   const transparencyRecords = transparency.map(recordValue);
   const epochEventRecords = epochEvents.map(recordValue);
+  const journeyEventRecords = journeyEvents.map(recordValue);
+  const commandEventRecords = dedupeCanonicalRecords(
+    commandEvents.map(recordValue).map(assertAgentCommandCommit),
+    (record) => record.commandId,
+    "command_id",
+    "agent_command_commit_recovery_conflict",
+  );
   const resultPageRecords = resultPages.map(recordValue);
   const contextSnapshotRecords = contextSnapshots.map(recordValue);
   const outboxRecords = outbox.map(recordValue);
@@ -182,11 +330,38 @@ export function hydrateAgentRuntimeOptions({
   const transparencyAnchors = transparencyRecords
     .filter((record) => record.type === "transparency_anchor" && isRecord(record.anchor))
     .map((record) => recordValue(record.anchor));
-  const canonicalEpochEvents = epochEventRecords
-    .flatMap((record) => epochEventsFromPersistenceRecord(record));
-  const sharedResultPages = resultPageRecords
-    .map((record) => record.type === "epoch_result_page" ? record.page : record)
-    .filter((page): page is JsonRecord => isRecord(page) && typeof page.pageId === "string");
+  const canonicalEpochEvents = dedupeCanonicalRecords([
+    ...epochEventRecords.flatMap((record) => epochEventsFromPersistenceRecord(record)),
+    ...commandEventRecords.flatMap((record) => epochEventsFromPersistenceRecord({
+      type: "epoch_event_batch",
+      events: record.epochEvents,
+    })),
+  ], (event) => event.eventId, "event_id", "epoch_event_recovery_conflict");
+  const canonicalJourneyEvents = dedupeCanonicalRecords([
+    ...journeyEventRecords.map((record) => record.type === "journey_event" ? record.event : record),
+    ...commandEventRecords.flatMap((record) => record.journeyEvents),
+  ]
+    .filter((event): event is JourneyRuntimeEvent => isRecord(event)
+      && typeof event.eventId === "string"
+      && typeof event.eventType === "string"
+      && typeof event.journeyId === "string"),
+  (event) => event.eventId, "event_id", "journey_event_recovery_conflict");
+  const journeyOrder = new Map<string, number>();
+  for (const event of canonicalJourneyEvents) {
+    if (!journeyOrder.has(event.journeyId)) journeyOrder.set(event.journeyId, journeyOrder.size);
+  }
+  canonicalJourneyEvents.sort((left, right) => {
+    const journeyComparison = (journeyOrder.get(left.journeyId) || 0) - (journeyOrder.get(right.journeyId) || 0);
+    if (journeyComparison !== 0) return journeyComparison;
+    const leftVersion = left.eventType === "journey_return_delivered" ? Number.MAX_SAFE_INTEGER : left.journey.version;
+    const rightVersion = right.eventType === "journey_return_delivered" ? Number.MAX_SAFE_INTEGER : right.journey.version;
+    return leftVersion - rightVersion || left.eventId.localeCompare(right.eventId);
+  });
+  const sharedResultPages = dedupeCanonicalResultPages([
+    ...resultPageRecords.map((record) => record.type === "epoch_result_page" ? record.page : record),
+    ...commandEventRecords.flatMap((record) => record.resultPages),
+  ]
+    .filter((page): page is JsonRecord => isRecord(page) && typeof page.pageId === "string"));
   const savedContextSnapshots = contextSnapshotRecords
     .map((record) => record.type === "context_snapshot" ? record.snapshot : record)
     .filter((snapshot): snapshot is JsonRecord => isRecord(snapshot) && typeof snapshot.snapshotId === "string");
@@ -202,6 +377,7 @@ export function hydrateAgentRuntimeOptions({
     transparencyEntries,
     transparencyAnchors,
     epochEvents: canonicalEpochEvents,
+    journeyEvents: canonicalJourneyEvents,
     resultPages: sharedResultPages,
     contextSnapshots: savedContextSnapshots,
     outboxEvents: outboxRecords,
@@ -220,6 +396,8 @@ export async function loadAgentRuntimeOptions() {
     experience: await readJsonl("experience.jsonl"),
     transparency: await readJsonl("transparency.jsonl"),
     epochEvents: await readJsonl("epoch-events.jsonl"),
+    journeyEvents: await readJsonl("journey-events.jsonl"),
+    commandEvents: await readJsonl("command-events.jsonl"),
     resultPages: await readJsonl("result-pages.jsonl"),
     contextSnapshots: await readJsonl("context-snapshots.jsonl"),
     outbox: await readJsonl("outbox.jsonl"),

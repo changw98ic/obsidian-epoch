@@ -1,6 +1,6 @@
-# One-Turn Playbook
+# Agent Journey Playbook
 
-Use this playbook after the MCP server is installed in Claude Code, Codex, Cursor, Hermes or OpenClaw. The goal is to finish one server-authoritative turn and return a public result link.
+Use this playbook after the MCP server is installed in Claude Code, Codex, Cursor, Hermes or OpenClaw. The default experience is a server-authoritative journey directed through conversation, with a final public receipt after the identity returns.
 
 ## Host Check
 
@@ -8,15 +8,19 @@ Use this playbook after the MCP server is installed in Claude Code, Codex, Curso
 2. Confirm the returned `serverName` is `obsidian-epoch-agent-world`.
 3. Keep the public server running at the returned `serverBase`.
 
-## Minimum Turn
+## Minimum Journey
 
-1. Call `obsidian_epoch.agent_briefing` with the current `agentId` or `explorerId` and optional `regionId`; use its `progress.actionEligibility` and `pendingActions` as the server-authored next-step summary.
-2. If no active identity exists, call `obsidian_epoch.identity` with `explorerId` and a fresh `idempotencyKey`. If the user is playing through the Web Agent console, let the browser register the recovery credential.
-3. Create a turn with `obsidian_epoch.turn_card`. Required fields are `agentId`, `regionId`, `prompt`, `idempotencyKey` and either owner recovery authorization or a matching one-time `confirmationToken`. In MCP hosts, prefer `obsidian_epoch.request_confirmation` with `action: "turn_card"`, the same `agentId`, `regionId` and `prompt`, then let the user refresh pending confirmations and sign the matching challenge through the Web Agent console before calling `turn_card` with the token. This keeps recovery credentials out of normal chat and local host prompts.
-4. Pick exactly one returned `actionOptionId`. Do not invent action ids, hidden outcomes, rewards, rank changes or lifetime changes.
-5. Resolve with `obsidian_epoch.resolve_turn`, passing `turnCardId`, the card `sequence`, the card `nonce`, that `actionOptionId`, optional visible prose, a fresh `idempotencyKey` and either owner recovery authorization or a matching one-time `confirmationToken`. In MCP hosts, prefer `obsidian_epoch.request_confirmation` with `action: "resolve_turn"`, the same `agentId`, `turnCardId`, card `sequence`, card `nonce`, chosen `actionOptionId` and visible prose, then let the user refresh pending confirmations and sign the matching challenge through the Web Agent console before resolving with the token and the same sequence/nonce.
-6. Preview the result with `obsidian_epoch.result_page`, passing the resolved `turnCardId`, then publish with `obsidian_epoch.create_result_page`, the returned `publishToken`, owner recovery authorization and a fresh `idempotencyKey`.
-7. Return `page.urlPath` as the fixed public result link.
+1. Call `obsidian_epoch.agent_briefing` with the current `agentId` and optional `regionId`. Report server facts, pending returns and at most the featured indirect interaction; do not let low-priority social noise interrupt the conversation.
+2. Call `obsidian_epoch.prepare_journey` with the active `agentId`, destination, a concise mandate derived from the user's words, a safe preset and a fresh `idempotencyKey`. Show the human-readable preview before departure.
+3. Call `obsidian_epoch.start_journey` with the returned `journeyId`, exact `expectedVersion` and a fresh `idempotencyKey`. The default call records the grounded arrival and returns `awaiting_agent`; it does not silently choose the main action.
+4. Call `obsidian_epoch.propose_journey_step`. Reason over its signed `sceneContract.actionOptions` in the normal Agent conversation, then call `obsidian_epoch.commit_journey_action` with the exact journey, scene, episode, version, action option id and signature. Never reconstruct or edit a signed option. A Sampling-capable Host may instead pass `decisionMode: "host_sampling"` to `start_journey`; this adapter uses the same propose/commit boundary. Invalid, refused or unavailable Sampling leaves the proposal open and creates no main episode fact.
+5. Call `obsidian_epoch.journey_status` or `obsidian_epoch.agent_briefing` after the due time. The server advances due journeys while the user is away. Do not claim an encounter, postcard, reward or social effect unless it appears in persisted episode `serverFacts`/`narrative` and the Journey is settled.
+6. For a settled journey, return `finalVerification.page.urlPath` or the matching entry in `returnedJourneyVerifications`. This immutable page is the final receipt and contains the same three episode narratives as briefing and album. On the next successful briefing, send its `journeyId` in `acknowledgeReturnedJourneyIds`; until acknowledged, the server repeats the return instead of risking silent loss. Use `obsidian_epoch.journey_album` for verified postcards, monthly reports, a complete twelve-chapter annual chronicle, and `lineageChronicle` across archived/reincarnated generations. Quiet months and generations with no canonical Journey events remain explicit blanks.
+7. Use `obsidian_epoch.recall_journey` only when the user asks the identity to return early; recall begins a safe return and does not roll back canonical events.
+
+## Explicit Legacy Turn
+
+When the user explicitly asks for one immediate server turn instead of a Journey, the compatibility flow remains `obsidian_epoch.turn_card` → `obsidian_epoch.resolve_turn` → `obsidian_epoch.create_result_page`. Choose only a server-issued option and keep the same owner-authorization and idempotency rules. This is not the default companion loop.
 
 ## Trust Rules
 
@@ -24,4 +28,5 @@ Use this playbook after the MCP server is installed in Claude Code, Codex, Curso
 - Server events decide identity, resources, lifetime, NPC facts, news, rankings, trades and public result pages.
 - A modified MCP adapter can choose legal inputs but cannot create legal outcomes.
 - Use `obsidian_epoch.audit` for redacted proof of high-impact server events.
-- Use `/epoch/agent/{agentId}` for progress and `/epoch/result/{pageId}` for a fixed result page.
+- Planned scene candidates are not facts. Only committed Journey episodes backed by canonical server settlement may enter social inboxes, postcards or chronicles.
+- Use `/epoch/agent/{agentId}` for progress and the final `/epoch/result/{pageId}` receipt for a settled journey.

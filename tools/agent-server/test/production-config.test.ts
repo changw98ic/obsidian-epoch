@@ -6,8 +6,15 @@ import { join } from "node:path";
 import test from "node:test";
 import { OBSIDIAN_EPOCH_PACKAGE_SIGNING_ENV_VAR } from "../lib/packageArchive.ts";
 import { productionAgentServerConfigFromEnv } from "../lib/productionConfig.ts";
+import {
+  RUNTIME_ACTION_SIGNING_ENV_VAR,
+  RUNTIME_ACTION_VERIFICATION_KEYS_ENV_VAR,
+} from "../lib/runtimeActionSigning.ts";
 
 const VALID_PRIVATE_KEY = generateKeyPairSync("ed25519").privateKey
+  .export({ type: "pkcs8", format: "pem" })
+  .toString();
+const VALID_ACTION_PRIVATE_KEY = generateKeyPairSync("ed25519").privateKey
   .export({ type: "pkcs8", format: "pem" })
   .toString();
 
@@ -28,6 +35,7 @@ function productionEnv(overrides: Record<string, string | undefined> = {}) {
     AGENT_SERVER_REGISTRATION_ACTOR_HASH_SECRET: "production-registration-actor-hash-secret-at-least-32-characters",
     AGENT_SERVER_REGISTRATION_TRUST_PROXY_HOPS: "1",
     [OBSIDIAN_EPOCH_PACKAGE_SIGNING_ENV_VAR]: VALID_PRIVATE_KEY,
+    [RUNTIME_ACTION_SIGNING_ENV_VAR]: VALID_ACTION_PRIVATE_KEY,
     ...overrides,
   };
 }
@@ -40,6 +48,7 @@ test("production server config loads long-lived secrets from files and rejects a
     AGENT_SERVER_REGISTRATION_SECRET: "file-registration-secret-at-least-32-characters",
     AGENT_SERVER_REGISTRATION_ACTOR_HASH_SECRET: "file-actor-hash-secret-at-least-32-characters",
     [OBSIDIAN_EPOCH_PACKAGE_SIGNING_ENV_VAR]: VALID_PRIVATE_KEY,
+    [RUNTIME_ACTION_SIGNING_ENV_VAR]: VALID_ACTION_PRIVATE_KEY,
   };
   const overrides: Record<string, string | undefined> = {};
   try {
@@ -54,6 +63,7 @@ test("production server config loads long-lived secrets from files and rejects a
     assert.equal(config.operatorKey, values.AGENT_SERVER_OPERATOR_KEY);
     assert.equal(config.registrationSecret, values.AGENT_SERVER_REGISTRATION_SECRET);
     assert.equal(config.packageReleaseKeyId, releaseKeyId(VALID_PRIVATE_KEY));
+    assert.equal(config.runtimeActionKeyId, releaseKeyId(VALID_ACTION_PRIVATE_KEY));
 
     assert.throws(
       () => productionAgentServerConfigFromEnv(productionEnv({
@@ -114,6 +124,7 @@ test("production server config accepts exact HTTPS origins and operator signing 
   assert.equal(config.mcpPlayerTokenJsonlPath, "/data/player-mcp-access-tokens.jsonl");
   assert.equal(config.mcpPlayerTokenTtlMs, 43_200_000);
   assert.equal(config.packageReleaseKeyId, releaseKeyId(VALID_PRIVATE_KEY));
+  assert.equal(config.runtimeActionKeyId, releaseKeyId(VALID_ACTION_PRIVATE_KEY));
   assert.equal(config.registrationSecret, "production-registration-secret-at-least-32-characters");
   assert.equal(config.publicRegistrationProtection.mode, "enforce");
   assert.equal(config.publicRegistrationProtection.trustProxyHops, 1);
@@ -315,6 +326,44 @@ test("production server config rejects blank package signing private key", () =>
       () => productionAgentServerConfigFromEnv(productionEnv({ [OBSIDIAN_EPOCH_PACKAGE_SIGNING_ENV_VAR]: privateKey })),
       /AGENT_PACKAGE_SIGNING_PRIVATE_KEY_PEM/,
       `expected production signing key ${String(privateKey)} to be rejected`,
+    );
+  }
+});
+
+test("production requires an independent runtime action signing key", () => {
+  for (const privateKey of [undefined, "", "   "]) {
+    assert.throws(
+      () => productionAgentServerConfigFromEnv(productionEnv({ [RUNTIME_ACTION_SIGNING_ENV_VAR]: privateKey })),
+      /AGENT_RUNTIME_ACTION_SIGNING_PRIVATE_KEY_PEM/,
+    );
+  }
+  assert.throws(
+    () => productionAgentServerConfigFromEnv(productionEnv({
+      [RUNTIME_ACTION_SIGNING_ENV_VAR]: VALID_PRIVATE_KEY,
+    })),
+    /must be independent/,
+  );
+});
+
+test("production rejects invalid runtime action verification rings", () => {
+  const ecPublicKeyPem = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).publicKey
+    .export({ type: "spki", format: "pem" }).toString();
+  for (const ring of [
+    "not-json",
+    JSON.stringify({ keys: [{ publicKey: "not-a-public-key" }] }),
+    JSON.stringify({ keys: [{ publicKey: ecPublicKeyPem }] }),
+    JSON.stringify({
+      keys: [{
+        publicKey: createPublicKey(VALID_ACTION_PRIVATE_KEY).export({ type: "spki", format: "pem" }).toString(),
+        keyId: "0".repeat(64),
+      }],
+    }),
+  ]) {
+    assert.throws(
+      () => productionAgentServerConfigFromEnv(productionEnv({
+        [RUNTIME_ACTION_VERIFICATION_KEYS_ENV_VAR]: ring,
+      })),
+      /runtime_action_verification_keys_invalid/,
     );
   }
 });

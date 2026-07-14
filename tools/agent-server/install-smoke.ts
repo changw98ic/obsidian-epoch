@@ -51,6 +51,7 @@ function requiredPublishToken(value: unknown, errorCode: string) {
 interface JsonRpcClient {
   readonly child: ChildProcessWithoutNullStreams;
   request(method: string, params?: AnyRecord): Promise<AnyRecord>;
+  notify(method: string, params?: AnyRecord): void;
   callTool(name: string, args?: AnyRecord): Promise<AnyRecord>;
   close(): Promise<void>;
 }
@@ -385,6 +386,9 @@ function createJsonRpcClient(serverBase: string, packageRoot: string, mcpToken: 
   return {
     child,
     request,
+    notify(method: string, params?: AnyRecord) {
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method, ...(params ? { params } : {}) })}\n`);
+    },
     async callTool(name: string, args: AnyRecord = {}) {
       return request("tools/call", { name, arguments: args });
     },
@@ -686,12 +690,17 @@ async function postStreamableMcpJsonRpc(
   payload: AnyRecord,
   mcpToken: string | undefined,
   expectedStatus = 200,
+  sessionId?: string,
 ) {
   const response = await fetch(`${serverBase}/mcp`, {
     method: "POST",
     headers: {
       "accept": "application/json, text/event-stream",
       "content-type": "application/json",
+      ...(sessionId ? {
+        "mcp-session-id": sessionId,
+        "mcp-protocol-version": MCP_PROTOCOL_VERSION,
+      } : {}),
       ...authorizationHeaders(mcpToken),
     },
     body: JSON.stringify(payload),
@@ -703,12 +712,12 @@ async function postStreamableMcpJsonRpc(
     }
     throw new Error(`install_smoke_streamable_mcp_status:${payload.method}:${response.status}`);
   }
-  if (!text) return { status: response.status, body: null };
+  if (!text) return { status: response.status, body: null, headers: response.headers };
   const body = JSON.parse(text);
   if (body?.error) {
     throw new Error(body.error.message || "install_smoke_streamable_mcp_error");
   }
-  return { status: response.status, body };
+  return { status: response.status, body, headers: response.headers };
 }
 
 async function verifyStreamableMcpEndpoint(serverBase: string, mcpToken: string | undefined): Promise<StreamableMcpSmokeResult> {
@@ -733,17 +742,19 @@ async function verifyStreamableMcpEndpoint(serverBase: string, mcpToken: string 
   if (serverName !== "obsidian-epoch-agent-world") {
     throw new Error("install_smoke_streamable_mcp_server_mismatch");
   }
+  const sessionId = initialize.headers.get("mcp-session-id") || "";
+  if (!sessionId) throw new Error("install_smoke_streamable_mcp_session_missing");
 
   const initialized = await postStreamableMcpJsonRpc(serverBase, {
     jsonrpc: "2.0",
     method: "notifications/initialized",
-  }, mcpToken, 202);
+  }, mcpToken, 202, sessionId);
 
   const tools = await postStreamableMcpJsonRpc(serverBase, {
     jsonrpc: "2.0",
     id: "install-smoke-tools",
     method: "tools/list",
-  }, mcpToken);
+  }, mcpToken, 200, sessionId);
   const toolEntries = tools.body?.result?.tools;
   if (!Array.isArray(toolEntries) || !toolEntries.some((tool: AnyRecord) => tool.name === "obsidian_epoch.quickstart")) {
     throw new Error("install_smoke_streamable_mcp_tools_missing");
@@ -760,7 +771,7 @@ async function verifyStreamableMcpEndpoint(serverBase: string, mcpToken: string 
       name: "obsidian_epoch.quickstart",
       arguments: { host: "Streamable HTTP MCP" },
     },
-  }, mcpToken);
+  }, mcpToken, 200, sessionId);
   const quickstart = contentPayload(quickstartResponse.body);
   if (quickstart.serverBase !== serverBase) {
     throw new Error("install_smoke_streamable_mcp_quickstart_server_mismatch");
@@ -1005,6 +1016,16 @@ export async function runEpochInstallSmoke(options: InstallSmokeOptions = {}) {
     packageRoot = extractedPackage.root;
     packageFileIntegrity = extractedPackage.integrity;
     mcp = createJsonRpcClient(serverBase, packageRoot, mcpToken);
+
+    const packageInitialize = await mcp.request("initialize", {
+      protocolVersion: MCP_PROTOCOL_VERSION,
+      capabilities: {},
+      clientInfo: { name: "obsidian-epoch-install-smoke-package", version: "0.1.0" },
+    });
+    if (recordValue(packageInitialize.result).protocolVersion !== MCP_PROTOCOL_VERSION) {
+      throw new Error("install_smoke_package_proxy_protocol_mismatch");
+    }
+    mcp.notify("notifications/initialized");
 
     const toolList = await mcp.request("tools/list");
     const packageToolEntries = recordValue(toolList.result).tools;

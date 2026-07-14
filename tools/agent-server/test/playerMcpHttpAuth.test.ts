@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createAgentHttpServer } from "../lib/httpServer.ts";
-import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { MCP_PROTOCOL_VERSION, createAgentWorldRuntime } from "../lib/mcpTools.ts";
 import { PlayerMcpAccessTokenStore } from "../lib/playerMcpAccessTokenStore.ts";
 import {
   type PublicRegistrationProtectionConfig,
@@ -46,13 +46,42 @@ async function postMcpTool(
   name: string,
   toolArguments: Record<string, unknown>,
 ) {
+  const commonHeaders = {
+    accept: "application/json, text/event-stream",
+    authorization: `Bearer ${bearerToken}`,
+    "content-type": "application/json",
+  };
+  const initialize = await fetch(`${baseUrl}/mcp`, {
+    method: "POST",
+    headers: commonHeaders,
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "player-mcp-initialize",
+      method: "initialize",
+      params: {
+        protocolVersion: MCP_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: "player-mcp-http-auth-test", version: "1" },
+      },
+    }),
+  });
+  const sessionId = initialize.headers.get("mcp-session-id") || "";
+  assert.equal(initialize.status, 200);
+  assert.ok(sessionId);
+  const sessionHeaders = {
+    ...commonHeaders,
+    "mcp-protocol-version": MCP_PROTOCOL_VERSION,
+    "mcp-session-id": sessionId,
+  };
+  const initialized = await fetch(`${baseUrl}/mcp`, {
+    method: "POST",
+    headers: sessionHeaders,
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+  });
+  assert.equal(initialized.status, 202);
   const response = await fetch(`${baseUrl}/mcp`, {
     method: "POST",
-    headers: {
-      accept: "application/json, text/event-stream",
-      authorization: `Bearer ${bearerToken}`,
-      "content-type": "application/json",
-    },
+    headers: sessionHeaders,
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
@@ -60,7 +89,9 @@ async function postMcpTool(
       params: { name, arguments: toolArguments },
     }),
   });
-  return { status: response.status, body: await response.json() as Record<string, unknown> };
+  const result = { status: response.status, body: await response.json() as Record<string, unknown> };
+  await fetch(`${baseUrl}/mcp`, { method: "DELETE", headers: sessionHeaders });
+  return result;
 }
 
 async function postJson(
@@ -274,6 +305,35 @@ test("player MCP bearer authorizes only its explorer without exposing owner secr
     });
     assert.equal(streamableAccepted.status, 200, JSON.stringify(streamableAccepted.body));
     assert.equal(streamableAccepted.body.jsonrpc, "2.0");
+
+    const prepared = await postTool(baseUrl, playerToken.bearerToken, "obsidian_epoch.prepare_journey", {
+      agentId: agentA,
+      destinationRegionId: "region_gray_harbor",
+      idempotencyKey: "player-token-prepare-journey",
+    });
+    assert.equal(prepared.status, 200, JSON.stringify(prepared.body));
+    const preparedPayload = JSON.parse(String((prepared.body.content as Array<{ text: string }>)[0]?.text));
+    const started = await postTool(baseUrl, playerToken.bearerToken, "obsidian_epoch.start_journey", {
+      journeyId: preparedPayload.journey.journeyId,
+      expectedVersion: preparedPayload.journey.version,
+      idempotencyKey: "player-token-start-journey",
+    });
+    assert.equal(started.status, 200, JSON.stringify(started.body));
+    const briefing = await postTool(baseUrl, playerToken.bearerToken, "obsidian_epoch.agent_briefing", {
+      agentId: agentA,
+    });
+    assert.equal(briefing.status, 200, JSON.stringify(briefing.body));
+    const briefingPayload = JSON.parse(String((briefing.body.content as Array<{ text: string }>)[0]?.text));
+    assert.equal(briefingPayload.currentJourney.agentId, agentA);
+    assert.equal(briefingPayload.recentEpisodes[0].phase, "arrival");
+
+    const foreignBriefing = await postTool(baseUrl, playerToken.bearerToken, "obsidian_epoch.agent_briefing", {
+      agentId: agentB,
+    });
+    assert.equal(foreignBriefing.status, 200);
+    const foreignPayload = JSON.parse(String((foreignBriefing.body.content as Array<{ text: string }>)[0]?.text));
+    assert.equal(foreignPayload.currentJourney, undefined);
+    assert.equal(foreignPayload.interactionInboxTotal, 0);
 
     const impersonation = await postTool(baseUrl, playerToken.bearerToken, "obsidian_epoch.set_downtime", {
       agentId: agentB,

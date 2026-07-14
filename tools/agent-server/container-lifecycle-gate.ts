@@ -67,6 +67,7 @@ function serverEnvironment(paths?: {
     AGENT_SERVER_REGISTRATION_TRUST_PROXY_HOPS: "0",
     AGENT_SERVER_PUBLIC_REGISTRATION_MODE: "enforce",
     AGENT_PACKAGE_SIGNING_PRIVATE_KEY_PEM_FILE: "/run/secrets/package-private.pem",
+    AGENT_RUNTIME_ACTION_SIGNING_PRIVATE_KEY_PEM_FILE: "/run/secrets/runtime-action-private.pem",
     AGENT_SERVER_MAINTENANCE_ENABLED: "1",
     AGENT_SERVER_MAINTENANCE_RUN_ON_START: "0",
     AGENT_SERVER_DATA_DIR: paths?.dataDir || "/data",
@@ -232,14 +233,17 @@ export async function runContainerLifecycleGate(image: string) {
   const secretVolume = `obsidian-epoch-gate-secrets-${suffix}`;
   const tempDir = await mkdtemp(join(tmpdir(), "obsidian-epoch-container-gate-"));
   const packageSigning = signingMaterial();
+  const runtimeActionSigning = signingMaterial();
   const backupSigning = signingMaterial();
   const backupPrivateKeyPath = join(tempDir, "backup-private.pem");
   const backupPublicKeyPath = join(tempDir, "backup-public.txt");
   const backupCheckpointPath = join(tempDir, "backup-checkpoint.json");
   const packagePrivateKeyPath = join(tempDir, "package-private.pem");
+  const runtimeActionPrivateKeyPath = join(tempDir, "runtime-action-private.pem");
   await writeFile(backupPrivateKeyPath, backupSigning.privateKeyPem, { mode: 0o600 });
   await writeFile(backupPublicKeyPath, backupSigning.publicKeyBase64, { mode: 0o600 });
   await writeFile(packagePrivateKeyPath, packageSigning.privateKeyPem, { mode: 0o600 });
+  await writeFile(runtimeActionPrivateKeyPath, runtimeActionSigning.privateKeyPem, { mode: 0o600 });
   const primaryServer = serverEnvironment();
   let agentId = "";
   let issuedToken = "";
@@ -249,6 +253,7 @@ export async function runContainerLifecycleGate(image: string) {
   try {
     for (const [sourcePath, targetName] of [
       [packagePrivateKeyPath, "package-private.pem"],
+      [runtimeActionPrivateKeyPath, "runtime-action-private.pem"],
       [backupPrivateKeyPath, "backup-private.pem"],
       [backupPublicKeyPath, "backup-public.txt"],
     ] as const) {

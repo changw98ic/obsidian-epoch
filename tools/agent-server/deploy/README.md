@@ -104,6 +104,10 @@ npm run agent:generate-signing-key -- --json
 
 Store the returned `privateKeyPem` in the deployment secret store and point `AGENT_PACKAGE_SIGNING_PRIVATE_KEY_PEM_FILE` at the mounted secret file; keep the returned `releaseKeyId` as the pinned production key id. Direct `AGENT_PACKAGE_SIGNING_PRIVATE_KEY_PEM` remains supported for local development, but Compose mounts the file as a secret so private material is absent from `docker inspect`. Do not commit the private key. Without either source, the server creates a process-ephemeral local alpha key for temporary smoke tests; no fallback private key is stored in the repository.
 
+Generate a second Ed25519 keypair for short-lived Journey `SceneContract` actions. Point `AGENT_RUNTIME_ACTION_SIGNING_PRIVATE_KEY_PEM_FILE` at that independent private key and never reuse the package release key: production startup rejects matching key identities. Runtime action signatures bind `signatureVersion: 1`, `signingPurpose: "journey_scene_action"`, the signing key id and the visible option fields, so a package signature cannot be replayed as an in-world action authorization.
+
+During a runtime action key rotation, place the retiring public key in the JSON file referenced by `AGENT_RUNTIME_ACTION_VERIFICATION_PUBLIC_KEYS_FILE` until every open contract signed by it has expired. Compose mounts this file as a read-only secret, independently from the active private key. The file accepts either an array of public-key PEM strings or `{ "keys": [{ "publicKey": "...", "keyId": "<sha256-spki-der>" }] }`; SPKI DER/base64 remains compatible. PEM and DER/base64 forms are normalized to the same identity and duplicates are ignored. If `keyId` is present it must match the normalized public key, and malformed or non-Ed25519 entries fail startup/verification closed. Deploy the verification ring before switching the private key, confirm open contracts still verify, then remove the retired key only after the maximum contract lifetime. Never place a private key in the verification ring.
+
 After deployment, require the live server to use that operator key. Production release smoke must run against the public HTTPS origin that operators and installed hosts will use; do not use `localhost`, `127.0.0.1`, a Docker service name or an internal reverse-proxy upstream as the production `serverBase`.
 
 ```bash
@@ -147,6 +151,7 @@ Record production readiness only after the target environment supplies evidence 
 - Public DNS resolves to the intended host, and the public `AGENT_PUBLIC_SERVER_BASE` is reachable through HTTPS.
 - The application image has been pushed to the configured registry and the registry-assigned immutable digest has been captured as `AGENT_RELEASE_IMAGE_DIGEST`.
 - `AGENT_PACKAGE_SIGNING_PRIVATE_KEY_PEM` is operator-owned, configured in the deployment secret store and verified by production smoke with the expected `releaseKeyId`.
+- `AGENT_RUNTIME_ACTION_SIGNING_PRIVATE_KEY_PEM_FILE` points to an operator-owned Ed25519 key that is distinct from the package release key; any active rotation includes only retiring public keys in `AGENT_RUNTIME_ACTION_VERIFICATION_PUBLIC_KEYS_FILE`.
 - A backup has been copied to a fresh host or staging host, restored into fresh paths, passed `agent:recovery-drill`, started with the restored paths and passed remote install smoke at the restored public URL.
 
 ## Attested Runner
@@ -255,6 +260,18 @@ curl http://127.0.0.1:8787/api/epoch/health
 ```
 
 Both health paths return the same body with `checks.store`, `checks.maintenance` and `checks.recovery`. They return HTTP 200 only when `ok` is true and HTTP 503 when any readiness check fails, so the bundled Compose healthcheck fails closed. A production server should report a persistent store (`jsonl` or `sqlite`), an enabled maintenance loop reports the latest start, success or error timestamps, and the recovery manifest reports ledger record counts plus sha256 proofs for the append-only JSONL-compatible ledgers. For SQLite deployments, `checks.recovery.status` should be `ok` and `checks.recovery.manifestSha256` should change only when canonical persisted records change.
+
+### Journey and MCP observability gates
+
+`/api/health` exposes bounded MCP transport counters and error budgets under `checks.mcp`; `obsidian_epoch.operator_overview` exposes Journey/companion metrics under `companion`. Do not attach prompt text, recovery credentials, player tokens, signatures or raw Sampling responses as metric labels.
+
+- Alert when at least 20 tool calls have a failure rate above 1%, or at least 20 Sampling calls have a timeout rate above 5%.
+- Stop Journey publication when `groundedNarrativeAlert`, `canonicalEventMissingAlert` or `correlationBreakAlert` is true. Every committed Episode must have persisted server facts/narrative; every referenced canonical event must exist and carry the Journey's `correlationId`.
+- Investigate any growth in unknown MCP responses, non-zero unbounded session counts, or a repeated-template rate that rises without an intentional content rollout.
+- The Journey correlation chain is `journey:<journeyId>` across proposal/session creation, hosted settlement, grounded facts, result-page receipt and cross-Agent shared projection. Scene IDs are causation IDs, not authorization tokens.
+- Persistence failures are fail-stop: the server becomes unhealthy and rejects later mutations. Sampling timeout, rejection, provider failure or disconnect must leave a signed proposal open or degrade to Agent-native play; it must never synthesize a settlement.
+
+Release evidence must include the authorization/player-token tests, secret-redaction gates, Sampling failure injection, persistence fail-stop/concurrency tests, and an operator overview whose companion error budgets are clear.
 
 Install manifest:
 

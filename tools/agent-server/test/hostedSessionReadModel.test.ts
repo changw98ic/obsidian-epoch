@@ -73,6 +73,10 @@ function hostedSessionFixture(input: {
     channelClass: "browser_copy_paste",
     deliveryTrust: "untrusted_client",
     status: input.status,
+    sceneContract: {
+      sceneId: `${input.sessionId}_secret_scene`,
+      actionOptions: [{ signature: "secret_scene_signature" }],
+    } as unknown as NonNullable<EpochHostedSession["sceneContract"]>,
     actionOptions: [{
       actionOptionId: `${input.sessionId}_secret_option`,
       optionKey: "observe",
@@ -149,6 +153,7 @@ test("hosted session read model redacts public session internals", async () => {
   const activeSession = readModel.publicHostedSession(projection.hostedSessions.session_old_active);
   assert.deepEqual(activeSession.actionOptions, []);
   assert.deepEqual(activeSession.actions, []);
+  assert.equal(activeSession.sceneContract, undefined);
 
   const completedSession = readModel.publicHostedSession(projection.hostedSessions.session_new_completed);
   assert.deepEqual(completedSession.actionOptions, []);

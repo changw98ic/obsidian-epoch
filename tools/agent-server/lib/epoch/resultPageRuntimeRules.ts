@@ -26,14 +26,30 @@ export const DELETED_RESULT_PAGE_REMOVED_BODY_CLASSES = [
 ] as const;
 
 export function stableResultPageJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableResultPageJson).join(",")}]`;
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => entry === undefined
+      || typeof entry === "function"
+      || typeof entry === "symbol"
+      ? "null"
+      : stableResultPageJson(entry)).join(",")}]`;
+  }
   if (value && typeof value === "object") {
     return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined && typeof entry !== "function" && typeof entry !== "symbol")
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => `${JSON.stringify(key)}:${stableResultPageJson(entry)}`)
       .join(",")}}`;
   }
-  return JSON.stringify(value);
+  const serialized = JSON.stringify(value);
+  return serialized === undefined ? "null" : serialized;
+}
+
+export function storedResultPageShareVersion(page: EpochSharedResultPage) {
+  if (typeof page.shareVersion === "undefined") return 1;
+  if (!Number.isSafeInteger(page.shareVersion) || page.shareVersion < 1) {
+    throw new Error("result_page_revision_invalid");
+  }
+  return page.shareVersion;
 }
 
 export const RESULT_PAGE_PUBLIC_SAFE_EXCLUDED_SOURCE_CLASSES: readonly EpochPublicSafeSummaryExcludedSourceClass[] = [
@@ -206,15 +222,19 @@ export function resultPageActiveRecord(input: {
     throw new Error("result_page_identity_required");
   }
   const shareVersion = 1;
+  const expiresAt = input.payload.journey?.status === "settled"
+    ? undefined
+    : resultPageExpiresAt(input.createdAt);
   return {
     pageId: input.pageId,
     createdAt: input.createdAt,
-    expiresAt: resultPageExpiresAt(input.createdAt),
+    ...(expiresAt ? { expiresAt } : {}),
     urlPath: resultPageUrlPath(input.pageId, input.shareToken, shareVersion),
     payload: input.payload,
     publicSafeSummary: input.payload.publicSafeSummary,
     createdBy: resultPageCreatedBy(input.request, input.payload),
     idempotencyKey: resultPageCreateIdempotencyKey(input.request),
+    idempotencySubjectHash: resultPageRequestHash(input.request),
     status: "active",
     shareVersion,
     shareTokenHash: resultPageShareTokenHash(input.shareToken),
@@ -227,13 +247,18 @@ export function resultPageRevokedRecord(input: {
   readonly revokedAt: string;
   readonly revokedBy: string;
 }): EpochSharedResultPage {
-  const nextShareVersion = (input.page.shareVersion || 1) + 1;
+  const nextShareVersion = storedResultPageShareVersion(input.page) + 1;
+  const {
+    lifecycleIdempotencyKey: _previousLifecycleIdempotencyKey,
+    shareTokenHash: _shareTokenHash,
+    ...page
+  } = input.page;
   return {
-    ...input.page,
+    ...page,
     urlPath: resultPageStatusUrlPath(input.page.pageId, nextShareVersion),
+    lifecycleIdempotencyKey: resultPageRevokeIdempotencyKey(input.request),
     status: "revoked",
     shareVersion: nextShareVersion,
-    shareTokenHash: undefined,
     revokedAt: input.revokedAt,
     revokedBy: input.revokedBy,
     revokeReason: resultPageMutationReason(input.request, "owner_revoked"),
@@ -247,19 +272,23 @@ export function resultPageDeletedRecord(input: {
   readonly deletedBy: string;
   readonly deletionSummary: EpochResultPageDeletionSummary;
 }): EpochSharedResultPage {
-  const nextShareVersion = (input.page.shareVersion || 1) + 1;
+  const nextShareVersion = storedResultPageShareVersion(input.page) + 1;
   return {
     pageId: input.page.pageId,
     createdAt: input.page.createdAt,
-    expiresAt: input.page.expiresAt,
+    ...(input.page.expiresAt ? { expiresAt: input.page.expiresAt } : {}),
     urlPath: resultPageStatusUrlPath(input.page.pageId, nextShareVersion),
     createdBy: input.page.createdBy,
     idempotencyKey: input.page.idempotencyKey,
+    ...(input.page.idempotencySubjectHash
+      ? { idempotencySubjectHash: input.page.idempotencySubjectHash }
+      : {}),
+    lifecycleIdempotencyKey: resultPageDeleteIdempotencyKey(input.request),
     status: "deleted",
     shareVersion: nextShareVersion,
-    revokedAt: input.page.revokedAt,
-    revokedBy: input.page.revokedBy,
-    revokeReason: input.page.revokeReason,
+    ...(input.page.revokedAt ? { revokedAt: input.page.revokedAt } : {}),
+    ...(input.page.revokedBy ? { revokedBy: input.page.revokedBy } : {}),
+    ...(input.page.revokeReason ? { revokeReason: input.page.revokeReason } : {}),
     deletedAt: input.deletedAt,
     deletedBy: input.deletedBy,
     deleteReason: resultPageMutationReason(input.request, "owner_deleted"),
@@ -277,7 +306,7 @@ export function resultPageAccessResult(
   nowMs: number,
 ): EpochResultPageAccessResult {
   if (!page) return { status: "missing", statusCode: 404 };
-  const status = page.status || "active";
+  const status = page.status ?? "active";
   if (status === "deleted") {
     return { status: "deleted", statusCode: 410, page };
   }
@@ -298,7 +327,7 @@ export function resultPageAccessResult(
   if (typeof requestedShareVersion === "undefined") {
     return { status: "share_version_required", statusCode: 403, page };
   }
-  const currentShareVersion = page.shareVersion || 1;
+  const currentShareVersion = storedResultPageShareVersion(page);
   if (!Number.isSafeInteger(requestedShareVersion) || requestedShareVersion !== currentShareVersion) {
     return { status: "share_version_mismatch", statusCode: 403, page };
   }
@@ -307,10 +336,16 @@ export function resultPageAccessResult(
 }
 
 export function resultPagePayloadOwnerExplorerId(payload: EpochResultPagePayload) {
-  return payload.receipt.explorerId
-    || payload.progress.explorerId
+  return payload.progress.explorerId
     || payload.progress.identity?.explorerId
     || payload.progress.identities.find((identity) => identity.explorerId)?.explorerId
+    || "";
+}
+
+export function resultPagePayloadAgentId(payload: EpochResultPagePayload) {
+  return payload.progress.agentId
+    || payload.progress.identity?.agentId
+    || payload.progress.identities.find((identity) => identity.agentId)?.agentId
     || "";
 }
 

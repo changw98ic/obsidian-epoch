@@ -169,3 +169,61 @@ test("result page payload rules reject conflicting focus inputs", () => {
     generatedAt: GENERATED_AT,
   }), /result_page_focus_conflict/);
 });
+
+test("result page payload rules expose only allowlisted Journey reward fields", () => {
+  const built = buildEpochResultPagePayload({
+    projection: projection(),
+    input: {
+      journeyVerification: {
+        journeyId: "journey_1",
+        correlationId: "journey:journey_1",
+        status: "traveling",
+        objective: "探访灰港",
+        regionId: "region_gray_harbor",
+        episodes: [],
+        canonicalEventIds: [],
+        stateDelta: {
+          outcomeSummary: "带回了港口见闻。",
+          reward: {
+            resourceId: "resource_obsidian",
+            amount: 2,
+            internalGrantToken: "must-not-leak",
+          },
+        },
+      },
+    },
+    generatedAt: GENERATED_AT,
+  });
+
+  assert.deepEqual(built.journey?.stateDelta?.reward, {
+    resourceId: "resource_obsidian",
+    amount: 2,
+  });
+  assert.doesNotMatch(JSON.stringify(built), /must-not-leak|internalGrantToken/);
+});
+
+test("settled Journey result pages fail closed instead of degrading invalid episodes to metadata", () => {
+  assert.throws(() => buildEpochResultPagePayload({
+    projection: projection(),
+    input: {
+      journeyVerification: {
+        journeyId: "journey_polluted",
+        correlationId: "journey:journey_polluted",
+        status: "settled",
+        objective: "伪造已结算旅程",
+        regionId: "region_gray_harbor",
+        canonicalEventIds: ["event_polluted"],
+        episodes: [{
+          episodeId: "journey_polluted:arrival",
+          title: "伪造抵达",
+          outcomeKey: "polluted",
+          participants: [],
+          sourceEventIds: ["event_polluted"],
+          serverFacts: { sourceEventIds: ["event_polluted"] },
+          narrative: {},
+        }],
+      },
+    },
+    generatedAt: GENERATED_AT,
+  }), /result_page_journey_grounding_invalid/);
+});
