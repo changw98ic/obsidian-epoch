@@ -85,6 +85,8 @@ test("compose renders constrained application, operations, and Caddy services", 
   assert.equal(app.mem_limit, "805306368");
   assert.equal(app.stop_signal, "SIGTERM");
   assert.equal(app.stop_grace_period, "18s");
+  const appHealthcheck = app.healthcheck as { readonly test: readonly string[] };
+  assert.deepEqual(appHealthcheck.test.slice(0, 2), ["CMD", "/nodejs/bin/node"]);
   const environment = app.environment as Record<string, string>;
   assert.equal(environment.AGENT_SERVER_SHUTDOWN_TIMEOUT_MS, "12000");
   for (const inlineSecret of [

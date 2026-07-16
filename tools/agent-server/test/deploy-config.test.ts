@@ -119,6 +119,7 @@ test("public deployment config ships Docker, Compose, env example, and operator 
   assert.match(compose, /obsidian_epoch_embedding_api_key:/);
   assert.match(compose, /target: obsidian_epoch_embedding_api_key\s+uid: "65532"\s+gid: "65532"\s+mode: 0400/);
   assert.doesNotMatch(compose, /AGENT_SERVER_EMBEDDING_API_KEY:/);
+  assert.match(compose, /test: \["CMD", "\/nodejs\/bin\/node"/);
   assert.match(compose, /fetch\('http:\/\/127\.0\.0\.1:8787\/api\/health'\)/);
   assert.match(compose, /process\.exit\(response\.ok \? 0 : 1\)/);
   assert.match(compose, /\$\{AGENT_SERVER_REGISTRATION_SECRET_FILE:\?set path to registration HMAC secret file\}/);
