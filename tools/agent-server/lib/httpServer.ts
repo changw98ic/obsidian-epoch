@@ -1024,7 +1024,7 @@ export function createAgentHttpServer({
     }
   }
 
-  return http.createServer((request, response) => {
+  const server = http.createServer((request, response) => {
     const run = () => handleWithErrorResponse(request, response);
     const pathname = new URL(request.url || "/", "http://127.0.0.1").pathname;
     const isMcpTransport = pathname === "/mcp" || pathname === "/api/epoch/mcp";
@@ -1037,4 +1037,7 @@ export function createAgentHttpServer({
       sendJson(request, response, 500, { error: "internal_error" }, allowedOrigins);
     });
   });
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
+  return server;
 }
