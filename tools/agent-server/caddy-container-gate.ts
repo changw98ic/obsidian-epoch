@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import https from "node:https";
-import { type IncomingHttpHeaders } from "node:http";
+import http, { type IncomingHttpHeaders } from "node:http";
 import { randomBytes } from "node:crypto";
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 function valueAfterFlag(flag: string) {
   const index = process.argv.indexOf(flag);
@@ -50,6 +52,21 @@ function httpsRequest(port: number) {
   });
 }
 
+function httpRequest(port: number, path: string) {
+  return new Promise<{ readonly status: number; readonly body: string }>((resolveRequest, rejectRequest) => {
+    const request = http.get({ host: "127.0.0.1", port, path, timeout: 2_000 }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on("end", () => resolveRequest({
+        status: response.statusCode || 0,
+        body: Buffer.concat(chunks).toString("utf8"),
+      }));
+    });
+    request.on("timeout", () => request.destroy(new Error("caddy_gate_request_timeout")));
+    request.on("error", rejectRequest);
+  });
+}
+
 async function waitForProxy(port: number) {
   const deadline = Date.now() + 30_000;
   let lastError: unknown;
@@ -86,9 +103,12 @@ async function main() {
   const network = `obsidian-caddy-gate-${suffix}`;
   const upstream = `obsidian-caddy-upstream-${suffix}`;
   const proxy = `obsidian-caddy-proxy-${suffix}`;
+  const staticServer = `obsidian-caddy-static-${suffix}`;
   const dataVolume = `obsidian-caddy-data-${suffix}`;
   const configVolume = `obsidian-caddy-config-${suffix}`;
+  const staticRoot = mkdtempSync(join(tmpdir(), "obsidian-caddy-static-"));
   try {
+    writeFileSync(join(staticRoot, "health.txt"), "healthy\n", "utf8");
     const validation = docker([
       "run", "--rm", "--network=none", "--read-only", "--cap-drop=ALL", "--cap-add=NET_BIND_SERVICE",
       "--security-opt=no-new-privileges:true", "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777",
@@ -97,6 +117,12 @@ async function main() {
       caddyImage, "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile",
     ]);
     assert.equal(validation.status, 0);
+    const rejectedRemoteHealthcheck = docker([
+      "run", "--rm", "--network=none", "--env", "CADDY_HEALTHCHECK_URL=https://example.test/health",
+      "--entrypoint", "/usr/bin/caddy-healthcheck", caddyImage,
+    ], true);
+    assert.notEqual(rejectedRemoteHealthcheck.status, 0);
+    assert.match(rejectedRemoteHealthcheck.stderr, /caddy_healthcheck_url_invalid/);
     docker(["network", "create", network]);
     docker(["volume", "create", dataVolume]);
     docker(["volume", "create", configVolume]);
@@ -150,13 +176,38 @@ async function main() {
     assert.equal(inspect.HostConfig.PidsLimit, 128);
     assert.equal(inspect.HostConfig.Memory, 256 * 1024 * 1024);
     assert.equal(inspect.HostConfig.NanoCpus, 500_000_000);
-    console.log(JSON.stringify({ ok: true, image: caddyImage, upstreamImage, httpsStatus: response.status, securityHeaders: true }));
+
+    docker([
+      "run", "--detach", "--name", staticServer, "--read-only", "--cap-drop=ALL",
+      "--security-opt=no-new-privileges:true", "--pids-limit", "64", "--cpus", "0.25", "--memory", "128m",
+      "--env", "CADDY_HEALTHCHECK_URL=http://127.0.0.1:18891/health.txt",
+      "--publish", "127.0.0.1::18891/tcp", "--health-interval", "1s", "--health-timeout", "2s",
+      "--health-retries", "10", "--volume", `${staticRoot}:/media:ro`, caddyImage,
+      "file-server", "--root", "/media", "--listen", ":18891",
+    ]);
+    const staticPortOutput = docker(["port", staticServer, "18891/tcp"]).stdout;
+    const staticPort = Number(staticPortOutput.match(/:(\d+)$/)?.[1]);
+    assert.ok(Number.isSafeInteger(staticPort) && staticPort > 0, staticPortOutput);
+    await waitForHealthy(staticServer);
+    const staticResponse = await httpRequest(staticPort, "/health.txt");
+    assert.deepEqual(staticResponse, { status: 200, body: "healthy\n" });
+
+    console.log(JSON.stringify({
+      ok: true,
+      image: caddyImage,
+      upstreamImage,
+      httpsStatus: response.status,
+      securityHeaders: true,
+      staticHealthcheck: true,
+    }));
   } finally {
+    docker(["rm", "--force", staticServer], true);
     docker(["rm", "--force", proxy], true);
     docker(["rm", "--force", upstream], true);
     docker(["network", "rm", network], true);
     docker(["volume", "rm", dataVolume], true);
     docker(["volume", "rm", configVolume], true);
+    rmSync(staticRoot, { recursive: true, force: true });
   }
 }
 
