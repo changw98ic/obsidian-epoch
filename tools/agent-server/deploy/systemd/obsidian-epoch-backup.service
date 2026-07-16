@@ -1,0 +1,27 @@
+[Unit]
+Description=Obsidian Epoch backup rotation
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=obsidian-epoch
+Group=obsidian-epoch
+WorkingDirectory=/opt/obsidian-epoch/tools/graph-react-app
+Environment=AGENT_SERVER_DATA_DIR=/data
+Environment=AGENT_SERVER_SQLITE_PATH=/data/agent-world.sqlite
+Environment=AGENT_SERVER_BACKUP_DIR=/var/lib/obsidian-epoch-backups
+Environment=AGENT_SERVER_BACKUP_SIGNATURE_REQUIRED=1
+Environment=AGENT_SERVER_BACKUP_SIGNING_PRIVATE_KEY_FILE=%d/backup-signing-private-key.pem
+Environment=AGENT_SERVER_BACKUP_VERIFICATION_PUBLIC_KEY_FILE=%d/backup-verification-public-keys.json
+LoadCredential=backup-signing-private-key.pem:/etc/obsidian-epoch/backup-signing-private-key.pem
+LoadCredential=backup-verification-public-keys.json:/etc/obsidian-epoch/backup-verification-public-keys.json
+StateDirectory=obsidian-epoch-backups
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/usr/bin/env npm run agent:backup -- --sqlite /data/agent-world.sqlite --sqlite-only --player-mcp-tokens /data/player-mcp-access-tokens.jsonl --backup-root /var/lib/obsidian-epoch-backups --keep-last 14 --require-signature --json
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/data /var/lib/obsidian-epoch-backups

@@ -1,0 +1,610 @@
+{
+  "nodes": [
+    {
+      "id": "title",
+      "type": "text",
+      "x": -220,
+      "y": -660,
+      "width": 520,
+      "height": 120,
+      "text": "# 黑曜纪元世界关系\n从世界底层到主轴、基底与异化生态的第一版可视化。",
+      "color": "6"
+    },
+    {
+      "id": "world",
+      "type": "file",
+      "x": -160,
+      "y": -420,
+      "width": 260,
+      "height": 120,
+      "file": "01_世界底层/黑曜纪元.md",
+      "color": "6"
+    },
+    {
+      "id": "rift",
+      "type": "file",
+      "x": -160,
+      "y": -230,
+      "width": 260,
+      "height": 120,
+      "file": "01_世界底层/诸天裂灾.md",
+      "color": "6"
+    },
+    {
+      "id": "hightech",
+      "type": "file",
+      "x": -760,
+      "y": 10,
+      "width": 260,
+      "height": 120,
+      "file": "01_世界底层/高科技文明.md",
+      "color": "2"
+    },
+    {
+      "id": "cyber",
+      "type": "file",
+      "x": -460,
+      "y": 10,
+      "width": 260,
+      "height": 120,
+      "file": "01_世界底层/赛博工业文明.md",
+      "color": "1"
+    },
+    {
+      "id": "cthulhu",
+      "type": "file",
+      "x": -160,
+      "y": 10,
+      "width": 260,
+      "height": 120,
+      "file": "01_世界底层/克苏鲁眷族.md",
+      "color": "4"
+    },
+    {
+      "id": "east",
+      "type": "file",
+      "x": 140,
+      "y": 10,
+      "width": 260,
+      "height": 120,
+      "file": "01_世界底层/东方修行者.md",
+      "color": "5"
+    },
+    {
+      "id": "west",
+      "type": "file",
+      "x": 440,
+      "y": 10,
+      "width": 260,
+      "height": 120,
+      "file": "01_世界底层/西方魔法师.md",
+      "color": "6"
+    },
+    {
+      "id": "norse",
+      "type": "file",
+      "x": 740,
+      "y": 10,
+      "width": 260,
+      "height": 120,
+      "file": "01_世界底层/北欧原始神系.md",
+      "color": "3"
+    },
+    {
+      "id": "star-order",
+      "type": "file",
+      "x": -900,
+      "y": 210,
+      "width": 260,
+      "height": 120,
+      "file": "02_种族/星序族.md",
+      "color": "2"
+    },
+    {
+      "id": "cloud-brain",
+      "type": "file",
+      "x": -760,
+      "y": 370,
+      "width": 260,
+      "height": 120,
+      "file": "02_种族/云脑族.md",
+      "color": "2"
+    },
+    {
+      "id": "angel",
+      "type": "file",
+      "x": -620,
+      "y": 210,
+      "width": 260,
+      "height": 120,
+      "file": "02_种族/白械天使.md",
+      "color": "2"
+    },
+    {
+      "id": "rust",
+      "type": "file",
+      "x": -580,
+      "y": 560,
+      "width": 260,
+      "height": 120,
+      "file": "02_种族/锈裔.md",
+      "color": "1"
+    },
+    {
+      "id": "meatware",
+      "type": "file",
+      "x": -440,
+      "y": 720,
+      "width": 260,
+      "height": 120,
+      "file": "02_种族/肉件族.md",
+      "color": "1"
+    },
+    {
+      "id": "pipe",
+      "type": "file",
+      "x": -300,
+      "y": 560,
+      "width": 260,
+      "height": 120,
+      "file": "02_种族/管巢族.md",
+      "color": "1"
+    },
+    {
+      "id": "abyss",
+      "type": "file",
+      "x": -260,
+      "y": 210,
+      "width": 260,
+      "height": 120,
+      "file": "02_种族/渊眠族.md",
+      "color": "4"
+    },
+    {
+      "id": "dream",
+      "type": "file",
+      "x": -120,
+      "y": 370,
+      "width": 260,
+      "height": 120,
+      "file": "02_种族/梦蛹族.md",
+      "color": "4"
+    },
+    {
+      "id": "star-tumor",
+      "type": "file",
+      "x": 20,
+      "y": 210,
+      "width": 260,
+      "height": 120,
+      "file": "02_种族/星瘤裔.md",
+      "color": "4"
+    },
+    {
+      "id": "sword",
+      "type": "file",
+      "x": 20,
+      "y": 560,
+      "width": 260,
+      "height": 120,
+      "file": "03_势力组织/斩念剑庭.md",
+      "color": "5"
+    },
+    {
+      "id": "machine-fu",
+      "type": "file",
+      "x": 160,
+      "y": 720,
+      "width": 260,
+      "height": 120,
+      "file": "03_势力组织/万机符宗.md",
+      "color": "5"
+    },
+    {
+      "id": "alchemy-flesh",
+      "type": "file",
+      "x": 300,
+      "y": 560,
+      "width": 260,
+      "height": 120,
+      "file": "03_势力组织/丹鼎肉仙门.md",
+      "color": "5"
+    },
+    {
+      "id": "tower",
+      "type": "file",
+      "x": 300,
+      "y": 210,
+      "width": 260,
+      "height": 120,
+      "file": "03_势力组织/白塔秘法学院.md",
+      "color": "6"
+    },
+    {
+      "id": "black-book",
+      "type": "file",
+      "x": 440,
+      "y": 370,
+      "width": 260,
+      "height": 120,
+      "file": "03_势力组织/黑书会.md",
+      "color": "6"
+    },
+    {
+      "id": "blood-noble",
+      "type": "file",
+      "x": 580,
+      "y": 210,
+      "width": 260,
+      "height": 120,
+      "file": "02_种族/血契贵族.md",
+      "color": "6"
+    },
+    {
+      "id": "frost",
+      "type": "file",
+      "x": 620,
+      "y": 560,
+      "width": 260,
+      "height": 120,
+      "file": "03_势力组织/霜巨原民.md",
+      "color": "3"
+    },
+    {
+      "id": "wolf",
+      "type": "file",
+      "x": 760,
+      "y": 720,
+      "width": 260,
+      "height": 120,
+      "file": "02_种族/狼灾血裔.md",
+      "color": "3"
+    },
+    {
+      "id": "witch",
+      "type": "file",
+      "x": 900,
+      "y": 560,
+      "width": 260,
+      "height": 120,
+      "file": "03_势力组织/根下三女巫.md",
+      "color": "3"
+    },
+    {
+      "id": "creature-eco",
+      "type": "file",
+      "x": -160,
+      "y": 950,
+      "width": 260,
+      "height": 120,
+      "file": "06_事件剧情/异化生物生态.md",
+      "color": "4"
+    },
+    {
+      "id": "spore",
+      "type": "file",
+      "x": -160,
+      "y": 1140,
+      "width": 260,
+      "height": 120,
+      "file": "04_异化生物/孢雾巡猎者.md",
+      "color": "4"
+    },
+    {
+      "id": "green-base",
+      "type": "file",
+      "x": -460,
+      "y": 1140,
+      "width": 260,
+      "height": 120,
+      "file": "07_基底气质/雾绿腐生.md",
+      "color": "4"
+    },
+    {
+      "id": "black-base",
+      "type": "file",
+      "x": 140,
+      "y": 1140,
+      "width": 260,
+      "height": 120,
+      "file": "07_基底气质/深黑不可名状.md",
+      "color": "4"
+    },
+    {
+      "id": "forest",
+      "type": "file",
+      "x": -460,
+      "y": 1320,
+      "width": 260,
+      "height": 120,
+      "file": "05_地点生态/腐林.md",
+      "color": "4"
+    },
+    {
+      "id": "mine",
+      "type": "file",
+      "x": 140,
+      "y": 1320,
+      "width": 260,
+      "height": 120,
+      "file": "05_地点生态/废弃矿区.md",
+      "color": "1"
+    },
+    {
+      "id": "priority",
+      "type": "file",
+      "x": 1040,
+      "y": 210,
+      "width": 260,
+      "height": 120,
+      "file": "08_关系网络/优先主轴.md",
+      "color": "6"
+    },
+    {
+      "id": "conflict",
+      "type": "file",
+      "x": 1040,
+      "y": 390,
+      "width": 260,
+      "height": 120,
+      "file": "00_总览/冲突关系索引.md",
+      "color": "6"
+    },
+    {
+      "id": "base-index",
+      "type": "file",
+      "x": 1040,
+      "y": 570,
+      "width": 260,
+      "height": 120,
+      "file": "00_总览/视觉基底索引.md",
+      "color": "6"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-world-rift",
+      "fromNode": "world",
+      "fromSide": "right",
+      "toNode": "rift",
+      "toSide": "left",
+      "label": "源头"
+    },
+    {
+      "id": "e-rift-hightech",
+      "fromNode": "rift",
+      "fromSide": "right",
+      "toNode": "hightech",
+      "toSide": "left"
+    },
+    {
+      "id": "e-rift-cyber",
+      "fromNode": "rift",
+      "fromSide": "right",
+      "toNode": "cyber",
+      "toSide": "left"
+    },
+    {
+      "id": "e-rift-cthulhu",
+      "fromNode": "rift",
+      "fromSide": "right",
+      "toNode": "cthulhu",
+      "toSide": "left"
+    },
+    {
+      "id": "e-rift-east",
+      "fromNode": "rift",
+      "fromSide": "right",
+      "toNode": "east",
+      "toSide": "left"
+    },
+    {
+      "id": "e-rift-west",
+      "fromNode": "rift",
+      "fromSide": "right",
+      "toNode": "west",
+      "toSide": "left"
+    },
+    {
+      "id": "e-rift-norse",
+      "fromNode": "rift",
+      "fromSide": "right",
+      "toNode": "norse",
+      "toSide": "left"
+    },
+    {
+      "id": "e-hightech-star",
+      "fromNode": "hightech",
+      "fromSide": "right",
+      "toNode": "star-order",
+      "toSide": "left"
+    },
+    {
+      "id": "e-hightech-cloud",
+      "fromNode": "hightech",
+      "fromSide": "right",
+      "toNode": "cloud-brain",
+      "toSide": "left"
+    },
+    {
+      "id": "e-hightech-angel",
+      "fromNode": "hightech",
+      "fromSide": "right",
+      "toNode": "angel",
+      "toSide": "left"
+    },
+    {
+      "id": "e-cyber-rust",
+      "fromNode": "cyber",
+      "fromSide": "right",
+      "toNode": "rust",
+      "toSide": "left"
+    },
+    {
+      "id": "e-cyber-meat",
+      "fromNode": "cyber",
+      "fromSide": "right",
+      "toNode": "meatware",
+      "toSide": "left"
+    },
+    {
+      "id": "e-cyber-pipe",
+      "fromNode": "cyber",
+      "fromSide": "right",
+      "toNode": "pipe",
+      "toSide": "left"
+    },
+    {
+      "id": "e-cthulhu-abyss",
+      "fromNode": "cthulhu",
+      "fromSide": "right",
+      "toNode": "abyss",
+      "toSide": "left"
+    },
+    {
+      "id": "e-cthulhu-dream",
+      "fromNode": "cthulhu",
+      "fromSide": "right",
+      "toNode": "dream",
+      "toSide": "left"
+    },
+    {
+      "id": "e-cthulhu-tumor",
+      "fromNode": "cthulhu",
+      "fromSide": "right",
+      "toNode": "star-tumor",
+      "toSide": "left"
+    },
+    {
+      "id": "e-east-sword",
+      "fromNode": "east",
+      "fromSide": "right",
+      "toNode": "sword",
+      "toSide": "left"
+    },
+    {
+      "id": "e-east-machine",
+      "fromNode": "east",
+      "fromSide": "right",
+      "toNode": "machine-fu",
+      "toSide": "left"
+    },
+    {
+      "id": "e-east-flesh",
+      "fromNode": "east",
+      "fromSide": "right",
+      "toNode": "alchemy-flesh",
+      "toSide": "left"
+    },
+    {
+      "id": "e-west-tower",
+      "fromNode": "west",
+      "fromSide": "right",
+      "toNode": "tower",
+      "toSide": "left"
+    },
+    {
+      "id": "e-west-book",
+      "fromNode": "west",
+      "fromSide": "right",
+      "toNode": "black-book",
+      "toSide": "left"
+    },
+    {
+      "id": "e-west-blood",
+      "fromNode": "west",
+      "fromSide": "right",
+      "toNode": "blood-noble",
+      "toSide": "left"
+    },
+    {
+      "id": "e-norse-frost",
+      "fromNode": "norse",
+      "fromSide": "right",
+      "toNode": "frost",
+      "toSide": "left"
+    },
+    {
+      "id": "e-norse-wolf",
+      "fromNode": "norse",
+      "fromSide": "right",
+      "toNode": "wolf",
+      "toSide": "left"
+    },
+    {
+      "id": "e-norse-witch",
+      "fromNode": "norse",
+      "fromSide": "right",
+      "toNode": "witch",
+      "toSide": "left"
+    },
+    {
+      "id": "e-rift-eco",
+      "fromNode": "rift",
+      "fromSide": "right",
+      "toNode": "creature-eco",
+      "toSide": "left",
+      "label": "异化生态"
+    },
+    {
+      "id": "e-eco-spore",
+      "fromNode": "creature-eco",
+      "fromSide": "right",
+      "toNode": "spore",
+      "toSide": "left"
+    },
+    {
+      "id": "e-green-spore",
+      "fromNode": "green-base",
+      "fromSide": "right",
+      "toNode": "spore",
+      "toSide": "left",
+      "label": "基底"
+    },
+    {
+      "id": "e-black-spore",
+      "fromNode": "black-base",
+      "fromSide": "right",
+      "toNode": "spore",
+      "toSide": "left",
+      "label": "基底"
+    },
+    {
+      "id": "e-forest-spore",
+      "fromNode": "forest",
+      "fromSide": "right",
+      "toNode": "spore",
+      "toSide": "left",
+      "label": "栖息"
+    },
+    {
+      "id": "e-mine-spore",
+      "fromNode": "mine",
+      "fromSide": "right",
+      "toNode": "spore",
+      "toSide": "left",
+      "label": "栖息"
+    },
+    {
+      "id": "e-priority",
+      "fromNode": "priority",
+      "fromSide": "right",
+      "toNode": "world",
+      "toSide": "left"
+    },
+    {
+      "id": "e-conflict",
+      "fromNode": "conflict",
+      "fromSide": "right",
+      "toNode": "world",
+      "toSide": "left"
+    },
+    {
+      "id": "e-base-index",
+      "fromNode": "base-index",
+      "fromSide": "right",
+      "toNode": "world",
+      "toSide": "left"
+    }
+  ]
+}

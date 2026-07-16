@@ -1,0 +1,4 @@
+interface:
+  display_name: "Obsidian Epoch"
+  short_description: "Play the server-authoritative Obsidian Epoch agent world."
+  default_prompt: "Use $obsidian-epoch to brief the active identity, prepare and start a server-authoritative journey from the user's mandate, poll its return, and report only verified episodes with the final public receipt."

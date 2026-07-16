@@ -1,0 +1,44 @@
+# Production Docker builds use a repo-root context, but the image only needs the
+# explicit files copied by tools/agent-server/deploy/Dockerfile.
+*
+
+!tools/
+!tools/graph-react-app/
+!tools/graph-react-app/**
+
+!tools/agent-server/
+!tools/agent-server/server.ts
+!tools/agent-server/backup.ts
+!tools/agent-server/restore-backup.ts
+!tools/agent-server/lib/
+!tools/agent-server/lib/**
+!tools/agent-server/package/
+!tools/agent-server/package/**
+!tools/agent-server/deploy/
+!tools/agent-server/deploy/Dockerfile
+
+!00_总览/
+00_总览/assets/media/
+00_总览/assets/media/**
+!00_总览/world-map-data.json
+
+# Explicit denylists document the production secrets and local runtime state that
+# must never be sent to the Docker daemon, even if new allowlist rules are added.
+.git/
+.DS_Store
+.codegraph/
+.omc/
+.omx/
+**/node_modules/
+**/dist/
+tools/agent-server/data/
+tools/agent-server/data-*
+tools/agent-server/backups/
+**/*.sqlite
+**/*.jsonl
+.env
+**/.env
+**/.env.*
+!**/.env.example
+*.log
+*.pid

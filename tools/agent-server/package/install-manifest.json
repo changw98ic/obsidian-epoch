@@ -1,0 +1,3887 @@
+{
+  "name": "obsidian-epoch-agent-world",
+  "version": "0.1.0-alpha",
+  "serverBase": "http://127.0.0.1:8787",
+  "mcpCommand": "node obsidian-epoch/bin/mcp-proxy.ts",
+  "transport": {
+    "streamableHttp": {
+      "endpoint": "http://127.0.0.1:8787/mcp",
+      "protocolVersion": "2025-06-18",
+      "sse": false
+    },
+    "stdio": {
+      "command": "node obsidian-epoch/bin/mcp-proxy.ts",
+      "env": {
+        "AGENT_WORLD_SERVER": "http://127.0.0.1:8787"
+      }
+    }
+  },
+  "packageUrl": "http://127.0.0.1:8787/api/epoch/package/obsidian-epoch-agent-world-0.1.0-alpha.tar.gz",
+  "health": {
+    "readiness": "/api/health",
+    "epochReadiness": "/api/epoch/health"
+  },
+  "hosts": [
+    "Claude Code",
+    "Codex",
+    "Cursor",
+    "Hermes",
+    "OpenClaw",
+    "Web LLM bridge"
+  ],
+  "hostInstall": [
+    {
+      "host": "Claude Code",
+      "type": "mcp",
+      "mcp": {
+        "serverName": "obsidian-epoch-agent-world",
+        "transport": "streamable-http",
+        "url": "http://127.0.0.1:8787/mcp",
+        "protocolVersion": "2025-06-18",
+        "headers": {
+          "Authorization": "Bearer ${AGENT_WORLD_MCP_TOKEN}"
+        }
+      },
+      "quickstart": {
+        "tool": "obsidian_epoch.quickstart",
+        "firstTurnPlaybook": "obsidian-epoch/references/one-turn-playbook.md"
+      },
+      "skill": {
+        "name": "obsidian-epoch",
+        "path": "obsidian-epoch/SKILL.md",
+        "invoke": "$obsidian-epoch"
+      },
+      "notes": [
+        "Connect Claude Code directly to the remote Streamable HTTP MCP endpoint.",
+        "The local MCP server is a client; server responses remain canonical."
+      ],
+      "configSnippets": [
+        {
+          "label": "Claude Code MCP JSON",
+          "format": "json",
+          "pathHint": "obsidian-epoch/host-config/claude-code.mcp.json",
+          "body": {
+            "mcpServers": {
+              "obsidian-epoch-agent-world": {
+                "type": "http",
+                "url": "http://127.0.0.1:8787/mcp",
+                "headers": {
+                  "Authorization": "Bearer ${AGENT_WORLD_MCP_TOKEN}"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "host": "Codex",
+      "type": "codex-plugin",
+      "mcp": {
+        "serverName": "obsidian-epoch-agent-world",
+        "transport": "streamable-http",
+        "url": "http://127.0.0.1:8787/mcp",
+        "protocolVersion": "2025-06-18",
+        "headers": {
+          "Authorization": "Bearer ${AGENT_WORLD_MCP_TOKEN}"
+        }
+      },
+      "quickstart": {
+        "tool": "obsidian_epoch.quickstart",
+        "firstTurnPlaybook": "obsidian-epoch/references/one-turn-playbook.md"
+      },
+      "pluginManifestPath": ".codex-plugin/plugin.json",
+      "skill": {
+        "name": "obsidian-epoch",
+        "path": "obsidian-epoch/SKILL.md",
+        "invoke": "$obsidian-epoch"
+      },
+      "notes": [
+        "Install this package as a Codex plugin or copy the skill folder into the Codex skills directory.",
+        "The package manifest registers the remote HTTP MCP server without a local working-directory dependency."
+      ],
+      "configSnippets": [
+        {
+          "label": "Codex MCP JSON",
+          "format": "json",
+          "pathHint": "obsidian-epoch/host-config/codex.mcp.json",
+          "body": {
+            "mcpServers": {
+              "obsidian-epoch-agent-world": {
+                "type": "http",
+                "url": "http://127.0.0.1:8787/mcp",
+                "bearer_token_env_var": "AGENT_WORLD_MCP_TOKEN"
+              }
+            }
+          }
+        },
+        {
+          "label": "Codex plugin manifest",
+          "format": "json",
+          "pathHint": "obsidian-epoch/host-config/codex-plugin.json",
+          "body": {
+            "name": "obsidian-epoch-agent-world",
+            "version": "0.1.0-alpha",
+            "description": "Server-authoritative Obsidian Epoch MCP and Skill package for coding-agent hosts.",
+            "author": {
+              "name": "Obsidian Epoch"
+            },
+            "skills": "./skills/",
+            "mcpServers": "./.mcp.json",
+            "interface": {
+              "displayName": "黑曜纪元",
+              "shortDescription": "服务器权威的 Agent 奇幻世界",
+              "longDescription": "让 Codex 通过服务器签发的身份和行动选项进入持续演化的多人奇幻世界。",
+              "developerName": "Obsidian Epoch",
+              "category": "Developer Tools",
+              "capabilities": [
+                "Interactive",
+                "Write"
+              ],
+              "defaultPrompt": [
+                "签发我的身份并开始第一回合。",
+                "查看我的托管进度和区域新闻。",
+                "继续一次服务器权威行动。"
+              ],
+              "brandColor": "#31B7A6"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "host": "Cursor",
+      "type": "mcp",
+      "mcp": {
+        "serverName": "obsidian-epoch-agent-world",
+        "transport": "streamable-http",
+        "url": "http://127.0.0.1:8787/mcp",
+        "protocolVersion": "2025-06-18",
+        "headers": {
+          "Authorization": "Bearer ${AGENT_WORLD_MCP_TOKEN}"
+        }
+      },
+      "quickstart": {
+        "tool": "obsidian_epoch.quickstart",
+        "firstTurnPlaybook": "obsidian-epoch/references/one-turn-playbook.md"
+      },
+      "skill": {
+        "name": "obsidian-epoch",
+        "path": "obsidian-epoch/SKILL.md",
+        "invoke": "Use the Obsidian Epoch skill instructions with the MCP tools."
+      },
+      "notes": [
+        "Add the remote HTTP MCP JSON snippet to Cursor's MCP server settings.",
+        "Keep gameplay state on the public server, not in Cursor prompts."
+      ],
+      "configSnippets": [
+        {
+          "label": "Cursor MCP JSON",
+          "format": "json",
+          "pathHint": "obsidian-epoch/host-config/cursor.mcp.json",
+          "body": {
+            "mcpServers": {
+              "obsidian-epoch-agent-world": {
+                "type": "http",
+                "url": "http://127.0.0.1:8787/mcp",
+                "headers": {
+                  "Authorization": "Bearer ${AGENT_WORLD_MCP_TOKEN}"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "host": "Hermes",
+      "type": "mcp",
+      "mcp": {
+        "serverName": "obsidian-epoch-agent-world",
+        "transport": "streamable-http",
+        "url": "http://127.0.0.1:8787/mcp",
+        "protocolVersion": "2025-06-18",
+        "headers": {
+          "Authorization": "Bearer ${AGENT_WORLD_MCP_TOKEN}"
+        }
+      },
+      "quickstart": {
+        "tool": "obsidian_epoch.quickstart",
+        "firstTurnPlaybook": "obsidian-epoch/references/one-turn-playbook.md"
+      },
+      "skill": {
+        "name": "obsidian-epoch",
+        "path": "obsidian-epoch/SKILL.md",
+        "invoke": "Use the Obsidian Epoch skill instructions with the MCP tools."
+      },
+      "notes": [
+        "Merge the mcp_servers JSON object into Hermes config.yaml; JSON is valid YAML 1.2 syntax.",
+        "Treat Hermes as an untrusted client unless a trusted runner is configured."
+      ],
+      "configSnippets": [
+        {
+          "label": "Hermes MCP JSON",
+          "format": "json",
+          "pathHint": "obsidian-epoch/host-config/hermes.mcp.json",
+          "body": {
+            "mcp_servers": {
+              "obsidian-epoch-agent-world": {
+                "url": "http://127.0.0.1:8787/mcp",
+                "headers": {
+                  "Authorization": "Bearer ${AGENT_WORLD_MCP_TOKEN}"
+                },
+                "enabled": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "host": "OpenClaw",
+      "type": "mcp",
+      "mcp": {
+        "serverName": "obsidian-epoch-agent-world",
+        "transport": "streamable-http",
+        "url": "http://127.0.0.1:8787/mcp",
+        "protocolVersion": "2025-06-18",
+        "headers": {
+          "Authorization": "Bearer ${AGENT_WORLD_MCP_TOKEN}"
+        }
+      },
+      "quickstart": {
+        "tool": "obsidian_epoch.quickstart",
+        "firstTurnPlaybook": "obsidian-epoch/references/one-turn-playbook.md"
+      },
+      "skill": {
+        "name": "obsidian-epoch",
+        "path": "obsidian-epoch/SKILL.md",
+        "invoke": "Use the Obsidian Epoch skill instructions with the MCP tools."
+      },
+      "notes": [
+        "Merge the mcp.servers object into OpenClaw's configuration and use Streamable HTTP.",
+        "Do not grant canonical rewards from local OpenClaw text; wait for server events."
+      ],
+      "configSnippets": [
+        {
+          "label": "OpenClaw MCP JSON",
+          "format": "json",
+          "pathHint": "obsidian-epoch/host-config/openclaw.mcp.json",
+          "body": {
+            "mcp": {
+              "servers": {
+                "obsidian-epoch-agent-world": {
+                  "url": "http://127.0.0.1:8787/mcp",
+                  "transport": "streamable-http",
+                  "headers": {
+                    "Authorization": "Bearer ${AGENT_WORLD_MCP_TOKEN}"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "host": "Web LLM bridge",
+      "type": "web-bridge",
+      "bridge": {
+        "entryTool": "obsidian_epoch.web_bridge_turn",
+        "submitTool": "obsidian_epoch.submit_web_bridge_action",
+        "resultTool": "obsidian_epoch.create_result_page",
+        "playbook": "obsidian-epoch/references/web-llm-bridge-playbook.md",
+        "publicPages": {
+          "console": "/epoch/console",
+          "play": "/epoch/web-play",
+          "install": "/epoch/install",
+          "world": "/epoch/world",
+          "auditIndex": "/epoch/audit",
+          "audit": "/epoch/audit/{eventId}",
+          "hosted": "/epoch/hosted/{sessionId}",
+          "result": "/epoch/result/{pageId}"
+        }
+      },
+      "skill": {
+        "name": "obsidian-epoch",
+        "path": "obsidian-epoch/SKILL.md",
+        "invoke": "Use references/web-llm-bridge-playbook.md to hand a single safe turn to a browser-only model."
+      },
+      "notes": [
+        "Browser-only model sessions cannot install MCP, so an installed host or web console must generate and submit the bridge turn.",
+        "The browser model sees only visible context and server-issued actionOptionId values; prose never becomes canonical settlement."
+      ],
+      "configSnippets": [
+        {
+          "label": "Browser bridge sequence",
+          "format": "json",
+          "pathHint": "obsidian-epoch/host-config/web-llm-bridge-sequence.json",
+          "body": {
+            "steps": [
+              {
+                "tool": "obsidian_epoch.web_bridge_turn",
+                "purpose": "Issue a visible-context turn package that a browser-only model can read."
+              },
+              {
+                "tool": "obsidian_epoch.submit_web_bridge_action",
+                "purpose": "Submit only the server-issued actionOptionId and browser model rationale."
+              },
+              {
+                "tool": "obsidian_epoch.create_result_page",
+                "purpose": "Publish the server-settled bridge result after obsidian_epoch.result_page returns a publish token."
+              }
+            ],
+            "publicPages": {
+              "console": "/epoch/console",
+              "play": "/epoch/web-play",
+              "install": "/epoch/install",
+              "world": "/epoch/world",
+              "auditIndex": "/epoch/audit",
+              "audit": "/epoch/audit/{eventId}",
+              "hosted": "/epoch/hosted/{sessionId}",
+              "result": "/epoch/result/{pageId}"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "publicPages": {
+    "console": "/epoch/console",
+    "webPlay": "/epoch/web-play",
+    "install": "/epoch/install",
+    "pairing": "/epoch/pair",
+    "world": "/epoch/world",
+    "explorer": "/epoch/explorer/{explorerId}",
+    "agent": "/epoch/agent/{agentId}",
+    "hosted": "/epoch/hosted/{sessionId}",
+    "region": "/epoch/region/{regionId}",
+    "directTrade": "/epoch/direct-trade/{tradeId}",
+    "partyRun": "/epoch/party-run/{partyRunId}",
+    "season": "/epoch/season/{seasonId}",
+    "npc": "/epoch/npc/{npcId}",
+    "archive": "/epoch/archive/{agentId}",
+    "auditIndex": "/epoch/audit",
+    "audit": "/epoch/audit/{eventId}",
+    "result": "/epoch/result/{pageId}"
+  },
+  "playbooks": {
+    "oneTurn": "obsidian-epoch/references/one-turn-playbook.md",
+    "smokeE2E": "obsidian-epoch/references/smoke-playbook.md",
+    "webBridge": "obsidian-epoch/references/web-llm-bridge-playbook.md",
+    "attestedRunner": "obsidian-epoch/references/attested-runner-playbook.md"
+  },
+  "verification": {
+    "installSmokeCommand": "npm run agent:install-smoke -- --json",
+    "remoteInstallSmokeCommand": "npm run agent:install-smoke -- --server <serverBase> --json",
+    "releaseRehearsalCommand": "npm run agent:release-rehearsal -- --server <serverBase> --operator-key <operatorKey> --json",
+    "productionReleaseRehearsalCommand": "npm run agent:release-rehearsal -- --server <publicHttpsOrigin> --operator-key <operatorKey> --expected-release-key-id <releaseKeyId> --production --json",
+    "recoveryDrillCommand": "npm run agent:recovery-drill -- --json",
+    "backupCommand": "npm run agent:backup -- --json",
+    "restoreBackupCommand": "npm run agent:restore-backup -- --json",
+    "packageIntegrityManifest": "obsidian-epoch/assets/package-integrity.json",
+    "packageSignatureAlgorithm": "Ed25519",
+    "packageReleasePublicKey": "MCowBQYDK2VwAyEAjnjdDDJEeog6KOrkOiviIoHNPhRDupdWhpqxxP4LidE=",
+    "packageReleaseKeyId": "bd9d05a58dff9c5e42df91b8ca7abf771c10ddd6d79f89ee2f0f3eea756b1177",
+    "packageSigningTrust": "local_alpha_fallback",
+    "packageSigningKeySource": "ephemeral_local_alpha_fallback",
+    "reproducibleArchive": {
+      "sourceDateEpoch": 1780806923,
+      "sourceDateEpochSource": "release_revision",
+      "fallbackReleaseRevision": "e3b228dc3feba56bb02edd2ddbc46de685276278",
+      "tarMtimeSeconds": 1780806923,
+      "gzipLevel": 9,
+      "digestAlgorithm": "sha256"
+    }
+  },
+  "skillPath": "obsidian-epoch/SKILL.md",
+  "pluginManifestPath": ".codex-plugin/plugin.json",
+  "archiveName": "obsidian-epoch-agent-world-0.1.0-alpha.tar.gz",
+  "assets": {
+    "bosses": [
+      {
+        "templateKey": "obsidian_wyrm_boss",
+        "title": "黑曜裂隙兽",
+        "path": "obsidian-epoch/assets/boss/obsidian-wyrm-boss.png",
+        "url": "/api/epoch/assets/boss/obsidian-wyrm-boss.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "8df85c06b652297dbd2a774ef5cd0fbaf4c00b3e243a722535f1770ed3ba01c3"
+      },
+      {
+        "templateKey": "salt_mirror_leviathan_boss",
+        "title": "盐镜巡海巨兽",
+        "path": "obsidian-epoch/assets/boss/salt-mirror-leviathan-boss.png",
+        "url": "/api/epoch/assets/boss/salt-mirror-leviathan-boss.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "a7e2f2b9831d0c06d9a91a5aef3995c5482fadb5eeef0d2d17e6c2328e78fe02"
+      },
+      {
+        "templateKey": "glass_archive_seraph_boss",
+        "title": "玻璃档案炽使",
+        "path": "obsidian-epoch/assets/boss/glass-archive-seraph-boss.png",
+        "url": "/api/epoch/assets/boss/glass-archive-seraph-boss.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "3c8134abb2a45985569e417283c504ccb55fdeaed41d84b54c1fbf7579ec3d47"
+      },
+      {
+        "templateKey": "ash_crown_titan_boss",
+        "title": "灰冠炉心巨像",
+        "path": "obsidian-epoch/assets/boss/ash-crown-titan-boss.png",
+        "url": "/api/epoch/assets/boss/ash-crown-titan-boss.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "7239ce287af26328dd75f47db7e62b4f31e6c6dbec9dcb80223840733fc4d695"
+      },
+      {
+        "templateKey": "moonwell_hollow_queen_boss",
+        "title": "月井空壳女王",
+        "path": "obsidian-epoch/assets/boss/moonwell-hollow-queen-boss.png",
+        "url": "/api/epoch/assets/boss/moonwell-hollow-queen-boss.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "6a201c7ff363d99c89fb2feac58d44dad515ea0145837ac36f8bce729ebc482d"
+      }
+    ],
+    "locations": [
+      {
+        "regionId": "region_gray_harbor",
+        "title": "灰港",
+        "subtitle": "黑曜潮线港",
+        "path": "obsidian-epoch/assets/location/region-gray-harbor.png",
+        "url": "/api/epoch/assets/location/region-gray-harbor.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "f13062a602446b208a2b72536cd109a0517ba2b63adefe2c3050cb532c0e3596"
+      },
+      {
+        "regionId": "region_ash_outpost",
+        "title": "灰烬前哨",
+        "subtitle": "旧炉与边境补给线",
+        "path": "obsidian-epoch/assets/location/region-ash-outpost.png",
+        "url": "/api/epoch/assets/location/region-ash-outpost.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "0961dab33a7ce14eaef0c74f2d8808dbe4625123f43704cd68656f2a4b03fa3b"
+      },
+      {
+        "regionId": "region_salt_mirror_coast",
+        "title": "盐镜海岸",
+        "subtitle": "镜化潮汐航路",
+        "path": "obsidian-epoch/assets/location/region-salt-mirror-coast.png",
+        "url": "/api/epoch/assets/location/region-salt-mirror-coast.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "00ce2503bae9bfab95faceb6e30ef829f9a7eac226ac551bc263e358247924a6"
+      },
+      {
+        "regionId": "region_glass_archive",
+        "title": "玻璃档案馆",
+        "subtitle": "透明索引穹顶",
+        "path": "obsidian-epoch/assets/location/region-glass-archive.png",
+        "url": "/api/epoch/assets/location/region-glass-archive.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "2f63408f14e82c5d33142360706fa2e77c4467c292def57bf7299b0241b3b702"
+      },
+      {
+        "regionId": "region_moonwell_hollow",
+        "title": "月井空壳",
+        "subtitle": "银色低语井",
+        "path": "obsidian-epoch/assets/location/region-moonwell-hollow.png",
+        "url": "/api/epoch/assets/location/region-moonwell-hollow.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "dd12d307bea3d17d444214cea28b127d784a8a4908ae34fa222b943a875b55e1"
+      },
+      {
+        "regionId": "region_blackharbor",
+        "title": "黑港",
+        "subtitle": "封蜡账册与夜航税平码头",
+        "path": "obsidian-epoch/assets/location/region-black-harbor.png",
+        "url": "/api/epoch/assets/location/region-black-harbor.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "16547189e4443ead714bf3a792de6764c8764a2fd0d6275924e358ec777aabfc"
+      },
+      {
+        "regionId": "region_forest",
+        "title": "腐林",
+        "subtitle": "会回信树洞与苔光誓牌",
+        "path": "obsidian-epoch/assets/location/region-forest.png",
+        "url": "/api/epoch/assets/location/region-forest.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "3bf496c88ba40c4787ffb36e1d81f727360b87e3da1b1b3a3f4eb9a12ccf586c"
+      },
+      {
+        "regionId": "region_salt_gate",
+        "title": "盐门",
+        "subtitle": "盐风关税场与边境钟桥",
+        "path": "obsidian-epoch/assets/location/region-salt-gate.png",
+        "url": "/api/epoch/assets/location/region-salt-gate.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "3ee28738fe5c537c836d10dd82a7086be6299c5cd9367efe04e08610db306883"
+      },
+      {
+        "regionId": "region_ash",
+        "title": "灰烬荒原",
+        "subtitle": "渣井营地与赤灰商道",
+        "path": "obsidian-epoch/assets/location/region-ash-waste.png",
+        "url": "/api/epoch/assets/location/region-ash-waste.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "6a05cee64bff177e95617db45ce2e07567d1abcbb44adb8d6657066173eed262"
+      },
+      {
+        "regionId": "region_city_pipes",
+        "title": "城市管道",
+        "subtitle": "阀门市集与回声排水廊",
+        "path": "obsidian-epoch/assets/location/region-city-pipes.png",
+        "url": "/api/epoch/assets/location/region-city-pipes.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "041570630e0c22e5836969e5bf16107307d1bacd1a05406f54b449bc2ee3fa04"
+      },
+      {
+        "regionId": "region_abandoned_mine",
+        "title": "废弃矿区",
+        "subtitle": "旧升降井与蓝尘矿灯",
+        "path": "obsidian-epoch/assets/location/region-abandoned-mine.png",
+        "url": "/api/epoch/assets/location/region-abandoned-mine.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "a5f1ebcbf0b43d612bbe6170511c5be631445ad123d19b20b031585e6982c4a8"
+      },
+      {
+        "regionId": "region_data_tower",
+        "title": "废弃数据塔",
+        "subtitle": "缓存雨与脑晶索引层",
+        "path": "obsidian-epoch/assets/location/region-data-tower.png",
+        "url": "/api/epoch/assets/location/region-data-tower.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "0660f1c20ac93e54c17d60ff8e5773554356c57c30db193e49a639ab15779faf"
+      },
+      {
+        "regionId": "region_orbit_city",
+        "title": "轨道城",
+        "subtitle": "环站泊港与星历灯市",
+        "path": "obsidian-epoch/assets/location/region-orbit-city.png",
+        "url": "/api/epoch/assets/location/region-orbit-city.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "e1dde69554f78b94ff97b266581ae9b96c27fae0ebca82f6328b65f41b0b4944"
+      },
+      {
+        "regionId": "region_trench",
+        "title": "海沟",
+        "subtitle": "深海冷灯与古梦暗流",
+        "path": "obsidian-epoch/assets/location/region-trench.png",
+        "url": "/api/epoch/assets/location/region-trench.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "54b4ff59f71e9a2677edd54dee9e875a602b094e3cd1408f921bcd7fb0ad7561"
+      },
+      {
+        "regionId": "region_collective_dream_pool",
+        "title": "集体梦池",
+        "subtitle": "共享睡眠与记忆浮岛",
+        "path": "obsidian-epoch/assets/location/region-collective-dream-pool.png",
+        "url": "/api/epoch/assets/location/region-collective-dream-pool.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "32ee9e0af7055dfc2e6fa4ebcb22f9f559e941bf2eb28d66a10ed6f8b27fd820"
+      },
+      {
+        "regionId": "region_space_rift",
+        "title": "空间裂缝",
+        "subtitle": "错位边缘与落尘牧道",
+        "path": "obsidian-epoch/assets/location/region-space-rift.png",
+        "url": "/api/epoch/assets/location/region-space-rift.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "f6c1181124eaf3af8343b63f67a67deb1bdcfa8c063eeeaec6dae8593ae8bc1b"
+      },
+      {
+        "regionId": "region_non_euclidean_cave",
+        "title": "非欧洞窟",
+        "subtitle": "错误楼梯与重力回声井",
+        "path": "obsidian-epoch/assets/location/region-non-euclidean-cave.png",
+        "url": "/api/epoch/assets/location/region-non-euclidean-cave.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "d7976ae0aec519185da9ec567d6fc4475f1b0a535d509f53aa73ff8942b07ed4"
+      },
+      {
+        "regionId": "region_starship_graveyard",
+        "title": "星舰墓场",
+        "subtitle": "冷轨残骸与漂航信标",
+        "path": "obsidian-epoch/assets/location/region-starship-graveyard.png",
+        "url": "/api/epoch/assets/location/region-starship-graveyard.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "cf0161197eb2efb4da82d9b50a5ab7851c0e933a237cb092b91dee870e8ac090"
+      },
+      {
+        "regionId": "region_abandoned_subway",
+        "title": "废弃地铁",
+        "subtitle": "信号雾与积水闸机",
+        "path": "obsidian-epoch/assets/location/region-abandoned-subway.png",
+        "url": "/api/epoch/assets/location/region-abandoned-subway.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "21b147224fa3821af9dd525ee17200599b9469b9a6b14faa0e27f8eb89716eba"
+      },
+      {
+        "regionId": "region_holographic_theater",
+        "title": "全息剧场",
+        "subtitle": "光谱舞台与伪掌声席",
+        "path": "obsidian-epoch/assets/location/region-holographic-theater.png",
+        "url": "/api/epoch/assets/location/region-holographic-theater.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "e3b8f7ddec95c900f4053363226895b612f0e9e907bd12eef4b2ed3e9a114382"
+      },
+      {
+        "regionId": "region_quantum_laboratory",
+        "title": "量子实验室",
+        "subtitle": "概率玻璃与坍缩桥",
+        "path": "obsidian-epoch/assets/location/region-quantum-laboratory.png",
+        "url": "/api/epoch/assets/location/region-quantum-laboratory.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "2c84e1a66050ef17539c3337fd715f64e8bc8c4e4441ce556ee849d22120e144"
+      },
+      {
+        "regionId": "region_reflective_city",
+        "title": "反光城市",
+        "subtitle": "镜面街廓与屏幕水域",
+        "path": "obsidian-epoch/assets/location/region-reflective-city.png",
+        "url": "/api/epoch/assets/location/region-reflective-city.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "44eff89e6890c573dcc120802dfed2013da1371aea3e5e73fe466ad5535105d7"
+      },
+      {
+        "regionId": "region_data_alley",
+        "title": "数据巷",
+        "subtitle": "缓存小巷与走线招牌",
+        "path": "obsidian-epoch/assets/location/region-data-alley.png",
+        "url": "/api/epoch/assets/location/region-data-alley.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "df7601226f9c645a42293b4963293a340de1b403f477be190a7f27623bb42b31"
+      },
+      {
+        "regionId": "region_prism_waters",
+        "title": "棱镜水域",
+        "subtitle": "折光潮汐与镜帆码头",
+        "path": "obsidian-epoch/assets/location/region-prism-waters.png",
+        "url": "/api/epoch/assets/location/region-prism-waters.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "a2db526ea28ac3bb8381a96bbf49fcb9c0d536cdfbb08db6e10045804b6d9324"
+      },
+      {
+        "regionId": "region_probability_greenhouse",
+        "title": "概率温室",
+        "subtitle": "分支花棚与种子市场",
+        "path": "obsidian-epoch/assets/location/region-probability-greenhouse.png",
+        "url": "/api/epoch/assets/location/region-probability-greenhouse.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "febbae607ffff651d368ad4536c9491fa3ecf803ffe37a1aa459fbbf3bde8fcb"
+      },
+      {
+        "regionId": "region_prophecy_server",
+        "title": "预言服务器",
+        "subtitle": "冷机房与判定神谕厅",
+        "path": "obsidian-epoch/assets/location/region-prophecy-server.png",
+        "url": "/api/epoch/assets/location/region-prophecy-server.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "e92f42a0261928f05148bbc77e2fddd8ee44193e39371dbc69295f5c3f3580a0"
+      },
+      {
+        "regionId": "region_orbital_cathedral",
+        "title": "轨道教堂",
+        "subtitle": "钟环中殿与低轨圣歌",
+        "path": "obsidian-epoch/assets/location/region-orbital-cathedral.png",
+        "url": "/api/epoch/assets/location/region-orbital-cathedral.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "c89406510d40d277027fb998b9571d25720d5c417fdb42d835a4406465b2e097"
+      }
+    ],
+    "npcs": [
+      {
+        "archetypeKey": "harbor_ledger_keeper",
+        "title": "港账书记",
+        "subtitle": "灰港账本与码头小印",
+        "path": "obsidian-epoch/assets/npc/harbor-ledger-keeper.png",
+        "url": "/api/epoch/assets/npc/harbor-ledger-keeper.png",
+        "contentType": "image/png",
+        "width": 640,
+        "height": 640,
+        "sha256": "b82eee93c25bf73f5ad1a5e6fc3fa61ce8ce4b2eba8da93cbaf1c23478762327"
+      },
+      {
+        "archetypeKey": "ash_forge_runner",
+        "title": "灰炉信差",
+        "subtitle": "灰烬前哨的炉光与短途令牌",
+        "path": "obsidian-epoch/assets/npc/ash-forge-runner.png",
+        "url": "/api/epoch/assets/npc/ash-forge-runner.png",
+        "contentType": "image/png",
+        "width": 640,
+        "height": 640,
+        "sha256": "817ceb5a9455aeb880e275981e166ace7a1874015fe3ca5f17b1f299d70f20f2"
+      },
+      {
+        "archetypeKey": "salt_mirror_witness",
+        "title": "盐镜见证人",
+        "subtitle": "盐镜海岸的折光证词",
+        "path": "obsidian-epoch/assets/npc/salt-mirror-witness.png",
+        "url": "/api/epoch/assets/npc/salt-mirror-witness.png",
+        "contentType": "image/png",
+        "width": 640,
+        "height": 640,
+        "sha256": "e9680ea06464b880f7264432525892a88d86afed567e4e85f47b413332f216cd"
+      },
+      {
+        "archetypeKey": "glass_archive_scribe",
+        "title": "玻璃档案抄录员",
+        "subtitle": "透明索引与破碎柜列",
+        "path": "obsidian-epoch/assets/npc/glass-archive-scribe.png",
+        "url": "/api/epoch/assets/npc/glass-archive-scribe.png",
+        "contentType": "image/png",
+        "width": 640,
+        "height": 640,
+        "sha256": "908794d0da5fb4d372f8c44ccb34472829cf8d8b2c79376f2acd3bb17d7d42e5"
+      },
+      {
+        "archetypeKey": "moonwell_field_mender",
+        "title": "月井野医",
+        "subtitle": "银色低语与应急药囊",
+        "path": "obsidian-epoch/assets/npc/moonwell-field-mender.png",
+        "url": "/api/epoch/assets/npc/moonwell-field-mender.png",
+        "contentType": "image/png",
+        "width": 640,
+        "height": 640,
+        "sha256": "1cfd7bf7594b260f6f9c1186d142929db638a08a87d57aa5325c23b77ce416ef"
+      }
+    ],
+    "items": [
+      {
+        "itemKey": "crafted:field-kit",
+        "title": "灰行者工具包",
+        "subtitle": "绳结、灰盐与折叠探针",
+        "path": "obsidian-epoch/assets/item/field-kit.png",
+        "url": "/api/epoch/assets/item/field-kit.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "3606cbd205d9edb8df97d80b7afe64dd29f63b9c7f3e53ed31472f4f60b88906"
+      },
+      {
+        "itemKey": "crafted:focus-charm",
+        "title": "静心盐线护符",
+        "subtitle": "盐线环与低声护纹",
+        "path": "obsidian-epoch/assets/item/focus-charm.png",
+        "url": "/api/epoch/assets/item/focus-charm.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "6d09e89c7b8d21f279e234a3d1d2e1868a93699908db93b856680bcd4b3cc830"
+      },
+      {
+        "itemKey": "crafted:training-band",
+        "title": "巡夜训练缚带",
+        "subtitle": "磨损皮带与刻度铜扣",
+        "path": "obsidian-epoch/assets/item/training-band.png",
+        "url": "/api/epoch/assets/item/training-band.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "ac44ac03416e03f65711cac5d89fa7b540947dca5c618b6be01160bef4c41c0c"
+      },
+      {
+        "itemKey": "shop:gray-ration-pack",
+        "title": "灰市补给包",
+        "subtitle": "蜡封口粮与粗布背袋",
+        "path": "obsidian-epoch/assets/item/gray-ration-pack.png",
+        "url": "/api/epoch/assets/item/gray-ration-pack.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "eed23ad35a1225c3e3df5945683af68e8dde32574c08468a4685fcfdcf4b0e2e"
+      },
+      {
+        "itemKey": "shop:aether-survey-lantern",
+        "title": "灵质探勘灯",
+        "subtitle": "青焰灯芯与测绘外环",
+        "path": "obsidian-epoch/assets/item/aether-survey-lantern.png",
+        "url": "/api/epoch/assets/item/aether-survey-lantern.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "55036126979d27f4f72b4935e51dfaef934fce7e93de599bb49d022bf4e98cc0"
+      },
+      {
+        "itemKey": "shop:ashen-oath-relic",
+        "title": "灰誓遗物",
+        "subtitle": "裂纹誓牌与封存火印",
+        "path": "obsidian-epoch/assets/item/ashen-oath-relic.png",
+        "url": "/api/epoch/assets/item/ashen-oath-relic.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "d24e8075ea870629ad29d5cb618b0494143b1752b0075380ebcf7a22b440cc5a"
+      },
+      {
+        "itemKey": "shop:pipewarden-valve-kit",
+        "title": "管网阀钥工具",
+        "subtitle": "铜阀钥、密封圈与短柄扳手",
+        "path": "obsidian-epoch/assets/item/pipewarden-valve-kit.png",
+        "url": "/api/epoch/assets/item/pipewarden-valve-kit.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "1cd5232a6916f01c224940030ddf35eac707424a1e5d3cf91cea443a704592c1"
+      },
+      {
+        "itemKey": "shop:mine-echo-relic",
+        "title": "矿脉回声遗物",
+        "subtitle": "黑矿晶核与回声刻痕",
+        "path": "obsidian-epoch/assets/item/mine-echo-relic.png",
+        "url": "/api/epoch/assets/item/mine-echo-relic.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "e24b08c59c8c4dd0c1c2d753feb1b7e6a9be355df170ed8356589b62c4f85e91"
+      }
+    ],
+    "factions": [
+      {
+        "factionId": "gray_watch",
+        "title": "灰港守望",
+        "subtitle": "潮线巡夜者与灰灯契约",
+        "path": "obsidian-epoch/assets/faction/gray-watch-emblem.png",
+        "url": "/api/epoch/assets/faction/gray-watch-emblem.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "fed5c8cb1488a1bed51e1dcab20bbb29a31af3a1a5ce4088eb86cd7a1560a973"
+      },
+      {
+        "factionId": "cinder_archive",
+        "title": "余烬档案会",
+        "subtitle": "封存火印与记忆誓册",
+        "path": "obsidian-epoch/assets/faction/cinder-archive-emblem.png",
+        "url": "/api/epoch/assets/faction/cinder-archive-emblem.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "292bb4d52e044ba0b4c43c7b1f835ee1b8d9030ce997b8e7f02ba832788c06a2"
+      },
+      {
+        "factionId": "white_tower_compact",
+        "title": "白塔契盟",
+        "subtitle": "冷光测绘与灵质宪章",
+        "path": "obsidian-epoch/assets/faction/white-tower-compact-emblem.png",
+        "url": "/api/epoch/assets/faction/white-tower-compact-emblem.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "915c5f81a480755b79fdb0dc63d7fa67e588f61d0c768f88a18c62017898786a"
+      }
+    ],
+    "seasonBanners": [
+      {
+        "seasonKey": "gray_harbor_faction_season",
+        "title": "灰港潮汐季",
+        "subtitle": "三方阵营在退潮窗口争夺灰港控制权",
+        "path": "obsidian-epoch/assets/season/gray-harbor-faction-season-banner.png",
+        "url": "/api/epoch/assets/season/gray-harbor-faction-season-banner.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "b29f31378c18e32d6b8d85a8a2582439ff6c974b47e987800a68aea7423cfc82"
+      },
+      {
+        "seasonKey": "cinder_archive_season",
+        "title": "余烬档案季",
+        "subtitle": "火印档案在封存期争夺失落记忆册",
+        "path": "obsidian-epoch/assets/season/cinder-archive-season-banner.png",
+        "url": "/api/epoch/assets/season/cinder-archive-season-banner.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "da8e202539fddddf701fcad87c8efc1d1b10f829307bad35449bac99179ab2ec"
+      },
+      {
+        "seasonKey": "white_tower_compact_season",
+        "title": "白塔测绘季",
+        "subtitle": "冷光契盟围绕灵质测绘权展开赛季推进",
+        "path": "obsidian-epoch/assets/season/white-tower-compact-season-banner.png",
+        "url": "/api/epoch/assets/season/white-tower-compact-season-banner.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "010479b69627f08a91fb9ca89a6018fcbd228ac840aac86a1cb2899d3eab2721"
+      }
+    ],
+    "resources": [
+      {
+        "resourceId": "coin",
+        "title": "灰港钱币",
+        "subtitle": "服务器结算的通用货币",
+        "path": "obsidian-epoch/assets/resource/coin-resource.png",
+        "url": "/api/epoch/assets/resource/coin-resource.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "290b18b12852127f8c3c7b5c68ac8125f6a360f82ae4e12743c11518caa6c2d9"
+      },
+      {
+        "resourceId": "aether",
+        "title": "灵质晶簇",
+        "subtitle": "异常与修炼产出的灵质",
+        "path": "obsidian-epoch/assets/resource/aether-resource.png",
+        "url": "/api/epoch/assets/resource/aether-resource.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "2c7d08def40cdc698a302ded8e9d626b567f2758dc914a65ae7237a08027ab96"
+      },
+      {
+        "resourceId": "stamina",
+        "title": "体力刻符",
+        "subtitle": "争抢、训练与对抗消耗",
+        "path": "obsidian-epoch/assets/resource/stamina-resource.png",
+        "url": "/api/epoch/assets/resource/stamina-resource.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "43827f6033c7180c4093a0a8642e1fd50c19c75a280563221210e332fc3b0bd8"
+      },
+      {
+        "resourceId": "focus",
+        "title": "专注盐线",
+        "subtitle": "冥想、异常压制与社交行动燃料",
+        "path": "obsidian-epoch/assets/resource/focus-resource.png",
+        "url": "/api/epoch/assets/resource/focus-resource.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "2e91ce02e8fee8f57aa505d22bed9e070049dfdba39de296f8c060a58749f06e"
+      },
+      {
+        "resourceId": "legend",
+        "title": "传说星印",
+        "subtitle": "新闻、战报与高阶身份槽进度",
+        "path": "obsidian-epoch/assets/resource/legend-resource.png",
+        "url": "/api/epoch/assets/resource/legend-resource.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "b33b3e5a9d34d796780f912d3a8a17c8e0dcd20036ce15d9db7f311ccb1c5977"
+      }
+    ],
+    "downtimeModes": [
+      {
+        "mode": "meditation",
+        "title": "静心冥想",
+        "subtitle": "整理心绪并缓慢积累专注",
+        "path": "obsidian-epoch/assets/downtime/meditation-downtime.png",
+        "url": "/api/epoch/assets/downtime/meditation-downtime.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "731d8af039ea4c84ef69a93e9165145c3e5756526b2dc854c2ac2e1f413f0d1d"
+      },
+      {
+        "mode": "cultivation",
+        "title": "灵质修炼",
+        "subtitle": "沿灵质潮汐吐纳",
+        "path": "obsidian-epoch/assets/downtime/cultivation-downtime.png",
+        "url": "/api/epoch/assets/downtime/cultivation-downtime.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "a5b4f52dd32a58af0ccab5b75315dca4b5f260bc59aa350725323321b6c08878"
+      },
+      {
+        "mode": "training",
+        "title": "体能训练",
+        "subtitle": "锻炼并恢复可用体力",
+        "path": "obsidian-epoch/assets/downtime/training-downtime.png",
+        "url": "/api/epoch/assets/downtime/training-downtime.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "255f4efe85804735a616195077e992e4059896ccc96df863cabf2b694776dd6d"
+      },
+      {
+        "mode": "resting",
+        "title": "安稳休整",
+        "subtitle": "睡眠、清点与低风险恢复",
+        "path": "obsidian-epoch/assets/downtime/resting-downtime.png",
+        "url": "/api/epoch/assets/downtime/resting-downtime.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "2d53ad73893686e851c4d40738fabb2e05bf1d8ae35b2c753c5fc3c53d627ace"
+      },
+      {
+        "mode": "slacking",
+        "title": "摸鱼闲逛",
+        "subtitle": "街角闲聊与小额钱币",
+        "path": "obsidian-epoch/assets/downtime/slacking-downtime.png",
+        "url": "/api/epoch/assets/downtime/slacking-downtime.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "8c9524fd8ac8d67a904c1b9bce66213ab5a3da5f868f5ef37228f869583ddf2a"
+      },
+      {
+        "mode": "travel",
+        "title": "外出游历",
+        "subtitle": "离开常驻地积累传说线索",
+        "path": "obsidian-epoch/assets/downtime/travel-downtime.png",
+        "url": "/api/epoch/assets/downtime/travel-downtime.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "504aeda28a4c5915a96b262682191021362641047e4518ec6483a1c9a6d02756"
+      },
+      {
+        "mode": "steward",
+        "title": "看店打理",
+        "subtitle": "维护店面、补给和小额钱币",
+        "path": "obsidian-epoch/assets/downtime/steward-downtime.png",
+        "url": "/api/epoch/assets/downtime/steward-downtime.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "767d63ca92ccd90ebd3a1de66c7431aaa52cd46352c60211b06bb7316f2d53b1"
+      },
+      {
+        "mode": "socialize",
+        "title": "街坊社交",
+        "subtitle": "拜访熟人并积累联系人线索",
+        "path": "obsidian-epoch/assets/downtime/socialize-downtime.png",
+        "url": "/api/epoch/assets/downtime/socialize-downtime.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "648f07693d292b4f36449106b502c6d36ae5b5f385a1179596883b853ed5b91c"
+      }
+    ],
+    "activities": [
+      {
+        "activityKey": "objective",
+        "title": "区域目标",
+        "subtitle": "多人贡献推进的公开目标",
+        "path": "obsidian-epoch/assets/activity/objective-activity.png",
+        "url": "/api/epoch/assets/activity/objective-activity.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "00fd4a756bbb683ee278c07678d12ff967d6300e3b48da1db954ac31167a0727"
+      },
+      {
+        "activityKey": "resource_node",
+        "title": "资源争夺",
+        "subtitle": "开放资源点的竞争行动",
+        "path": "obsidian-epoch/assets/activity/resource-node-activity.png",
+        "url": "/api/epoch/assets/activity/resource-node-activity.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "4a0fcebce0202ef1fda50c23844a2b6e203cf9b10410044299130be9f16d1041"
+      },
+      {
+        "activityKey": "anomaly",
+        "title": "异常压制",
+        "subtitle": "处理区域异常链的高风险行动",
+        "path": "obsidian-epoch/assets/activity/anomaly-activity.png",
+        "url": "/api/epoch/assets/activity/anomaly-activity.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "94b2aa6474e469d131bbcdb7fb1f523e53c50476f0825743b31c08481836ae54"
+      },
+      {
+        "activityKey": "bounty",
+        "title": "悬赏契约",
+        "subtitle": "玩家发布并由服务器结算的悬赏",
+        "path": "obsidian-epoch/assets/activity/bounty-activity.png",
+        "url": "/api/epoch/assets/activity/bounty-activity.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "009ede3251c176c32d069709c62a1a7180caecba83b7fe0ad51c954149456ad3"
+      },
+      {
+        "activityKey": "party_run",
+        "title": "小队任务",
+        "subtitle": "多个 agent 身份共同加入的开放任务",
+        "path": "obsidian-epoch/assets/activity/social-hook-activity.png",
+        "url": "/api/epoch/assets/activity/social-hook-activity.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "7720ed2105f5b592dab03edb492945deec3210fe3479809ec98dc70fda8bbee5"
+      },
+      {
+        "activityKey": "social_hook",
+        "title": "社交钩子",
+        "subtitle": "NPC、组织与关系网触发的行动",
+        "path": "obsidian-epoch/assets/activity/social-hook-activity.png",
+        "url": "/api/epoch/assets/activity/social-hook-activity.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "2e5e54108efa42812c480b1fcd492ce9b0bc8641cc7a1cec91b1c8988943a986"
+      },
+      {
+        "activityKey": "retaliation",
+        "title": "复仇契机",
+        "subtitle": "被袭击后由服务器开放的反击窗口",
+        "path": "obsidian-epoch/assets/activity/retaliation-activity.png",
+        "url": "/api/epoch/assets/activity/retaliation-activity.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "8a20e7a8d92e81f7c7c587b28a1cabd3c36f0825ebc711eb26c821358c463ff1"
+      },
+      {
+        "activityKey": "turn_card",
+        "title": "继续回合",
+        "subtitle": "服务器发放的新回合卡",
+        "path": "obsidian-epoch/assets/activity/turn-card-activity.png",
+        "url": "/api/epoch/assets/activity/turn-card-activity.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "0050b06d85ccfa9aa33847d39e4ec2c8dde4056f9630248687de376a3bb2a581"
+      },
+      {
+        "activityKey": "downtime",
+        "title": "设置托管",
+        "subtitle": "离线时的冥想、修炼、锻炼或外出",
+        "path": "obsidian-epoch/assets/activity/downtime-activity.png",
+        "url": "/api/epoch/assets/activity/downtime-activity.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "269811174ff823a98672dd41091c74f2f1da9e851882a370dbce5b4f0cf70b9b"
+      },
+      {
+        "activityKey": "reincarnation",
+        "title": "下一世身份",
+        "subtitle": "寿命结束后的服务器新身份",
+        "path": "obsidian-epoch/assets/activity/reincarnation-activity.png",
+        "url": "/api/epoch/assets/activity/reincarnation-activity.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "c83bb5d76163c4fc6b4666beb39946e22e63f15c54e65d15af64e622e972f221"
+      }
+    ],
+    "relationships": [
+      {
+        "relationshipKey": "spouse",
+        "title": "配偶誓约",
+        "subtitle": "服务器记录的婚姻与伴侣关系",
+        "path": "obsidian-epoch/assets/relationship/spouse-relationship.png",
+        "url": "/api/epoch/assets/relationship/spouse-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "a1b914786e40421af2b336cae250f2a7dc3a94252eb7999ffc003d9fb6c6dee6"
+      },
+      {
+        "relationshipKey": "parent",
+        "title": "父母血缘",
+        "subtitle": "服务器记录的亲代关系",
+        "path": "obsidian-epoch/assets/relationship/parent-relationship.png",
+        "url": "/api/epoch/assets/relationship/parent-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "15098761c1b4a6b7dba22f127746301aa4465432cef8a0a76756ce680a383c49"
+      },
+      {
+        "relationshipKey": "child",
+        "title": "子女血缘",
+        "subtitle": "服务器记录的子代关系",
+        "path": "obsidian-epoch/assets/relationship/child-relationship.png",
+        "url": "/api/epoch/assets/relationship/child-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "5e5425375c79cafdae8bf6346223aae19ff26a9be390bf164bf04b159a8cbec3"
+      },
+      {
+        "relationshipKey": "relative",
+        "title": "亲族纽带",
+        "subtitle": "服务器记录的亲人关系",
+        "path": "obsidian-epoch/assets/relationship/relative-relationship.png",
+        "url": "/api/epoch/assets/relationship/relative-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "4b714dc927f8fd898685eb3266647129d0e950cd1bde48150b5219ba01f2e1c5"
+      },
+      {
+        "relationshipKey": "friend",
+        "title": "朋友交情",
+        "subtitle": "服务器记录的友好关系",
+        "path": "obsidian-epoch/assets/relationship/friend-relationship.png",
+        "url": "/api/epoch/assets/relationship/friend-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "8d07d98c5d5942719a0a50fc41b71d8bb20a26ddace81a1a9f7767877daa2b6b"
+      },
+      {
+        "relationshipKey": "enemy",
+        "title": "仇敌裂痕",
+        "subtitle": "服务器记录的敌对 NPC 关系",
+        "path": "obsidian-epoch/assets/relationship/enemy-relationship.png",
+        "url": "/api/epoch/assets/relationship/enemy-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "2366053ced1f0c6ac908d9352a9eda59ae2cad0b94c768a5d5ad9ddeb1f2a298"
+      },
+      {
+        "relationshipKey": "superior",
+        "title": "上级权责",
+        "subtitle": "服务器记录的上级关系",
+        "path": "obsidian-epoch/assets/relationship/superior-relationship.png",
+        "url": "/api/epoch/assets/relationship/superior-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "36ec4668054a6e7b4cf5196de8afdda46bf1f507e074b2a27817350c72c565ae"
+      },
+      {
+        "relationshipKey": "subordinate",
+        "title": "下属职责",
+        "subtitle": "服务器记录的下属关系",
+        "path": "obsidian-epoch/assets/relationship/subordinate-relationship.png",
+        "url": "/api/epoch/assets/relationship/subordinate-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "3668565a95da5dfa74a0ab52353e90262f20a8409ef8f11319840891b019ce0a"
+      },
+      {
+        "relationshipKey": "mentor",
+        "title": "导师传承",
+        "subtitle": "服务器记录的师承与教导关系",
+        "path": "obsidian-epoch/assets/relationship/mentor-relationship.png",
+        "url": "/api/epoch/assets/relationship/mentor-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "36ec4668054a6e7b4cf5196de8afdda46bf1f507e074b2a27817350c72c565ae"
+      },
+      {
+        "relationshipKey": "apprentice",
+        "title": "学徒契约",
+        "subtitle": "服务器记录的学徒与训练关系",
+        "path": "obsidian-epoch/assets/relationship/apprentice-relationship.png",
+        "url": "/api/epoch/assets/relationship/apprentice-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "3668565a95da5dfa74a0ab52353e90262f20a8409ef8f11319840891b019ce0a"
+      },
+      {
+        "relationshipKey": "creditor",
+        "title": "债权账册",
+        "subtitle": "服务器记录的债权与担保关系",
+        "path": "obsidian-epoch/assets/relationship/creditor-relationship.png",
+        "url": "/api/epoch/assets/relationship/creditor-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "facfa910d8de71e6bbfd64a99f51586c54e8562fc2a2f9b95fa61a4fb765cc2a"
+      },
+      {
+        "relationshipKey": "debtor",
+        "title": "债务压力",
+        "subtitle": "服务器记录的欠款与义务关系",
+        "path": "obsidian-epoch/assets/relationship/debtor-relationship.png",
+        "url": "/api/epoch/assets/relationship/debtor-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "4afd6edd50febf8164f689691cafd5c813b4980fa87596d541b93c7591ab7067"
+      },
+      {
+        "relationshipKey": "alliance",
+        "title": "玩家联盟",
+        "subtitle": "服务器结算的 agent 联盟关系",
+        "path": "obsidian-epoch/assets/relationship/alliance-relationship.png",
+        "url": "/api/epoch/assets/relationship/alliance-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "63448a3fc6e02383fcf377fde7c9cdd73c99e0134ea61a8c4230ccd690f1ffb6"
+      },
+      {
+        "relationshipKey": "hostility",
+        "title": "玩家敌对",
+        "subtitle": "服务器结算的 agent 敌对关系",
+        "path": "obsidian-epoch/assets/relationship/hostility-relationship.png",
+        "url": "/api/epoch/assets/relationship/hostility-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "4afd6edd50febf8164f689691cafd5c813b4980fa87596d541b93c7591ab7067"
+      },
+      {
+        "relationshipKey": "reputation",
+        "title": "玩家声望",
+        "subtitle": "服务器结算的 agent 声望边",
+        "path": "obsidian-epoch/assets/relationship/reputation-relationship.png",
+        "url": "/api/epoch/assets/relationship/reputation-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "facfa910d8de71e6bbfd64a99f51586c54e8562fc2a2f9b95fa61a4fb765cc2a"
+      },
+      {
+        "relationshipKey": "household",
+        "title": "家庭共同体",
+        "subtitle": "服务器记录的家庭成员关系",
+        "path": "obsidian-epoch/assets/relationship/household-relationship.png",
+        "url": "/api/epoch/assets/relationship/household-relationship.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "ed5bde1462a07fb4b672c028fbef038323bdfe1d1724691607a29e797b4323ad"
+      }
+    ],
+    "worldSurfaces": [
+      {
+        "surfaceKey": "world_news",
+        "title": "世界新闻",
+        "subtitle": "服务器整理的区域新闻与传说提醒",
+        "path": "obsidian-epoch/assets/surface/world-news-surface.png",
+        "url": "/api/epoch/assets/surface/world-news-surface.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "941e63890e6fc004aab247c7146cd02b8a7e6227dd17abfbc8b37025e96af0cb"
+      },
+      {
+        "surfaceKey": "audit_replay",
+        "title": "审计回放",
+        "subtitle": "高影响事件的公开脱敏证据链",
+        "path": "obsidian-epoch/assets/surface/audit-replay-surface.png",
+        "url": "/api/epoch/assets/surface/audit-replay-surface.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "634ee79868d914c56e1faed6b2f2992a493f5a5cee6a09b1a9cecf7e44b825bb"
+      },
+      {
+        "surfaceKey": "market_board",
+        "title": "市场看板",
+        "subtitle": "区域订单、费用和风控状态",
+        "path": "obsidian-epoch/assets/surface/market-board-surface.png",
+        "url": "/api/epoch/assets/surface/market-board-surface.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "944e4be2fc2aa1990fdb59c901120a64e358f20bff515360b79838313154ec09"
+      },
+      {
+        "surfaceKey": "operator_watch",
+        "title": "运营观察",
+        "subtitle": "审核、滥用、维护和风险队列",
+        "path": "obsidian-epoch/assets/surface/operator-watch-surface.png",
+        "url": "/api/epoch/assets/surface/operator-watch-surface.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "6d03a8da0dfb2e573a2b068fa86848ba3fe60eb93b8b4a82cfcb4c436e09d7bb"
+      },
+      {
+        "surfaceKey": "result_page",
+        "title": "结果页面",
+        "subtitle": "一次性分享和继续行动入口",
+        "path": "obsidian-epoch/assets/surface/result-page-surface.png",
+        "url": "/api/epoch/assets/surface/result-page-surface.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "cca03e35a87dec8f480d8e2313df0466dbad35951d19250e047767f64c1c905f"
+      },
+      {
+        "surfaceKey": "death_archive",
+        "title": "死亡归档",
+        "subtitle": "寿命结束后的身份定档和下一世",
+        "path": "obsidian-epoch/assets/surface/death-archive-surface.png",
+        "url": "/api/epoch/assets/surface/death-archive-surface.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "31601b56c83803789042bdb65a7816e1ad39376a14e79180c03482ffe0e02bfe"
+      },
+      {
+        "surfaceKey": "install_portal",
+        "title": "安装入口",
+        "subtitle": "通用 MCP + Skill 包下载与多宿主配置",
+        "path": "obsidian-epoch/assets/surface/install-portal-surface.png",
+        "url": "/api/epoch/assets/surface/install-portal-surface.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "9aab332605320e690d53e251a6f7449502338fdbc2ebc1155f26d3fc8ba8ec73"
+      },
+      {
+        "surfaceKey": "web_bridge",
+        "title": "网页桥接",
+        "subtitle": "网页端大模型也能参与的安全回合",
+        "path": "obsidian-epoch/assets/surface/web-bridge-surface.png",
+        "url": "/api/epoch/assets/surface/web-bridge-surface.png",
+        "contentType": "image/png",
+        "width": 512,
+        "height": 512,
+        "sha256": "339fd882d22f155ff100c72c11c1bb88fcf8cbe4fe6675f6eed90d4619b613f4"
+      }
+    ],
+    "pageScenes": [
+      {
+        "sceneKey": "install_portal",
+        "title": "安装入口场景",
+        "subtitle": "多宿主 MCP 与 Skill 包入口",
+        "path": "obsidian-epoch/assets/page-scene/install-portal-page-scene.png",
+        "url": "/api/epoch/assets/page-scene/install-portal-page-scene.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "8efb2dfdf644268b9db32be7cb7ec02ef9f82e7430e6aeab1bab6a122ca47c45"
+      },
+      {
+        "sceneKey": "explorer_dashboard",
+        "title": "玩家档案场景",
+        "subtitle": "同一 Explorer 的身份世系总览",
+        "path": "obsidian-epoch/assets/page-scene/explorer-dashboard-page-scene.png",
+        "url": "/api/epoch/assets/page-scene/explorer-dashboard-page-scene.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "7447bdad39f674313afdf93453b135a57f1b5b4e5d69f16eb8dbed1847787d0a"
+      },
+      {
+        "sceneKey": "agent_status",
+        "title": "身份状态场景",
+        "subtitle": "单个 agent 身份的公开进度页",
+        "path": "obsidian-epoch/assets/page-scene/agent-status-page-scene.png",
+        "url": "/api/epoch/assets/page-scene/agent-status-page-scene.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "8f85abab09bf40bb559c7cbccb37b3f01f644738d8eb6d2c1b23d8ebe437dd24"
+      },
+      {
+        "sceneKey": "region_state",
+        "title": "区域状态场景",
+        "subtitle": "区域新闻、委托、NPC 与冲突投影",
+        "path": "obsidian-epoch/assets/page-scene/region-state-page-scene.png",
+        "url": "/api/epoch/assets/page-scene/region-state-page-scene.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "afa24934cc0a1f07509c3f5a14236df80707f3d82727de037549e9e149182ef9"
+      },
+      {
+        "sceneKey": "season_archive",
+        "title": "赛季档案场景",
+        "subtitle": "阵营战争与赛季归档页面",
+        "path": "obsidian-epoch/assets/page-scene/season-archive-page-scene.png",
+        "url": "/api/epoch/assets/page-scene/season-archive-page-scene.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "65060fd9830e1b8a2eb03fcbcda7590390ff77e5d31b7f857a347f01f70d2252"
+      },
+      {
+        "sceneKey": "npc_profile",
+        "title": "NPC 档案场景",
+        "subtitle": "服务器 canonical NPC 的公开资料页",
+        "path": "obsidian-epoch/assets/page-scene/npc-profile-page-scene.png",
+        "url": "/api/epoch/assets/page-scene/npc-profile-page-scene.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "42d64839064532a20ae906fca7a579fa7560a1425dd120b139551ad708805fc3"
+      },
+      {
+        "sceneKey": "death_archive",
+        "title": "死亡归档场景",
+        "subtitle": "身份定档、终局头衔与下一世",
+        "path": "obsidian-epoch/assets/page-scene/death-archive-page-scene.png",
+        "url": "/api/epoch/assets/page-scene/death-archive-page-scene.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "c53a00f16973dde6ed68cf1a703a2e4014e559a363df7a157483e8fc084ec91e"
+      },
+      {
+        "sceneKey": "audit_replay",
+        "title": "审计回放场景",
+        "subtitle": "脱敏事件证据链和高影响回放",
+        "path": "obsidian-epoch/assets/page-scene/audit-replay-page-scene.png",
+        "url": "/api/epoch/assets/page-scene/audit-replay-page-scene.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "1ca264604550b07d22a50e4047b6ed5afc801b6c17f85d29d5eb242db13619f4"
+      },
+      {
+        "sceneKey": "result_page",
+        "title": "结果页面场景",
+        "subtitle": "一次性分享、区域上下文和下一步建议",
+        "path": "obsidian-epoch/assets/page-scene/result-page-page-scene.png",
+        "url": "/api/epoch/assets/page-scene/result-page-page-scene.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "e71fc9aee7e78eebd799879fae783a72755be8df9f9bb8b2920a0c2fe5459f4c"
+      },
+      {
+        "sceneKey": "web_bridge",
+        "title": "网页桥接场景",
+        "subtitle": "网页端大模型安全参与回合",
+        "path": "obsidian-epoch/assets/page-scene/web-bridge-page-scene.png",
+        "url": "/api/epoch/assets/page-scene/web-bridge-page-scene.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "fd36117d75f3529254a690c6d0643b0b376a7c7b0440e119c6bfbab44e740591"
+      },
+      {
+        "sceneKey": "market_board",
+        "title": "市场看板场景",
+        "subtitle": "区域交易、费用和风控状态",
+        "path": "obsidian-epoch/assets/page-scene/market-board-page-scene.png",
+        "url": "/api/epoch/assets/page-scene/market-board-page-scene.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "e36605be4a71cfca555a122d4ded40f87f1fba4053cc2e262323cb17fcc865ee"
+      },
+      {
+        "sceneKey": "operator_console",
+        "title": "运营控制台场景",
+        "subtitle": "审核、维护、滥用和风险队列",
+        "path": "obsidian-epoch/assets/page-scene/operator-console-page-scene.png",
+        "url": "/api/epoch/assets/page-scene/operator-console-page-scene.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "fd33be4521d76d57c91c1104114b879b0c40f5d5b446064f1d053334fa71b918"
+      }
+    ],
+    "campaignKeyArt": [
+      {
+        "campaignKey": "gray_harbor_faction_war",
+        "title": "灰港阵营战争",
+        "subtitle": "潮线、灯塔和三阵营争夺",
+        "path": "obsidian-epoch/assets/campaign/gray-harbor-faction-war-campaign.png",
+        "url": "/api/epoch/assets/campaign/gray-harbor-faction-war-campaign.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "11cffe4413b5017aad8bae0a374e3d0119dae889f99115689802c44a1369e8bc"
+      },
+      {
+        "campaignKey": "cinder_archive_expedition",
+        "title": "余烬档案远征",
+        "subtitle": "火印、誓册和失落索引",
+        "path": "obsidian-epoch/assets/campaign/cinder-archive-expedition-campaign.png",
+        "url": "/api/epoch/assets/campaign/cinder-archive-expedition-campaign.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "75d0c34c0f9d4e7c88b6984abf40004f15447820c48c8cd0a170ff17aaac6265"
+      },
+      {
+        "campaignKey": "white_tower_compact",
+        "title": "白塔契盟测绘",
+        "subtitle": "冷光测绘、灵质宪章和区域控制",
+        "path": "obsidian-epoch/assets/campaign/white-tower-compact-campaign.png",
+        "url": "/api/epoch/assets/campaign/white-tower-compact-campaign.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "b8ede4381ebaee36449524d7d35914ed4c9af8cf479d612f211eb5c623874d96"
+      },
+      {
+        "campaignKey": "anomaly_containment",
+        "title": "异常围猎",
+        "subtitle": "多人压制 Boss 和区域污染",
+        "path": "obsidian-epoch/assets/campaign/anomaly-containment-campaign.png",
+        "url": "/api/epoch/assets/campaign/anomaly-containment-campaign.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "cc037ef756238add9bb15343654b1cc7e8db9be3563faaaa5e695e552526f4eb"
+      },
+      {
+        "campaignKey": "resource_node_rush",
+        "title": "资源点争夺",
+        "subtitle": "限时采掘窗口和区域竞速委托",
+        "path": "obsidian-epoch/assets/campaign/resource-node-rush-campaign.png",
+        "url": "/api/epoch/assets/campaign/resource-node-rush-campaign.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "b097a9e4868a4cd86f02ee3ca41437f83c8a301b416c842c0650465b46aa1d76"
+      },
+      {
+        "campaignKey": "market_convoy",
+        "title": "市场护送",
+        "subtitle": "区域交易、护送和风险审计",
+        "path": "obsidian-epoch/assets/campaign/market-convoy-campaign.png",
+        "url": "/api/epoch/assets/campaign/market-convoy-campaign.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "f0eef836f1d8b4f684597af1849fc5ca2e55c0b0d093ac165ecfd5a33c04120a"
+      }
+    ],
+    "ambienceScenes": [
+      {
+        "sceneKey": "gray_harbor_night_watch",
+        "title": "灰港夜巡",
+        "subtitle": "盐雾、灯塔和午夜值守",
+        "path": "obsidian-epoch/assets/ambience/gray-harbor-night-watch-ambience.png",
+        "url": "/api/epoch/assets/ambience/gray-harbor-night-watch-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "05db469408c1f2a79043319057cf742efc7a4faa26a5e219bdcf86a287eb8b0b"
+      },
+      {
+        "sceneKey": "ash_outpost_training_yard",
+        "title": "灰烬前哨训练场",
+        "subtitle": "炉火、靶桩和夜间体能操练",
+        "path": "obsidian-epoch/assets/ambience/ash-outpost-training-yard-ambience.png",
+        "url": "/api/epoch/assets/ambience/ash-outpost-training-yard-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "f63894aea5ee8f2ac838bae48cae11017f7019eeb5e149322da1bb527fda9c91"
+      },
+      {
+        "sceneKey": "salt_mirror_tide_market",
+        "title": "盐镜潮市",
+        "subtitle": "镜面潮汐、临时摊位和护送商队",
+        "path": "obsidian-epoch/assets/ambience/salt-mirror-tide-market-ambience.png",
+        "url": "/api/epoch/assets/ambience/salt-mirror-tide-market-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "78bf53ac168c60da329f1956858e92332ea766c433318d41a10b9ff527c0c145"
+      },
+      {
+        "sceneKey": "glass_archive_quiet_stacks",
+        "title": "玻璃档案静库",
+        "subtitle": "透明柜列、检索光和低声誓约",
+        "path": "obsidian-epoch/assets/ambience/glass-archive-quiet-stacks-ambience.png",
+        "url": "/api/epoch/assets/ambience/glass-archive-quiet-stacks-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "656bb5eafeae7b51a3090b01965a6e768bfc24fecc41ff886c37693ae922be28"
+      },
+      {
+        "sceneKey": "moonwell_hollow_meditation_grove",
+        "title": "月井空壳冥想林",
+        "subtitle": "银井、低语树影和托管修炼",
+        "path": "obsidian-epoch/assets/ambience/moonwell-hollow-meditation-grove-ambience.png",
+        "url": "/api/epoch/assets/ambience/moonwell-hollow-meditation-grove-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "f544e6f4e7e51f07d08fce17154a39dfe32183e171391f960c9039b9d830887b"
+      },
+      {
+        "sceneKey": "frontier_waystation_lazy_afternoon",
+        "title": "边境旅站午后",
+        "subtitle": "摸鱼、闲聊和出门前的补给",
+        "path": "obsidian-epoch/assets/ambience/frontier-waystation-lazy-afternoon-ambience.png",
+        "url": "/api/epoch/assets/ambience/frontier-waystation-lazy-afternoon-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "38611dbe80d693063416ce4dae09a89a1b60af6aa87f725f3e928d79deb6934b"
+      },
+      {
+        "sceneKey": "black_harbor_night_ledger",
+        "title": "黑港夜账",
+        "subtitle": "低蓝信号、封蜡账册和等待放行的夜航货队",
+        "path": "obsidian-epoch/assets/ambience/black-harbor-night-ledger-ambience.png",
+        "url": "/api/epoch/assets/ambience/black-harbor-night-ledger-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "478f59cbe9295b79c89a825bd31f84441397bcd92d57670b82d294b1750c37ee"
+      },
+      {
+        "sceneKey": "forest_whispering_hollow",
+        "title": "腐林回信树洞",
+        "subtitle": "苔光树洞、猎人誓牌和会回信的低声林地",
+        "path": "obsidian-epoch/assets/ambience/forest-whispering-hollow-ambience.png",
+        "url": "/api/epoch/assets/ambience/forest-whispering-hollow-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "ef3efff33671fd43f49cbcd2bdd0f51ef7dbee175e36c162086eb2146703bffc"
+      },
+      {
+        "sceneKey": "salt_gate_customs_dawn",
+        "title": "盐门晨关",
+        "subtitle": "晨盐雾、关税账棚和边境钟桥开闸",
+        "path": "obsidian-epoch/assets/ambience/salt-gate-customs-dawn-ambience.png",
+        "url": "/api/epoch/assets/ambience/salt-gate-customs-dawn-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "c0434ab68786171b8358bf6f34b385a1c92d2109257e6cbfbedc331572218342"
+      },
+      {
+        "sceneKey": "ash_waste_cinder_camp",
+        "title": "灰烬荒原渣井营",
+        "subtitle": "冷灰夜、黑铁吊架和托管者外出前的低火营地",
+        "path": "obsidian-epoch/assets/ambience/ash-waste-cinder-camp-ambience.png",
+        "url": "/api/epoch/assets/ambience/ash-waste-cinder-camp-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "4b18f1c91e6191106465e0ae80e0647a7421dca9d4acf88307993573b2d33f7c"
+      },
+      {
+        "sceneKey": "city_pipes_drip_market",
+        "title": "城市管道滴水市集",
+        "subtitle": "阀门摊位、冷凝水声和检修桥下的临时委托牌",
+        "path": "obsidian-epoch/assets/ambience/city-pipes-drip-market-ambience.png",
+        "url": "/api/epoch/assets/ambience/city-pipes-drip-market-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "f146d72308a55a1f875b4b601683be3092f72e51282dd41d0050d16ad5a0b836"
+      },
+      {
+        "sceneKey": "abandoned_mine_echo_shaft",
+        "title": "废弃矿区回声井",
+        "subtitle": "旧升降架、蓝尘矿灯和封存警戒线",
+        "path": "obsidian-epoch/assets/ambience/abandoned-mine-echo-shaft-ambience.png",
+        "url": "/api/epoch/assets/ambience/abandoned-mine-echo-shaft-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "04d67b1bf3f6a7ff95b38f92807d96d7fbf49a28af75c31d1e78f99b4ace18bd"
+      },
+      {
+        "sceneKey": "data_tower_cache_rain",
+        "title": "废弃数据塔缓存雨",
+        "subtitle": "断裂索引层、缓存雨和脑晶巡检灯列",
+        "path": "obsidian-epoch/assets/ambience/data-tower-cache-rain-ambience.png",
+        "url": "/api/epoch/assets/ambience/data-tower-cache-rain-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "b14881ff0866db6e2a9301a8e24f7ebfc3907164784e472eba455c022f916886"
+      },
+      {
+        "sceneKey": "orbit_city_docking_ring",
+        "title": "轨道城泊港环",
+        "subtitle": "星历信标、环站泊位和低轨灯市",
+        "path": "obsidian-epoch/assets/ambience/orbit-city-docking-ring-ambience.png",
+        "url": "/api/epoch/assets/ambience/orbit-city-docking-ring-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "59f817fa2119c01e1fd24ad926dcce2fa8be72a7132391aef16e318deab1b2a5"
+      },
+      {
+        "sceneKey": "trench_dream_current",
+        "title": "海沟古梦暗流",
+        "subtitle": "深海冷灯、岩架与守梦生物的低频巡游",
+        "path": "obsidian-epoch/assets/ambience/trench-dream-current-ambience.png",
+        "url": "/api/epoch/assets/ambience/trench-dream-current-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "49984ea57c0cb5cedfc5a90821ad862841c3b6bf627769ffdbf41f3ee8bc098c"
+      },
+      {
+        "sceneKey": "collective_dream_pool_lanterns",
+        "title": "集体梦池梦灯列",
+        "subtitle": "共享梦面、记忆浮岛与身份倒影",
+        "path": "obsidian-epoch/assets/ambience/collective-dream-pool-lanterns-ambience.png",
+        "url": "/api/epoch/assets/ambience/collective-dream-pool-lanterns-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "e1b9b779ef39cbd435cad15e7408789e19a2bcda0790ab0ff4ecba3dc2c087e9"
+      },
+      {
+        "sceneKey": "space_rift_edge_lights",
+        "title": "空间裂缝边缘灯",
+        "subtitle": "紫色裂光、落尘轨迹和临时通行刻度",
+        "path": "obsidian-epoch/assets/ambience/space-rift-edge-lights-ambience.png",
+        "url": "/api/epoch/assets/ambience/space-rift-edge-lights-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "9a7c1c46fddd29e1ee8280ec025ede6dda5e3184cea590a796476a54092cb104"
+      },
+      {
+        "sceneKey": "non_euclidean_cave_gravity_fold",
+        "title": "非欧洞窟重力折页",
+        "subtitle": "错误楼梯、黄铜测量灯和回声井",
+        "path": "obsidian-epoch/assets/ambience/non-euclidean-cave-gravity-fold-ambience.png",
+        "url": "/api/epoch/assets/ambience/non-euclidean-cave-gravity-fold-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "e3dc16156da01c1d511355b0d50ee5f32619275dfbf4bfd877d639e175c432f9"
+      },
+      {
+        "sceneKey": "starship_graveyard_drift_lights",
+        "title": "星舰墓场漂航灯",
+        "subtitle": "冷轨残骸、打捞禁线和断续信标",
+        "path": "obsidian-epoch/assets/ambience/starship-graveyard-drift-lights-ambience.png",
+        "url": "/api/epoch/assets/ambience/starship-graveyard-drift-lights-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "189e9ab807ec650b8c330a4b08ff6c21fce1f05278b6baed6f1f17fcedc4643b"
+      },
+      {
+        "sceneKey": "abandoned_subway_signal_fog",
+        "title": "废弃地铁信号雾",
+        "subtitle": "旧站台、积水轨道和青色信号灯",
+        "path": "obsidian-epoch/assets/ambience/abandoned-subway-signal-fog-ambience.png",
+        "url": "/api/epoch/assets/ambience/abandoned-subway-signal-fog-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "552877789c5704090f14c96d1bb6d4b676bd4c46c8b955f1ea343e2b32ee6261"
+      },
+      {
+        "sceneKey": "holographic_theater_spectrum_stage",
+        "title": "全息剧场光谱舞台",
+        "subtitle": "伪掌声、折光后台和循环演出的光幕",
+        "path": "obsidian-epoch/assets/ambience/holographic-theater-spectrum-stage-ambience.png",
+        "url": "/api/epoch/assets/ambience/holographic-theater-spectrum-stage-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "a863f318d861a619643a48ee84a73c1324c9e3225737ec630004b86c85feb36e"
+      },
+      {
+        "sceneKey": "quantum_laboratory_probability_glass",
+        "title": "量子实验室概率玻璃",
+        "subtitle": "纠缠舱、观测窗和坍缩桥前的警戒灯",
+        "path": "obsidian-epoch/assets/ambience/quantum-laboratory-probability-glass-ambience.png",
+        "url": "/api/epoch/assets/ambience/quantum-laboratory-probability-glass-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "6fb63bc6aaa4d2c1cbfa896047b69792cf3bed1198ad0c0a30c679ec222bf759"
+      },
+      {
+        "sceneKey": "reflective_city_mirror_boulevard",
+        "title": "反光城市镜面大道",
+        "subtitle": "镜面塔楼、屏幕水域和霓虹巡游线",
+        "path": "obsidian-epoch/assets/ambience/reflective-city-mirror-boulevard-ambience.png",
+        "url": "/api/epoch/assets/ambience/reflective-city-mirror-boulevard-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "5ef610ca27cb4de986c52b8024d4e4b41ac755e3bd8610d85a7448c90284d0c3"
+      },
+      {
+        "sceneKey": "data_alley_cache_signs",
+        "title": "数据巷缓存招牌",
+        "subtitle": "窄巷走线、缓存招牌和包市场灯箱",
+        "path": "obsidian-epoch/assets/ambience/data-alley-cache-signs-ambience.png",
+        "url": "/api/epoch/assets/ambience/data-alley-cache-signs-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "4c9deebf0fa200bf73735cf5d4530d973cc422541fe0713d277dd8441ef5dd58"
+      },
+      {
+        "sceneKey": "prism_waters_spectrum_tide",
+        "title": "棱镜水域光谱潮",
+        "subtitle": "折光潮面、镜帆码头和彩带航标",
+        "path": "obsidian-epoch/assets/ambience/prism-waters-spectrum-tide-ambience.png",
+        "url": "/api/epoch/assets/ambience/prism-waters-spectrum-tide-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "f7dadc9f8198691a59b526a6bfec364415cab9f1204e771b838fce3e05185970"
+      },
+      {
+        "sceneKey": "probability_greenhouse_branch_lab",
+        "title": "概率温室分支花棚",
+        "subtitle": "玻璃步道、分支花床和可能性种子灯",
+        "path": "obsidian-epoch/assets/ambience/probability-greenhouse-branch-lab-ambience.png",
+        "url": "/api/epoch/assets/ambience/probability-greenhouse-branch-lab-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "43d9556483ee111c7bb1a047475e283fc25b2a824cded8c99f1e91dba9e520d5"
+      },
+      {
+        "sceneKey": "prophecy_server_cold_oracle",
+        "title": "预言服务器冷神谕厅",
+        "subtitle": "低温机柜、判定环和可审计神谕屏",
+        "path": "obsidian-epoch/assets/ambience/prophecy-server-cold-oracle-ambience.png",
+        "url": "/api/epoch/assets/ambience/prophecy-server-cold-oracle-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "bda45e4ad4e2ad703f4dfc3eda94a6db620560672a0b84f97f9760436e98a594"
+      },
+      {
+        "sceneKey": "orbital_cathedral_bell_halo",
+        "title": "轨道教堂钟环",
+        "subtitle": "低轨钟环、漂浮祭台和圣歌光带",
+        "path": "obsidian-epoch/assets/ambience/orbital-cathedral-bell-halo-ambience.png",
+        "url": "/api/epoch/assets/ambience/orbital-cathedral-bell-halo-ambience.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "9a40d180ddf55d316b40ad0cd23ec359612da16dbcc092d75df0a4e5c9e8a4c5"
+      }
+    ],
+    "worldScenes": [
+      {
+        "sceneKey": "gray_harbor_gate",
+        "regionId": "region_gray_harbor",
+        "title": "灰港外门",
+        "subtitle": "巡游者进入灰港前看到的灯塔、税闸和潮湿石路",
+        "path": "obsidian-epoch/assets/world-scene/gray-harbor-gate-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/gray-harbor-gate-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "0525fc517c1f792df258a6fa2d7e224df26fe66eb3d2ca90760078acdf623d95"
+      },
+      {
+        "sceneKey": "gray_harbor_lantern_market",
+        "regionId": "region_gray_harbor",
+        "title": "灰港灯市",
+        "subtitle": "潮线集市、临时摊棚和等待托管者归来的委托牌",
+        "path": "obsidian-epoch/assets/world-scene/gray-harbor-lantern-market-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/gray-harbor-lantern-market-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "f8b1b0bf813ebb5ae6f7944c36dded106c2ec687049f1d8fe58579e6550b5c64"
+      },
+      {
+        "sceneKey": "ash_outpost_wall",
+        "regionId": "region_ash_outpost",
+        "title": "灰烬前哨城墙",
+        "subtitle": "训练号角、炉光和巡逻者等待下一次委托",
+        "path": "obsidian-epoch/assets/world-scene/ash-outpost-wall-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/ash-outpost-wall-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "f5c2dc57a9594a67fb5399bab0104fdcc90002279b0f96dc5273891a8d9bd68b"
+      },
+      {
+        "sceneKey": "ash_outpost_drill_yard",
+        "regionId": "region_ash_outpost",
+        "title": "灰烬前哨操练场",
+        "subtitle": "旧炉火、靶桩和等待托管行动的夜训队列",
+        "path": "obsidian-epoch/assets/world-scene/ash-outpost-drill-yard-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/ash-outpost-drill-yard-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "6614ea21e14473d8c8235c5842ec458ff5aa90c992b59bb481a7b1c49ac156fb"
+      },
+      {
+        "sceneKey": "salt_mirror_causeway",
+        "regionId": "region_salt_mirror_coast",
+        "title": "盐镜堤道",
+        "subtitle": "商队穿过反光盐潮和临时市场之间的狭长路",
+        "path": "obsidian-epoch/assets/world-scene/salt-mirror-causeway-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/salt-mirror-causeway-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "37d40116b09cb8b52d2c20e4b5035cda682726b4c41f7fd9d26273eb825a96f9"
+      },
+      {
+        "sceneKey": "salt_mirror_tide_market",
+        "regionId": "region_salt_mirror_coast",
+        "title": "盐镜潮市",
+        "subtitle": "潮汐退去后的临时摊棚、竞价旗和护送队列",
+        "path": "obsidian-epoch/assets/world-scene/salt-mirror-tide-market-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/salt-mirror-tide-market-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "ac37345c312e0a4991cd61e24c762cf84acab0fe6fd4c44fd168d8cb5a30dfbd"
+      },
+      {
+        "sceneKey": "glass_archive_outer_stacks",
+        "regionId": "region_glass_archive",
+        "title": "玻璃档案外库",
+        "subtitle": "透明书塔、索引桥和被服务器记录的公开誓言",
+        "path": "obsidian-epoch/assets/world-scene/glass-archive-outer-stacks-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/glass-archive-outer-stacks-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "89d9c8fc59439d1f50c380f143a43cafbea118c7ab72eeb3a1eb87758741a678"
+      },
+      {
+        "sceneKey": "glass_archive_index_bridge",
+        "regionId": "region_glass_archive",
+        "title": "玻璃档案索引桥",
+        "subtitle": "悬空索引桥、誓言灯和服务器封存的公开档案",
+        "path": "obsidian-epoch/assets/world-scene/glass-archive-index-bridge-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/glass-archive-index-bridge-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "43c5ffb445f8252a9a1b62e5e6feb9eae95b39060ef0307df2908ab8a82b8efb"
+      },
+      {
+        "sceneKey": "moonwell_hollow_threshold",
+        "regionId": "region_moonwell_hollow",
+        "title": "月井空壳入口",
+        "subtitle": "银井、低语树影和托管修炼者的静默边界",
+        "path": "obsidian-epoch/assets/world-scene/moonwell-hollow-threshold-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/moonwell-hollow-threshold-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "d09892678174f5bab6a04cb79bbed44024b28404bb5c1d00abe9fcc53300f0a1"
+      },
+      {
+        "sceneKey": "moonwell_hollow_meditation_ring",
+        "regionId": "region_moonwell_hollow",
+        "title": "月井修炼环",
+        "subtitle": "围绕银井的托管修炼席、苔光标记和亲友祈愿牌",
+        "path": "obsidian-epoch/assets/world-scene/moonwell-hollow-meditation-ring-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/moonwell-hollow-meditation-ring-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "7ed55f08f2ca9a79606dc250b06ea810b4e1eb66b8c0818e6fa7c9b5c8380bd7"
+      },
+      {
+        "sceneKey": "black_harbor_toll_quay",
+        "regionId": "region_blackharbor",
+        "title": "黑港税平码头",
+        "subtitle": "潮湿税棚、封蜡账册和等待服务器放行的夜航货队",
+        "path": "obsidian-epoch/assets/world-scene/black-harbor-toll-quay-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/black-harbor-toll-quay-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "c2a3d3301051c771cd053bee02460420904f82b4476be0b4129b385574bd7427"
+      },
+      {
+        "sceneKey": "black_harbor_signal_roof",
+        "regionId": "region_blackharbor",
+        "title": "黑港信号屋顶",
+        "subtitle": "雾中旗灯、走私传闻和公开榜单下的守夜人",
+        "path": "obsidian-epoch/assets/world-scene/black-harbor-signal-roof-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/black-harbor-signal-roof-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "40fcbbfd8517cf3bff88840f169af45a4b769fe02b7a14dc2aa894a29f9a533a"
+      },
+      {
+        "sceneKey": "forest_oath_crossing",
+        "regionId": "region_forest",
+        "title": "誓林岔路",
+        "subtitle": "树根路标、猎人誓牌和通往深林委托的潮湿小径",
+        "path": "obsidian-epoch/assets/world-scene/forest-oath-crossing-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/forest-oath-crossing-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "429da557ac0bc06e6841e679056d4771560264bfd88fc6fada7422da4341cb47"
+      },
+      {
+        "sceneKey": "forest_moss_shrine",
+        "regionId": "region_forest",
+        "title": "苔光小祠",
+        "subtitle": "林中亲友祈牌、疗养席和等待归档的地方传闻",
+        "path": "obsidian-epoch/assets/world-scene/forest-moss-shrine-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/forest-moss-shrine-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "61c692c92b21fb5a2429cf9c29f47c194072bff08e5c32916c4e185e860b4c18"
+      },
+      {
+        "sceneKey": "salt_gate_customs_yard",
+        "regionId": "region_salt_gate",
+        "title": "盐门关税场",
+        "subtitle": "盐风关卡、封蜡账棚和等待通行许可的边境车队",
+        "path": "obsidian-epoch/assets/world-scene/salt-gate-customs-yard-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/salt-gate-customs-yard-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "0d2d405d03352f670e55b285f1a74a5f874967c1298e906fefc3000f9fcfe480"
+      },
+      {
+        "sceneKey": "salt_gate_bell_bridge",
+        "regionId": "region_salt_gate",
+        "title": "盐门钟桥",
+        "subtitle": "悬钟桥、盐雾旗线和通往边境市集的审查队列",
+        "path": "obsidian-epoch/assets/world-scene/salt-gate-bell-bridge-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/salt-gate-bell-bridge-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "730184ad16d0e060a93b12a8f1f49791ab1601836a18172ca33a1e8a5dad345a"
+      },
+      {
+        "sceneKey": "ash_waste_caravan_line",
+        "regionId": "region_ash",
+        "title": "灰烬荒道商队线",
+        "subtitle": "赤灰荒道、补给车辙和穿越落灰带的护送队",
+        "path": "obsidian-epoch/assets/world-scene/ash-waste-caravan-line-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/ash-waste-caravan-line-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "bf2a62424507238716f7902851e06bd06b50cb149164f364695d9cdda0cf8eaa"
+      },
+      {
+        "sceneKey": "ash_waste_cinder_well",
+        "regionId": "region_ash",
+        "title": "灰烬荒原渣井",
+        "subtitle": "冷却渣井、黑铁吊架和荒道旅人的夜间补给点",
+        "path": "obsidian-epoch/assets/world-scene/ash-waste-cinder-well-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/ash-waste-cinder-well-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "bbcdd268e5a932cba7967f6109c39443e9c8671ea63d6394f88fb18aaa4be99b"
+      },
+      {
+        "sceneKey": "city_pipes_valve_market",
+        "regionId": "region_city_pipes",
+        "title": "城市管道阀门市集",
+        "subtitle": "废城下方的阀门摊位、冷凝水渠和临时委托灯",
+        "path": "obsidian-epoch/assets/world-scene/city-pipes-valve-market-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/city-pipes-valve-market-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "f770b5bd5114bdc6bec8fa8fc31ac6686c15cee32bbede66d1ca623636afa17c"
+      },
+      {
+        "sceneKey": "city_pipes_maintenance_crawl",
+        "regionId": "region_city_pipes",
+        "title": "城市管道检修爬廊",
+        "subtitle": "低矮维修道、滴水回声和等待托管行动的工具箱",
+        "path": "obsidian-epoch/assets/world-scene/city-pipes-maintenance-crawl-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/city-pipes-maintenance-crawl-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "49371608a65ad6a56eae1da8173b7ee8fe7637af977d4a9d89789189ed99045e"
+      },
+      {
+        "sceneKey": "abandoned_mine_lift_yard",
+        "regionId": "region_abandoned_mine",
+        "title": "废弃矿区升降井场",
+        "subtitle": "旧升降塔、塌方轨道和等待清点的矿车队列",
+        "path": "obsidian-epoch/assets/world-scene/abandoned-mine-lift-yard-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/abandoned-mine-lift-yard-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "30cd105387925fb9b4bbb377250fb8a21204f917d5e33384cf686e3095ad5e58"
+      },
+      {
+        "sceneKey": "abandoned_mine_echo_shaft",
+        "regionId": "region_abandoned_mine",
+        "title": "废弃矿区回声竖井",
+        "subtitle": "蓝尘矿灯、深井回声和服务器封存的塌方区域",
+        "path": "obsidian-epoch/assets/world-scene/abandoned-mine-echo-shaft-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/abandoned-mine-echo-shaft-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "53ac96e160a5ad821400acd72a2af701f82f8ec384511c1718f83e6ad52cff1b"
+      },
+      {
+        "sceneKey": "data_tower_cache_spire",
+        "regionId": "region_data_tower",
+        "title": "废弃数据塔缓存尖顶",
+        "subtitle": "断裂缓存层、脑晶灯列和高空维护桥",
+        "path": "obsidian-epoch/assets/world-scene/data-tower-cache-spire-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/data-tower-cache-spire-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "4c3cb60a7939fb6da984dda39cb392d9ca5172ac350c7baf025a4735c4914993"
+      },
+      {
+        "sceneKey": "data_tower_index_bridge",
+        "regionId": "region_data_tower",
+        "title": "废弃数据塔索引桥",
+        "subtitle": "摇晃索引桥、封存缓存和被星风刮亮的塔脊",
+        "path": "obsidian-epoch/assets/world-scene/data-tower-index-bridge-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/data-tower-index-bridge-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "0724a0cbe8f7b90c11b4c894d2a8d9a3ad8647182cdf73e05b659ee1285c8c83"
+      },
+      {
+        "sceneKey": "orbit_city_ring_station",
+        "regionId": "region_orbit_city",
+        "title": "轨道城环站",
+        "subtitle": "低轨泊位、环形街区和星历交通灯",
+        "path": "obsidian-epoch/assets/world-scene/orbit-city-ring-station-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/orbit-city-ring-station-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "4e6ece4c073bd176a96a3bf7de77458998b2e353c238daf4156854f7cd2581b7"
+      },
+      {
+        "sceneKey": "orbit_city_beacon_bazaar",
+        "regionId": "region_orbit_city",
+        "title": "轨道城信标灯市",
+        "subtitle": "信标塔、悬浮摊位和等待放行的迁徙航道",
+        "path": "obsidian-epoch/assets/world-scene/orbit-city-beacon-bazaar-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/orbit-city-beacon-bazaar-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "a40fb6d12b6c7042188c395e35f6c8c1f793b3f28d4641c4911be2704668546b"
+      },
+      {
+        "sceneKey": "trench_cold_lantern_shelf",
+        "regionId": "region_trench",
+        "title": "海沟冷灯岩架",
+        "subtitle": "深海岩架、冷光灯标和等待服务器放行的下潜路径",
+        "path": "obsidian-epoch/assets/world-scene/trench-cold-lantern-shelf-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/trench-cold-lantern-shelf-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "6d774173f1f158e5a12603aecebc76ade4bcfb46afb2bbebbad2153d13b42ec6"
+      },
+      {
+        "sceneKey": "trench_ancient_dream_current",
+        "regionId": "region_trench",
+        "title": "海沟古梦暗流",
+        "subtitle": "古梦水流、浮游光带和折寿风险标记",
+        "path": "obsidian-epoch/assets/world-scene/trench-ancient-dream-current-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/trench-ancient-dream-current-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "d84fc5617a89583fabf511023b7e3a5254d8118c1aafe384a292f02331c2349b"
+      },
+      {
+        "sceneKey": "collective_dream_pool_threshold",
+        "regionId": "region_collective_dream_pool",
+        "title": "集体梦池门槛",
+        "subtitle": "共享梦面、入梦阶梯和服务器身份封条",
+        "path": "obsidian-epoch/assets/world-scene/collective-dream-pool-threshold-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/collective-dream-pool-threshold-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "3c90d22d55bee683698fd01e799afb0b97ec726aea098db9212dd9d152494725"
+      },
+      {
+        "sceneKey": "collective_dream_pool_memory_isles",
+        "regionId": "region_collective_dream_pool",
+        "title": "集体梦池记忆浮岛",
+        "subtitle": "梦面浮岛、公共回忆灯和可被新闻引用的传说倒影",
+        "path": "obsidian-epoch/assets/world-scene/collective-dream-pool-memory-isles-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/collective-dream-pool-memory-isles-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "b6d5a43f786cec4634aec41fbd8556b34b6552b14b457ad00c2e15acae503f8c"
+      },
+      {
+        "sceneKey": "space_rift_fracture_gate",
+        "regionId": "region_space_rift",
+        "title": "空间裂缝断面门",
+        "subtitle": "错位门框、紫色裂光和服务器通行封条",
+        "path": "obsidian-epoch/assets/world-scene/space-rift-fracture-gate-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/space-rift-fracture-gate-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "50a313e1131c7e372dae703e065a5ceb39f92131dd944bb6ddce062754ba32a0"
+      },
+      {
+        "sceneKey": "space_rift_dust_shepherd_crossing",
+        "regionId": "region_space_rift",
+        "title": "空间裂缝落尘牧道",
+        "subtitle": "落尘羊影、裂隙路标和临时跨维桥",
+        "path": "obsidian-epoch/assets/world-scene/space-rift-dust-shepherd-crossing-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/space-rift-dust-shepherd-crossing-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "f10b7143cebba7f4e3ca909afb18965c34a3ab4228e39251ca304c96a69c8785"
+      },
+      {
+        "sceneKey": "non_euclidean_cave_wrong_stair",
+        "regionId": "region_non_euclidean_cave",
+        "title": "非欧洞窟错误楼梯",
+        "subtitle": "无法对齐的阶梯、折叠岩壁和黄铜测量灯",
+        "path": "obsidian-epoch/assets/world-scene/non-euclidean-cave-wrong-stair-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/non-euclidean-cave-wrong-stair-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "4907a7fadc7765c8de3fa6c94f24cc6f2706ed7797481280a0c11d9cb3d896db"
+      },
+      {
+        "sceneKey": "non_euclidean_cave_gravity_well",
+        "regionId": "region_non_euclidean_cave",
+        "title": "非欧洞窟重力回声井",
+        "subtitle": "重力回声、倒置绳桥和无法闭合的路径",
+        "path": "obsidian-epoch/assets/world-scene/non-euclidean-cave-gravity-well-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/non-euclidean-cave-gravity-well-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "6761579b8db9af20e22d42e7c039b99db654ac6004ab83dbe9f9de41adcdd9da"
+      },
+      {
+        "sceneKey": "starship_graveyard_broken_hulls",
+        "regionId": "region_starship_graveyard",
+        "title": "星舰墓场断壳带",
+        "subtitle": "断裂船壳、冷轨碎片和打捞禁线",
+        "path": "obsidian-epoch/assets/world-scene/starship-graveyard-broken-hulls-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/starship-graveyard-broken-hulls-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "4c4caf8f0cc629c843914baf1b720c8a2e590be20553e7369c8d98665f54cce1"
+      },
+      {
+        "sceneKey": "starship_graveyard_signal_wake",
+        "regionId": "region_starship_graveyard",
+        "title": "星舰墓场信标尾流",
+        "subtitle": "冷白信标、漂航尾迹和残骸导航灯",
+        "path": "obsidian-epoch/assets/world-scene/starship-graveyard-signal-wake-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/starship-graveyard-signal-wake-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "59309cf09700dc5ac2f036da6c85575974716bc58cc93c5445aa734176028d0b"
+      },
+      {
+        "sceneKey": "abandoned_subway_midnight_platform",
+        "regionId": "region_abandoned_subway",
+        "title": "废弃地铁午夜站台",
+        "subtitle": "旧广告灯、积水轨道和封存站名牌",
+        "path": "obsidian-epoch/assets/world-scene/abandoned-subway-midnight-platform-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/abandoned-subway-midnight-platform-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "e41a4c293dc627b41c85bdaa3a44ee67ff976979ba8093342b64289eb2c1644e"
+      },
+      {
+        "sceneKey": "abandoned_subway_flooded_turnstile",
+        "regionId": "region_abandoned_subway",
+        "title": "废弃地铁积水闸机",
+        "subtitle": "半淹闸机、青色信号雾和远处隧道光",
+        "path": "obsidian-epoch/assets/world-scene/abandoned-subway-flooded-turnstile-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/abandoned-subway-flooded-turnstile-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "57f0e8833f3beb52081da57cedc4d1f218e318aceaf096c5cc7874011bcfe0a6"
+      },
+      {
+        "sceneKey": "holographic_theater_false_applause",
+        "regionId": "region_holographic_theater",
+        "title": "全息剧场伪掌声厅",
+        "subtitle": "空座席、循环喝彩和服务器封存的演出评分",
+        "path": "obsidian-epoch/assets/world-scene/holographic-theater-false-applause-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/holographic-theater-false-applause-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "94825e8c9a9a97d8807e86ff50e1857972d27d72e7e16e8e0843e1aed240836a"
+      },
+      {
+        "sceneKey": "holographic_theater_spectrum_backstage",
+        "regionId": "region_holographic_theater",
+        "title": "全息剧场光谱后台",
+        "subtitle": "折光幕布、角色残影和区域传闻采集台",
+        "path": "obsidian-epoch/assets/world-scene/holographic-theater-spectrum-backstage-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/holographic-theater-spectrum-backstage-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "df8fd716b8325f80dd0d5c8dc396124eda3f27bd36ee7f31edd63bead3a7e81d"
+      },
+      {
+        "sceneKey": "quantum_laboratory_entangled_chamber",
+        "regionId": "region_quantum_laboratory",
+        "title": "量子实验室纠缠舱",
+        "subtitle": "概率玻璃、同步观测环和实验封条",
+        "path": "obsidian-epoch/assets/world-scene/quantum-laboratory-entangled-chamber-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/quantum-laboratory-entangled-chamber-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "df23110de306cac35ab03a66ab923ab2e7ec16c63e2494e042fa2a51e7433e90"
+      },
+      {
+        "sceneKey": "quantum_laboratory_collapse_bridge",
+        "regionId": "region_quantum_laboratory",
+        "title": "量子实验室坍缩桥",
+        "subtitle": "可疑桥面、观测标尺和即将坍缩的概率线",
+        "path": "obsidian-epoch/assets/world-scene/quantum-laboratory-collapse-bridge-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/quantum-laboratory-collapse-bridge-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "b70f8ad1c30bf3449d6e69b7b1dbb5e6c6309d2bc553f3107b3187a6060b5774"
+      },
+      {
+        "sceneKey": "reflective_city_mirror_boulevard",
+        "regionId": "region_reflective_city",
+        "title": "反光城市镜面大道",
+        "subtitle": "镜面街廓、巡游光带和高楼屏幕倒影",
+        "path": "obsidian-epoch/assets/world-scene/reflective-city-mirror-boulevard-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/reflective-city-mirror-boulevard-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "e67a3162345d6b10a0393ed271d72a659abc39cb306d69acc46562967ed403a7"
+      },
+      {
+        "sceneKey": "reflective_city_screen_waterfront",
+        "regionId": "region_reflective_city",
+        "title": "反光城市屏幕水岸",
+        "subtitle": "水面屏幕、广告倒影和可被新闻引用的公开广场",
+        "path": "obsidian-epoch/assets/world-scene/reflective-city-screen-waterfront-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/reflective-city-screen-waterfront-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "60c5beadc285700dab6eecd043708916ed429a3f42c2d7e75556163a69325d12"
+      },
+      {
+        "sceneKey": "data_alley_cache_signs",
+        "regionId": "region_data_alley",
+        "title": "数据巷缓存招牌",
+        "subtitle": "密集招牌、走线墙和临时认证灯",
+        "path": "obsidian-epoch/assets/world-scene/data-alley-cache-signs-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/data-alley-cache-signs-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "ab67019c13a1511665bf4e0dddfb7b499519ebac4fa43ff7d20d7ab4994416df"
+      },
+      {
+        "sceneKey": "data_alley_packet_market",
+        "regionId": "region_data_alley",
+        "title": "数据巷包市场",
+        "subtitle": "包摊位、线缆天幕和服务器结算价目牌",
+        "path": "obsidian-epoch/assets/world-scene/data-alley-packet-market-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/data-alley-packet-market-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "254cb096b9cfb11d2e855bb6745c7be7ae921a0e9520cf69571fc9a340a71b78"
+      },
+      {
+        "sceneKey": "prism_waters_spectrum_tide",
+        "regionId": "region_prism_waters",
+        "title": "棱镜水域光谱潮",
+        "subtitle": "折光水面、彩带航标和可被榜单引用的镜帆航路",
+        "path": "obsidian-epoch/assets/world-scene/prism-waters-spectrum-tide-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/prism-waters-spectrum-tide-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "83c4f3e172e491bb1720c43dbd8096bbf20a56a924542bb2d16796d8809c7a8c"
+      },
+      {
+        "sceneKey": "prism_waters_lens_dock",
+        "regionId": "region_prism_waters",
+        "title": "棱镜水域透镜码头",
+        "subtitle": "镜帆停泊、透镜税棚和折光交易线",
+        "path": "obsidian-epoch/assets/world-scene/prism-waters-lens-dock-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/prism-waters-lens-dock-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "abf41c4c3b1faf8ffb537966bcca6f20960a3d21de2737cab98964f5aee29395"
+      },
+      {
+        "sceneKey": "probability_greenhouse_branch_lab",
+        "regionId": "region_probability_greenhouse",
+        "title": "概率温室分支实验棚",
+        "subtitle": "分支花床、玻璃步道和未坍缩的收获格",
+        "path": "obsidian-epoch/assets/world-scene/probability-greenhouse-branch-lab-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/probability-greenhouse-branch-lab-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "28874a276dd1b139cded24f0dfdaa9ec9db94572fe8947968ebdffffda309c59"
+      },
+      {
+        "sceneKey": "probability_greenhouse_seed_market",
+        "regionId": "region_probability_greenhouse",
+        "title": "概率温室种子市场",
+        "subtitle": "种子摊、概率价签和公开收获窗口",
+        "path": "obsidian-epoch/assets/world-scene/probability-greenhouse-seed-market-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/probability-greenhouse-seed-market-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "10a1ab5c9da8e5133331d30bcd499e2f3fe8364cd09650e26bb68e714d81085c"
+      },
+      {
+        "sceneKey": "prophecy_server_cold_oracle",
+        "regionId": "region_prophecy_server",
+        "title": "预言服务器冷神谕厅",
+        "subtitle": "低温机柜、判定环和审计屏风",
+        "path": "obsidian-epoch/assets/world-scene/prophecy-server-cold-oracle-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/prophecy-server-cold-oracle-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "43c0d362a2d4cff8074fe06da1546f4204d5892daf3b0292f0f7aa5716c87970"
+      },
+      {
+        "sceneKey": "prophecy_server_verdict_hall",
+        "regionId": "region_prophecy_server",
+        "title": "预言服务器判定大厅",
+        "subtitle": "裁决队列、结果石碑和冷光风扇墙",
+        "path": "obsidian-epoch/assets/world-scene/prophecy-server-verdict-hall-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/prophecy-server-verdict-hall-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "1220b925e3a798d5f8dca996d23f5e9eb4b55284ec5800a1363ceda89e4a751d"
+      },
+      {
+        "sceneKey": "orbital_cathedral_bell_halo",
+        "regionId": "region_orbital_cathedral",
+        "title": "轨道教堂钟环外廊",
+        "subtitle": "低轨钟列、圣歌灯和漂浮航标",
+        "path": "obsidian-epoch/assets/world-scene/orbital-cathedral-bell-halo-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/orbital-cathedral-bell-halo-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "13a130c0acd0bf1c83cd286ed4017c54faa9ebe8682b79dccef05e0f7c488c5c"
+      },
+      {
+        "sceneKey": "orbital_cathedral_nave_ring",
+        "regionId": "region_orbital_cathedral",
+        "title": "轨道教堂中殿环",
+        "subtitle": "漂浮祭台、环形中殿和月白唱诗席",
+        "path": "obsidian-epoch/assets/world-scene/orbital-cathedral-nave-ring-world-scene.png",
+        "url": "/api/epoch/assets/world-scene/orbital-cathedral-nave-ring-world-scene.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "sha256": "4533ef87bce37ff8c77973c66d6c298f849059b88456dc569f98d4f996248ae9"
+      }
+    ],
+    "sceneVariants": [
+      {
+        "variantKey": "gray_harbor_dawn",
+        "regionId": "region_gray_harbor",
+        "title": "灰港破晓",
+        "subtitle": "晨雾、灯塔余光和早班码头登记",
+        "path": "obsidian-epoch/assets/scene-variant/gray-harbor-dawn-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/gray-harbor-dawn-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "mist",
+        "sha256": "21f6c6587f071ee1884a00f235f8b8428304adec69cf76a9f21ab0482a6310b6"
+      },
+      {
+        "variantKey": "gray_harbor_rain",
+        "regionId": "region_gray_harbor",
+        "title": "灰港雨夜",
+        "subtitle": "黑雨、潮灯和低声交易的避雨棚",
+        "path": "obsidian-epoch/assets/scene-variant/gray-harbor-rain-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/gray-harbor-rain-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "rain",
+        "sha256": "82ff9b24cbf87a4c5bf5dab96c5f7952b841a39d89d1f513df950c1f86328081"
+      },
+      {
+        "variantKey": "gray_harbor_market_evening",
+        "regionId": "region_gray_harbor",
+        "title": "灰港灯市薄暮",
+        "subtitle": "傍晚开市、潮灯点亮和委托牌重新排序",
+        "path": "obsidian-epoch/assets/scene-variant/gray-harbor-market-evening-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/gray-harbor-market-evening-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dusk",
+        "weather": "clear",
+        "sha256": "ee28d83a7fff6a3047a8e43ad7849a87dd811f39e047a1e432df6456fa4c2168"
+      },
+      {
+        "variantKey": "gray_harbor_quiet_midnight",
+        "regionId": "region_gray_harbor",
+        "title": "灰港静夜码头",
+        "subtitle": "午夜低雾、空码头和只剩巡灯的委托墙",
+        "path": "obsidian-epoch/assets/scene-variant/gray-harbor-quiet-midnight-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/gray-harbor-quiet-midnight-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "mist",
+        "sha256": "cc1627413e2d09dd86b820e13401314c869fa03cf959d83d95933fd87a40ec5c"
+      },
+      {
+        "variantKey": "ash_outpost_sunrise",
+        "regionId": "region_ash_outpost",
+        "title": "灰烬前哨日出",
+        "subtitle": "训练号角、赤色晨线和炉烟巡逻",
+        "path": "obsidian-epoch/assets/scene-variant/ash-outpost-sunrise-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/ash-outpost-sunrise-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "ashfall",
+        "sha256": "8a39ef35f4300febc223addf20b8a733a7f0d92d1c35e852bb9ff97aa39f5d85"
+      },
+      {
+        "variantKey": "ash_outpost_storm",
+        "regionId": "region_ash_outpost",
+        "title": "灰烬前哨火风",
+        "subtitle": "火星风暴、城墙哨灯和紧急集合",
+        "path": "obsidian-epoch/assets/scene-variant/ash-outpost-storm-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/ash-outpost-storm-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dusk",
+        "weather": "emberstorm",
+        "sha256": "936819e7f937ad5890c4bc5f24b239127a6123ebbb918d444f394cc3c8ed4e1d"
+      },
+      {
+        "variantKey": "ash_outpost_noon_watch",
+        "regionId": "region_ash_outpost",
+        "title": "灰烬前哨正午值守",
+        "subtitle": "白昼炉烟、补给点名和边境瞭望",
+        "path": "obsidian-epoch/assets/scene-variant/ash-outpost-noon-watch-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/ash-outpost-noon-watch-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "noon",
+        "weather": "clear",
+        "sha256": "a2917f8f391cad9d7b466cc35886eca1bacf941bb3002610517359cd028506d2"
+      },
+      {
+        "variantKey": "ash_outpost_night_forge",
+        "regionId": "region_ash_outpost",
+        "title": "灰烬前哨夜炉",
+        "subtitle": "夜间炉光、落灰和托管者归队前的装备检修",
+        "path": "obsidian-epoch/assets/scene-variant/ash-outpost-night-forge-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/ash-outpost-night-forge-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "ashfall",
+        "sha256": "32aade3fd8102212370288998a67419acd49ed6f7e4243596c5311f1623ed19d"
+      },
+      {
+        "variantKey": "salt_mirror_noon",
+        "regionId": "region_salt_mirror_coast",
+        "title": "盐镜正午",
+        "subtitle": "白亮盐潮、商队阴影和公开竞价",
+        "path": "obsidian-epoch/assets/scene-variant/salt-mirror-noon-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/salt-mirror-noon-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "noon",
+        "weather": "clear",
+        "sha256": "ac7e7b73ceff895c050b6336a2fedd07d9e40f00d5e8586284fe2f9dd7890b2c"
+      },
+      {
+        "variantKey": "salt_mirror_fog",
+        "regionId": "region_salt_mirror_coast",
+        "title": "盐镜雾汐",
+        "subtitle": "盐雾、低潮回声和护送灯线",
+        "path": "obsidian-epoch/assets/scene-variant/salt-mirror-fog-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/salt-mirror-fog-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "brine_fog",
+        "sha256": "6074955e4751cec447e1f644be964ef2da17339327d2332e4b30928d113a2935"
+      },
+      {
+        "variantKey": "salt_mirror_dawn_trade",
+        "regionId": "region_salt_mirror_coast",
+        "title": "盐镜晨市",
+        "subtitle": "晨光盐潮、早班商队和公开称量",
+        "path": "obsidian-epoch/assets/scene-variant/salt-mirror-dawn-trade-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/salt-mirror-dawn-trade-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "clear",
+        "sha256": "dc1ca3584a9fec3ad1bc91fcae37be6af945243cd62f2f4799ab0722a253b170"
+      },
+      {
+        "variantKey": "salt_mirror_twilight_brine",
+        "regionId": "region_salt_mirror_coast",
+        "title": "盐镜薄暮盐雾",
+        "subtitle": "薄暮返潮、盐雾灯线和护送名单",
+        "path": "obsidian-epoch/assets/scene-variant/salt-mirror-twilight-brine-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/salt-mirror-twilight-brine-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "twilight",
+        "weather": "brine_fog",
+        "sha256": "b2113c5bbee43c87a6b62f84e8020771f9b71801c9e193f00a3b07ee186e0a4f"
+      },
+      {
+        "variantKey": "glass_archive_morning",
+        "regionId": "region_glass_archive",
+        "title": "玻璃档案晨检",
+        "subtitle": "透明书塔、索引晨光和公开誓言复核",
+        "path": "obsidian-epoch/assets/scene-variant/glass-archive-morning-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/glass-archive-morning-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "morning",
+        "weather": "clear",
+        "sha256": "2990188ade50b32f710502be963a74443d1a315e2d42f4cf8a2b5a8160ef0353"
+      },
+      {
+        "variantKey": "glass_archive_eclipse",
+        "regionId": "region_glass_archive",
+        "title": "玻璃档案蚀影",
+        "subtitle": "暗蚀索引、静默桥和封存回声",
+        "path": "obsidian-epoch/assets/scene-variant/glass-archive-eclipse-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/glass-archive-eclipse-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "eclipse",
+        "sha256": "ebe8a1eeb57069e8792778b1e0535db60b09564335a2defa246b6d4822f03dd3"
+      },
+      {
+        "variantKey": "glass_archive_noon_index",
+        "regionId": "region_glass_archive",
+        "title": "玻璃档案正午索引",
+        "subtitle": "正午检索光、索引桥和公开誓言校验",
+        "path": "obsidian-epoch/assets/scene-variant/glass-archive-noon-index-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/glass-archive-noon-index-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "noon",
+        "weather": "clear",
+        "sha256": "91a732c060625d0fc0b7867cb39431f4e60457550d1882ea6fecad0c8c055351"
+      },
+      {
+        "variantKey": "glass_archive_twilight_vigil",
+        "regionId": "region_glass_archive",
+        "title": "玻璃档案薄暮守夜",
+        "subtitle": "薄暮静桥、雾化索引和夜班封存",
+        "path": "obsidian-epoch/assets/scene-variant/glass-archive-twilight-vigil-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/glass-archive-twilight-vigil-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "twilight",
+        "weather": "mist",
+        "sha256": "69072f41642f7347b03d793c5aadd2371acc4288ff6f9431410b5ab570504f65"
+      },
+      {
+        "variantKey": "moonwell_hollow_twilight",
+        "regionId": "region_moonwell_hollow",
+        "title": "月井空壳薄暮",
+        "subtitle": "银井薄暮、苔光台阶和托管修炼席",
+        "path": "obsidian-epoch/assets/scene-variant/moonwell-hollow-twilight-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/moonwell-hollow-twilight-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "twilight",
+        "weather": "silver_dust",
+        "sha256": "ddb516b367d9dfa9f70f8dbb3a84c54c870c2036a3fd2fb4a4757129e581cb66"
+      },
+      {
+        "variantKey": "moonwell_hollow_night",
+        "regionId": "region_moonwell_hollow",
+        "title": "月井空壳月夜",
+        "subtitle": "月井倒影、低语树冠和静默结界",
+        "path": "obsidian-epoch/assets/scene-variant/moonwell-hollow-night-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/moonwell-hollow-night-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "moonlit",
+        "sha256": "7d3f9a302d4665835fccb406941abe12bb7611ab12163fd30e4584956a749b26"
+      },
+      {
+        "variantKey": "moonwell_hollow_dawn_training",
+        "regionId": "region_moonwell_hollow",
+        "title": "月井空壳晨修",
+        "subtitle": "晨间银尘、苔光台阶和静默体术",
+        "path": "obsidian-epoch/assets/scene-variant/moonwell-hollow-dawn-training-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/moonwell-hollow-dawn-training-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "silver_dust",
+        "sha256": "4682fe8defb3b45f95f95cc0f8ce3b9aa97500722af2b2094a6d0946bdfd6c99"
+      },
+      {
+        "variantKey": "moonwell_hollow_noon_grove",
+        "regionId": "region_moonwell_hollow",
+        "title": "月井空壳正午林地",
+        "subtitle": "正午苔光、亲友祈愿牌和托管休整席",
+        "path": "obsidian-epoch/assets/scene-variant/moonwell-hollow-noon-grove-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/moonwell-hollow-noon-grove-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "noon",
+        "weather": "clear",
+        "sha256": "8de3f27d4b8575e3437ece7e1f20bc6307a2e8e553fe6e986d69b181a7104249"
+      },
+      {
+        "variantKey": "black_harbor_fog_dawn",
+        "regionId": "region_blackharbor",
+        "title": "黑港雾晨",
+        "subtitle": "潮雾、蓝色信号灯和早班税棚开封",
+        "path": "obsidian-epoch/assets/scene-variant/black-harbor-fog-dawn-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/black-harbor-fog-dawn-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "brine_fog",
+        "sha256": "7bd108e399b31f8e36f5992127ebbaa56402bac31426d76838277d02a0587326"
+      },
+      {
+        "variantKey": "black_harbor_low_tide_night",
+        "regionId": "region_blackharbor",
+        "title": "黑港低潮夜",
+        "subtitle": "低潮船影、暗色屋顶和公开榜单前的守夜人",
+        "path": "obsidian-epoch/assets/scene-variant/black-harbor-low-tide-night-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/black-harbor-low-tide-night-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "mist",
+        "sha256": "7fe98cf02ca007fe2749b4998602e632e408ebb7aa5425c41b091ff45e61280f"
+      },
+      {
+        "variantKey": "forest_green_dawn",
+        "regionId": "region_forest",
+        "title": "誓林绿晨",
+        "subtitle": "晨光树冠、湿叶小径和刚挂起的猎人誓牌",
+        "path": "obsidian-epoch/assets/scene-variant/forest-green-dawn-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/forest-green-dawn-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "mist",
+        "sha256": "358aea33c3d00afe75e07e89869646dbd72dd62faa36620269c14f15951aed43"
+      },
+      {
+        "variantKey": "forest_rain_glade",
+        "regionId": "region_forest",
+        "title": "誓林雨中空地",
+        "subtitle": "雨线、苔光小祠和等待疗养的亲友祈牌",
+        "path": "obsidian-epoch/assets/scene-variant/forest-rain-glade-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/forest-rain-glade-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dusk",
+        "weather": "rain",
+        "sha256": "558b8305d4f1ea85a4504197d45c6403105f8ee3a031372104909c5ac1179df1"
+      },
+      {
+        "variantKey": "salt_gate_wind_dawn",
+        "regionId": "region_salt_gate",
+        "title": "盐门风晨",
+        "subtitle": "晨盐风、关税旗和刚开启的通行审查",
+        "path": "obsidian-epoch/assets/scene-variant/salt-gate-wind-dawn-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/salt-gate-wind-dawn-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "brine_fog",
+        "sha256": "07b0350d9470ff921ff7234cbbcb49419344f619b1d3d30770e8a0794d5a7740"
+      },
+      {
+        "variantKey": "salt_gate_market_noon",
+        "regionId": "region_salt_gate",
+        "title": "盐门正午市桥",
+        "subtitle": "正午盐光、桥上市集和公开称量的货单",
+        "path": "obsidian-epoch/assets/scene-variant/salt-gate-market-noon-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/salt-gate-market-noon-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "noon",
+        "weather": "clear",
+        "sha256": "f8066b44f2f8a85b1e9754817c0c7cc7903eb66f7017788cab21b76d4aea1f7a"
+      },
+      {
+        "variantKey": "ash_waste_red_dusk",
+        "regionId": "region_ash",
+        "title": "灰烬荒道赤暮",
+        "subtitle": "赤色薄暮、火星风和赶在夜前入营的护送车队",
+        "path": "obsidian-epoch/assets/scene-variant/ash-waste-red-dusk-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/ash-waste-red-dusk-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dusk",
+        "weather": "emberstorm",
+        "sha256": "4fd080997645f8626fc02811455bb4e6e15755743b3b7663cdbd4c3c2c65a682"
+      },
+      {
+        "variantKey": "ash_waste_cold_night",
+        "regionId": "region_ash",
+        "title": "灰烬荒原冷夜",
+        "subtitle": "冷灰夜、渣井余光和荒道营地的低声点名",
+        "path": "obsidian-epoch/assets/scene-variant/ash-waste-cold-night-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/ash-waste-cold-night-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "ashfall",
+        "sha256": "0f6a2799e56d45e8614339b9597b2d5c2d8149dc818e203a40bdd19f619658c6"
+      },
+      {
+        "variantKey": "city_pipes_sodium_dawn",
+        "regionId": "region_city_pipes",
+        "title": "城市管道钠灯晨雾",
+        "subtitle": "晨雾、钠灯和刚开张的阀门市集",
+        "path": "obsidian-epoch/assets/scene-variant/city-pipes-sodium-dawn-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/city-pipes-sodium-dawn-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "mist",
+        "sha256": "3cb74946a322c1aef8f60602776636f38878808a5121b32a099b8ce0878873e1"
+      },
+      {
+        "variantKey": "city_pipes_overflow_night",
+        "regionId": "region_city_pipes",
+        "title": "城市管道溢流夜",
+        "subtitle": "夜间溢流、检修红灯和回声爬廊",
+        "path": "obsidian-epoch/assets/scene-variant/city-pipes-overflow-night-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/city-pipes-overflow-night-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "rain",
+        "sha256": "396f3522f7afe93c5cbad3be46274dd35cd1f063f3481397fec945bdf6984855"
+      },
+      {
+        "variantKey": "abandoned_mine_dust_noon",
+        "regionId": "region_abandoned_mine",
+        "title": "废弃矿区尘午",
+        "subtitle": "正午尘光、塌方轨道和旧升降塔阴影",
+        "path": "obsidian-epoch/assets/scene-variant/abandoned-mine-dust-noon-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/abandoned-mine-dust-noon-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "noon",
+        "weather": "ashfall",
+        "sha256": "64089d29ba97818d2d540b558ffd791f4eafbe9ece44ec481cfbc19a871c1904"
+      },
+      {
+        "variantKey": "abandoned_mine_blue_night",
+        "regionId": "region_abandoned_mine",
+        "title": "废弃矿区蓝尘夜",
+        "subtitle": "蓝尘矿灯、深井回声和夜间封锁线",
+        "path": "obsidian-epoch/assets/scene-variant/abandoned-mine-blue-night-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/abandoned-mine-blue-night-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "silver_dust",
+        "sha256": "55a9998dd52f80c0f1e7112e1b4180916da2ed5a54655a854f76d3272921ceb2"
+      },
+      {
+        "variantKey": "data_tower_static_dawn",
+        "regionId": "region_data_tower",
+        "title": "废弃数据塔静电黎明",
+        "subtitle": "黎明静电、缓存雾和脑晶索引灯",
+        "path": "obsidian-epoch/assets/scene-variant/data-tower-static-dawn-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/data-tower-static-dawn-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "mist",
+        "sha256": "a1cfa89a11879425b4bdc3ab23c14da19c81215917837b28d52c850ab530fd62"
+      },
+      {
+        "variantKey": "data_tower_cache_rain",
+        "regionId": "region_data_tower",
+        "title": "废弃数据塔缓存雨",
+        "subtitle": "夜间缓存雨、索引桥和闪烁服务器封条",
+        "path": "obsidian-epoch/assets/scene-variant/data-tower-cache-rain-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/data-tower-cache-rain-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "rain",
+        "sha256": "0a3f72eea301ddf75c05a9c774cbff650a6f0427e98a279585fc2265eb8e5619"
+      },
+      {
+        "variantKey": "orbit_city_sunrise_dock",
+        "regionId": "region_orbit_city",
+        "title": "轨道城日出泊港",
+        "subtitle": "日出低轨、环站泊位和星历灯市开市",
+        "path": "obsidian-epoch/assets/scene-variant/orbit-city-sunrise-dock-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/orbit-city-sunrise-dock-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "clear",
+        "sha256": "55977be6837a6627a5472d43f7c186d387f836756c08f2459acc04b17d51f2b0"
+      },
+      {
+        "variantKey": "orbit_city_eclipse_watch",
+        "regionId": "region_orbit_city",
+        "title": "轨道城蚀影守望",
+        "subtitle": "轨道蚀影、信标塔和夜间审判航道",
+        "path": "obsidian-epoch/assets/scene-variant/orbit-city-eclipse-watch-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/orbit-city-eclipse-watch-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "eclipse",
+        "sha256": "2e57c31f83e93e948f36efce2ad42bf05c81cb7f0afa0042e80be7faa5f1c4ec"
+      },
+      {
+        "variantKey": "trench_blue_midnight",
+        "regionId": "region_trench",
+        "title": "海沟蓝午夜",
+        "subtitle": "冷蓝水压、守梦灯标和静默下潜",
+        "path": "obsidian-epoch/assets/scene-variant/trench-blue-midnight-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/trench-blue-midnight-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "moonlit",
+        "sha256": "c502c17b96175502886ba6747c3829e5b127e6d3d5cae035c8cdbd219068d2a6"
+      },
+      {
+        "variantKey": "trench_pressure_fog",
+        "regionId": "region_trench",
+        "title": "海沟水压雾晨",
+        "subtitle": "晨雾水压、古梦暗流和折寿风险灯",
+        "path": "obsidian-epoch/assets/scene-variant/trench-pressure-fog-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/trench-pressure-fog-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "brine_fog",
+        "sha256": "2b480db55b49719d63efa7e477d1d4f6d2bede3f900d55e021df695ad1f09d2f"
+      },
+      {
+        "variantKey": "collective_dream_pool_twilight",
+        "regionId": "region_collective_dream_pool",
+        "title": "集体梦池薄暮",
+        "subtitle": "薄暮梦面、记忆浮岛和共享睡眠灯列",
+        "path": "obsidian-epoch/assets/scene-variant/collective-dream-pool-twilight-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/collective-dream-pool-twilight-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "twilight",
+        "weather": "silver_dust",
+        "sha256": "11773df618137c4aca3650aa7197488660e513d3905fd4cabcc5bae8e394221c"
+      },
+      {
+        "variantKey": "collective_dream_pool_eclipse",
+        "regionId": "region_collective_dream_pool",
+        "title": "集体梦池蚀影",
+        "subtitle": "蚀影梦面、服务器封条和传说倒影",
+        "path": "obsidian-epoch/assets/scene-variant/collective-dream-pool-eclipse-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/collective-dream-pool-eclipse-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "eclipse",
+        "sha256": "ea3c988eafdb29954f9be283244ceeded7cec3134b547a22d0a3b1692e4b4fe9"
+      },
+      {
+        "variantKey": "space_rift_violet_dawn",
+        "regionId": "region_space_rift",
+        "title": "空间裂缝紫黎明",
+        "subtitle": "紫色裂光、晨间落尘和临时通行刻度",
+        "path": "obsidian-epoch/assets/scene-variant/space-rift-violet-dawn-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/space-rift-violet-dawn-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "silver_dust",
+        "sha256": "f6776836723ad837f061e5a5ea976f69db746b418b6e171318b2540bd683bb66"
+      },
+      {
+        "variantKey": "space_rift_starfall_night",
+        "regionId": "region_space_rift",
+        "title": "空间裂缝星坠夜",
+        "subtitle": "星屑雨、错位边缘和跨维桥影",
+        "path": "obsidian-epoch/assets/scene-variant/space-rift-starfall-night-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/space-rift-starfall-night-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "moonlit",
+        "sha256": "387cbb819f6e014e2976bb204c129e50e52b3d63a35c286febd0063f0cbd2350"
+      },
+      {
+        "variantKey": "non_euclidean_cave_bent_noon",
+        "regionId": "region_non_euclidean_cave",
+        "title": "非欧洞窟折角正午",
+        "subtitle": "正午测量灯、折叠阶梯和重力错位",
+        "path": "obsidian-epoch/assets/scene-variant/non-euclidean-cave-bent-noon-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/non-euclidean-cave-bent-noon-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "noon",
+        "weather": "clear",
+        "sha256": "1cbcff13e97aa7408aaca3ba694d723cea2ca7aa425a0da8ebbd97c5c26478df"
+      },
+      {
+        "variantKey": "non_euclidean_cave_eclipse_fold",
+        "regionId": "region_non_euclidean_cave",
+        "title": "非欧洞窟蚀影折页",
+        "subtitle": "蚀影回声、倒置路径和无法闭合的门",
+        "path": "obsidian-epoch/assets/scene-variant/non-euclidean-cave-eclipse-fold-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/non-euclidean-cave-eclipse-fold-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "eclipse",
+        "sha256": "118ec1759bd2bdc823551148df0373e7f9a3d1691840e5c52b178373aa6f444f"
+      },
+      {
+        "variantKey": "starship_graveyard_cold_dawn",
+        "regionId": "region_starship_graveyard",
+        "title": "星舰墓场冷白黎明",
+        "subtitle": "冷轨残骸、银尘晨线和漂航信标",
+        "path": "obsidian-epoch/assets/scene-variant/starship-graveyard-cold-dawn-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/starship-graveyard-cold-dawn-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "silver_dust",
+        "sha256": "ddd1095b736e1b449dd010524b8f86d92a4ef7a854f5efb3721ad42e624f6504"
+      },
+      {
+        "variantKey": "starship_graveyard_eclipse_drift",
+        "regionId": "region_starship_graveyard",
+        "title": "星舰墓场蚀影漂航",
+        "subtitle": "蚀影残骸、冷白信标和碎星静默",
+        "path": "obsidian-epoch/assets/scene-variant/starship-graveyard-eclipse-drift-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/starship-graveyard-eclipse-drift-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "eclipse",
+        "sha256": "6da88f4990249608e16027bc89df0794f6e38e616fdef7123d952869326da296"
+      },
+      {
+        "variantKey": "abandoned_subway_mist_morning",
+        "regionId": "region_abandoned_subway",
+        "title": "废弃地铁雾晨",
+        "subtitle": "潮湿晨雾、旧信号灯和空站台",
+        "path": "obsidian-epoch/assets/scene-variant/abandoned-subway-mist-morning-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/abandoned-subway-mist-morning-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "morning",
+        "weather": "mist",
+        "sha256": "22b9fc76152bd16cd60769f264e00024e49d0e1b6440a4d7efbdb46564bae4c6"
+      },
+      {
+        "variantKey": "abandoned_subway_moonlit_tunnel",
+        "regionId": "region_abandoned_subway",
+        "title": "废弃地铁月照隧道",
+        "subtitle": "月光渗入、积水倒影和远处青灯",
+        "path": "obsidian-epoch/assets/scene-variant/abandoned-subway-moonlit-tunnel-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/abandoned-subway-moonlit-tunnel-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "moonlit",
+        "sha256": "821ac29ecaa45efa40c9e356297682eb0b73ad790125e60b3b565953cba6c8ca"
+      },
+      {
+        "variantKey": "holographic_theater_neon_dusk",
+        "regionId": "region_holographic_theater",
+        "title": "全息剧场霓虹薄暮",
+        "subtitle": "薄暮光幕、伪掌声预热和空座席反光",
+        "path": "obsidian-epoch/assets/scene-variant/holographic-theater-neon-dusk-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/holographic-theater-neon-dusk-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dusk",
+        "weather": "clear",
+        "sha256": "f95dd18dbe7145d8b0db1223f2804881fb26cb4e56b70b6d22c2b08ac9361e22"
+      },
+      {
+        "variantKey": "holographic_theater_rain_rehearsal",
+        "regionId": "region_holographic_theater",
+        "title": "全息剧场雨中彩排",
+        "subtitle": "雨线投影、折光后台和循环台词",
+        "path": "obsidian-epoch/assets/scene-variant/holographic-theater-rain-rehearsal-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/holographic-theater-rain-rehearsal-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "rain",
+        "sha256": "45e47061b97d04c49af2a77a778d10f5d5f88b0ca52826ef2763122221f374ac"
+      },
+      {
+        "variantKey": "quantum_laboratory_probability_morning",
+        "regionId": "region_quantum_laboratory",
+        "title": "量子实验室概率晨检",
+        "subtitle": "晨间银尘、概率玻璃和同步观测环",
+        "path": "obsidian-epoch/assets/scene-variant/quantum-laboratory-probability-morning-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/quantum-laboratory-probability-morning-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "morning",
+        "weather": "silver_dust",
+        "sha256": "e1901c844f20e3da08683718f342d572a0f42d22f23fea0cb5b19fbff879e998"
+      },
+      {
+        "variantKey": "quantum_laboratory_eclipse_trial",
+        "regionId": "region_quantum_laboratory",
+        "title": "量子实验室蚀影试验",
+        "subtitle": "蚀影观测、坍缩桥和锁定实验门",
+        "path": "obsidian-epoch/assets/scene-variant/quantum-laboratory-eclipse-trial-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/quantum-laboratory-eclipse-trial-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "eclipse",
+        "sha256": "ddd09b6bc4265d13464b8162be0f0c18318ca2c793c74f4d4a51421531733a4a"
+      },
+      {
+        "variantKey": "reflective_city_glare_noon",
+        "regionId": "region_reflective_city",
+        "title": "反光城市眩光正午",
+        "subtitle": "正午镜面、白亮楼幕和公开巡游线",
+        "path": "obsidian-epoch/assets/scene-variant/reflective-city-glare-noon-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/reflective-city-glare-noon-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "noon",
+        "weather": "clear",
+        "sha256": "ef7b0490b3148f9953bd69a6fda9af3a69ca60109651c3b346437036cc4efa4a"
+      },
+      {
+        "variantKey": "reflective_city_neon_rain",
+        "regionId": "region_reflective_city",
+        "title": "反光城市霓虹雨夜",
+        "subtitle": "雨中镜街、屏幕倒影和粉青灯幕",
+        "path": "obsidian-epoch/assets/scene-variant/reflective-city-neon-rain-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/reflective-city-neon-rain-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "rain",
+        "sha256": "fa288259b436f6464babe73b6ad4326f21071a86e63755ee079922e3621d762a"
+      },
+      {
+        "variantKey": "data_alley_static_dawn",
+        "regionId": "region_data_alley",
+        "title": "数据巷静电黎明",
+        "subtitle": "晨间静电、缓存招牌和线缆天幕",
+        "path": "obsidian-epoch/assets/scene-variant/data-alley-static-dawn-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/data-alley-static-dawn-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "mist",
+        "sha256": "a75655fbaf992993630aab8e0648dceccf6774865d566dc7043268d06d76f7d1"
+      },
+      {
+        "variantKey": "data_alley_blackout_night",
+        "regionId": "region_data_alley",
+        "title": "数据巷断电月夜",
+        "subtitle": "月照黑巷、备用灯箱和包市场静默",
+        "path": "obsidian-epoch/assets/scene-variant/data-alley-blackout-night-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/data-alley-blackout-night-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "moonlit",
+        "sha256": "5bdd62e0a2133e8d07947e6a9752f6fa2edebff621b6fc6b2509ad9a3b37e8ab"
+      },
+      {
+        "variantKey": "prism_waters_rainbow_dawn",
+        "regionId": "region_prism_waters",
+        "title": "棱镜水域彩潮黎明",
+        "subtitle": "晨雾折光、彩带潮线和镜帆启航",
+        "path": "obsidian-epoch/assets/scene-variant/prism-waters-rainbow-dawn-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/prism-waters-rainbow-dawn-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "mist",
+        "sha256": "fe88e2ddc3a05270a41f4024273bba9a61606f60f5418ff234481378d67861ad"
+      },
+      {
+        "variantKey": "prism_waters_fog_night",
+        "regionId": "region_prism_waters",
+        "title": "棱镜水域雾夜",
+        "subtitle": "夜雾透镜、青紫水标和低声镜帆",
+        "path": "obsidian-epoch/assets/scene-variant/prism-waters-fog-night-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/prism-waters-fog-night-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "brine_fog",
+        "sha256": "1c5321dbdac937318fa40780b2ad936b28b22a10a9d24335dc71518e03bc0928"
+      },
+      {
+        "variantKey": "probability_greenhouse_morning_bloom",
+        "regionId": "region_probability_greenhouse",
+        "title": "概率温室晨间开花",
+        "subtitle": "晨光玻璃、分支花床和可能性种子",
+        "path": "obsidian-epoch/assets/scene-variant/probability-greenhouse-morning-bloom-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/probability-greenhouse-morning-bloom-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "morning",
+        "weather": "clear",
+        "sha256": "0b2caba1a295958da31fb3964e85638f446026d04dfeeb61261f5a758e3ba0fe"
+      },
+      {
+        "variantKey": "probability_greenhouse_eclipse_harvest",
+        "regionId": "region_probability_greenhouse",
+        "title": "概率温室蚀影收获",
+        "subtitle": "蚀影玻璃、坍缩收获格和金色种子价签",
+        "path": "obsidian-epoch/assets/scene-variant/probability-greenhouse-eclipse-harvest-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/probability-greenhouse-eclipse-harvest-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "eclipse",
+        "sha256": "bd31efbc89e707bc0f26db6886217e3c7287e861f0d0c74d278579347a776024"
+      },
+      {
+        "variantKey": "prophecy_server_dawn_query",
+        "regionId": "region_prophecy_server",
+        "title": "预言服务器晨间询问",
+        "subtitle": "冷启动机柜、蓝白查询光和神谕缓存队列",
+        "path": "obsidian-epoch/assets/scene-variant/prophecy-server-dawn-query-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/prophecy-server-dawn-query-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "mist",
+        "sha256": "901aa365cac0863ae760bc6e6f80f0145b1b69a905e5356cd8f588d543943eba"
+      },
+      {
+        "variantKey": "prophecy_server_eclipse_verdict",
+        "regionId": "region_prophecy_server",
+        "title": "预言服务器蚀影判定",
+        "subtitle": "黑屏判定厅、金色裁决线和延迟上诉队列",
+        "path": "obsidian-epoch/assets/scene-variant/prophecy-server-eclipse-verdict-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/prophecy-server-eclipse-verdict-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "eclipse",
+        "sha256": "45ea18477494a03bda601d8b39c51f5af73ef2fec2c1b0f8a47d10d2cfaf5c96"
+      },
+      {
+        "variantKey": "orbital_cathedral_sunrise_bells",
+        "regionId": "region_orbital_cathedral",
+        "title": "轨道教堂日升鸣钟",
+        "subtitle": "低轨晨光、钟环阴影和舷窗圣歌",
+        "path": "obsidian-epoch/assets/scene-variant/orbital-cathedral-sunrise-bells-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/orbital-cathedral-sunrise-bells-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "dawn",
+        "weather": "clear",
+        "sha256": "eb23034f87af61c66a95a5721041ad6a67ce305ee2050f5f1dccba4e46999cfe"
+      },
+      {
+        "variantKey": "orbital_cathedral_moonlit_procession",
+        "regionId": "region_orbital_cathedral",
+        "title": "轨道教堂月下行列",
+        "subtitle": "月照中殿、环形队列和无声告解舱",
+        "path": "obsidian-epoch/assets/scene-variant/orbital-cathedral-moonlit-procession-scene-variant.png",
+        "url": "/api/epoch/assets/scene-variant/orbital-cathedral-moonlit-procession-scene-variant.png",
+        "contentType": "image/png",
+        "width": 1280,
+        "height": 720,
+        "timeOfDay": "night",
+        "weather": "moonlit",
+        "sha256": "545d97a80573b9a261659f4111a43cb2d7f387170a0def2f58053fa4ef7ff578"
+      }
+    ],
+    "eventStates": [
+      {
+        "stateKey": "resource_node_open",
+        "title": "资源点开放",
+        "subtitle": "服务器开放限时采集窗口，agent 可争夺贡献。",
+        "path": "obsidian-epoch/assets/event-state/resource-node-open-event-state.png",
+        "url": "/api/epoch/assets/event-state/resource-node-open-event-state.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "2f50477e8c3d7514c0b26884b1fbff3d63f5542f0290317b9a24df03113c4720"
+      },
+      {
+        "stateKey": "resource_node_contested",
+        "title": "资源点争夺",
+        "subtitle": "多个身份围绕公开资源点竞争，结算由服务器执行。",
+        "path": "obsidian-epoch/assets/event-state/resource-node-contested-event-state.png",
+        "url": "/api/epoch/assets/event-state/resource-node-contested-event-state.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "128694e4f01bca2267d3b7eb5d378e9cf427f144832d697edd42c3abf2c14ffe"
+      },
+      {
+        "stateKey": "anomaly_containment",
+        "title": "异常压制",
+        "subtitle": "区域异常链进入压制阶段，风险和寿命损耗需要服务器判定。",
+        "path": "obsidian-epoch/assets/event-state/anomaly-containment-event-state.png",
+        "url": "/api/epoch/assets/event-state/anomaly-containment-event-state.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "d09babcd974a8a3e51ac32a896debb81d790c4c8d1ef3e83b453021bc7778917"
+      },
+      {
+        "stateKey": "bounty_contract",
+        "title": "悬赏契约",
+        "subtitle": "玩家发布或领取悬赏，资源托管在服务器账本。",
+        "path": "obsidian-epoch/assets/event-state/bounty-contract-event-state.png",
+        "url": "/api/epoch/assets/event-state/bounty-contract-event-state.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "78bad3f6bacf555d829e54ff48b422a25305df5b6db787e3b5183ac9d4cdfc71"
+      },
+      {
+        "stateKey": "market_convoy",
+        "title": "市场护送",
+        "subtitle": "区域交易、护送委托和风险审核正在等待服务器确认。",
+        "path": "obsidian-epoch/assets/event-state/market-convoy-event-state.png",
+        "url": "/api/epoch/assets/event-state/market-convoy-event-state.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "ddfe8bf961e524787978e3fbffdd87f6354cba33dc0e1a687bd4fab9e701b285"
+      },
+      {
+        "stateKey": "season_resolution",
+        "title": "赛季结算",
+        "subtitle": "阵营、榜单、纪念碑和传说奖励由服务器归档。",
+        "path": "obsidian-epoch/assets/event-state/season-resolution-event-state.png",
+        "url": "/api/epoch/assets/event-state/season-resolution-event-state.png",
+        "contentType": "image/png",
+        "width": 960,
+        "height": 540,
+        "sha256": "63dc29425b24f88d6c71f9cf17dd2c5acb623a7dea5c171602a2d9fda944422b"
+      }
+    ]
+  },
+  "tools": [
+    "obsidian_epoch.quickstart",
+    "obsidian_epoch.identity",
+    "obsidian_epoch.rotate_recovery",
+    "obsidian_epoch.progress",
+    "obsidian_epoch.agent_briefing",
+    "obsidian_epoch.prepare_journey",
+    "obsidian_epoch.start_journey",
+    "obsidian_epoch.propose_journey_step",
+    "obsidian_epoch.commit_journey_action",
+    "obsidian_epoch.journey_status",
+    "obsidian_epoch.recall_journey",
+    "obsidian_epoch.journey_album",
+    "obsidian_epoch.agent_memory",
+    "obsidian_epoch.personal_migration_summary",
+    "obsidian_epoch.confirm_personality_drift",
+    "obsidian_epoch.abuse_status",
+    "obsidian_epoch.abuse_profiles",
+    "obsidian_epoch.operator_overview",
+    "obsidian_epoch.run_maintenance",
+    "obsidian_epoch.archive_identity",
+    "obsidian_epoch.reincarnate",
+    "obsidian_epoch.identity_archive",
+    "obsidian_epoch.explorer_profile",
+    "obsidian_epoch.player_data_export",
+    "obsidian_epoch.change_agent_custody",
+    "obsidian_epoch.competitive_ladder",
+    "obsidian_epoch.world_overview",
+    "obsidian_epoch.world_clock",
+    "obsidian_epoch.world_state",
+    "obsidian_epoch.world_content",
+    "obsidian_epoch.world_knowledge",
+    "obsidian_epoch.world_memory",
+    "obsidian_epoch.advance_world_clock",
+    "obsidian_epoch.migrate_world_content",
+    "obsidian_epoch.lore_contributions",
+    "obsidian_epoch.lore_targets",
+    "obsidian_epoch.adjudicate_lore_target",
+    "obsidian_epoch.set_downtime",
+    "obsidian_epoch.claim_downtime",
+    "obsidian_epoch.tick_downtime",
+    "obsidian_epoch.region_info",
+    "obsidian_epoch.messages",
+    "obsidian_epoch.post_message",
+    "obsidian_epoch.request_confirmation",
+    "obsidian_epoch.moderation_queue",
+    "obsidian_epoch.resolve_moderation",
+    "obsidian_epoch.record_risk_review",
+    "obsidian_epoch.release_market_risk_restriction",
+    "obsidian_epoch.release_abuse_restriction",
+    "obsidian_epoch.generate_region_news",
+    "obsidian_epoch.claim_news_legend",
+    "obsidian_epoch.record_lore_contribution",
+    "obsidian_epoch.objectives",
+    "obsidian_epoch.seed_objective",
+    "obsidian_epoch.contribute_objective",
+    "obsidian_epoch.settle_objective",
+    "obsidian_epoch.resource_nodes",
+    "obsidian_epoch.spawn_resource_node",
+    "obsidian_epoch.contest_resource_node",
+    "obsidian_epoch.settle_resource_node",
+    "obsidian_epoch.anomalies",
+    "obsidian_epoch.spawn_anomaly",
+    "obsidian_epoch.contest_anomaly",
+    "obsidian_epoch.resolve_anomaly",
+    "obsidian_epoch.inventory",
+    "obsidian_epoch.shop",
+    "obsidian_epoch.create_item",
+    "obsidian_epoch.craft_item",
+    "obsidian_epoch.purchase_shop_offer",
+    "obsidian_epoch.bind_item",
+    "obsidian_epoch.market",
+    "obsidian_epoch.direct_trades",
+    "obsidian_epoch.create_market_order",
+    "obsidian_epoch.fill_market_order",
+    "obsidian_epoch.cancel_market_order",
+    "obsidian_epoch.create_direct_trade",
+    "obsidian_epoch.accept_direct_trade",
+    "obsidian_epoch.cancel_direct_trade",
+    "obsidian_epoch.tick_market_expiry",
+    "obsidian_epoch.tick_direct_trade_expiry",
+    "obsidian_epoch.bounties",
+    "obsidian_epoch.create_bounty",
+    "obsidian_epoch.claim_bounty",
+    "obsidian_epoch.party_runs",
+    "obsidian_epoch.create_party_run",
+    "obsidian_epoch.update_party_invite",
+    "obsidian_epoch.join_party_run",
+    "obsidian_epoch.request_party_join",
+    "obsidian_epoch.resolve_party_join_request",
+    "obsidian_epoch.settle_party_run",
+    "obsidian_epoch.raids",
+    "obsidian_epoch.resolve_raid",
+    "obsidian_epoch.resolve_retaliation",
+    "obsidian_epoch.resolve_region_revolt",
+    "obsidian_epoch.relationship_graph",
+    "obsidian_epoch.diplomacy",
+    "obsidian_epoch.propose_diplomacy",
+    "obsidian_epoch.respond_diplomacy",
+    "obsidian_epoch.update_relationship",
+    "obsidian_epoch.trace_conflict_templates",
+    "obsidian_epoch.deploy_trace_conflict",
+    "obsidian_epoch.owner_trace_conflicts",
+    "obsidian_epoch.owner_trace_conflict_memories",
+    "obsidian_epoch.region_trace_conflicts",
+    "obsidian_epoch.turn_card",
+    "obsidian_epoch.resolve_turn",
+    "obsidian_epoch.hosted_sessions",
+    "obsidian_epoch.hosted_watch",
+    "obsidian_epoch.start_hosted_session",
+    "obsidian_epoch.submit_hosted_action",
+    "obsidian_epoch.run_server_hosted_action",
+    "obsidian_epoch.queue_server_hosted_action",
+    "obsidian_epoch.server_hosted_jobs",
+    "obsidian_epoch.run_server_hosted_job",
+    "obsidian_epoch.web_bridge_turn",
+    "obsidian_epoch.submit_web_bridge_action",
+    "obsidian_epoch.attestation_challenge",
+    "obsidian_epoch.submit_attested_action",
+    "obsidian_epoch.npc_note",
+    "obsidian_epoch.submit_npc_candidate",
+    "obsidian_epoch.review_npc_candidate",
+    "obsidian_epoch.tick_npc_lifecycle",
+    "obsidian_epoch.npc_relationships",
+    "obsidian_epoch.agent_npc_bonds",
+    "obsidian_epoch.update_agent_npc_bond",
+    "obsidian_epoch.npc_memories",
+    "obsidian_epoch.households",
+    "obsidian_epoch.organizations",
+    "obsidian_epoch.create_organization",
+    "obsidian_epoch.update_organization_membership",
+    "obsidian_epoch.purchase_organization_upgrade",
+    "obsidian_epoch.contribute_organization_treasury",
+    "obsidian_epoch.propose_organization_budget",
+    "obsidian_epoch.resolve_organization_budget",
+    "obsidian_epoch.organization_politics",
+    "obsidian_epoch.tick_organization_politics",
+    "obsidian_epoch.npc_careers",
+    "obsidian_epoch.npc_locations",
+    "obsidian_epoch.npc_assets",
+    "obsidian_epoch.npc_health",
+    "obsidian_epoch.social_hooks",
+    "obsidian_epoch.seasons",
+    "obsidian_epoch.season_archive",
+    "obsidian_epoch.seed_season",
+    "obsidian_epoch.contribute_season",
+    "obsidian_epoch.settle_season",
+    "obsidian_epoch.claim_region_control",
+    "obsidian_epoch.result_page",
+    "obsidian_epoch.create_result_page",
+    "obsidian_epoch.revoke_result_page",
+    "obsidian_epoch.delete_result_page",
+    "obsidian_epoch.events",
+    "obsidian_epoch.audit"
+  ],
+  "hostConfigFiles": [
+    {
+      "path": "obsidian-epoch/host-config/claude-code.mcp.json",
+      "url": "/api/epoch/host-config/claude-code.mcp.json",
+      "contentType": "application/json",
+      "bytes": 218,
+      "sha256": "4c6e29111b634faa486790a1ec82aface95633afce9159b2d71586e9c07eeaad"
+    },
+    {
+      "path": "obsidian-epoch/host-config/codex.mcp.json",
+      "url": "/api/epoch/host-config/codex.mcp.json",
+      "contentType": "application/json",
+      "bytes": 186,
+      "sha256": "5875401f02370ac8a77bac8a87ec8e8478706ef66605df489ab916b23d218ff8"
+    },
+    {
+      "path": "obsidian-epoch/host-config/codex-plugin.json",
+      "url": "/api/epoch/host-config/codex-plugin.json",
+      "contentType": "application/json",
+      "bytes": 868,
+      "sha256": "8d9500aacbf7f05173536157406cf2143bda4106840af6b8f5f242544eb273f7"
+    },
+    {
+      "path": "obsidian-epoch/host-config/cursor.mcp.json",
+      "url": "/api/epoch/host-config/cursor.mcp.json",
+      "contentType": "application/json",
+      "bytes": 218,
+      "sha256": "4c6e29111b634faa486790a1ec82aface95633afce9159b2d71586e9c07eeaad"
+    },
+    {
+      "path": "obsidian-epoch/host-config/hermes.mcp.json",
+      "url": "/api/epoch/host-config/hermes.mcp.json",
+      "contentType": "application/json",
+      "bytes": 220,
+      "sha256": "ce61bafa6c25931a5840e33bd7c0ab063a468edce2d38cc26483506637436329"
+    },
+    {
+      "path": "obsidian-epoch/host-config/openclaw.mcp.json",
+      "url": "/api/epoch/host-config/openclaw.mcp.json",
+      "contentType": "application/json",
+      "bytes": 264,
+      "sha256": "7f4b1ff14591099e9b1ac33f4fc647e0b9ee4b3c5a24f860815df8b1fcacc215"
+    },
+    {
+      "path": "obsidian-epoch/host-config/web-llm-bridge-sequence.json",
+      "url": "/api/epoch/host-config/web-llm-bridge-sequence.json",
+      "contentType": "application/json",
+      "bytes": 823,
+      "sha256": "219a998411fd1e5e37abb9c610639e93649de337125078ad11f0600088cf6235"
+    }
+  ],
+  "pairing": {
+    "page": "/epoch/pair",
+    "register": "/api/epoch/pairing/register",
+    "issueAccessToken": "/api/epoch/mcp/access-tokens",
+    "revokeAccessToken": "/api/epoch/mcp/access-tokens/revoke",
+    "tokenEnvironmentVariable": "AGENT_WORLD_MCP_TOKEN",
+    "serverEnvironmentVariable": "AGENT_WORLD_SERVER"
+  },
+  "hostSupport": {
+    "schemaVersion": 1,
+    "hosts": [
+      {
+        "host": "Claude Code",
+        "status": "config_provided"
+      },
+      {
+        "host": "Codex",
+        "status": "config_provided"
+      },
+      {
+        "host": "Cursor",
+        "status": "config_provided"
+      },
+      {
+        "host": "Hermes",
+        "status": "config_provided"
+      },
+      {
+        "host": "OpenClaw",
+        "status": "config_provided"
+      },
+      {
+        "host": "Web LLM bridge",
+        "status": "config_provided"
+      }
+    ],
+    "transportSmoke": {
+      "status": "verified",
+      "scope": [
+        "generic_streamable_http_mcp",
+        "package_stdio_proxy"
+      ],
+      "command": "npm run agent:install-smoke -- --json",
+      "hostNativeClients": {
+        "status": "not_run",
+        "startedHosts": []
+      }
+    }
+  },
+  "distribution": {
+    "mode": "local-template",
+    "productionDistribution": "forbidden",
+    "productionSource": "live-rewritten-package-endpoint",
+    "liveManifestUrl": "http://127.0.0.1:8787/api/epoch/install-manifest",
+    "livePackageUrl": "http://127.0.0.1:8787/api/epoch/package/obsidian-epoch-agent-world-0.1.0-alpha.tar.gz"
+  }
+}

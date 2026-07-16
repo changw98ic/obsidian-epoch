@@ -1,0 +1,26 @@
+{
+  "steps": [
+    {
+      "tool": "obsidian_epoch.web_bridge_turn",
+      "purpose": "Issue a visible-context turn package that a browser-only model can read."
+    },
+    {
+      "tool": "obsidian_epoch.submit_web_bridge_action",
+      "purpose": "Submit only the server-issued actionOptionId and browser model rationale."
+    },
+    {
+      "tool": "obsidian_epoch.create_result_page",
+      "purpose": "Publish the server-settled bridge result after obsidian_epoch.result_page returns a publish token."
+    }
+  ],
+  "publicPages": {
+    "console": "/epoch/console",
+    "play": "/epoch/web-play",
+    "install": "/epoch/install",
+    "world": "/epoch/world",
+    "auditIndex": "/epoch/audit",
+    "audit": "/epoch/audit/{eventId}",
+    "hosted": "/epoch/hosted/{sessionId}",
+    "result": "/epoch/result/{pageId}"
+  }
+}

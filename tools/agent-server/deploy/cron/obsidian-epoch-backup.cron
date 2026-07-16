@@ -1,0 +1,5 @@
+MAILTO=
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+15 3 * * * obsidian-epoch umask 077 && cd /opt/obsidian-epoch/tools/graph-react-app && AGENT_SERVER_BACKUP_SIGNING_PRIVATE_KEY_FILE=/etc/obsidian-epoch/backup-signing-private-key.pem AGENT_SERVER_BACKUP_VERIFICATION_PUBLIC_KEY_FILE=/etc/obsidian-epoch/backup-verification-public-keys.json npm run agent:backup -- --sqlite /data/agent-world.sqlite --sqlite-only --player-mcp-tokens /data/player-mcp-access-tokens.jsonl --backup-root /var/lib/obsidian-epoch-backups --keep-last 14 --require-signature --json

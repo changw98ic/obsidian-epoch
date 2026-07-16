@@ -1,0 +1,58 @@
+{
+  "collapse-filter": false,
+  "search": "-path:00_总览 -path:06_事件剧情 -path:07_基底气质 -path:08_关系网络 -path:09_素材与图片 -path:_templates",
+  "showTags": false,
+  "showAttachments": false,
+  "hideUnresolved": true,
+  "showOrphans": false,
+  "collapse-color-groups": false,
+  "colorGroups": [
+    {
+      "query": "path:01_世界底层",
+      "color": {
+        "a": 1,
+        "rgb": 9419263
+      }
+    },
+    {
+      "query": "path:02_种族",
+      "color": {
+        "a": 1,
+        "rgb": 7657882
+      }
+    },
+    {
+      "query": "path:03_势力组织",
+      "color": {
+        "a": 1,
+        "rgb": 15769962
+      }
+    },
+    {
+      "query": "path:04_异化生物",
+      "color": {
+        "a": 1,
+        "rgb": 4380581
+      }
+    },
+    {
+      "query": "path:05_地点生态",
+      "color": {
+        "a": 1,
+        "rgb": 10924223
+      }
+    }
+  ],
+  "collapse-display": false,
+  "showArrow": true,
+  "textFadeMultiplier": -1,
+  "nodeSizeMultiplier": 1.2,
+  "lineSizeMultiplier": 1,
+  "collapse-forces": true,
+  "centerStrength": 0.518713248970312,
+  "repelStrength": 10,
+  "linkStrength": 1,
+  "linkDistance": 250,
+  "scale": 1,
+  "close": false
+}
