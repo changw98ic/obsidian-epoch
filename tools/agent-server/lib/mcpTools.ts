@@ -59,6 +59,7 @@ import {
 } from "./epoch/actionEligibilityReadModel.ts";
 import {
   attachEpochEventsForPersistence,
+  boundedEpochTransportValue,
   epochEventsForPersistence,
 } from "./epoch/runtimePublicProjectionRules.ts";
 import {
@@ -5519,11 +5520,12 @@ export function epochAgentWorldToolNames() {
 }
 
 function toolResult(value: unknown) {
+  const transportValue = boundedEpochTransportValue(value);
   const result = {
     content: [
       {
         type: "text",
-        text: JSON.stringify(value, null, 2),
+        text: JSON.stringify(transportValue, null, 2),
       },
     ],
   };

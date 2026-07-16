@@ -23,11 +23,49 @@ export interface EpochRuntimeResult<TValue> {
 }
 
 const EPOCH_EVENTS_FOR_PERSISTENCE = Symbol("epochEventsForPersistence");
+export const EPOCH_TRANSPORT_RESULT_MAX_BYTES = 1_000_000;
 
 type ResultWithPersistenceEvents = {
   readonly [EPOCH_EVENTS_FOR_PERSISTENCE]?: readonly EpochEvent[];
   readonly events?: readonly EpochEvent[];
 };
+
+type EpochTransportCommandResult = {
+  readonly value: unknown;
+  readonly events: readonly unknown[];
+  readonly projection: object;
+  readonly [key: string]: unknown;
+};
+
+function isEpochTransportCommandResult(value: unknown): value is EpochTransportCommandResult {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return "value" in record
+    && Array.isArray(record.events)
+    && Boolean(record.projection)
+    && typeof record.projection === "object"
+    && !Array.isArray(record.projection);
+}
+
+export function boundedEpochTransportValue(value: unknown): unknown {
+  if (!isEpochTransportCommandResult(value)) return value;
+  const originalBytes = Buffer.byteLength(JSON.stringify(value));
+  if (originalBytes <= EPOCH_TRANSPORT_RESULT_MAX_BYTES) return value;
+  const { projection: _projection, ...result } = value;
+  return {
+    ...result,
+    projectionOmitted: {
+      reason: "response_size_limit",
+      originalBytes,
+      maxBytes: EPOCH_TRANSPORT_RESULT_MAX_BYTES,
+      readTools: [
+        "obsidian_epoch.progress",
+        "obsidian_epoch.region_info",
+        "obsidian_epoch.world_overview",
+      ],
+    },
+  };
+}
 
 export function epochEventsForPersistence(result: unknown): readonly EpochEvent[] {
   if (!result || typeof result !== "object") return [];

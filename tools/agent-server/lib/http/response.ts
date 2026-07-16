@@ -1,4 +1,5 @@
 import { type IncomingMessage, type ServerResponse } from "node:http";
+import { boundedEpochTransportValue } from "../epoch/runtimePublicProjectionRules.ts";
 
 export function corsHeaders(request: IncomingMessage, allowedOrigins: string[]) {
   const origin = request.headers.origin;
@@ -14,7 +15,7 @@ export function corsHeaders(request: IncomingMessage, allowedOrigins: string[]) 
 
 export function sendJson(request: IncomingMessage, response: ServerResponse, status: number, value: unknown, allowedOrigins: string[]) {
   response.writeHead(status, corsHeaders(request, allowedOrigins));
-  response.end(status === 204 ? "" : JSON.stringify(value));
+  response.end(status === 204 ? "" : JSON.stringify(boundedEpochTransportValue(value)));
 }
 
 export function sendJsonDownload(

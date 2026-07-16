@@ -4,7 +4,9 @@ import test from "node:test";
 import type { EpochEvent } from "../lib/epoch/events.ts";
 import { createEpochGameCore, type EpochCommandResult, type EpochPartyRun } from "../lib/epoch/gameCore.ts";
 import {
+  boundedEpochTransportValue,
   commandResult,
+  EPOCH_TRANSPORT_RESULT_MAX_BYTES,
   publicCommandValue,
   publicEpochEvent,
   publicProjection,
@@ -159,4 +161,32 @@ test("withInternalEvents attaches internal events without making them enumerable
   assert.deepEqual(Object.keys(result), ["value"]);
   assert.equal(descriptor?.enumerable, false);
   assert.deepEqual(resultWithEvents.events, [event]);
+});
+
+test("transport results omit an oversized world projection without losing the command delta", () => {
+  const value = {
+    value: { turnCardId: "turn_card_transport", status: "open" },
+    events: [{ eventId: "event_transport", eventType: "turn_card_created" }],
+    projection: { events: ["x".repeat(EPOCH_TRANSPORT_RESULT_MAX_BYTES)] },
+  };
+
+  const bounded = boundedEpochTransportValue(value) as Record<string, unknown>;
+  const omission = bounded.projectionOmitted as Record<string, unknown>;
+
+  assert.equal("projection" in bounded, false);
+  assert.deepEqual(bounded.value, value.value);
+  assert.deepEqual(bounded.events, value.events);
+  assert.equal(omission.reason, "response_size_limit");
+  assert.equal(omission.maxBytes, EPOCH_TRANSPORT_RESULT_MAX_BYTES);
+  assert.ok(Number(omission.originalBytes) > EPOCH_TRANSPORT_RESULT_MAX_BYTES);
+});
+
+test("transport results preserve small projections for compatibility", () => {
+  const value = {
+    value: { status: "ok" },
+    events: [],
+    projection: { events: [] },
+  };
+
+  assert.equal(boundedEpochTransportValue(value), value);
 });
