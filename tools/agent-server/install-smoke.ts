@@ -1,6 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { once } from "node:events";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -359,6 +358,25 @@ function createJsonRpcClient(serverBase: string, packageRoot: string, mcpToken: 
   const childOutput = () => Buffer.concat(stderrChunks).toString("utf8").trim();
   let nextId = 1;
 
+  function waitForChildExit(timeoutMs: number) {
+    if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      const cleanup = () => {
+        clearTimeout(timeout);
+        child.off("exit", onExit);
+      };
+      const onExit = () => {
+        cleanup();
+        resolve(true);
+      };
+      const timeout = setTimeout(() => {
+        cleanup();
+        resolve(false);
+      }, timeoutMs);
+      child.once("exit", onExit);
+    });
+  }
+
   async function request(method: string, params?: AnyRecord) {
     const id = nextId++;
     if (child.exitCode !== null || child.signalCode !== null) {
@@ -405,12 +423,12 @@ function createJsonRpcClient(serverBase: string, packageRoot: string, mcpToken: 
     },
     async close() {
       lines.close();
-      child.stdin.destroy();
-      if (!child.killed) child.kill();
-      await Promise.race([
-        once(child, "exit"),
-        new Promise((resolve) => setTimeout(resolve, 1_000)),
-      ]);
+      child.stdin.end();
+      if (await waitForChildExit(1_000)) return;
+      child.kill("SIGTERM");
+      if (await waitForChildExit(1_000)) return;
+      child.kill("SIGKILL");
+      await waitForChildExit(1_000);
     },
   };
 }

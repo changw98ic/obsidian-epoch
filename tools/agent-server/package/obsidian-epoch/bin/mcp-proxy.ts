@@ -22,6 +22,21 @@ const protocolVersion = "2025-06-18";
 const serverBase = (process.env.AGENT_WORLD_SERVER || "http://127.0.0.1:8787").replace(/\/+$/, "");
 const endpoint = new URL("/mcp", `${serverBase}/`);
 const mcpToken = (process.env.AGENT_WORLD_MCP_TOKEN || "").trim();
+const remoteRequestTimeoutMs = 30_000;
+const remoteShutdownTimeoutMs = 1_000;
+const remoteRequestMaxAttempts = 3;
+const retryableTransportErrorCodes = new Set([
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETDOWN",
+  "ENETUNREACH",
+  "EPIPE",
+  "ETIMEDOUT",
+]);
+const httpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 1_000, maxSockets: 8, maxFreeSockets: 2 });
+const httpsAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 1_000, maxSockets: 8, maxFreeSockets: 2 });
 let remoteSessionId = "";
 let remoteProtocolVersion = protocolVersion;
 let lastEventId = "";
@@ -34,6 +49,15 @@ let clientMessageTail: Promise<void> = Promise.resolve();
 
 function transportFor(url: URL) {
   return url.protocol === "https:" ? https : http;
+}
+
+function agentFor(url: URL) {
+  return url.protocol === "https:" ? httpsAgent : httpAgent;
+}
+
+function destroyRemoteAgents() {
+  httpAgent.destroy();
+  httpsAgent.destroy();
 }
 
 function authorizationHeaders() {
@@ -69,8 +93,24 @@ function writeJson(message: AnyRecord) {
   return queued;
 }
 
-function requestRemote(method: string, body?: AnyRecord, extraHeaders: Record<string, string> = {}) {
-  const payload = body === undefined ? undefined : JSON.stringify(body);
+interface RemoteRequestOptions {
+  readonly maxAttempts?: number;
+  readonly timeoutMs?: number;
+}
+
+function retryableTransportError(error: unknown) {
+  const code = error && typeof error === "object" && "code" in error
+    ? String((error as NodeJS.ErrnoException).code || "")
+    : "";
+  return retryableTransportErrorCodes.has(code);
+}
+
+function requestRemoteOnce(
+  method: string,
+  payload: string | undefined,
+  extraHeaders: Record<string, string>,
+  timeoutMs: number,
+) {
   return new Promise<RemoteResponse>((resolve, reject) => {
     const request = transportFor(endpoint).request({
       protocol: endpoint.protocol,
@@ -78,7 +118,7 @@ function requestRemote(method: string, body?: AnyRecord, extraHeaders: Record<st
       port: endpoint.port,
       path: `${endpoint.pathname}${endpoint.search}`,
       method,
-      agent: false,
+      agent: agentFor(endpoint),
       headers: {
         accept: "application/json, text/event-stream",
         ...authorizationHeaders(),
@@ -93,6 +133,7 @@ function requestRemote(method: string, body?: AnyRecord, extraHeaders: Record<st
       let text = "";
       remote.setEncoding("utf8");
       remote.on("data", (chunk: string) => { text += chunk; });
+      remote.once("error", reject);
       remote.once("end", () => {
         let parsed: AnyRecord | undefined;
         if (text.trim()) {
@@ -107,9 +148,38 @@ function requestRemote(method: string, body?: AnyRecord, extraHeaders: Record<st
         resolve({ status: remote.statusCode || 0, headers: remote.headers, body: parsed });
       });
     });
+    const timeout = setTimeout(() => {
+      const error = new Error("remote_mcp_request_timeout") as NodeJS.ErrnoException;
+      error.code = "ETIMEDOUT";
+      request.destroy(error);
+    }, timeoutMs);
+    timeout.unref();
+    request.once("close", () => clearTimeout(timeout));
     request.once("error", reject);
     request.end(payload);
   });
+}
+
+async function requestRemote(
+  method: string,
+  body?: AnyRecord,
+  extraHeaders: Record<string, string> = {},
+  options: RemoteRequestOptions = {},
+) {
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  const maxAttempts = Math.max(1, Math.floor(options.maxAttempts || remoteRequestMaxAttempts));
+  const timeoutMs = Math.max(1, Math.floor(options.timeoutMs || remoteRequestTimeoutMs));
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await requestRemoteOnce(method, payload, extraHeaders, timeoutMs);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maxAttempts || !retryableTransportError(error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+    }
+  }
+  throw lastError;
 }
 
 function remoteError(result: RemoteResponse) {
@@ -162,7 +232,7 @@ function openEventStream(): Promise<void> {
     port: endpoint.port,
     path: `${endpoint.pathname}${endpoint.search}`,
     method: "GET",
-    agent: false,
+    agent: agentFor(endpoint),
     headers: {
       accept: "text/event-stream",
       connection: "keep-alive",
@@ -215,7 +285,10 @@ async function closeRemoteSession() {
   eventStreamReady = undefined;
   if (!remoteSessionId) return;
   try {
-    await requestRemote("DELETE");
+    await requestRemote("DELETE", undefined, {}, {
+      maxAttempts: 1,
+      timeoutMs: remoteShutdownTimeoutMs,
+    });
   } catch {
     // The local Host is already disconnecting; remote cleanup is best effort.
   }
@@ -288,7 +361,14 @@ if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
       clientMessageTail = queued.then(() => undefined, () => undefined);
     }
   });
-  lines.once("close", () => { void closeRemoteSession().finally(() => { void writeTail; }); });
-  process.once("SIGTERM", () => { void closeRemoteSession().finally(() => process.exit(0)); });
-  process.once("SIGINT", () => { void closeRemoteSession().finally(() => process.exit(0)); });
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = () => {
+    shutdownPromise ||= closeRemoteSession()
+      .then(() => writeTail)
+      .finally(destroyRemoteAgents);
+    return shutdownPromise;
+  };
+  lines.once("close", () => { void shutdown(); });
+  process.once("SIGTERM", () => { void shutdown().finally(() => process.exit(0)); });
+  process.once("SIGINT", () => { void shutdown().finally(() => process.exit(0)); });
 }
