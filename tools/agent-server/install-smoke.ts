@@ -99,7 +99,7 @@ const CONSOLE_SMOKE_ASSET_FILE = CONSOLE_SMOKE_ASSET_PATH.split("/").at(-1) || "
 const CONSOLE_EXTERNAL_MEDIA_BASE_URL_ENV = "AGENT_INSTALL_SMOKE_CONSOLE_MEDIA_BASE_URL";
 const CONSOLE_EXTERNAL_MEDIA_REQUIRED_ENV = "AGENT_INSTALL_SMOKE_REQUIRE_EXTERNAL_CONSOLE_MEDIA";
 const CONSOLE_RUNTIME_MEDIA_BASE_URL_ENV = "AGENT_EPOCH_CONSOLE_MEDIA_BASE_URL";
-const CONSOLE_EXTERNAL_MEDIA_TIMEOUT_MS = 5_000;
+const CONSOLE_EXTERNAL_MEDIA_TIMEOUT_MS = 15_000;
 const CONSOLE_EXTERNAL_MEDIA_PROBE_BYTES = 1_024;
 const CONSOLE_EXTERNAL_MEDIA_MAX_CONTENT_LENGTH = 50 * 1_024 * 1_024;
 const INSTALL_HTTP_REQUEST_TIMEOUT_MS = 60_000;
@@ -1105,6 +1105,8 @@ export async function runEpochInstallSmoke(options: InstallSmokeOptions = {}) {
       throw new Error("install_smoke_result_trust_mode_mismatch");
     }
     const resultPageUrl = resultPage.page.urlPath as string;
+    const resultPublicSummary = String(resultPage.page.payload.publicSafeSummary?.text || "");
+    if (!resultPublicSummary) throw new Error("install_smoke_result_public_summary_missing");
     const resultPageStatus = await getStatus(serverBase, resultPageUrl);
     const agentPageStatus = await getStatus(serverBase, `/epoch/agent/${encodeURIComponent(agentId)}`);
     if (resultPageStatus !== 200 || agentPageStatus !== 200) {
@@ -1220,7 +1222,7 @@ export async function runEpochInstallSmoke(options: InstallSmokeOptions = {}) {
       && /text\/html/.test(worldPage.contentType)
       && worldPage.text.includes("世界总览")
       && htmlIncludesUrl(worldPage.text, resultPageUrl)
-      && worldPage.text.includes(agentId)
+      && worldPage.text.includes(resultPublicSummary)
       && !/<script/i.test(worldPage.text);
     if (!worldPageVerified) {
       throw new Error("install_smoke_world_page_failed");
@@ -1245,6 +1247,7 @@ export async function runEpochInstallSmoke(options: InstallSmokeOptions = {}) {
       agentId,
       turnCardId: turnCard.value.turnCardId,
       resultPageUrl,
+      resultPublicSummary,
       resultPlayMode,
       resultTrustTier,
       worldPageUrl: preflight.worldPageUrl,

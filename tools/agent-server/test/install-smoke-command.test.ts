@@ -108,6 +108,8 @@ function assertExplorerProfileSmoke(result: Record<string, any>) {
 }
 
 function assertWorldOverviewToolSmoke(result: Record<string, any>) {
+  assert.equal(result.worldPageVerified, true);
+  assert.match(result.resultPublicSummary, /已整理为可分享摘要/);
   assert.equal(result.worldOverviewToolVerified, true);
   assert.equal(result.worldOverviewPublicPage, "/epoch/world");
 }
