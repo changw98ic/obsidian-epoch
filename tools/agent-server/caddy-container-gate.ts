@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import https from "node:https";
 import http, { type IncomingHttpHeaders } from "node:http";
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -108,7 +108,10 @@ async function main() {
   const configVolume = `obsidian-caddy-config-${suffix}`;
   const staticRoot = mkdtempSync(join(tmpdir(), "obsidian-caddy-static-"));
   try {
-    writeFileSync(join(staticRoot, "health.txt"), "healthy\n", "utf8");
+    chmodSync(staticRoot, 0o755);
+    const staticHealthFile = join(staticRoot, "health.txt");
+    writeFileSync(staticHealthFile, "healthy\n", "utf8");
+    chmodSync(staticHealthFile, 0o644);
     const validation = docker([
       "run", "--rm", "--network=none", "--read-only", "--cap-drop=ALL", "--cap-add=NET_BIND_SERVICE",
       "--security-opt=no-new-privileges:true", "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777",
