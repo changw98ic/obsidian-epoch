@@ -6002,9 +6002,10 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
   const identityNameFactory = options.identityNameFactory || ((input: { explorerId: string; generation: number }) =>
     `${input.explorerId}-第${input.generation}世`);
   let events = initialEvents;
+  let currentProjection = projectEpochEvents(events);
 
   function projection() {
-    return projectEpochEvents(events);
+    return currentProjection;
   }
 
   function identitySlots(input: { readonly explorerId: string }): EpochIdentitySlotState {
@@ -6054,8 +6055,9 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
   }
 
   function commit<TValue>(nextEvents: readonly EpochEvent[], value: TValue): EpochCommandResult<TValue> {
-    const nextProjection = applyEvents(projection(), nextEvents);
+    const nextProjection = applyEvents(currentProjection, nextEvents);
     events = [...nextProjection.events];
+    currentProjection = nextProjection;
     return { events: nextEvents, value, projection: nextProjection };
   }
 
@@ -6078,6 +6080,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     if (freshEvents.length === 0) return current;
     const nextProjection = applyEvents(current, freshEvents);
     events = [...nextProjection.events];
+    currentProjection = nextProjection;
     return nextProjection;
   }
 

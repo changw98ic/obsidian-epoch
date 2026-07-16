@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
 import test from "node:test";
-import { createEpochGameCore, epochShopOffersForRegion, previewEpochDowntime, type EpochNpcRelationship, type EpochSocialHook } from "../lib/epoch/gameCore.ts";
+import { createEpochGameCore, epochShopOffersForRegion, previewEpochDowntime, projectEpochEvents, type EpochNpcRelationship, type EpochSocialHook } from "../lib/epoch/gameCore.ts";
 import type { EpochEvent } from "../lib/epoch/events.ts";
 import { assertNpcRelationshipKind, createSequentialEpochIdFactory, type EpochClock, type EpochCommandContext } from "../lib/epoch/protocol.ts";
 import { createEpochRuntime } from "../lib/epoch/runtime.ts";
@@ -150,6 +150,36 @@ test("epoch core issues server-owned identities and builds lineage from events",
     throw new Error("expected_identity_issued_event");
   }
   assert.equal(projected.events[0].payload.agentId, issued.value.agentId);
+});
+
+test("epoch core reuses its projection until canonical events change", () => {
+  const source = createEpochGameCore({
+    idFactory: createSequentialEpochIdFactory("projection_cache_source"),
+  });
+  const initialProjection = source.project();
+
+  assert.strictEqual(source.project(), initialProjection);
+
+  const issued = source.issueIdentity({
+    explorerId: "explorer_projection_cache",
+    identityName: "投影缓存校验员",
+  }, userContext);
+
+  assert.notStrictEqual(issued.projection, initialProjection);
+  assert.strictEqual(source.project(), issued.projection);
+  assert.strictEqual(source.project(), source.project());
+  assert.deepEqual(source.project(), projectEpochEvents(source.events()));
+
+  const replica = createEpochGameCore({
+    idFactory: createSequentialEpochIdFactory("projection_cache_replica"),
+  });
+  const replicaInitialProjection = replica.project();
+  const ingestedProjection = replica.ingestCanonicalEvents(issued.events);
+
+  assert.notStrictEqual(ingestedProjection, replicaInitialProjection);
+  assert.strictEqual(replica.project(), ingestedProjection);
+  assert.strictEqual(replica.ingestCanonicalEvents(issued.events), ingestedProjection);
+  assert.deepEqual(replica.project(), projectEpochEvents(replica.events()));
 });
 
 test("the first Agent-native journey reserve is ledger-backed, identity-scoped, and replay-idempotent", () => {
