@@ -275,6 +275,49 @@ test("command commits index nested canonical events and result pages atomically"
   }
 });
 
+test("SQLite hydration preserves canonical append order across command and epoch ledgers", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "epoch-sqlite-cross-ledger-order-"));
+  const dbPath = path.join(tempDir, "agent-world.sqlite");
+  try {
+    const core = createEpochGameCore({ idFactory: createSequentialEpochIdFactory("sqlite_cross_ledger") });
+    const commandIdentity = core.issueIdentity({
+      explorerId: "explorer_sqlite_cross_ledger_command",
+      identityName: "跨账本命令身份",
+    }, {
+      actorExplorerId: "explorer_sqlite_cross_ledger_command",
+      trustClass: "untrusted_client",
+      idempotencyKey: "issue-sqlite-cross-ledger-command",
+    });
+    const directIdentity = core.issueIdentity({
+      explorerId: "explorer_sqlite_cross_ledger_direct",
+      identityName: "跨账本直接身份",
+    }, {
+      actorExplorerId: "explorer_sqlite_cross_ledger_direct",
+      trustClass: "untrusted_client",
+      idempotencyKey: "issue-sqlite-cross-ledger-direct",
+    });
+
+    await appendSqliteJsonl(dbPath, "command-events.jsonl", {
+      type: "agent_command_commit",
+      version: 1,
+      command: "obsidian_epoch.identity",
+      commandId: "command-sqlite-cross-ledger-order",
+      journeyEvents: [],
+      epochEvents: commandIdentity.events,
+      resultPages: [],
+    });
+    await appendSqliteEpochEventBatch(dbPath, directIdentity.events);
+
+    const loaded = await loadAgentRuntimeOptionsFromSqlite(dbPath);
+    assert.deepEqual(
+      loaded.epochEvents.map((event) => event.eventId),
+      [...commandIdentity.events, ...directIdentity.events].map((event) => event.eventId),
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("schema v2 atomically backfills command, journey, and result-page indexes from a v1 database", async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "epoch-sqlite-v1-backfill-"));
   const dbPath = path.join(tempDir, "agent-world.sqlite");

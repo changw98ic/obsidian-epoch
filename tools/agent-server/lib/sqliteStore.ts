@@ -636,11 +636,30 @@ export function readSqliteJsonlRecords(dbPath: string, fileName: string): JsonRe
   }
 }
 
+function readSqliteCanonicalEpochEventRecords(dbPath: string): JsonRecord[] {
+  const db = openSqlite(dbPath);
+  try {
+    initializeSqliteSchema(db);
+    const rows = db.prepare(`
+      SELECT event_json
+      FROM epoch_events
+      ORDER BY record_id ASC, rowid ASC
+    `).all() as { event_json: string }[];
+    return rows.map((row) => ({
+      type: "epoch_event",
+      event: epochEventsFromPersistenceRecord(JSON.parse(row.event_json) as unknown)[0],
+    }));
+  } finally {
+    db.close();
+  }
+}
+
 export async function loadAgentRuntimeOptionsFromSqlite(dbPath: string) {
   await ensureSqliteDir(dbPath);
   const files = Object.fromEntries(KNOWN_JSONL_FILES.map((fileName) => [
     fileName,
     readSqliteJsonlRecords(dbPath, fileName),
   ])) as MutableKnownJsonlRecordFiles;
+  files["epoch-events.jsonl"] = readSqliteCanonicalEpochEventRecords(dbPath);
   return hydrateKnownJsonlRecordFiles(files);
 }
