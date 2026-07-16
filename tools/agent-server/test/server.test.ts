@@ -956,6 +956,34 @@ test("HTTP MCP endpoints require the configured bearer token before parsing requ
   }, { mcpBearerToken: bearerToken });
 });
 
+test("HTTP MCP canonical event reads never repersist the events they return", async () => {
+  const writes: { fileName: string; record: unknown }[] = [];
+  const runtime = createAgentWorldRuntime({
+    epoch: { idFactory: createSequentialEpochIdFactory("http_mcp_event_read") },
+  });
+
+  await withHttpServer(runtime, async (baseUrl) => {
+    const registration = await postJson(baseUrl, "/api/epoch/pairing/register", {
+      idempotencyKey: "register-http-mcp-event-read-1",
+    });
+    assert.equal(registration.status, 201);
+    const writesBeforeRead = writes.length;
+
+    const eventsTool = await postJson(baseUrl, "/api/epoch/mcp/tools/call", {
+      name: "obsidian_epoch.events",
+      arguments: { agentId: registration.body.agentId, limit: 10 },
+    });
+    assert.equal(eventsTool.status, 200);
+    const payload = parseMcpToolResultPayload(eventsTool.body) as { events: readonly unknown[] };
+    assert.ok(payload.events.length > 0);
+    assert.equal(writes.length, writesBeforeRead);
+  }, {
+    persistJsonl: async (fileName, record) => {
+      writes.push({ fileName, record });
+    },
+  });
+});
+
 test("HTTP rejects secret-shaped JSON uploads before command handling and redacts rejection audit", async () => {
   const runtime = createAgentWorldRuntime();
   const persisted: { fileName: string; record: unknown }[] = [];

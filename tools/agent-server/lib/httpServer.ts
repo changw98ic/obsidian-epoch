@@ -584,9 +584,6 @@ async function persistMcpToolPayload(
     await persistEpochResultPage(persistJsonl, payload);
     return;
   }
-  if (toolName.startsWith("obsidian_epoch.")) {
-    await persistEpochResult(payload);
-  }
 }
 
 async function persistMcpJsonRpcPayload(

@@ -3396,7 +3396,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     },
     epochEvents: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
-      return epochRuntime.events(input);
+      return attachEpochEventsForPersistence(epochRuntime.events(input), []);
     },
     epochAudit: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
