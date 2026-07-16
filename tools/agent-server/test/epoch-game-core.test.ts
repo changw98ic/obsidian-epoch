@@ -168,6 +168,17 @@ test("epoch core reuses its projection until canonical events change", () => {
   assert.notStrictEqual(issued.projection, initialProjection);
   assert.strictEqual(source.project(), issued.projection);
   assert.strictEqual(source.project(), source.project());
+  const exposedProjection = source.project() as unknown as {
+    events: EpochEvent[];
+    identities: Record<string, { identityName: string }>;
+  };
+  assert.throws(() => exposedProjection.events.push(issued.events[0]!), TypeError);
+  assert.equal(Reflect.set(
+    exposedProjection.identities[issued.value.agentId]!,
+    "identityName",
+    "被外部污染的身份",
+  ), false);
+  assert.equal(exposedProjection.identities[issued.value.agentId]!.identityName, issued.value.identityName);
   assert.deepEqual(source.project(), projectEpochEvents(source.events()));
 
   const replica = createEpochGameCore({

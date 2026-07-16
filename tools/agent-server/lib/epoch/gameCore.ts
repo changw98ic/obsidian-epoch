@@ -5903,6 +5903,18 @@ function applyEvents(projection: EpochProjection, events: readonly EpochEvent[])
   return events.reduce((current, event) => applyEvent(current, event), projection);
 }
 
+function freezeProjection<T>(value: T, frozenObjects: WeakSet<object>): T {
+  if (value === null || typeof value !== "object") return value;
+  const objectValue = value as object;
+  if (frozenObjects.has(objectValue)) return value;
+  frozenObjects.add(objectValue);
+  for (const key of Reflect.ownKeys(objectValue)) {
+    freezeProjection(Reflect.get(objectValue, key), frozenObjects);
+  }
+  Object.freeze(objectValue);
+  return value;
+}
+
 function projectTraceConflictState(events: readonly EpochEvent[]): {
   readonly deployments: readonly TraceConflictDeployment[];
   readonly memories: readonly TraceConflictRumorMemory[];
@@ -6002,7 +6014,8 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
   const identityNameFactory = options.identityNameFactory || ((input: { explorerId: string; generation: number }) =>
     `${input.explorerId}-第${input.generation}世`);
   let events = initialEvents;
-  let currentProjection = projectEpochEvents(events);
+  const frozenProjectionObjects = new WeakSet<object>();
+  let currentProjection = freezeProjection(projectEpochEvents(events), frozenProjectionObjects);
 
   function projection() {
     return currentProjection;
@@ -6055,7 +6068,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
   }
 
   function commit<TValue>(nextEvents: readonly EpochEvent[], value: TValue): EpochCommandResult<TValue> {
-    const nextProjection = applyEvents(currentProjection, nextEvents);
+    const nextProjection = freezeProjection(applyEvents(currentProjection, nextEvents), frozenProjectionObjects);
     events = [...nextProjection.events];
     currentProjection = nextProjection;
     return { events: nextEvents, value, projection: nextProjection };
@@ -6078,7 +6091,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       freshEvents.push(event);
     }
     if (freshEvents.length === 0) return current;
-    const nextProjection = applyEvents(current, freshEvents);
+    const nextProjection = freezeProjection(applyEvents(current, freshEvents), frozenProjectionObjects);
     events = [...nextProjection.events];
     currentProjection = nextProjection;
     return nextProjection;
