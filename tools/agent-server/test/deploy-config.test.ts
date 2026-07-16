@@ -101,8 +101,11 @@ test("public deployment config ships Docker, Compose, env example, and operator 
   assert.match(caddyDockerfile, /FROM gcr\.io\/distroless\/static-debian13:nonroot@sha256:[a-f0-9]{64}/);
   assert.match(caddyDockerfile, /^USER 65532:65532$/m);
   assert.match(caddyDockerfile, /CMD \["\/usr\/bin\/caddy-healthcheck"\]/);
-  assert.match(caddyHealthcheck, /RootCAs: rootCertificates/);
+  assert.match(caddyHealthcheck, /RootCAs:\s+rootCertificates/);
   assert.match(caddyHealthcheck, /https:\/\/127\.0\.0\.1\/api\/health/);
+  assert.match(caddyHealthcheck, /CADDY_HEALTHCHECK_URL/);
+  assert.match(caddyHealthcheck, /target\.Hostname\(\) != "127\.0\.0\.1" && target\.Hostname\(\) != "::1"/);
+  assert.match(caddyHealthcheck, /return http\.ErrUseLastResponse/);
   assert.match(compose, /AGENT_PUBLIC_HOST/);
   assert.doesNotMatch(compose, /\.env\.example/);
   assert.doesNotMatch(compose, /env_file:/);
