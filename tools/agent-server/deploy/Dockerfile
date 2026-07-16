@@ -63,7 +63,7 @@ COPY --from=web-build --chown=65532:65532 /build/00_总览/world-map-data.json .
 VOLUME ["/data"]
 EXPOSE 8787
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD ["/nodejs/bin/node", "--input-type=module", "-e", "const response = await fetch('http://127.0.0.1:8787/api/health'); process.exit(response.ok ? 0 : 1)"]
 
 WORKDIR /app

@@ -62,6 +62,7 @@ test("public deployment config ships Docker, Compose, env example, and operator 
   assert.match(dockerfile, /^ENTRYPOINT \["\/nodejs\/bin\/node"\]$/m);
   assert.match(dockerfile, /^CMD \["tools\/agent-server\/server\.ts"\]$/m);
   assert.match(dockerfile, /HEALTHCHECK/);
+  assert.match(dockerfile, /HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3/);
   assert.match(dockerfile, /\/api\/health/);
   assert.match(dockerfile, /^COPY tools\/graph-react-app \.\/tools\/graph-react-app$/m);
   assert.match(dockerfile, /^COPY 00_总览\/world-map-data\.json \.\/00_总览\/world-map-data\.json$/m);
@@ -94,6 +95,7 @@ test("public deployment config ships Docker, Compose, env example, and operator 
   assert.match(compose, /profiles: \["public"\]/);
   assert.match(compose, /443:443\/udp/);
   assert.match(compose, /\/usr\/bin\/caddy-healthcheck/);
+  assert.match(compose, /start_period: 60s/);
   assert.match(caddyDockerfile, /FROM golang:1\.26\.5-alpine@sha256:[a-f0-9]{64} AS build/);
   assert.match(caddyDockerfile, /github\.com\/caddyserver\/caddy\/v2\/cmd\/caddy@\$\{CADDY_VERSION\}/);
   assert.match(caddyDockerfile, /FROM gcr\.io\/distroless\/static-debian13:nonroot@sha256:[a-f0-9]{64}/);
