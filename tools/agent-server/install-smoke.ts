@@ -103,7 +103,8 @@ const CONSOLE_RUNTIME_MEDIA_BASE_URL_ENV = "AGENT_EPOCH_CONSOLE_MEDIA_BASE_URL";
 const CONSOLE_EXTERNAL_MEDIA_TIMEOUT_MS = 5_000;
 const CONSOLE_EXTERNAL_MEDIA_PROBE_BYTES = 1_024;
 const CONSOLE_EXTERNAL_MEDIA_MAX_CONTENT_LENGTH = 50 * 1_024 * 1_024;
-const MCP_STDIO_REQUEST_TIMEOUT_MS = 30_000;
+const INSTALL_HTTP_REQUEST_TIMEOUT_MS = 60_000;
+const MCP_STDIO_REQUEST_TIMEOUT_MS = 90_000;
 const REQUIRED_MCP_HOST_CONFIGS = [
   ["Claude Code", "obsidian-epoch/host-config/claude-code.mcp.json"],
   ["Codex", "obsidian-epoch/host-config/codex.mcp.json"],
@@ -113,6 +114,16 @@ const REQUIRED_MCP_HOST_CONFIGS = [
 ] as const;
 const HOST_INSTALL_MCP_SERVER_NAME = "obsidian-epoch-agent-world";
 const HOST_INSTALL_MCP_COMMAND = "node";
+
+function installFetch(
+  input: Parameters<typeof fetch>[0],
+  init: Parameters<typeof fetch>[1] = {},
+) {
+  return fetch(input, {
+    ...init,
+    signal: init.signal || AbortSignal.timeout(INSTALL_HTTP_REQUEST_TIMEOUT_MS),
+  });
+}
 const HOST_INSTALL_MCP_ARGS = ["obsidian-epoch/bin/mcp-proxy.ts"] as const;
 const HOST_INSTALL_QUICKSTART_TOOL = "obsidian_epoch.quickstart";
 const HOST_INSTALL_FIRST_TURN_PLAYBOOK = "obsidian-epoch/references/one-turn-playbook.md";
@@ -405,13 +416,13 @@ function createJsonRpcClient(serverBase: string, packageRoot: string, mcpToken: 
 }
 
 async function getStatus(baseUrl: string, path: string, headers: Record<string, string> = {}) {
-  const response = await fetch(`${baseUrl}${path}`, { headers });
+  const response = await installFetch(`${baseUrl}${path}`, { headers });
   await response.arrayBuffer();
   return response.status;
 }
 
 async function getTextWithStatus(baseUrl: string, path: string) {
-  const response = await fetch(`${baseUrl}${path}`);
+  const response = await installFetch(`${baseUrl}${path}`);
   return {
     status: response.status,
     contentType: response.headers.get("content-type") || "",
@@ -420,13 +431,13 @@ async function getTextWithStatus(baseUrl: string, path: string) {
 }
 
 async function getJsonWithStatus(baseUrl: string, path: string) {
-  const response = await fetch(`${baseUrl}${path}`);
+  const response = await installFetch(`${baseUrl}${path}`);
   const body = await response.json();
   return { status: response.status, body };
 }
 
 async function registerSmokeIdentity(serverBase: string, idempotencyKey: string) {
-  const response = await fetch(`${serverBase}/api/epoch/pairing/register`, {
+  const response = await installFetch(`${serverBase}/api/epoch/pairing/register`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ idempotencyKey }),
@@ -654,7 +665,7 @@ async function verifyHostConfigFiles(serverBase: string, manifest: AnyRecord) {
       throw new Error("install_smoke_host_config_manifest_invalid");
     }
 
-    const response = await fetch(new URL(url, serverBase));
+    const response = await installFetch(new URL(url, serverBase));
     const text = await response.text();
     const actualSha256 = createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex");
     if (
@@ -692,7 +703,7 @@ async function postStreamableMcpJsonRpc(
   expectedStatus = 200,
   sessionId?: string,
 ) {
-  const response = await fetch(`${serverBase}/mcp`, {
+  const response = await installFetch(`${serverBase}/mcp`, {
     method: "POST",
     headers: {
       "accept": "application/json, text/event-stream",
@@ -919,7 +930,7 @@ async function preflightInstallSurface(
     && !/<script/i.test(webBridgeAuditIndexPage.text);
   if (!webBridgeAuditIndexVerified) throw new Error("install_smoke_web_bridge_audit_index_failed");
 
-  const packageResponse = await fetch(new URL(packageUrl, serverBase));
+  const packageResponse = await installFetch(new URL(packageUrl, serverBase));
   const packageBuffer = Buffer.from(await packageResponse.arrayBuffer());
   const packageSha256 = createHash("sha256").update(packageBuffer).digest("hex");
   const expectedSha256 = String(packageInfo.sha256 || "");
