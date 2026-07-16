@@ -1849,7 +1849,9 @@ test("MCP confirms personality drift proposals after anomaly scars", async () =>
   }));
   assert.equal(beforeConfirm.personalityDrifts[0].driftId, driftId);
   assert.equal(beforeConfirm.personalityDrifts[0].status, "proposed");
-  assert.deepEqual(beforeConfirm.identity.personality.traits, []);
+  const initialTraits = [...beforeConfirm.identity.personality.traits];
+  assert.equal(initialTraits.length, 2);
+  assert.ok(!initialTraits.includes(proposalEvent.payload.suggestedTrait));
 
   await assert.rejects(
     () => mcp.callTool("obsidian_epoch.confirm_personality_drift", {
@@ -1866,7 +1868,10 @@ test("MCP confirms personality drift proposals after anomaly scars", async () =>
   }));
   assert.deepEqual(confirmed.events.map((event: { eventType: string }) => event.eventType), ["personality_drift_confirmed"]);
   assert.equal(confirmed.value.status, "confirmed");
-  assert.deepEqual(confirmed.projection.identities[identity.value.agentId].personality.traits, [proposalEvent.payload.suggestedTrait]);
+  assert.deepEqual(confirmed.projection.identities[identity.value.agentId].personality.traits, [
+    ...initialTraits,
+    proposalEvent.payload.suggestedTrait,
+  ]);
 });
 
 test("MCP confirms personality drift proposals after severe relationship hostility", async () => {
@@ -1926,7 +1931,9 @@ test("MCP confirms personality drift proposals after severe relationship hostili
   }));
   assert.equal(beforeConfirm.personalityDrifts[0].driftId, driftId);
   assert.equal(beforeConfirm.personalityDrifts[0].status, "proposed");
-  assert.deepEqual(beforeConfirm.identity.personality.traits, []);
+  const initialTraits = [...beforeConfirm.identity.personality.traits];
+  assert.equal(initialTraits.length, 2);
+  assert.ok(!initialTraits.includes(proposalEvent.payload.suggestedTrait));
 
   await assert.rejects(
     () => mcp.callTool("obsidian_epoch.confirm_personality_drift", {
@@ -1944,7 +1951,10 @@ test("MCP confirms personality drift proposals after severe relationship hostili
   }));
   assert.deepEqual(confirmed.events.map((event: { eventType: string }) => event.eventType), ["personality_drift_confirmed"]);
   assert.equal(confirmed.value.status, "confirmed");
-  assert.deepEqual(confirmed.projection.identities[target.value.agentId].personality.traits, [proposalEvent.payload.suggestedTrait]);
+  assert.deepEqual(confirmed.projection.identities[target.value.agentId].personality.traits, [
+    ...initialTraits,
+    proposalEvent.payload.suggestedTrait,
+  ]);
 });
 
 test("MCP attested runner verifies challenge signatures before settling hosted actions", async () => {

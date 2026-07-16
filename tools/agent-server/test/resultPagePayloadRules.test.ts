@@ -189,6 +189,10 @@ test("result page payload rules expose only allowlisted Journey reward fields", 
             amount: 2,
             internalGrantToken: "must-not-leak",
           },
+          rewardBundle: {
+            resources: [{ resourceId: "coin", amount: 2 }],
+            items: [{ itemKey: "journey_reward_alpha", displayName: "实验核验凭章", rarity: "rare" }],
+          },
         },
       },
     },
@@ -199,7 +203,35 @@ test("result page payload rules expose only allowlisted Journey reward fields", 
     resourceId: "resource_obsidian",
     amount: 2,
   });
+  assert.deepEqual(built.journey?.stateDelta?.rewardBundle, {
+    resources: [{ resourceId: "coin", amount: 2 }],
+    items: [{ itemKey: "journey_reward_alpha", displayName: "实验核验凭章", rarity: "rare" }],
+  });
   assert.doesNotMatch(JSON.stringify(built), /must-not-leak|internalGrantToken/);
+});
+
+test("result page payload rules reject malformed Journey reward bundles", () => {
+  assert.throws(() => buildEpochResultPagePayload({
+    projection: projection(),
+    input: {
+      journeyVerification: {
+        journeyId: "journey_reward_polluted",
+        correlationId: "journey:journey_reward_polluted",
+        status: "traveling",
+        objective: "探访灰港",
+        regionId: "region_gray_harbor",
+        episodes: [],
+        canonicalEventIds: [],
+        stateDelta: {
+          rewardBundle: {
+            resources: [{ resourceId: "legend", amount: 999, forged: true }],
+            items: [],
+          },
+        },
+      },
+    },
+    generatedAt: GENERATED_AT,
+  }), /result_page_journey_reward_bundle_invalid/u);
 });
 
 test("settled Journey result pages fail closed instead of degrading invalid episodes to metadata", () => {

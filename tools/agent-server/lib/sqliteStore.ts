@@ -6,7 +6,16 @@ import {
   createEpochEventBatchRecord,
   epochEventsFromPersistenceRecord,
 } from "./epochPersistence.ts";
-import { hydrateAgentRuntimeOptions } from "./store.ts";
+import {
+  hydrateAgentRuntimeOptions,
+  validateCanonicalRecoveryConflicts,
+} from "./store.ts";
+import {
+  backfillWorldMemoryFromResultPages,
+  indexCanonicalResultPageForWorldMemory,
+  initializeWorldMemorySchema,
+  markWorldMemoryProjectionDirty,
+} from "./worldMemoryIndex.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -26,6 +35,10 @@ export const KNOWN_JSONL_FILES = [
   "context-snapshots.jsonl",
   "outbox.jsonl",
 ] as const;
+
+type KnownJsonlFileName = typeof KNOWN_JSONL_FILES[number];
+type KnownJsonlRecordFiles = Record<KnownJsonlFileName, readonly JsonRecord[]>;
+type MutableKnownJsonlRecordFiles = Record<KnownJsonlFileName, JsonRecord[]>;
 
 export interface SqliteMigrationSummary {
   readonly dbPath: string;
@@ -84,6 +97,27 @@ function initializeSqliteSchema(db: DatabaseSync) {
       record_id INTEGER NOT NULL REFERENCES jsonl_records(id) ON DELETE CASCADE,
       page_json TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS journey_events (
+      event_id TEXT PRIMARY KEY,
+      journey_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      explorer_id TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      journey_version INTEGER,
+      record_id INTEGER NOT NULL REFERENCES jsonl_records(id) ON DELETE CASCADE,
+      event_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_journey_events_journey_version
+      ON journey_events(journey_id, journey_version, occurred_at);
+    CREATE INDEX IF NOT EXISTS idx_journey_events_agent_time
+      ON journey_events(agent_id, occurred_at);
+    CREATE TABLE IF NOT EXISTS command_commits (
+      command_id TEXT PRIMARY KEY,
+      command TEXT NOT NULL,
+      record_id INTEGER NOT NULL UNIQUE REFERENCES jsonl_records(id) ON DELETE CASCADE,
+      commit_json TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS tickets (
       run_ticket TEXT PRIMARY KEY,
       state TEXT,
@@ -103,7 +137,58 @@ function initializeSqliteSchema(db: DatabaseSync) {
       run_json TEXT NOT NULL
     );
   `);
+  initializeWorldMemorySchema(db);
+  db.exec(`
+    CREATE TRIGGER IF NOT EXISTS result_pages_world_memory_dirty_ai
+    AFTER INSERT ON result_pages BEGIN
+      UPDATE world_memory_meta SET value = '1' WHERE key = 'projection_dirty';
+    END;
+    CREATE TRIGGER IF NOT EXISTS result_pages_world_memory_dirty_au
+    AFTER UPDATE OF page_json ON result_pages BEGIN
+      UPDATE world_memory_meta SET value = '1' WHERE key = 'projection_dirty';
+    END;
+    CREATE TRIGGER IF NOT EXISTS result_pages_world_memory_dirty_ad
+    AFTER DELETE ON result_pages BEGIN
+      UPDATE world_memory_meta SET value = '1' WHERE key = 'projection_dirty';
+    END;
+  `);
   db.prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(1, nowIso());
+  const v2 = db.prepare("SELECT version FROM schema_migrations WHERE version = 2").get();
+  if (!v2) {
+    let migrationStarted = false;
+    try {
+      db.exec("BEGIN IMMEDIATE");
+      migrationStarted = true;
+      const concurrentlyApplied = db.prepare("SELECT version FROM schema_migrations WHERE version = 2").get();
+      if (!concurrentlyApplied) {
+        backfillSqliteIndexes(db);
+        db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(2, nowIso());
+      }
+      db.exec("COMMIT");
+      migrationStarted = false;
+    } catch (error) {
+      if (migrationStarted) db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+  const v3 = db.prepare("SELECT version FROM schema_migrations WHERE version = 3").get();
+  if (!v3) {
+    let migrationStarted = false;
+    try {
+      db.exec("BEGIN IMMEDIATE");
+      migrationStarted = true;
+      const concurrentlyApplied = db.prepare("SELECT version FROM schema_migrations WHERE version = 3").get();
+      if (!concurrentlyApplied) {
+        backfillWorldMemoryFromResultPages(db);
+        db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(3, nowIso());
+      }
+      db.exec("COMMIT");
+      migrationStarted = false;
+    } catch (error) {
+      if (migrationStarted) db.exec("ROLLBACK");
+      throw error;
+    }
+  }
 }
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -124,6 +209,53 @@ function stringOrNull(value: unknown) {
 
 function recordType(record: JsonRecord) {
   return typeof record.type === "string" ? record.type : null;
+}
+
+function emptyKnownJsonlRecordFiles(): MutableKnownJsonlRecordFiles {
+  return {
+    "tickets.jsonl": [],
+    "runs.jsonl": [],
+    "lore.jsonl": [],
+    "progression.jsonl": [],
+    "factions.jsonl": [],
+    "community.jsonl": [],
+    "experience.jsonl": [],
+    "transparency.jsonl": [],
+    "epoch-events.jsonl": [],
+    "journey-events.jsonl": [],
+    "command-events.jsonl": [],
+    "result-pages.jsonl": [],
+    "context-snapshots.jsonl": [],
+    "outbox.jsonl": [],
+  };
+}
+
+function hydrateKnownJsonlRecordFiles(files: KnownJsonlRecordFiles) {
+  return hydrateAgentRuntimeOptions({
+    tickets: files["tickets.jsonl"],
+    runs: files["runs.jsonl"],
+    lore: files["lore.jsonl"],
+    progression: files["progression.jsonl"],
+    factions: files["factions.jsonl"],
+    community: files["community.jsonl"],
+    experience: files["experience.jsonl"],
+    transparency: files["transparency.jsonl"],
+    epochEvents: files["epoch-events.jsonl"],
+    journeyEvents: files["journey-events.jsonl"],
+    commandEvents: files["command-events.jsonl"],
+    resultPages: files["result-pages.jsonl"],
+    contextSnapshots: files["context-snapshots.jsonl"],
+    outbox: files["outbox.jsonl"],
+  });
+}
+
+function validateKnownJsonlRecordFiles(files: KnownJsonlRecordFiles) {
+  validateCanonicalRecoveryConflicts({
+    epochEvents: files["epoch-events.jsonl"],
+    journeyEvents: files["journey-events.jsonl"],
+    commandEvents: files["command-events.jsonl"],
+    resultPages: files["result-pages.jsonl"],
+  });
 }
 
 function lastInsertId(db: DatabaseSync) {
@@ -176,6 +308,86 @@ function indexEpochEvent(db: DatabaseSync, recordId: number, event: EpochEvent, 
   );
 }
 
+function indexJourneyEvent(
+  db: DatabaseSync,
+  recordId: number,
+  event: JsonRecord,
+  strict: boolean,
+) {
+  const eventId = stringValue(event.eventId);
+  const journeyId = stringValue(event.journeyId);
+  const eventType = stringValue(event.eventType);
+  const agentId = stringValue(event.agentId);
+  const explorerId = stringValue(event.explorerId);
+  const occurredAt = stringValue(event.occurredAt);
+  const journey = recordValue(event.journey);
+  const journeyVersion = Number.isSafeInteger(journey.version) ? Number(journey.version) : null;
+  if (!eventId || !journeyId || !eventType || !agentId || !explorerId || !occurredAt) {
+    if (strict) throw new Error("journey_event_index_fields_required");
+    return;
+  }
+  const insertSql = strict
+    ? `INSERT INTO journey_events(
+        event_id, journey_id, event_type, agent_id, explorer_id, occurred_at,
+        journey_version, record_id, event_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    : `INSERT OR REPLACE INTO journey_events(
+        event_id, journey_id, event_type, agent_id, explorer_id, occurred_at,
+        journey_version, record_id, event_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  db.prepare(insertSql).run(
+    eventId,
+    journeyId,
+    eventType,
+    agentId,
+    explorerId,
+    occurredAt,
+    journeyVersion,
+    recordId,
+    JSON.stringify(event),
+  );
+}
+
+function indexResultPage(db: DatabaseSync, recordId: number, page: JsonRecord) {
+  const pageId = stringValue(page.pageId);
+  const createdAt = stringValue(page.createdAt);
+  const urlPath = stringValue(page.urlPath);
+  if (!pageId || !createdAt || !urlPath) return;
+  db.prepare(`
+    INSERT OR REPLACE INTO result_pages(page_id, created_at, url_path, record_id, page_json)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(pageId, createdAt, urlPath, recordId, JSON.stringify(page));
+  db.exec("SAVEPOINT world_memory_projection");
+  try {
+    indexCanonicalResultPageForWorldMemory(db, page);
+    db.exec("RELEASE SAVEPOINT world_memory_projection");
+  } catch {
+    try {
+      db.exec("ROLLBACK TO SAVEPOINT world_memory_projection");
+    } finally {
+      db.exec("RELEASE SAVEPOINT world_memory_projection");
+    }
+    try {
+      markWorldMemoryProjectionDirty(db);
+    } catch {
+      // A damaged derived schema must still not roll back the canonical page.
+    }
+  }
+}
+
+function indexCommandCommit(db: DatabaseSync, recordId: number, record: JsonRecord, strict: boolean) {
+  const commandId = stringValue(record.commandId);
+  const command = stringValue(record.command);
+  if (!commandId || !command) {
+    if (strict) throw new Error("agent_command_commit_index_fields_required");
+    return;
+  }
+  const insertSql = strict
+    ? "INSERT INTO command_commits(command_id, command, record_id, commit_json) VALUES (?, ?, ?, ?)"
+    : "INSERT OR REPLACE INTO command_commits(command_id, command, record_id, commit_json) VALUES (?, ?, ?, ?)";
+  db.prepare(insertSql).run(commandId, command, recordId, JSON.stringify(record));
+}
+
 function indexKnownRecord(
   db: DatabaseSync,
   recordId: number,
@@ -187,16 +399,31 @@ function indexKnownRecord(
       indexEpochEvent(db, recordId, event, strictEpochConflicts);
     }
   }
+  const directJourneyEvent = record.type === "journey_event" ? recordValue(record.event) : record;
+  if (stringValue(directJourneyEvent.eventId)
+    && stringValue(directJourneyEvent.journeyId)
+    && stringValue(directJourneyEvent.eventType)) {
+    indexJourneyEvent(db, recordId, directJourneyEvent, strictEpochConflicts);
+  }
   if (record.type === "epoch_result_page" && isRecord(record.page)) {
-    const page = record.page;
-    const pageId = stringValue(page.pageId);
-    const createdAt = stringValue(page.createdAt);
-    const urlPath = stringValue(page.urlPath);
-    if (!pageId || !createdAt || !urlPath) return;
-    db.prepare(`
-      INSERT OR REPLACE INTO result_pages(page_id, created_at, url_path, record_id, page_json)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(pageId, createdAt, urlPath, recordId, JSON.stringify(page));
+    indexResultPage(db, recordId, record.page);
+  }
+  if (record.type === "agent_command_commit") {
+    indexCommandCommit(db, recordId, record, strictEpochConflicts);
+    const epochEvents = Array.isArray(record.epochEvents) ? record.epochEvents : [];
+    for (const event of epochEventsFromPersistenceRecord({ type: "epoch_event_batch", events: epochEvents })) {
+      indexEpochEvent(db, recordId, event, strictEpochConflicts);
+    }
+    const journeyEvents = Array.isArray(record.journeyEvents) ? record.journeyEvents : [];
+    for (const event of journeyEvents) {
+      if (!isRecord(event)) {
+        if (strictEpochConflicts) throw new Error("journey_event_index_invalid");
+        continue;
+      }
+      indexJourneyEvent(db, recordId, event, strictEpochConflicts);
+    }
+    const resultPages = Array.isArray(record.resultPages) ? record.resultPages : [];
+    for (const page of resultPages) if (isRecord(page)) indexResultPage(db, recordId, page);
   }
   const recordRunTicket = stringValue(record.runTicket);
   if (record.type === "ticket_issued" && recordRunTicket) {
@@ -252,6 +479,28 @@ function indexKnownRecord(
   }
 }
 
+function backfillSqliteIndexes(db: DatabaseSync) {
+  const rows = db.prepare(`
+    SELECT id, file_name, record_json
+    FROM jsonl_records
+    ORDER BY id ASC
+  `).all() as { id: number; file_name: string; record_json: string }[];
+  const recordsByFile = emptyKnownJsonlRecordFiles();
+  const parsedRows: { readonly id: number; readonly record: JsonRecord }[] = [];
+  for (const row of rows) {
+    const parsed: unknown = JSON.parse(row.record_json);
+    if (!isRecord(parsed)) continue;
+    if (Object.hasOwn(recordsByFile, row.file_name)) {
+      recordsByFile[row.file_name as KnownJsonlFileName].push(parsed);
+    }
+    parsedRows.push({ id: Number(row.id), record: parsed });
+  }
+  validateKnownJsonlRecordFiles(recordsByFile);
+  for (const row of parsedRows) {
+    indexKnownRecord(db, row.id, row.record, false);
+  }
+}
+
 async function readJsonlFile(filePath: string): Promise<JsonRecord[]> {
   try {
     const raw = await readFile(filePath, "utf8");
@@ -273,15 +522,24 @@ export async function migrateJsonlDataDirToSqlite({
   readonly sourceDataDir: string;
   readonly dbPath: string;
 }): Promise<SqliteMigrationSummary> {
+  const sourceEntries = await Promise.all(KNOWN_JSONL_FILES.map(async (fileName) => [
+    fileName,
+    await readJsonlFile(join(sourceDataDir, fileName)),
+  ] as const));
+  const sourceFiles = Object.fromEntries(sourceEntries) as MutableKnownJsonlRecordFiles;
+  validateKnownJsonlRecordFiles(sourceFiles);
+
   await ensureSqliteDir(dbPath);
   const db = openSqlite(dbPath);
   const files: Record<string, number> = {};
   let records = 0;
+  let transactionStarted = false;
   try {
     initializeSqliteSchema(db);
     db.exec("BEGIN");
+    transactionStarted = true;
     for (const fileName of KNOWN_JSONL_FILES) {
-      const fileRecords = await readJsonlFile(join(sourceDataDir, fileName));
+      const fileRecords = sourceFiles[fileName];
       files[fileName] = fileRecords.length;
       fileRecords.forEach((record, index) => {
         const recordId = insertJsonlRecord(db, fileName, index + 1, record);
@@ -290,8 +548,9 @@ export async function migrateJsonlDataDirToSqlite({
       records += fileRecords.length;
     }
     db.exec("COMMIT");
+    transactionStarted = false;
   } catch (error) {
-    db.exec("ROLLBACK");
+    if (transactionStarted) db.exec("ROLLBACK");
     throw error;
   } finally {
     db.close();
@@ -382,21 +641,6 @@ export async function loadAgentRuntimeOptionsFromSqlite(dbPath: string) {
   const files = Object.fromEntries(KNOWN_JSONL_FILES.map((fileName) => [
     fileName,
     readSqliteJsonlRecords(dbPath, fileName),
-  ]));
-  return hydrateAgentRuntimeOptions({
-    tickets: files["tickets.jsonl"],
-    runs: files["runs.jsonl"],
-    lore: files["lore.jsonl"],
-    progression: files["progression.jsonl"],
-    factions: files["factions.jsonl"],
-    community: files["community.jsonl"],
-    experience: files["experience.jsonl"],
-    transparency: files["transparency.jsonl"],
-    epochEvents: files["epoch-events.jsonl"],
-    journeyEvents: files["journey-events.jsonl"],
-    commandEvents: files["command-events.jsonl"],
-    resultPages: files["result-pages.jsonl"],
-    contextSnapshots: files["context-snapshots.jsonl"],
-    outbox: files["outbox.jsonl"],
-  });
+  ])) as MutableKnownJsonlRecordFiles;
+  return hydrateKnownJsonlRecordFiles(files);
 }

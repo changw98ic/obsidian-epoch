@@ -131,6 +131,49 @@ function dedupeCanonicalResultPages(values: readonly JsonRecord[]) {
     .map((entry) => entry.page);
 }
 
+export function validateCanonicalRecoveryConflicts({
+  epochEvents = [],
+  journeyEvents = [],
+  commandEvents = [],
+  resultPages = [],
+}: {
+  readonly epochEvents?: readonly object[];
+  readonly journeyEvents?: readonly object[];
+  readonly commandEvents?: readonly object[];
+  readonly resultPages?: readonly object[];
+} = {}) {
+  const commandRecords = commandEvents.map(recordValue);
+  dedupeCanonicalRecords(
+    commandRecords.filter((record) => nonEmptyString(record.commandId) && nonEmptyString(record.command)),
+    (record) => record.commandId,
+    "command_id",
+    "agent_command_commit_recovery_conflict",
+  );
+  dedupeCanonicalRecords([
+    ...epochEvents.map(recordValue).flatMap((record) => epochEventsFromPersistenceRecord(record)),
+    ...commandRecords.flatMap((record) => epochEventsFromPersistenceRecord({
+      type: "epoch_event_batch",
+      events: Array.isArray(record.epochEvents) ? record.epochEvents : [],
+    })),
+  ], (event) => event.eventId, "event_id", "epoch_event_recovery_conflict");
+  dedupeCanonicalRecords([
+    ...journeyEvents.map(recordValue).map((record) => record.type === "journey_event" ? record.event : record),
+    ...commandRecords.flatMap((record) => Array.isArray(record.journeyEvents) ? record.journeyEvents : []),
+  ]
+    .filter((event): event is JsonRecord => isRecord(event)
+      && nonEmptyString(event.eventId) !== undefined
+      && nonEmptyString(event.eventType) !== undefined
+      && nonEmptyString(event.journeyId) !== undefined
+      && nonEmptyString(event.agentId) !== undefined
+      && nonEmptyString(event.explorerId) !== undefined
+      && nonEmptyString(event.occurredAt) !== undefined),
+  (event) => event.eventId, "event_id", "journey_event_recovery_conflict");
+  dedupeCanonicalResultPages([
+    ...resultPages.map(recordValue).map((record) => record.type === "epoch_result_page" ? record.page : record),
+    ...commandRecords.flatMap((record) => Array.isArray(record.resultPages) ? record.resultPages : []),
+  ].filter((page): page is JsonRecord => isRecord(page) && nonEmptyString(page.pageId) !== undefined));
+}
+
 interface AgentCommandCommitRecord extends JsonRecord {
   readonly type: "agent_command_commit";
   readonly version: 1;
@@ -143,8 +186,11 @@ interface AgentCommandCommitRecord extends JsonRecord {
 
 const JOURNEY_SNAPSHOT_EVENT_TYPES = new Set([
   "journey_prepared",
+  "journey_world_window_reserved",
+  "journey_task_plan_installed",
   "journey_started",
   "journey_episode_recorded",
+  "journey_world_commit_recorded",
   "journey_verification_linked",
   "journey_status_changed",
 ]);

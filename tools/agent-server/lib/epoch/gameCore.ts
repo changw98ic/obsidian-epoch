@@ -11,6 +11,7 @@ import {
   type HostedActionRisk,
   type HostedActionRecordedPayload,
   type HostedSessionStartedPayload,
+  type JourneyWorldSolidifiedPayload,
   type ExperimentMainRuleReview,
   type NpcCandidateDecision,
   type NpcCandidateFlavorPublication,
@@ -32,6 +33,13 @@ import {
   type TurnResolvedPayload,
 } from "./events.ts";
 import { eventFactory } from "./eventFactory.ts";
+import {
+  advanceActorNeeds,
+  initialActorLifeGoal,
+  initialActorNeeds,
+  type EpochActorLifeGoal,
+  type EpochActorNeedsState,
+} from "./actorNeedsRules.ts";
 import {
   type EpochAnomalyMedia,
   type EpochAnomalyOutcome,
@@ -323,6 +331,12 @@ import {
   verifyJourneySceneActionSignature,
 } from "./journeySceneContractRules.ts";
 import {
+  resolveJourneyAction,
+  type JourneyActionResolution,
+} from "./journeyActionResolutionRules.ts";
+import { planJourneyWorldImpactEvents } from "./journeyWorldImpactRules.ts";
+import type { JourneyWorldCommit } from "./journeyRules.ts";
+import {
   planServerHostedJobCompletedEvents,
   planServerHostedJobQueuedEvents,
   planServerHostedJobSkippedEvents,
@@ -414,6 +428,7 @@ import {
   relationshipUpdatedPayload,
   planAgentNpcBondUpdateEvents,
   planHostedSocialHookSideEffectEvents,
+  planJourneyNpcRelationshipSolidificationEvents,
   planRelationshipUpdateEvents,
   isChildNpc,
 } from "./agentInteractionRules.ts";
@@ -585,6 +600,8 @@ export interface EpochAgentIdentity {
     readonly finalTitle?: string;
   };
   readonly personality: EpochAgentPersonality;
+  readonly needs?: EpochActorNeedsState;
+  readonly lifeGoal?: EpochActorLifeGoal;
   readonly createdAt: string;
 }
 
@@ -624,6 +641,8 @@ export interface EpochNpcRecord {
   readonly displayName: string;
   readonly regionId: string;
   readonly traits: readonly string[];
+  readonly needs?: EpochActorNeedsState;
+  readonly lifeGoal?: EpochActorLifeGoal;
   readonly createdAt: string;
   readonly lifecycle: readonly {
     readonly occurredAt: string;
@@ -1181,6 +1200,20 @@ export interface EpochRegionInfluenceChange {
   readonly sourceEventType: RegionInfluenceSourceEventType;
   readonly sourceAggregateId: string;
   readonly changedAt: string;
+  readonly worldMinute?: number;
+}
+
+export interface EpochAgentFactionStanding {
+  readonly standingId: string;
+  readonly agentId: string;
+  readonly explorerId: string;
+  readonly factionId: string;
+  readonly score: number;
+  readonly routeIds: readonly string[];
+  readonly journeyIds: readonly string[];
+  readonly sourceEventIds: readonly string[];
+  readonly updatedAt: string;
+  readonly worldMinute: number;
 }
 
 export interface EpochConflictTrace {
@@ -1518,6 +1551,7 @@ export interface EpochHostedActionRecord {
   readonly explanation: EpochActionExplanation;
   readonly visibleText?: string;
   readonly outcomeSummary: string;
+  readonly journeyResolution?: JourneyActionResolution;
   readonly reward?: EpochServerReward;
   readonly lifetimeDelta?: number;
   readonly nonEvidence?: boolean;
@@ -1734,6 +1768,9 @@ export interface EpochProjection {
   readonly seasonObjectiveIdsBySeason: Readonly<Record<string, readonly string[]>>;
   readonly seasonCampaignIdsByRegion: Readonly<Record<string, readonly string[]>>;
   readonly seasonCampaignIdsByFaction: Readonly<Record<string, readonly string[]>>;
+  readonly agentFactionStandings: Readonly<Record<string, EpochAgentFactionStanding>>;
+  readonly factionStandingIdsByAgent: Readonly<Record<string, readonly string[]>>;
+  readonly factionStandingIdsByFaction: Readonly<Record<string, readonly string[]>>;
   readonly regionInfluenceChanges: Readonly<Record<string, EpochRegionInfluenceChange>>;
   readonly regionInfluenceIdsByRegion: Readonly<Record<string, readonly string[]>>;
   readonly regionInfluenceIdsByAgent: Readonly<Record<string, readonly string[]>>;
@@ -2465,6 +2502,20 @@ export interface SubmitHostedActionInput {
   };
 }
 
+export interface SolidifyJourneyWorldInput {
+  readonly journeyId: string;
+  readonly agentId: string;
+  readonly regionId: string;
+  readonly completedObjectiveIds: readonly string[];
+  readonly requiredMainObjectiveIds: readonly string[];
+  readonly mirrorStartedAtWorldTime: string;
+  readonly mirrorEndedAtWorldTime: string;
+  readonly committedAtWorldTime: string;
+  readonly completionTier: "良好" | "完美" | "惊世";
+  readonly completionScoreBps: number;
+  readonly worldSliceHash?: `sha256:${string}`;
+}
+
 export interface QueueServerHostedJobInput {
   readonly agentId: string;
   readonly regionId: string;
@@ -2579,6 +2630,9 @@ function emptyProjection(): EpochProjection {
     seasonObjectiveIdsBySeason: {},
     seasonCampaignIdsByRegion: {},
     seasonCampaignIdsByFaction: {},
+    agentFactionStandings: {},
+    factionStandingIdsByAgent: {},
+    factionStandingIdsByFaction: {},
     regionInfluenceChanges: {},
     regionInfluenceIdsByRegion: {},
     regionInfluenceIdsByAgent: {},
@@ -2618,6 +2672,42 @@ function emptyProjection(): EpochProjection {
 
 function uniqueValues(values: readonly string[]): string[] {
   return values.filter((value, index) => value && values.indexOf(value) === index);
+}
+
+function currentProjectionWorldMinute(projection: EpochProjection): number {
+  for (let index = projection.events.length - 1; index >= 0; index -= 1) {
+    const event = projection.events[index];
+    if (event?.eventType === "world_clock_advanced") return event.payload.toWorldMinute;
+  }
+  return 0;
+}
+
+function currentAgentFactionStandingScore(
+  projection: EpochProjection,
+  agentId: string,
+  factionId: string | undefined,
+): number {
+  if (!factionId) return 0;
+  return (projection.factionStandingIdsByAgent[agentId] || [])
+    .map((standingId) => projection.agentFactionStandings[standingId])
+    .find((standing) => standing?.factionId === factionId)?.score ?? 0;
+}
+
+function journeyWorldCommitFromMarker(
+  event: Extract<EpochEvent, { readonly eventType: "journey_world_solidified" }>,
+): JourneyWorldCommit {
+  return {
+    mode: "mirror",
+    status: "solidified",
+    reason: "main_completed_and_returned",
+    regionId: event.payload.regionId,
+    committedAtWorldTime: event.payload.committedAtWorldTime ?? event.payload.mirrorEndedAtWorldTime,
+    influenceDelta: event.payload.influenceDelta,
+    factionStandings: event.payload.factionStandings,
+    npcRelationships: event.payload.npcRelationships,
+    commitEventId: event.eventId,
+    sourceEventIds: [...event.payload.effectEventIds, event.eventId],
+  };
 }
 
 function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjection {
@@ -2806,6 +2896,13 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
   const seasonCampaignIdsByFaction: Record<string, string[]> = Object.fromEntries(
     Object.entries(projection.seasonCampaignIdsByFaction).map(([factionId, seasonIds]) => [factionId, [...seasonIds]]),
   );
+  const agentFactionStandings = { ...projection.agentFactionStandings };
+  const factionStandingIdsByAgent: Record<string, string[]> = Object.fromEntries(
+    Object.entries(projection.factionStandingIdsByAgent).map(([agentId, standingIds]) => [agentId, [...standingIds]]),
+  );
+  const factionStandingIdsByFaction: Record<string, string[]> = Object.fromEntries(
+    Object.entries(projection.factionStandingIdsByFaction).map(([factionId, standingIds]) => [factionId, [...standingIds]]),
+  );
   const regionInfluenceChanges = { ...projection.regionInfluenceChanges };
   const regionInfluenceIdsByRegion: Record<string, string[]> = Object.fromEntries(
     Object.entries(projection.regionInfluenceIdsByRegion).map(([regionId, influenceIds]) => [regionId, [...influenceIds]]),
@@ -2872,8 +2969,58 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
   const abuseScores = { ...projection.abuseScores };
 
   switch (event.eventType) {
+    case "world_clock_advanced": {
+      for (const identity of Object.values(identities)) {
+        if (identity.status !== "active") continue;
+        const needs = identity.needs || initialActorNeeds("agent", identity.agentId, event.payload.fromWorldMinute);
+        const lifeGoal = identity.lifeGoal || initialActorLifeGoal({
+          actorKind: "agent",
+          actorId: identity.agentId,
+          descriptor: identity.identityName,
+          traits: identity.personality.traits,
+          worldMinute: event.payload.fromWorldMinute,
+        });
+        const advanced = advanceActorNeeds({
+          current: needs,
+          goal: lifeGoal,
+          elapsedWorldMinutes: event.payload.elapsedWorldMinutes,
+          toWorldMinute: event.payload.toWorldMinute,
+          downtimeMode: downtime[identity.agentId]?.active ? downtime[identity.agentId]?.mode : undefined,
+          sourceEventId: event.eventId,
+        });
+        identities[identity.agentId] = {
+          ...identity,
+          needs: advanced.needs,
+          lifeGoal: advanced.goal,
+        };
+      }
+      for (const npc of Object.values(npcs)) {
+        const needs = npc.needs || initialActorNeeds("npc", npc.npcId, event.payload.fromWorldMinute);
+        const lifeGoal = npc.lifeGoal || initialActorLifeGoal({
+          actorKind: "npc",
+          actorId: npc.npcId,
+          descriptor: npc.displayName,
+          traits: npc.traits,
+          worldMinute: event.payload.fromWorldMinute,
+        });
+        const advanced = advanceActorNeeds({
+          current: needs,
+          goal: lifeGoal,
+          elapsedWorldMinutes: event.payload.elapsedWorldMinutes,
+          toWorldMinute: event.payload.toWorldMinute,
+          sourceEventId: event.eventId,
+        });
+        npcs[npc.npcId] = {
+          ...npc,
+          needs: advanced.needs,
+          lifeGoal: advanced.goal,
+        };
+      }
+      break;
+    }
     case "identity_issued": {
       const payload = event.payload;
+      const worldMinute = currentProjectionWorldMinute(projection);
       identities[payload.agentId] = {
         agentId: payload.agentId,
         explorerId: payload.explorerId,
@@ -2884,9 +3031,17 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
         ...(payload.inheritance ? { inheritance: payload.inheritance } : {}),
         lifetime: payload.lifetime,
         personality: {
-          traits: [],
+          traits: payload.personalityTraits ?? [],
           driftIds: [],
         },
+        needs: initialActorNeeds("agent", payload.agentId, worldMinute),
+        lifeGoal: initialActorLifeGoal({
+          actorKind: "agent",
+          actorId: payload.agentId,
+          descriptor: payload.identityName,
+          traits: payload.personalityTraits ?? [],
+          worldMinute,
+        }),
         createdAt: event.createdAt,
       };
       lineage[payload.explorerId] = [...(lineage[payload.explorerId] || []), payload.agentId];
@@ -3147,12 +3302,21 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
       break;
     }
     case "npc_canonicalized": {
+      const worldMinute = currentProjectionWorldMinute(projection);
       npcs[event.payload.npcId] = {
         npcId: event.payload.npcId,
         npcKey: event.payload.npcKey,
         displayName: event.payload.displayName,
         regionId: event.payload.regionId,
         traits: event.payload.traits,
+        needs: initialActorNeeds("npc", event.payload.npcId, worldMinute),
+        lifeGoal: initialActorLifeGoal({
+          actorKind: "npc",
+          actorId: event.payload.npcId,
+          descriptor: event.payload.displayName,
+          traits: event.payload.traits,
+          worldMinute,
+        }),
         createdAt: event.createdAt,
         lifecycle: [],
       };
@@ -4521,6 +4685,31 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
       });
       break;
     }
+    case "agent_faction_standing_changed": {
+      const payload = event.payload;
+      const existing = agentFactionStandings[payload.standingId];
+      agentFactionStandings[payload.standingId] = {
+        standingId: payload.standingId,
+        agentId: payload.agentId,
+        explorerId: payload.explorerId,
+        factionId: payload.factionId,
+        score: payload.standingAfter,
+        routeIds: uniqueValues([...(existing?.routeIds || []), payload.routeId]),
+        journeyIds: uniqueValues([...(existing?.journeyIds || []), payload.journeyId]),
+        sourceEventIds: uniqueValues([...(existing?.sourceEventIds || []), payload.sourceEventId]),
+        updatedAt: payload.changedAt,
+        worldMinute: payload.worldMinute,
+      };
+      factionStandingIdsByAgent[payload.agentId] = uniqueValues([
+        ...(factionStandingIdsByAgent[payload.agentId] || []),
+        payload.standingId,
+      ]);
+      factionStandingIdsByFaction[payload.factionId] = uniqueValues([
+        ...(factionStandingIdsByFaction[payload.factionId] || []),
+        payload.standingId,
+      ]);
+      break;
+    }
     case "region_influence_changed": {
       const payload = event.payload;
       regionInfluenceChanges[payload.influenceId] = {
@@ -4535,6 +4724,7 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
         sourceEventType: payload.sourceEventType,
         sourceAggregateId: payload.sourceAggregateId,
         changedAt: payload.changedAt,
+        ...(payload.worldMinute === undefined ? {} : { worldMinute: payload.worldMinute }),
       };
       regionInfluenceIdsByRegion[payload.regionId] = [
         ...(regionInfluenceIdsByRegion[payload.regionId] || []),
@@ -5475,6 +5665,7 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
         explanation: event.payload.explanation,
         visibleText: event.payload.visibleText,
         outcomeSummary: event.payload.outcomeSummary,
+        ...(event.payload.journeyResolution ? { journeyResolution: event.payload.journeyResolution } : {}),
         reward: event.payload.reward,
         lifetimeDelta: event.payload.lifetimeDelta,
         nonEvidence: event.payload.nonEvidence,
@@ -5487,6 +5678,31 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
         actions: [...session.actions, action],
         completedAt: event.payload.recordedAt,
       };
+      if (session.sceneContract
+        && session.sceneContract.worldMode !== "mirror"
+        && event.payload.journeyResolution) {
+        addRegionActivityForEvent(regionActivities, regionActivityIdsByRegion, event, {
+          regionId: session.regionId,
+          kind: "journey",
+          agentId: event.payload.agentId,
+          title: session.sceneContract.taskObjective?.title || session.sceneContract.title,
+          summary: event.payload.outcomeSummary,
+          occurredAt: event.payload.recordedAt,
+          sourceEventType: "hosted_action_recorded",
+        });
+      }
+      break;
+    }
+    case "journey_world_solidified": {
+      addRegionActivityForEvent(regionActivities, regionActivityIdsByRegion, event, {
+        regionId: event.payload.regionId,
+        kind: "journey",
+        agentId: event.payload.agentId,
+        title: "镜像对局固化",
+        summary: `主线完成并安全返程；${event.payload.completedObjectiveIds.length} 项目标结果已写入真实世界，地区影响 +${event.payload.influenceDelta}，NPC 关系 ${event.payload.npcRelationships.length} 项。`,
+        occurredAt: event.payload.solidifiedAt,
+        sourceEventType: "journey_world_solidified",
+      });
       break;
     }
     case "abuse_score_changed": {
@@ -5639,6 +5855,9 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
     seasonObjectiveIdsBySeason,
     seasonCampaignIdsByRegion,
     seasonCampaignIdsByFaction,
+    agentFactionStandings,
+    factionStandingIdsByAgent,
+    factionStandingIdsByFaction,
     regionInfluenceChanges,
     regionInfluenceIdsByRegion,
     regionInfluenceIdsByAgent,
@@ -5838,6 +6057,28 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     const nextProjection = applyEvents(projection(), nextEvents);
     events = [...nextProjection.events];
     return { events: nextEvents, value, projection: nextProjection };
+  }
+
+  function ingestCanonicalEvents(nextEvents: readonly EpochEvent[]): EpochProjection {
+    if (nextEvents.length === 0) return projection();
+    const current = projection();
+    const eventsById = new Map(current.events.map((event) => [event.eventId, event]));
+    const freshEvents: EpochEvent[] = [];
+    for (const event of nextEvents) {
+      const existing = eventsById.get(event.eventId);
+      if (existing) {
+        if (JSON.stringify(existing) !== JSON.stringify(event)) {
+          throw new Error(`epoch_event_id_conflict:${event.eventId}`);
+        }
+        continue;
+      }
+      eventsById.set(event.eventId, event);
+      freshEvents.push(event);
+    }
+    if (freshEvents.length === 0) return current;
+    const nextProjection = applyEvents(current, freshEvents);
+    events = [...nextProjection.events];
+    return nextProjection;
   }
 
   function issueIdentity(input: IssueIdentityInput, context: EpochCommandContext): EpochCommandResult<EpochAgentIdentity> {
@@ -9261,6 +9502,8 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     const actionOptionId = assertNonEmptyString(input.actionOptionId, "hosted_action_option_id");
     const option = session.actionOptions.find((candidate) => candidate.actionOptionId === actionOptionId);
     if (!option) throw new Error("hosted_action_option_not_found");
+    const signedJourneyAction = session.sceneContract?.actionOptions.find((candidate) =>
+      candidate.actionOptionId === actionOptionId);
     if (session.sceneContract) {
       const validation = input.journeyValidation;
       if (!validation) throw new Error("journey_scene_commit_required");
@@ -9272,12 +9515,10 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       if (clock().getTime() > Date.parse(session.sceneContract.expiresAt)) {
         throw new Error("journey_scene_contract_expired");
       }
-      const signedAction = session.sceneContract.actionOptions.find((candidate) =>
-        candidate.actionOptionId === actionOptionId);
-      if (!signedAction || !verifyJourneySceneActionSignature({
+      if (!signedJourneyAction || !verifyJourneySceneActionSignature({
         agentId: session.agentId,
         contract: session.sceneContract,
-        action: signedAction,
+        action: signedJourneyAction,
       })) {
         throw new Error("journey_scene_action_signature_invalid");
       }
@@ -9287,6 +9528,61 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       reward: option.reward,
       lifetimeDelta: option.lifetimeDelta,
     });
+    const journeyPreparationScore = session.sceneContract
+      ? Math.min(16, Object.values(current.hostedSessions).reduce((score, priorSession) => {
+          const priorContract = priorSession.sceneContract;
+          if (!priorContract || priorContract.journeyId !== session.sceneContract?.journeyId) return score;
+          const objectiveKind = priorContract.taskObjective?.kind;
+          if (objectiveKind !== "main" && objectiveKind !== "side") return score;
+          const completed = priorSession.actions.some((action) =>
+            action.journeyResolution?.completionKind === "complete");
+          if (!completed) return score;
+          return score + (objectiveKind === "side" ? 8 : 6);
+        }, 0))
+      : 0;
+    const journeyResolution = session.sceneContract && signedJourneyAction?.taskObjectiveId
+      ? resolveJourneyAction({
+          agentId: session.agentId,
+          journeyId: session.sceneContract.journeyId,
+          episodeId: session.sceneContract.episodeId,
+          actionOptionId: signedJourneyAction.actionOptionId,
+          actionLabel: signedJourneyAction.label,
+          objectiveTitle: session.sceneContract.taskObjective?.title ?? "该目标",
+          locationLabel: session.sceneContract.location.label,
+          successOutcomeSummary: option.outcomeSummary,
+          risk: signedJourneyAction.risk,
+          objectiveKind: session.sceneContract.taskObjective?.kind,
+          journeyPreparationScore,
+          ...(signedJourneyAction.completionKind === "skip" ? { signedCompletionKind: "skip" as const } : {}),
+          identity: {
+            lifetime: identity.lifetime,
+            traits: identity.personality.traits,
+            ...(identity.needs ? { needs: identity.needs } : {}),
+            ...(identity.lifeGoal ? { lifeGoal: identity.lifeGoal } : {}),
+          },
+          resources: current.resourceBalances[session.agentId] ?? {},
+          inventoryItems: (current.inventoryItemIdsByAgent[session.agentId] ?? [])
+            .map((itemId) => current.inventoryItems[itemId])
+            .filter((item): item is EpochInventoryItem => Boolean(item)),
+          participantTargetCount: signedJourneyAction.targetEntityIds.filter((targetId) =>
+            session.sceneContract?.participants.some((participant) => participant.id === targetId)).length,
+        })
+      : undefined;
+    const completedJourneyObjective = journeyResolution?.completionKind === "complete"
+      ? session.sceneContract?.taskObjective
+      : undefined;
+    const journeySideBonus = completedJourneyObjective?.kind === "side" ? 1 : 0;
+    const journeyRiskPremium = journeyResolution?.riskPremium?.amount ?? 0;
+    const journeyObjectiveReward = completedJourneyObjective && (journeySideBonus > 0 || journeyRiskPremium > 0)
+      ? {
+          resourceId: "coin" as const,
+          amount: journeySideBonus + journeyRiskPremium,
+          reason: journeyRiskPremium > 0
+            ? `journey_risk_reward:${session.sceneContract?.journeyId}:${completedJourneyObjective.objectiveId}:${signedJourneyAction?.risk}`
+            : `journey_side_objective:${session.sceneContract?.journeyId}:${completedJourneyObjective.objectiveId}`,
+        }
+      : undefined;
+    const actionReward = journeyObjectiveReward ?? settlement.reward;
     const recordedAt = serverIsoTime(clock);
     const actionId = idFactory("action", `record:${sessionId}:${actionOptionId}`);
     const responseEnvelopeId = idFactory("challenge", `${actionId}:${recordedAt}:hosted-action`);
@@ -9320,23 +9616,68 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       } : undefined,
       explanation: option.explanation,
       visibleText: input.visibleText,
-      outcomeSummary: option.outcomeSummary,
-      reward: settlement.reward,
+      outcomeSummary: journeyResolution?.summary ?? option.outcomeSummary,
+      ...(journeyResolution ? { journeyResolution } : {}),
+      reward: actionReward,
       lifetimeDelta: settlement.lifetimeDelta,
       nonEvidence: settlement.nonEvidence,
       recordedAt,
       sideEffectEvents: (actionRecorded) => {
-        if (!option.socialHookId) return [];
+        const sideEffects: EpochEvent[] = [];
+        const resourceCost = journeyResolution?.resourceCost;
+        if (resourceCost?.paid) {
+          const balance = currentBalance(current, session.agentId, resourceCost.resourceId);
+          if (balance < resourceCost.amount) throw new Error("journey_action_cost_state_invalid");
+          sideEffects.push(resourceSpentEvent(makeEvent, session.agentId, {
+            resourceId: resourceCost.resourceId,
+            amount: resourceCost.amount,
+            reason: `journey_action_cost:${session.sceneContract?.journeyId}:${session.sceneContract?.taskObjective?.objectiveId}`,
+            balanceAfter: balance - resourceCost.amount,
+          }));
+        }
+        if (journeyResolution && signedJourneyAction?.taskObjectiveId
+          && session.sceneContract?.taskObjective
+          && session.sceneContract.worldMode !== "mirror") {
+          sideEffects.push(...planJourneyWorldImpactEvents({
+            makeEvent,
+            idFactory,
+            regionId: session.regionId,
+            agentId: session.agentId,
+            explorerId: session.explorerId,
+            identityName: identity.identityName,
+            journeyId: session.sceneContract.journeyId,
+            episodeId: session.sceneContract.episodeId,
+            objectiveId: signedJourneyAction.taskObjectiveId,
+            objectiveKind: session.sceneContract.taskObjective.kind,
+            objectiveTitle: session.sceneContract.taskObjective.title,
+            actionLabel: signedJourneyAction.label,
+            actionRisk: signedJourneyAction.risk,
+            allowedEffectKinds: signedJourneyAction.allowedEffectKinds,
+            resolution: journeyResolution,
+            previousInfluenceScore: currentRegionInfluenceScore(current, session.regionId, session.agentId),
+            previousFactionStandingScore: currentAgentFactionStandingScore(
+              current,
+              session.agentId,
+              signedJourneyAction.routeSelection?.factionObjectId,
+            ),
+            routeSelection: signedJourneyAction.routeSelection,
+            sourceEventId: actionRecorded.eventId,
+            sourceAggregateId: session.sessionId,
+            recordedAt,
+            worldMinute: currentProjectionWorldMinute(current),
+          }));
+        }
+        if (!option.socialHookId || session.sceneContract?.worldMode === "mirror") return sideEffects;
         const hook = current.socialHooks[option.socialHookId];
         if (!hook) throw new Error("social_hook_not_found");
-        if (!hook.npcId) return [];
+        if (!hook.npcId) return sideEffects;
         const npc = current.npcs[hook.npcId];
         if (!npc) throw new Error("npc_not_found");
         const bondId = idFactory("agent_npc_bond", `${session.agentId}:${hook.npcId}:friend`);
         const previousScore = current.agentNpcBonds[bondId]?.score || 0;
         const memoryId = idFactory("npc_memory", `${hook.npcId}:${actionId}:social_hook`);
         const influenceId = idFactory("region_influence", `${hook.regionId}:${session.agentId}:${actionId}:social_hook`);
-        return planHostedSocialHookSideEffectEvents({
+        sideEffects.push(...planHostedSocialHookSideEffectEvents({
           makeEvent,
           bondId,
           memoryId,
@@ -9356,7 +9697,8 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
           sourceEventId: actionRecorded.eventId,
           sourceAggregateId: session.sessionId,
           recordedAt,
-        });
+        }));
+        return sideEffects;
       },
       balanceBefore: (targetAgentId, resourceId) => currentBalance(current, targetAgentId, resourceId),
       lifetimeEventsForDelta: ({ delta, reason, finalTitle }) =>
@@ -9366,6 +9708,301 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     const recorded = nextProjection.hostedSessions[sessionId].actions.find((action) => action.actionId === actionId);
     if (!recorded) throw new Error("hosted_action_projection_failed");
     return commit(nextEvents, recorded);
+  }
+
+  function solidifyJourneyWorld(
+    input: SolidifyJourneyWorldInput,
+    context: EpochCommandContext,
+  ): EpochCommandResult<JourneyWorldCommit> {
+    const trustClass = requireServerTrust(context, "journey_world_solidification_requires_server_trust");
+    const current = projection();
+    const journeyId = assertNonEmptyString(input.journeyId, "journey_id");
+    const agentId = assertNonEmptyString(input.agentId, "agent_id");
+    const regionId = assertNonEmptyString(input.regionId, "region_id");
+    const identity = requireIdentity(current, agentId);
+    const existingMarker = current.events.find((event): event is Extract<EpochEvent, {
+      readonly eventType: "journey_world_solidified";
+    }> => event.eventType === "journey_world_solidified"
+      && event.payload.journeyId === journeyId
+      && event.payload.agentId === agentId);
+    if (existingMarker) {
+      return { events: [], value: journeyWorldCommitFromMarker(existingMarker), projection: current };
+    }
+
+    const completedObjectiveIds = uniqueValues(input.completedObjectiveIds
+      .map((objectiveId) => assertNonEmptyString(objectiveId, "journey_completed_objective_id")));
+    const requiredMainObjectiveIds = uniqueValues(input.requiredMainObjectiveIds
+      .map((objectiveId) => assertNonEmptyString(objectiveId, "journey_required_main_objective_id")));
+    if (!requiredMainObjectiveIds.length
+      || requiredMainObjectiveIds.some((objectiveId) => !completedObjectiveIds.includes(objectiveId))) {
+      throw new Error("journey_main_line_incomplete");
+    }
+    const mirrorStartedAtWorldTime = assertNonEmptyString(
+      input.mirrorStartedAtWorldTime,
+      "journey_mirror_started_at_world_time",
+    );
+    const mirrorEndedAtWorldTime = assertNonEmptyString(
+      input.mirrorEndedAtWorldTime,
+      "journey_mirror_ended_at_world_time",
+    );
+    const committedAtWorldTime = assertNonEmptyString(
+      input.committedAtWorldTime,
+      "journey_committed_at_world_time",
+    );
+    if (!Number.isFinite(Date.parse(mirrorStartedAtWorldTime))
+      || !Number.isFinite(Date.parse(mirrorEndedAtWorldTime))
+      || !Number.isFinite(Date.parse(committedAtWorldTime))
+      || Date.parse(mirrorEndedAtWorldTime) <= Date.parse(mirrorStartedAtWorldTime)
+      || Date.parse(committedAtWorldTime) < Date.parse(mirrorEndedAtWorldTime)) {
+      throw new Error("journey_mirror_time_window_invalid");
+    }
+    if (!["良好", "完美", "惊世"].includes(input.completionTier)) {
+      throw new Error("journey_canon_quality_below_threshold");
+    }
+    if (!Number.isSafeInteger(input.completionScoreBps)
+      || input.completionScoreBps < 0
+      || input.completionScoreBps > 10_000) {
+      throw new Error("journey_completion_score_invalid");
+    }
+    if (input.worldSliceHash !== undefined && !/^sha256:[0-9a-f]{64}$/u.test(input.worldSliceHash)) {
+      throw new Error("journey_world_slice_hash_invalid");
+    }
+
+    const journeySessions = Object.values(current.hostedSessions).filter((session) =>
+      session.agentId === agentId
+      && session.regionId === regionId
+      && session.sceneContract?.journeyId === journeyId
+      && session.sceneContract.worldMode === "mirror");
+    const returnSession = journeySessions.find((session) =>
+      session.sceneContract?.phase === "return" && session.actions.length > 0);
+    const returnAction = returnSession?.actions.at(-1);
+    const returnSourceEvent = returnAction
+      ? current.events.find((event): event is Extract<EpochEvent, { readonly eventType: "hosted_action_recorded" }> =>
+          event.eventType === "hosted_action_recorded" && event.payload.actionId === returnAction.actionId)
+      : undefined;
+    if (!returnSession || !returnAction || !returnSourceEvent) {
+      throw new Error("journey_safe_return_evidence_required");
+    }
+
+    const evidenceByObjectiveId = new Map<string, {
+      readonly session: EpochHostedSession;
+      readonly action: EpochHostedActionRecord;
+      readonly actionEvent: Extract<EpochEvent, { readonly eventType: "hosted_action_recorded" }>;
+      readonly signedAction: JourneySceneContract["actionOptions"][number];
+    }>();
+    for (const session of journeySessions) {
+      const contract = session.sceneContract;
+      const objectiveId = contract?.taskObjective?.objectiveId;
+      if (!contract || !objectiveId || !completedObjectiveIds.includes(objectiveId)) continue;
+      const action = session.actions.find((candidate) =>
+        candidate.journeyResolution?.authority === "server"
+        && candidate.journeyResolution.completionKind === "complete");
+      if (!action) continue;
+      const signedAction = contract.actionOptions.find((candidate) =>
+        candidate.actionOptionId === action.actionOptionId
+        && candidate.taskObjectiveId === objectiveId);
+      const actionEvent = current.events.find((event): event is Extract<EpochEvent, {
+        readonly eventType: "hosted_action_recorded";
+      }> => event.eventType === "hosted_action_recorded"
+        && event.payload.actionId === action.actionId
+        && event.correlationId === context.correlationId);
+      if (!signedAction || !actionEvent || actionEvent.payload.journeyResolution?.completionKind !== "complete") continue;
+      evidenceByObjectiveId.set(objectiveId, { session, action, actionEvent, signedAction });
+    }
+    if (completedObjectiveIds.includes("legacy_main") && !evidenceByObjectiveId.has("legacy_main")) {
+      const session = journeySessions.find((candidate) =>
+        candidate.sceneContract?.phase === "main"
+        && !candidate.sceneContract.taskObjective
+        && candidate.actions.length > 0);
+      const action = session?.actions.at(-1);
+      const signedAction = action && session?.sceneContract?.actionOptions.find((candidate) =>
+        candidate.actionOptionId === action.actionOptionId);
+      const actionEvent = action
+        ? current.events.find((event): event is Extract<EpochEvent, {
+            readonly eventType: "hosted_action_recorded";
+          }> => event.eventType === "hosted_action_recorded"
+            && event.payload.actionId === action.actionId
+            && event.correlationId === context.correlationId)
+        : undefined;
+      if (session && action && signedAction && actionEvent) {
+        evidenceByObjectiveId.set("legacy_main", { session, action, actionEvent, signedAction });
+      }
+    }
+    if (completedObjectiveIds.some((objectiveId) => !evidenceByObjectiveId.has(objectiveId))) {
+      throw new Error("journey_completed_objective_evidence_missing");
+    }
+    if (requiredMainObjectiveIds.some((objectiveId) => !evidenceByObjectiveId.has(objectiveId))) {
+      throw new Error("journey_main_line_evidence_missing");
+    }
+
+    const solidifiedAt = serverIsoTime(clock);
+    const makeEvent = eventFactory(clock, idFactory, { ...context, trustClass });
+    const effectEvents: EpochEvent[] = [];
+    let workingProjection = current;
+    const orderedEvidence = completedObjectiveIds.map((objectiveId) =>
+      evidenceByObjectiveId.get(objectiveId) as NonNullable<ReturnType<typeof evidenceByObjectiveId.get>>);
+    for (const evidence of orderedEvidence) {
+      const contract = evidence.session.sceneContract as JourneySceneContract;
+      const objective = contract.taskObjective;
+      const resolution = evidence.action.journeyResolution;
+      if (!objective || !resolution) continue;
+      const planned = planJourneyWorldImpactEvents({
+        makeEvent,
+        idFactory,
+        regionId,
+        agentId,
+        explorerId: identity.explorerId,
+        identityName: identity.identityName,
+        journeyId,
+        episodeId: contract.episodeId,
+        objectiveId: objective.objectiveId,
+        objectiveKind: objective.kind,
+        objectiveTitle: objective.title,
+        actionLabel: evidence.signedAction.label,
+        actionRisk: evidence.signedAction.risk,
+        allowedEffectKinds: evidence.signedAction.allowedEffectKinds,
+        resolution,
+        previousInfluenceScore: currentRegionInfluenceScore(workingProjection, regionId, agentId),
+        previousFactionStandingScore: currentAgentFactionStandingScore(
+          workingProjection,
+          agentId,
+          evidence.signedAction.routeSelection?.factionObjectId,
+        ),
+        routeSelection: evidence.signedAction.routeSelection,
+        sourceEventId: evidence.actionEvent.eventId,
+        sourceAggregateId: evidence.session.sessionId,
+        recordedAt: solidifiedAt,
+        worldMinute: currentProjectionWorldMinute(workingProjection),
+      });
+      effectEvents.push(...planned);
+      workingProjection = applyEvents(workingProjection, planned);
+    }
+
+    const contacts = new Map<string, {
+      readonly displayName: string;
+      readonly sourceEventIds: string[];
+      readonly risks: HostedActionRisk[];
+      readonly objectiveTitles: string[];
+    }>();
+    for (const evidence of orderedEvidence) {
+      const contract = evidence.session.sceneContract as JourneySceneContract;
+      const participants = contract.participants.filter((participant) =>
+        participant.type.toLowerCase() === "npc" || participant.type.toLowerCase() === "person");
+      const targeted = participants.filter((participant) =>
+        evidence.signedAction.targetEntityIds.includes(participant.id));
+      for (const participant of targeted.length ? targeted : participants) {
+        const key = stableKey(`${regionId}:${participant.label}`);
+        const prior = contacts.get(key) ?? {
+          displayName: participant.label,
+          sourceEventIds: [],
+          risks: [],
+          objectiveTitles: [],
+        };
+        contacts.set(key, {
+          displayName: prior.displayName,
+          sourceEventIds: uniqueValues([...prior.sourceEventIds, evidence.actionEvent.eventId]),
+          risks: [...prior.risks, evidence.signedAction.risk],
+          objectiveTitles: uniqueValues([
+            ...prior.objectiveTitles,
+            contract.taskObjective?.title || contract.title,
+          ]),
+        });
+      }
+    }
+
+    const npcRelationships: JourneyWorldSolidifiedPayload["npcRelationships"][number][] = [];
+    for (const [npcKey, contact] of [...contacts].sort(([left], [right]) => left.localeCompare(right, "en-US"))) {
+      let npcId = workingProjection.npcIdsByKey[npcKey];
+      if (!npcId) {
+        npcId = idFactory("npc", npcKey);
+        const canonicalEvents = planNpcCanonicalizedEvents({
+          makeEvent,
+          npcId,
+          npcKey,
+          displayName: contact.displayName,
+          regionId,
+          traits: ["journey_contact"],
+          sourceEventId: contact.sourceEventIds[0],
+        });
+        effectEvents.push(...canonicalEvents);
+        workingProjection = applyEvents(workingProjection, canonicalEvents);
+      }
+      const npc = workingProjection.npcs[npcId];
+      if (!npc) throw new Error("journey_npc_canonicalization_failed");
+      assertChildNpcBondAllowed(npc, "friend");
+      const bondId = idFactory("agent_npc_bond", `${agentId}:${npcId}:friend`);
+      const previousScore = workingProjection.agentNpcBonds[bondId]?.score ?? 0;
+      const memoryId = idFactory("npc_memory", `${npcId}:${journeyId}:mirror-solidified`);
+      const relationship = planJourneyNpcRelationshipSolidificationEvents({
+        makeEvent,
+        bondId,
+        memoryId,
+        journeyId,
+        agentId,
+        explorerId: identity.explorerId,
+        npcId,
+        npcRegionId: npc.regionId,
+        npcDisplayName: npc.displayName,
+        identityName: identity.identityName,
+        previousScore,
+        risks: contact.risks,
+        objectiveTitles: contact.objectiveTitles,
+        sourceEventIds: contact.sourceEventIds,
+        recordedAt: solidifiedAt,
+      });
+      effectEvents.push(...relationship.events);
+      workingProjection = applyEvents(workingProjection, relationship.events);
+      npcRelationships.push({
+        npcId,
+        displayName: npc.displayName,
+        bondId,
+        scoreDelta: relationship.scoreDelta,
+        scoreAfter: relationship.scoreAfter,
+        memoryId,
+      });
+    }
+
+    const factionStandings = effectEvents.flatMap((event) => event.eventType === "agent_faction_standing_changed"
+      ? [{
+          factionId: event.payload.factionId,
+          routeId: event.payload.routeId,
+          standingDelta: event.payload.standingDelta,
+          standingAfter: event.payload.standingAfter,
+        }]
+      : []);
+    const influenceDelta = effectEvents.reduce((total, event) =>
+      total + (event.eventType === "region_influence_changed" ? event.payload.influenceDelta : 0), 0);
+    const sourceEventIds = uniqueValues([
+      ...orderedEvidence.map((evidence) => evidence.actionEvent.eventId),
+      returnSourceEvent.eventId,
+    ]);
+    const markerPayload: JourneyWorldSolidifiedPayload = {
+      journeyId,
+      agentId,
+      explorerId: identity.explorerId,
+      regionId,
+      completedObjectiveIds,
+      requiredMainObjectiveIds,
+      mirrorStartedAtWorldTime,
+      mirrorEndedAtWorldTime,
+      committedAtWorldTime,
+      completionTier: input.completionTier,
+      completionScoreBps: input.completionScoreBps,
+      ...(input.worldSliceHash ? { worldSliceHash: input.worldSliceHash } : {}),
+      influenceDelta,
+      factionStandings,
+      npcRelationships,
+      sourceEventIds,
+      effectEventIds: effectEvents.map((event) => event.eventId),
+      solidifiedAt,
+    };
+    const marker = makeEvent("journey_world_solidified", journeyId, markerPayload, {
+      aggregateType: "agent_identity",
+      agentId,
+    }) as Extract<EpochEvent, { readonly eventType: "journey_world_solidified" }>;
+    const nextEvents = [...effectEvents, marker];
+    const nextProjection = applyEvents(current, nextEvents);
+    return commit(nextEvents, journeyWorldCommitFromMarker(marker));
   }
 
   function queueServerHostedJob(input: QueueServerHostedJobInput, context: EpochCommandContext): EpochCommandResult<EpochServerHostedJob> {
@@ -9453,6 +10090,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
   return {
     project: projection,
     events: () => [...events],
+    ingestCanonicalEvents,
     identitySlots,
     issueIdentity,
     rotateExplorerRecovery,
@@ -9539,6 +10177,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     resolveTurnCard,
     startHostedSession,
     submitHostedAction,
+    solidifyJourneyWorld,
     queueServerHostedJob,
     canRunServerHostedJobOption,
     completeServerHostedJob,

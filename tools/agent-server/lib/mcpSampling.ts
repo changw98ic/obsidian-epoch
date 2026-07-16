@@ -1,7 +1,9 @@
 import {
   buildMcpSamplingCreateMessageParams,
+  buildMcpTaskSamplingCreateMessageParams,
   McpSamplingSchemaError,
   parseJourneySamplingResult,
+  parseJourneyTaskSamplingResult,
   type JourneySamplingDecision,
   type McpSamplingCreateMessageInput,
 } from "./mcpSamplingSchemas.ts";
@@ -37,6 +39,19 @@ export type McpSamplingOutcome = {
 } | {
   readonly ok: false;
   readonly source: "sampling_advice";
+  readonly trust: "untrusted_client";
+  readonly fallback: McpSamplingFallback;
+};
+
+export type McpTaskSamplingOutcome = {
+  readonly ok: true;
+  readonly source: "task_plan_sampling";
+  readonly trust: "untrusted_client";
+  readonly proposal: unknown;
+  readonly audit: { readonly model?: string; readonly stopReason?: string };
+} | {
+  readonly ok: false;
+  readonly source: "task_plan_sampling";
   readonly trust: "untrusted_client";
   readonly fallback: McpSamplingFallback;
 };
@@ -138,6 +153,68 @@ export class McpSamplingClient {
         if (!(error instanceof McpSamplingSchemaError)) throw error;
         this.#audit("sampling_terminal", { fallback: "invalid_result", schemaError: error.code });
         return failure("invalid_result");
+      }
+    } finally {
+      permit.release();
+    }
+  }
+
+  async createTaskPlanMessage(
+    input: McpSamplingCreateMessageInput,
+    context: McpSamplingCallContext,
+  ): Promise<McpTaskSamplingOutcome> {
+    const failed = (fallback: McpSamplingFallback): McpTaskSamplingOutcome => Object.freeze({
+      ok: false,
+      source: "task_plan_sampling",
+      trust: "untrusted_client",
+      fallback,
+    });
+    if (!context.activeClientRequest) return failed("not_active_client_request");
+    try {
+      this.#session.assertInitialized();
+    } catch (error: unknown) {
+      if (error instanceof McpSessionError) return failed("session_not_initialized");
+      throw error;
+    }
+    if (!this.#session.supportsClientCapability("sampling")) return failed("capability_absent");
+    const permit = this.#limiter.acquire(input.maxTokens);
+    if ("denied" in permit) return failed("rate_limited");
+    try {
+      let wireResult: unknown;
+      try {
+        wireResult = await this.#requestManager.request(
+          "sampling/createMessage",
+          buildMcpTaskSamplingCreateMessageParams(input),
+          {
+            signal: context.signal,
+            softTimeoutMs: context.softTimeoutMs,
+            absoluteTimeoutMs: context.absoluteTimeoutMs,
+          },
+        );
+      } catch (error: unknown) {
+        if (!(error instanceof McpServerRequestError)) throw error;
+        const fallback = remoteFallback(error);
+        this.#audit("task_plan_sampling_terminal", { fallback });
+        return failed(fallback);
+      }
+      try {
+        const parsed = parseJourneyTaskSamplingResult(wireResult);
+        this.#audit("task_plan_sampling_terminal", {
+          outcome: "success",
+          ...(parsed.audit.model ? { model: parsed.audit.model } : {}),
+          ...(parsed.audit.stopReason ? { stopReason: parsed.audit.stopReason } : {}),
+        });
+        return Object.freeze({
+          ok: true,
+          source: "task_plan_sampling",
+          trust: "untrusted_client",
+          proposal: parsed.proposal,
+          audit: parsed.audit,
+        });
+      } catch (error: unknown) {
+        if (!(error instanceof McpSamplingSchemaError)) throw error;
+        this.#audit("task_plan_sampling_terminal", { fallback: "invalid_result", schemaError: error.code });
+        return failed("invalid_result");
       }
     } finally {
       permit.release();

@@ -12,6 +12,16 @@ export const MCP_SAMPLING_LIMITS = Object.freeze({
   maxStopSequenceChars: 64,
 });
 
+export const MCP_TASK_SAMPLING_LIMITS = Object.freeze({
+  ...MCP_SAMPLING_LIMITS,
+  maxMessageChars: 12_000,
+  maxTotalMessageChars: 24_000,
+  maxSystemPromptChars: 8_000,
+  maxTokens: 8_192,
+  maxResultChars: 32_768,
+  maxDecisionDepth: 10,
+});
+
 export type McpSamplingRole = "assistant" | "user";
 
 export interface McpSamplingTextMessage {
@@ -111,8 +121,17 @@ function buildModelPreferences(value: McpSamplingModelPreferences | undefined) {
   };
 }
 
-export function buildMcpSamplingCreateMessageParams(input: McpSamplingCreateMessageInput): JsonRecord {
-  if (!Array.isArray(input.messages) || input.messages.length === 0 || input.messages.length > MCP_SAMPLING_LIMITS.maxMessages) {
+function buildMcpSamplingCreateMessageParamsWithLimits(
+  input: McpSamplingCreateMessageInput,
+  limits: Readonly<{
+    maxMessages: number;
+    maxMessageChars: number;
+    maxTotalMessageChars: number;
+    maxSystemPromptChars: number;
+    maxTokens: number;
+  }>,
+): JsonRecord {
+  if (!Array.isArray(input.messages) || input.messages.length === 0 || input.messages.length > limits.maxMessages) {
     failRequest("messages");
   }
   let totalChars = 0;
@@ -120,14 +139,14 @@ export function buildMcpSamplingCreateMessageParams(input: McpSamplingCreateMess
     if (!isRecord(message) || (message.role !== "user" && message.role !== "assistant")) {
       failRequest(`messages[${index}].role`);
     }
-    const text = boundedText(message.text, `messages[${index}].text`, MCP_SAMPLING_LIMITS.maxMessageChars);
+    const text = boundedText(message.text, `messages[${index}].text`, limits.maxMessageChars);
     totalChars += text.length;
     return { role: message.role, content: { type: "text", text } };
   });
-  if (totalChars > MCP_SAMPLING_LIMITS.maxTotalMessageChars) failRequest("messages.totalChars");
+  if (totalChars > limits.maxTotalMessageChars) failRequest("messages.totalChars");
 
   const maxTokens = input.maxTokens ?? 512;
-  if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > MCP_SAMPLING_LIMITS.maxTokens) failRequest("maxTokens");
+  if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > limits.maxTokens) failRequest("maxTokens");
   if (input.temperature !== undefined
     && (typeof input.temperature !== "number" || !Number.isFinite(input.temperature) || input.temperature < 0 || input.temperature > 2)) {
     failRequest("temperature");
@@ -144,7 +163,7 @@ export function buildMcpSamplingCreateMessageParams(input: McpSamplingCreateMess
     maxTokens,
     includeContext: "none",
     ...(input.systemPrompt === undefined ? {} : {
-      systemPrompt: boundedText(input.systemPrompt, "systemPrompt", MCP_SAMPLING_LIMITS.maxSystemPromptChars),
+      systemPrompt: boundedText(input.systemPrompt, "systemPrompt", limits.maxSystemPromptChars),
     }),
     ...(input.modelPreferences === undefined ? {} : { modelPreferences: buildModelPreferences(input.modelPreferences) }),
     ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
@@ -152,14 +171,22 @@ export function buildMcpSamplingCreateMessageParams(input: McpSamplingCreateMess
   };
 }
 
-function assertJsonDepth(value: unknown, depth: number): void {
-  if (depth > MCP_SAMPLING_LIMITS.maxDecisionDepth) failResult("decision.depth");
+export function buildMcpSamplingCreateMessageParams(input: McpSamplingCreateMessageInput): JsonRecord {
+  return buildMcpSamplingCreateMessageParamsWithLimits(input, MCP_SAMPLING_LIMITS);
+}
+
+export function buildMcpTaskSamplingCreateMessageParams(input: McpSamplingCreateMessageInput): JsonRecord {
+  return buildMcpSamplingCreateMessageParamsWithLimits(input, MCP_TASK_SAMPLING_LIMITS);
+}
+
+function assertJsonDepth(value: unknown, depth: number, maxDepth: number = MCP_SAMPLING_LIMITS.maxDecisionDepth): void {
+  if (depth > maxDepth) failResult("decision.depth");
   if (!value || typeof value !== "object") return;
   if (Array.isArray(value)) {
-    for (const entry of value) assertJsonDepth(entry, depth + 1);
+    for (const entry of value) assertJsonDepth(entry, depth + 1, maxDepth);
     return;
   }
-  for (const entry of Object.values(value)) assertJsonDepth(entry, depth + 1);
+  for (const entry of Object.values(value)) assertJsonDepth(entry, depth + 1, maxDepth);
 }
 
 const DECISION_FIELDS = new Set(["actionOptionId", "rationale", "userFacingMessage", "confidence"]);
@@ -208,6 +235,49 @@ export function parseJourneySamplingResult(value: unknown): ParsedJourneySamplin
       ...(userFacingMessage === undefined ? {} : { userFacingMessage }),
       confidence: decoded.confidence,
     }),
+    audit: Object.freeze({
+      ...(typeof value.model === "string" ? { model: value.model } : {}),
+      ...(typeof value.stopReason === "string" ? { stopReason: value.stopReason } : {}),
+    }),
+  });
+}
+
+export interface ParsedJourneyTaskSamplingResult {
+  readonly proposal: unknown;
+  readonly audit: {
+    readonly model?: string;
+    readonly stopReason?: string;
+  };
+}
+
+export function parseJourneyTaskSamplingResult(value: unknown): ParsedJourneyTaskSamplingResult {
+  if (!isRecord(value)) failResult("result");
+  for (const field of Object.keys(value)) if (!RESULT_FIELDS.has(field)) failResult(`result.${field}`);
+  if (value.role !== "assistant") failResult("result.role");
+  if (!isRecord(value.content) || value.content.type !== "text") {
+    throw new McpSamplingSchemaError("sampling_result_not_text", { field: "result.content" });
+  }
+  for (const field of Object.keys(value.content)) if (!CONTENT_FIELDS.has(field)) failResult(`result.content.${field}`);
+  if (typeof value.content.text !== "string") failResult("result.content.text");
+  if (value.content.text.length > MCP_TASK_SAMPLING_LIMITS.maxResultChars) {
+    throw new McpSamplingSchemaError("sampling_result_too_large");
+  }
+  const trimmed = value.content.text.trim();
+  if (!trimmed || trimmed.includes("```") || !trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    failResult("result.content.text.strictJson");
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(trimmed);
+  } catch {
+    failResult("result.content.text.json");
+  }
+  assertJsonDepth(decoded, 0, MCP_TASK_SAMPLING_LIMITS.maxDecisionDepth);
+  if (!isRecord(decoded)) failResult("taskProposal");
+  if (value.model !== undefined && typeof value.model !== "string") failResult("result.model");
+  if (value.stopReason !== undefined && typeof value.stopReason !== "string") failResult("result.stopReason");
+  return Object.freeze({
+    proposal: decoded,
     audit: Object.freeze({
       ...(typeof value.model === "string" ? { model: value.model } : {}),
       ...(typeof value.stopReason === "string" ? { stopReason: value.stopReason } : {}),

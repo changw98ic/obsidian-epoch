@@ -182,6 +182,8 @@ function envelopeForJourneyEpisode(
   verificationUrlPath?: string,
 ): AgentInteractionEnvelope | undefined {
   if (!episode.fingerprint.participantIds.includes(targetAgentId) || journey.agentId === targetAgentId) return undefined;
+  const selectedTargetIds = episode.serverFacts?.storyBeat?.selectedAction.targetEntityIds ?? [];
+  if (episode.generatedTaskObjective && !selectedTargetIds.includes(targetAgentId)) return undefined;
   const sourceEventIds = boundedUnique(episode.serverFacts?.sourceEventIds
     ?? episode.settlement?.canonicalEventIds
     ?? [episode.episodeId]);

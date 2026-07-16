@@ -48,6 +48,13 @@ import type {
   TraceConflictServerEffect,
 } from "./traceConflictRules.ts";
 import type { JourneySceneContract } from "./journeySceneContractRules.ts";
+import type { JourneyActionResolution } from "./journeyActionResolutionRules.ts";
+import type {
+  EpochWorldCommodityLedger,
+  EpochWorldSimulationFlowSummary,
+  EpochWorldSimulationSignals,
+  EpochWorldSimulationSnapshot,
+} from "./worldSimulationRules.ts";
 
 export interface EpochEventEnvelope<TType extends EpochEventType, TPayload> {
   readonly eventId: string;
@@ -64,6 +71,85 @@ export interface EpochEventEnvelope<TType extends EpochEventType, TPayload> {
   readonly payload: TPayload;
 }
 
+export interface WorldClockInitializedPayload {
+  readonly clockId: string;
+  readonly worldMinute: number;
+  readonly worldTime: string;
+  readonly ruleVersion: string;
+  /** Present for server-elapsed clocks; absent on persisted v1 manual clocks. */
+  readonly timeBasis?: "server_elapsed";
+  readonly speedRatio?: number;
+  readonly serverEpochAt?: string;
+  readonly timelineCycleYears?: number;
+  readonly commandHash?: `sha256:${string}`;
+}
+
+export interface WorldClockAdvancedPayload {
+  readonly clockId: string;
+  readonly fromWorldMinute: number;
+  readonly toWorldMinute: number;
+  readonly fromWorldTime: string;
+  readonly toWorldTime: string;
+  readonly elapsedWorldMinutes: number;
+  readonly reason: string;
+  readonly processedDomains: readonly string[];
+  readonly sourceEventIds: readonly string[];
+  readonly ruleVersion: string;
+  readonly commandHash: `sha256:${string}`;
+  /** Present on v2 events so replay does not depend on process-local boot state. */
+  readonly timeBasis?: "server_elapsed";
+  readonly speedRatio?: number;
+  readonly serverEpochAt?: string;
+  readonly timelineCycleYears?: number;
+  readonly crossedTimelineCycleIds?: readonly string[];
+}
+
+export interface WorldSimulationInitializedPayload {
+  readonly simulationId: string;
+  readonly worldMinute: number;
+  readonly worldContentSourceHash: `sha256:${string}`;
+  readonly ruleVersion: string;
+  readonly snapshot: EpochWorldSimulationSnapshot;
+}
+
+export interface WorldSimulationAdvancedPayload {
+  readonly simulationId: string;
+  readonly fromWorldMinute: number;
+  readonly toWorldMinute: number;
+  readonly elapsedWorldMinutes: number;
+  readonly sourceClockEventId: string;
+  readonly sourceEventIds: readonly string[];
+  readonly worldContentSourceHash: `sha256:${string}`;
+  readonly ruleVersion: string;
+  readonly commandHash: `sha256:${string}`;
+  readonly previousStateHash: `sha256:${string}`;
+  readonly signals?: EpochWorldSimulationSignals;
+  readonly nextStateHash?: `sha256:${string}`;
+  readonly nextVersion?: number;
+  readonly checkpoint?: boolean;
+  readonly snapshot?: EpochWorldSimulationSnapshot;
+  readonly flows: EpochWorldSimulationFlowSummary;
+}
+
+export interface WorldSimulationContentMigratedPayload {
+  readonly simulationId: string;
+  readonly worldMinute: number;
+  readonly fromWorldContentSourceHash: `sha256:${string}`;
+  readonly toWorldContentSourceHash: `sha256:${string}`;
+  readonly ruleVersion: string;
+  readonly commandHash: `sha256:${string}`;
+  readonly previousStateHash: `sha256:${string}`;
+  readonly nextStateHash: `sha256:${string}`;
+  readonly regionSuccessors: Readonly<Record<string, string>>;
+  readonly factionSuccessors: Readonly<Record<string, string>>;
+  readonly genesisCommodityDelta: EpochWorldCommodityLedger;
+  readonly genesisReserveDelta: EpochWorldCommodityLedger;
+  readonly genesisCoinDelta: number;
+  readonly reroutedShipmentCount: number;
+  readonly forcedArrivalCount: number;
+  readonly snapshot: EpochWorldSimulationSnapshot;
+}
+
 export interface IdentityIssuedPayload {
   readonly agentId: string;
   readonly explorerId: string;
@@ -73,6 +159,7 @@ export interface IdentityIssuedPayload {
   readonly status: EpochIdentityStatus;
   readonly previousAgentId?: string;
   readonly inheritance?: EpochLineageInheritance;
+  readonly personalityTraits?: readonly string[];
   readonly lifetime: {
     readonly max: number;
     readonly remaining: number;
@@ -978,6 +1065,58 @@ export interface RegionInfluenceChangedPayload {
   readonly sourceEventType: RegionInfluenceSourceEventType;
   readonly sourceAggregateId: string;
   readonly changedAt: string;
+  /** Canonical game time when available; legacy events may omit it. */
+  readonly worldMinute?: number;
+}
+
+export interface AgentFactionStandingChangedPayload {
+  readonly standingId: string;
+  readonly agentId: string;
+  readonly explorerId: string;
+  readonly factionId: string;
+  readonly standingDelta: number;
+  readonly standingAfter: number;
+  readonly journeyId: string;
+  readonly episodeId: string;
+  readonly objectiveId: string;
+  readonly routeId: string;
+  readonly sourceEventId: string;
+  readonly changedAt: string;
+  readonly worldMinute: number;
+}
+
+export interface JourneyWorldSolidifiedPayload {
+  readonly journeyId: string;
+  readonly agentId: string;
+  readonly explorerId: string;
+  readonly regionId: string;
+  readonly completedObjectiveIds: readonly string[];
+  readonly requiredMainObjectiveIds: readonly string[];
+  readonly mirrorStartedAtWorldTime: string;
+  readonly mirrorEndedAtWorldTime: string;
+  /** Canonical shared-world time when this historical mirror was accepted. */
+  readonly committedAtWorldTime?: string;
+  readonly completionTier?: "良好" | "完美" | "惊世";
+  readonly completionScoreBps?: number;
+  readonly worldSliceHash?: `sha256:${string}`;
+  readonly influenceDelta: number;
+  readonly factionStandings: readonly {
+    readonly factionId: string;
+    readonly routeId: string;
+    readonly standingDelta: number;
+    readonly standingAfter: number;
+  }[];
+  readonly npcRelationships: readonly {
+    readonly npcId: string;
+    readonly displayName: string;
+    readonly bondId: string;
+    readonly scoreDelta: number;
+    readonly scoreAfter: number;
+    readonly memoryId: string;
+  }[];
+  readonly sourceEventIds: readonly string[];
+  readonly effectEventIds: readonly string[];
+  readonly solidifiedAt: string;
 }
 
 export type TraceSourceEventType = RegionInfluenceSourceEventType | "bounty_claimed" | "diplomacy_responded";
@@ -1477,6 +1616,8 @@ export interface HostedActionRecordedPayload {
   readonly explanation: EpochActionExplanation;
   readonly visibleText?: string;
   readonly outcomeSummary: string;
+  /** Server-authored generated-task result. Absent on legacy/non-journey hosted actions. */
+  readonly journeyResolution?: JourneyActionResolution;
   readonly reward?: EpochServerReward;
   readonly lifetimeDelta?: number;
   readonly nonEvidence?: boolean;
@@ -1685,6 +1826,11 @@ export interface LoreTargetAdjudicatedPayload {
 }
 
 export interface EpochEventPayloadMap {
+  readonly world_clock_initialized: WorldClockInitializedPayload;
+  readonly world_clock_advanced: WorldClockAdvancedPayload;
+  readonly world_simulation_initialized: WorldSimulationInitializedPayload;
+  readonly world_simulation_advanced: WorldSimulationAdvancedPayload;
+  readonly world_simulation_content_migrated: WorldSimulationContentMigratedPayload;
   readonly identity_issued: IdentityIssuedPayload;
   readonly explorer_recovery_rotated: ExplorerRecoveryRotatedPayload;
   readonly lifetime_adjusted: LifetimeAdjustedPayload;
@@ -1741,6 +1887,8 @@ export interface EpochEventPayloadMap {
   readonly season_objective_completed: SeasonObjectiveCompletedPayload;
   readonly season_campaign_resolved: SeasonCampaignResolvedPayload;
   readonly season_resolved: SeasonResolvedPayload;
+  readonly agent_faction_standing_changed: AgentFactionStandingChangedPayload;
+  readonly journey_world_solidified: JourneyWorldSolidifiedPayload;
   readonly region_influence_changed: RegionInfluenceChangedPayload;
   readonly trace_created: TraceCreatedPayload;
   readonly trace_conflict_deployed: TraceConflictDeployedPayload;

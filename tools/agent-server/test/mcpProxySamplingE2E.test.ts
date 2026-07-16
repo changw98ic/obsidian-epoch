@@ -126,7 +126,10 @@ test("local Host through package proxy completes remote Streamable HTTP Sampling
     const verificationUrl = status.finalVerification.page.urlPath;
     const verification = await fetch(`${baseUrl}${verificationUrl}`);
     assert.equal(verification.status, 200);
-    assert.match(await verification.text(), /从旅途中寄来/);
+    const verificationHtml = await verification.text();
+    assert.match(verificationHtml, /这是一份面向玩家的完整故事/);
+    assert.match(verificationHtml, /完整故事报告/);
+    assert.doesNotMatch(verificationHtml, /从旅途中寄来|历程时间线/);
   } finally {
     lines.close();
     child.stdin.destroy();

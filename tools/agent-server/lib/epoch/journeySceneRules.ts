@@ -1,5 +1,10 @@
 import type { JourneyMandate } from "./journeyPolicyRules.ts";
+import type { EpochResourceId } from "./protocol.ts";
 import type { PersistedJourneyNarrative, ServerJourneyEpisodeFacts } from "./journeyNarrativeRules.ts";
+import type {
+  JourneyGeneratedTaskObjective,
+  JourneyGeneratedTaskPlan,
+} from "./journeyGeneratedTaskRules.ts";
 import {
   JOURNEY_SCENE_CATALOG,
   JOURNEY_SCENE_TYPES,
@@ -73,17 +78,22 @@ export interface JourneySceneCandidate {
   readonly routine: boolean;
 }
 
-export type JourneyEpisodePhase = "arrival" | "main" | "return";
+export type JourneyEpisodePhase = "arrival" | "main" | "side" | "return";
 
 export interface JourneySceneEpisode extends Omit<JourneySceneCandidate, "candidateId" | "score" | "scoreReasons"> {
   readonly episodeId: string;
   readonly candidateId: string;
   readonly phase?: JourneyEpisodePhase;
+  readonly generatedTaskObjective?: JourneyGeneratedTaskObjective;
   readonly settlement?: {
     readonly canonicalEventIds: readonly string[];
     readonly outcomeSummary?: string;
+    readonly taskObjective?: {
+      readonly objectiveId: string;
+      readonly completionKind: "complete" | "failed" | "skip";
+    };
     readonly reward?: {
-      readonly resourceId?: string;
+      readonly resourceId?: EpochResourceId;
       readonly amount?: number;
     };
   };
@@ -116,7 +126,7 @@ function matches(entry: JourneySceneCatalogEntry, value: string): boolean {
 }
 
 function enabledForObject(entry: JourneySceneCatalogEntry, object: JourneyAvailableWorldObject): boolean {
-  if (object.sceneTypes?.includes(entry.type)) return true;
+  if (object.sceneTypes) return object.sceneTypes.includes(entry.type);
   if (entry.objectTypes.includes(object.type.toLocaleLowerCase("en-US"))) return true;
   return matches(entry, `${object.type} ${object.label} ${(object.tags ?? []).join(" ")}`);
 }
@@ -214,8 +224,14 @@ function candidateFor(
   routine: boolean,
 ): JourneySceneCandidate {
   const scored = scoreCandidate(entry, object, input);
-  const supportingObjects = entry.type === "livelihood"
-    ? [
+  const routeTag = object.tags?.find((tag) => tag.startsWith("journey_route:"));
+  const supportingObjects = routeTag
+    ? input.availableWorldObjects.filter((candidate) =>
+        candidate.id !== object.id
+        && candidate.regionId === object.regionId
+        && candidate.tags?.includes(routeTag))
+    : entry.type === "livelihood"
+      ? [
         input.availableWorldObjects.find((candidate) =>
           candidate.type.toLocaleLowerCase("en-US") === "organization"
           && (candidate.regionId ?? input.region.id) === input.region.id
@@ -224,8 +240,12 @@ function candidateFor(
           candidate.type.toLocaleLowerCase("en-US") === "npc"
           && (candidate.regionId ?? input.region.id) === input.region.id
           && candidate.id !== object.id),
-      ].filter((candidate): candidate is JourneyAvailableWorldObject => Boolean(candidate))
-    : [];
+        ...input.availableWorldObjects.filter((candidate) =>
+          candidate.type.toLocaleLowerCase("en-US") === "document"
+          && (candidate.regionId ?? input.region.id) === input.region.id
+          && candidate.id !== object.id),
+        ].filter((candidate): candidate is JourneyAvailableWorldObject => Boolean(candidate))
+      : [];
   const supportingParticipants = supportingObjects.filter((candidate) =>
     ["npc", "agent"].includes(candidate.type.toLocaleLowerCase("en-US")));
   const sources = cleaned([
@@ -317,7 +337,11 @@ function journeyPhaseEpisode(input: {
 }): JourneySceneEpisode {
   const arrival = input.phase === "arrival";
   const optionIds = arrival
-    ? ["enter_gray_harbor", "review_arrival_route", "turn_back_before_entry"]
+    ? [
+        input.region.id === "region_gray_harbor" ? "enter_gray_harbor" : "enter_destination",
+        "review_arrival_route",
+        "turn_back_before_entry",
+      ]
     : ["return_by_known_route", "record_verified_facts", "wait_for_safe_departure"];
   const outcomeKey = arrival ? "arrival_recorded" : "return_recorded";
   const candidateId = `scene:${input.phase}:${input.region.id}`;
@@ -369,5 +393,68 @@ export function generateThreePhaseJourneySceneEpisodes(input: JourneySceneGenera
     candidates,
     episodes,
     usedRoutineFallback: episodes.some((episode) => episode.routine),
+  };
+}
+
+export function generateTaskPlanJourneySceneEpisodes(input: {
+  readonly plan: JourneyGeneratedTaskPlan;
+  readonly region: JourneyRegionContext;
+  readonly availableWorldObjects: readonly JourneyAvailableWorldObject[];
+}): JourneyScenePlan {
+  if (!validObject(input.region)) {
+    return { status: "no_verifiable_world_object", candidates: [], episodes: [], usedRoutineFallback: false };
+  }
+  const objectsById = new Map([
+    [input.region.id, input.region as JourneyAvailableWorldObject],
+    ...input.availableWorldObjects.map((object) => [object.id, object] as const),
+  ]);
+  const objectiveEpisodes = input.plan.objectives.map((objective, objectiveIndex): JourneySceneEpisode => {
+    const objects = objective.worldObjectIds.map((objectId) => objectsById.get(objectId));
+    if (objects.some((object) => !object)) throw new Error("journey_task_episode_object_missing");
+    const groundedObjects = objects.filter((object): object is JourneyAvailableWorldObject => Boolean(object));
+    const refs = [...new Map([
+      [input.region.id, ref(input.region)],
+      ...groundedObjects.map((object) => [object.id, ref(object)] as const),
+    ]).values()];
+    const sourceFactIds = cleaned([
+      ...input.region.sourceFactIds,
+      ...groundedObjects.flatMap((object) => object.sourceFactIds),
+    ]);
+    const optionIds = cleaned([
+      ...objective.actions.map((action) => action.optionKey),
+      `skip_${objective.objectiveId}`,
+    ]);
+    const phase = objective.kind === "side" ? "side" : "main";
+    const candidateId = `scene:task:${objective.objectiveId}`;
+    return {
+      episodeId: `episode:${objectiveIndex + 2}:${candidateId}`,
+      candidateId,
+      phase,
+      type: objective.sceneType,
+      title: objective.title,
+      worldObjectRefs: refs,
+      sourceFactIds,
+      optionIds,
+      outcomeKey: `task_objective:${objective.objectiveId}`,
+      fingerprint: {
+        locationId: objective.locationId,
+        participantIds: cleaned(groundedObjects.flatMap((object) => object.participantIds ?? [])),
+        optionIds,
+        outcomeKey: `task_objective:${objective.objectiveId}`,
+      },
+      routine: false,
+      generatedTaskObjective: objective,
+    };
+  });
+  const episodes: readonly JourneySceneEpisode[] = [
+    journeyPhaseEpisode({ phase: "arrival", index: 1, region: input.region }),
+    ...objectiveEpisodes,
+    journeyPhaseEpisode({ phase: "return", index: objectiveEpisodes.length + 2, region: input.region }),
+  ];
+  return {
+    status: "ready",
+    candidates: [],
+    episodes,
+    usedRoutineFallback: false,
   };
 }

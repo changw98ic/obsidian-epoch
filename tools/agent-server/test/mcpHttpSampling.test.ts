@@ -243,18 +243,26 @@ test("Streamable HTTP carries nested Sampling request and response on one MCP se
 
     const commandRecords = writes.get("command-events.jsonl") || [];
     assert.ok(commandRecords.length >= 1, "Journey and Epoch events must share durable command envelopes");
+    const durableJourneyStages = commandRecords
+      .filter((record) => record.command === "obsidian_epoch.start_journey"
+        || record.command === "obsidian_epoch.propose_journey_step"
+        || record.command === "obsidian_epoch.commit_journey_action");
     assert.deepEqual(
-      commandRecords
-        .map((record) => record.command)
-        .filter((command) => command === "obsidian_epoch.start_journey"
-          || command === "obsidian_epoch.propose_journey_step"
-          || command === "obsidian_epoch.commit_journey_action"),
+      durableJourneyStages.map((record) => record.command),
       [
+        "obsidian_epoch.start_journey",
         "obsidian_epoch.start_journey",
         "obsidian_epoch.commit_journey_action",
       ],
-      "Host Sampling must commit each durable local mutation stage once without holding a transaction across the remote await",
+      "Host Sampling must commit the frozen world window before model I/O, then commit journey start and action without holding a transaction across a remote await",
     );
+    const firstStartEventTypes = (durableJourneyStages[0]?.journeyEvents as Array<{ eventType?: string }> || [])
+      .map((event) => event.eventType);
+    const secondStartEventTypes = (durableJourneyStages[1]?.journeyEvents as Array<{ eventType?: string }> || [])
+      .map((event) => event.eventType);
+    assert.ok(firstStartEventTypes.includes("journey_world_window_reserved"));
+    assert.ok(!firstStartEventTypes.includes("journey_started"));
+    assert.ok(secondStartEventTypes.includes("journey_started"));
     const persistedJourneyEventIds = [
       ...(writes.get("journey-events.jsonl") || []).map((record) => (record.event as Record<string, unknown>).eventId),
       ...commandRecords.flatMap((record) => (record.journeyEvents as Record<string, unknown>[]).map((event) => event.eventId)),

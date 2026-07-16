@@ -1,7 +1,12 @@
 import type { JourneyProjection } from "./journeyReadModel.ts";
 import { journeyNarrativeText } from "./journeyNarrativeRules.ts";
+import { buildGroundedJourneyStoryReport } from "./journeyStoryReport.ts";
+import { buildJourneyInteractionLog } from "./journeyInteractionLog.ts";
+import { buildJourneyMission } from "./journeyMissionReadModel.ts";
+import type { EpochJourney } from "./journeyRules.ts";
+import type { GroundedJourneyStoryReport } from "./journeyStoryReport.ts";
 
-export const OBSIDIAN_WORLD_CALENDAR_VERSION = "obsidian-world-calendar-v1" as const;
+export const OBSIDIAN_WORLD_CALENDAR_VERSION = "obsidian-world-calendar-v2" as const;
 
 export interface JourneyPostcard {
   readonly postcardId: string;
@@ -56,7 +61,15 @@ export function journeyPostcards(projection: JourneyProjection, agentId: string)
   return postcards.sort((left, right) => left.worldTime.localeCompare(right.worldTime) || left.episodeId.localeCompare(right.episodeId));
 }
 
-export function buildJourneyAlbum(projection: JourneyProjection, agentId: string) {
+export interface BuildJourneyAlbumOptions {
+  readonly storyReportForJourney?: (journey: EpochJourney) => GroundedJourneyStoryReport | undefined;
+}
+
+export function buildJourneyAlbum(
+  projection: JourneyProjection,
+  agentId: string,
+  options: BuildJourneyAlbumOptions = {},
+) {
   const journeys = Object.values(projection.journeys)
     .filter((record) => record.journey.agentId === agentId)
     .sort((left, right) => (left.journey.startedAtWorldTime || "").localeCompare(right.journey.startedAtWorldTime || ""));
@@ -64,11 +77,41 @@ export function buildJourneyAlbum(projection: JourneyProjection, agentId: string
   return {
     calendarVersion: OBSIDIAN_WORLD_CALENDAR_VERSION,
     agentId,
-    journeys: journeys.map((record) => ({
-      ...record,
-      episodes: record.journey.episodeIds.map((episodeId) => projection.episodes[episodeId]).filter(Boolean),
-      postcards: postcards.filter((postcard) => postcard.journeyId === record.journey.journeyId),
-    })),
+    journeys: journeys.map((record) => {
+      const episodes = record.journey.episodeIds.map((episodeId) => projection.episodes[episodeId]).filter(Boolean);
+      const mission = buildJourneyMission({
+        journeyId: record.journey.journeyId,
+        journeyStatus: record.journey.status,
+        playerObjective: record.journey.mandate.objective,
+        regionId: record.journey.destinationRegionId,
+        episodes,
+        taskPlan: record.journey.taskPlan,
+        hiddenTaskSeal: projection.hiddenTaskSeals[record.journey.journeyId],
+      });
+      const storyReport = options.storyReportForJourney?.(record.journey) ?? buildGroundedJourneyStoryReport({
+        journeyId: record.journey.journeyId,
+        status: record.journey.status,
+        objective: record.journey.mandate.objective,
+        regionId: record.journey.destinationRegionId,
+        startedAtWorldTime: record.journey.startedAtWorldTime,
+        dueAtWorldTime: record.journey.dueAtWorldTime,
+        worldCommit: record.journey.worldCommit,
+        episodes,
+        taskPlan: record.journey.taskPlan,
+        hiddenTaskSeal: projection.hiddenTaskSeals[record.journey.journeyId],
+      });
+      return {
+        ...record,
+        episodes,
+        mission,
+        interactionLog: buildJourneyInteractionLog({
+          journeyId: record.journey.journeyId,
+          episodes,
+        }),
+        postcards: postcards.filter((postcard) => postcard.journeyId === record.journey.journeyId),
+        ...(storyReport ? { storyReport } : {}),
+      };
+    }),
     postcards,
   };
 }

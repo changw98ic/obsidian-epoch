@@ -202,6 +202,7 @@ test("epoch maintenance tick processes queued server-hosted jobs through operato
       idFactory: createSequentialEpochIdFactory("maintenance_server_jobs"),
       operatorKey: "maintenance-server-jobs-key",
     },
+    worldClock: { nowReal: time.clock },
   });
   const persisted: { fileName: string; record: unknown }[] = [];
   const persistJsonl = async (fileName: string, record: unknown) => {
@@ -240,6 +241,7 @@ test("epoch maintenance tick processes queued server-hosted jobs through operato
     runOnStart: false,
     operatorKey: "maintenance-server-jobs-key",
   };
+  time.set("2026-06-25T00:01:00.000Z");
 
   const summary = await runEpochMaintenanceTick({
     runtime,
@@ -251,6 +253,12 @@ test("epoch maintenance tick processes queued server-hosted jobs through operato
   assert.equal(summary.serverHostedJobs.completed, 1);
   assert.equal(summary.serverHostedJobs.skipped, 0);
   assert.ok(summary.serverHostedJobs.events >= 1);
+  assert.equal(summary.worldClock?.events, 2);
+  assert.equal(summary.worldSimulation?.events, 2);
+  assert.equal(summary.worldSimulation?.regions, 25);
+  assert.equal(summary.worldSimulation?.factions, 18);
+  assert.ok((summary.worldSimulation?.tradeCoinTransferred || 0) >= 0);
+  assert.equal(runtime.epochWorldState().initialized, true);
   assert.equal(runtime.epochServerHostedJobs({
     operatorKey: "maintenance-server-jobs-key",
     agentId,
@@ -262,6 +270,7 @@ test("epoch maintenance tick processes queued server-hosted jobs through operato
     status: "completed",
   }).jobs.length, 1);
   assert.ok(persisted.some((entry) => ((entry.record as { event?: { eventType?: string } }).event?.eventType) === "server_hosted_job_completed"));
+  assert.ok(persisted.some((entry) => ((entry.record as { event?: { eventType?: string } }).event?.eventType) === "world_simulation_advanced"));
 });
 
 test("server-hosted jobs skip cleanly when their queued option is no longer legal", () => {

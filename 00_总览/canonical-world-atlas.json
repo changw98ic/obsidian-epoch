@@ -1,0 +1,260 @@
+{
+  "schemaVersion": 1,
+  "loreVersion": "black-obsidian-atlas-v1",
+  "worldTimeOrigin": "0412-01-01T00:00:00",
+  "layers": [
+    { "id": "layer_surface_city", "label": "地表城市层" },
+    { "id": "layer_surface_ecology", "label": "地表生态层" },
+    { "id": "layer_underground", "label": "地下层" },
+    { "id": "layer_deep_sea", "label": "深海层" },
+    { "id": "layer_sky_orbit", "label": "高空低轨层" },
+    { "id": "layer_alien_dimension", "label": "异维异常层" }
+  ],
+  "places": [
+    {
+      "id": "region_reflective_city",
+      "label": "镜面城",
+      "kind": "settlement",
+      "layerId": "layer_surface_city",
+      "parentId": null,
+      "jurisdictionIds": ["civic_reflective_city"],
+      "tags": ["population_center", "trade", "memory_industry", "playable_vertical_slice"]
+    },
+    {
+      "id": "region_data_alley",
+      "label": "数据巷",
+      "kind": "district",
+      "layerId": "layer_surface_city",
+      "parentId": "region_reflective_city",
+      "jurisdictionIds": ["civic_reflective_city", "community_data_alley"],
+      "tags": ["housing", "data_labor", "black_market"]
+    },
+    {
+      "id": "region_holographic_theater",
+      "label": "全息剧场",
+      "kind": "site",
+      "layerId": "layer_surface_city",
+      "parentId": "region_reflective_city",
+      "jurisdictionIds": ["civic_reflective_city", "coop_holographic_theater"],
+      "tags": ["workplace", "culture", "news"]
+    },
+    {
+      "id": "region_city_pipes",
+      "label": "城市管道",
+      "kind": "district",
+      "layerId": "layer_underground",
+      "parentId": "region_reflective_city",
+      "jurisdictionIds": ["civic_reflective_city", "community_pipe_nests"],
+      "tags": ["water", "maintenance", "underground_transit"]
+    },
+    {
+      "id": "region_quantum_laboratory",
+      "label": "量子实验室",
+      "kind": "site",
+      "layerId": "layer_surface_city",
+      "parentId": "region_reflective_city",
+      "jurisdictionIds": ["civic_reflective_city", "union_quantum_research"],
+      "tags": ["research", "restricted", "probability"]
+    },
+    {
+      "id": "region_probability_greenhouse",
+      "label": "概率温室",
+      "kind": "site",
+      "layerId": "layer_surface_city",
+      "parentId": "region_reflective_city",
+      "jurisdictionIds": ["civic_reflective_city", "coop_probability_agriculture"],
+      "tags": ["food", "medicine", "research"]
+    },
+    {
+      "id": "region_prism_waters",
+      "label": "棱镜水域",
+      "kind": "macro_region",
+      "layerId": "layer_surface_ecology",
+      "parentId": null,
+      "jurisdictionIds": ["civic_reflective_city", "guild_tide_navigation"],
+      "tags": ["water_source", "shipping", "prism_material"]
+    },
+    {
+      "id": "region_salt_gate",
+      "label": "盐门",
+      "kind": "settlement",
+      "layerId": "layer_surface_city",
+      "parentId": null,
+      "jurisdictionIds": ["civic_salt_gate"],
+      "tags": ["trade_gate", "food_import", "inspection"]
+    },
+    {
+      "id": "region_salt_mirror_coast",
+      "label": "盐镜海岸",
+      "kind": "macro_region",
+      "layerId": "layer_surface_ecology",
+      "parentId": null,
+      "jurisdictionIds": ["coastal_town_leagues", "faction_serpent_ring"],
+      "tags": ["salt", "fishery", "shipping", "outer_monitoring"]
+    },
+    {
+      "id": "region_trench",
+      "label": "深沟",
+      "kind": "macro_region",
+      "layerId": "layer_deep_sea",
+      "parentId": null,
+      "jurisdictionIds": ["tide_clans", "deep_sea_exclusion_zone"],
+      "tags": ["deep_sea", "dream_tide", "outer_ruins"]
+    },
+    {
+      "id": "region_deepsea_carcass",
+      "label": "深海尸骸",
+      "kind": "site",
+      "layerId": "layer_deep_sea",
+      "parentId": "region_trench",
+      "jurisdictionIds": ["tide_clans", "deep_sea_exclusion_zone"],
+      "tags": ["ecology", "salvage", "ritual", "outer_signal"]
+    },
+    {
+      "id": "region_forest",
+      "label": "腐林",
+      "kind": "macro_region",
+      "layerId": "layer_surface_ecology",
+      "parentId": null,
+      "jurisdictionIds": ["faction_hundred_forms", "forest_border_towns"],
+      "tags": ["ecology", "hunting", "medicine", "timber"]
+    },
+    {
+      "id": "region_shanhai_forest",
+      "label": "山海森林",
+      "kind": "site",
+      "layerId": "layer_surface_ecology",
+      "parentId": "region_forest",
+      "jurisdictionIds": ["faction_hundred_forms", "forest_conservation_compact"],
+      "tags": ["conservation", "trial", "medicine", "biodiversity"]
+    },
+    {
+      "id": "region_wet_valley",
+      "label": "湿谷",
+      "kind": "site",
+      "layerId": "layer_surface_ecology",
+      "parentId": "region_forest",
+      "jurisdictionIds": ["forest_border_towns", "wet_valley_water_compact"],
+      "tags": ["wetland", "water", "medicine", "spores"]
+    },
+    {
+      "id": "region_abandoned_mine",
+      "label": "废弃矿区",
+      "kind": "site",
+      "layerId": "layer_underground",
+      "parentId": null,
+      "jurisdictionIds": ["mine_claim_holders", "rescue_compact"],
+      "tags": ["salvage", "rescue", "ore", "hazard"]
+    },
+    {
+      "id": "region_divine_corpse_mine",
+      "label": "神尸矿区",
+      "kind": "site",
+      "layerId": "layer_underground",
+      "parentId": "region_abandoned_mine",
+      "jurisdictionIds": ["mine_claim_holders", "rescue_compact"],
+      "tags": ["restricted", "divine_material", "mining", "hazard"]
+    },
+    {
+      "id": "region_ash_outpost",
+      "label": "灰烬哨站",
+      "kind": "settlement",
+      "layerId": "layer_surface_city",
+      "parentId": null,
+      "jurisdictionIds": ["civic_ash_outpost"],
+      "tags": ["frontier", "relief", "convoy"]
+    },
+    {
+      "id": "region_ash",
+      "label": "灰烬荒原",
+      "kind": "macro_region",
+      "layerId": "layer_surface_ecology",
+      "parentId": null,
+      "jurisdictionIds": [],
+      "tags": ["waste", "ruins", "fuel", "high_risk"]
+    },
+    {
+      "id": "region_orbit_city",
+      "label": "轨道城",
+      "kind": "settlement",
+      "layerId": "layer_sky_orbit",
+      "parentId": null,
+      "jurisdictionIds": ["civic_orbit_city"],
+      "tags": ["orbit", "star_gate", "research", "manufacturing"]
+    },
+    {
+      "id": "region_orbital_cathedral",
+      "label": "轨道圣堂",
+      "kind": "site",
+      "layerId": "layer_sky_orbit",
+      "parentId": "region_orbit_city",
+      "jurisdictionIds": ["cathedral_novitiate", "faction_silver_inquisition"],
+      "tags": ["trial", "purification", "rescue"]
+    },
+    {
+      "id": "region_prophecy_server",
+      "label": "预言服务器",
+      "kind": "site",
+      "layerId": "layer_sky_orbit",
+      "parentId": "region_orbit_city",
+      "jurisdictionIds": ["prophecy_audit_authority"],
+      "tags": ["forecast", "audit", "restricted"]
+    },
+    {
+      "id": "region_starship_graveyard",
+      "label": "星舰墓场",
+      "kind": "macro_region",
+      "layerId": "layer_sky_orbit",
+      "parentId": null,
+      "jurisdictionIds": ["voidfarer_salvage_guild", "orbital_license_authority"],
+      "tags": ["salvage", "deep_space", "outer_signal"]
+    },
+    {
+      "id": "region_collective_dream_pool",
+      "label": "集体梦池",
+      "kind": "anomaly",
+      "layerId": "layer_alien_dimension",
+      "parentId": null,
+      "jurisdictionIds": [],
+      "persistent": false,
+      "tags": ["dream", "dynamic_entry"]
+    },
+    {
+      "id": "region_space_rift",
+      "label": "空间裂缝",
+      "kind": "anomaly",
+      "layerId": "layer_alien_dimension",
+      "parentId": null,
+      "jurisdictionIds": [],
+      "persistent": false,
+      "tags": ["space", "dynamic_entry"]
+    },
+    {
+      "id": "region_non_euclidean_cave",
+      "label": "非欧洞穴",
+      "kind": "anomaly",
+      "layerId": "layer_alien_dimension",
+      "parentId": null,
+      "jurisdictionIds": [],
+      "persistent": false,
+      "tags": ["geometry", "dynamic_entry"]
+    }
+  ],
+  "routes": [
+    { "id": "route_mirror_saltgate", "from": "region_reflective_city", "to": "region_salt_gate", "mode": ["rail", "road"], "baseMinutes": 480, "bidirectional": true },
+    { "id": "route_saltgate_coast", "from": "region_salt_gate", "to": "region_salt_mirror_coast", "mode": ["causeway_convoy"], "baseMinutes": 240, "bidirectional": true },
+    { "id": "route_coast_trench", "from": "region_salt_mirror_coast", "to": "region_trench", "mode": ["submersible"], "baseMinutes": 840, "bidirectional": true },
+    { "id": "route_trench_carcass", "from": "region_trench", "to": "region_deepsea_carcass", "mode": ["submersible"], "baseMinutes": 180, "bidirectional": true },
+    { "id": "route_mirror_forest", "from": "region_reflective_city", "to": "region_forest", "mode": ["road"], "baseMinutes": 600, "bidirectional": true },
+    { "id": "route_forest_shanhai", "from": "region_forest", "to": "region_shanhai_forest", "mode": ["forest_road", "foot"], "baseMinutes": 90, "bidirectional": true },
+    { "id": "route_forest_wetvalley", "from": "region_forest", "to": "region_wet_valley", "mode": ["trail", "pack_animal"], "baseMinutes": 120, "bidirectional": true },
+    { "id": "route_forest_mine", "from": "region_forest", "to": "region_abandoned_mine", "mode": ["mountain_road", "maintenance_rail"], "baseMinutes": 300, "bidirectional": true },
+    { "id": "route_mine_divinecorpse", "from": "region_abandoned_mine", "to": "region_divine_corpse_mine", "mode": ["mine_tram", "foot"], "baseMinutes": 75, "bidirectional": true },
+    { "id": "route_mine_outpost", "from": "region_abandoned_mine", "to": "region_ash_outpost", "mode": ["mining_rail"], "baseMinutes": 480, "bidirectional": true },
+    { "id": "route_outpost_ash", "from": "region_ash_outpost", "to": "region_ash", "mode": ["escort_convoy"], "baseMinutes": 180, "bidirectional": true },
+    { "id": "route_mirror_prism", "from": "region_reflective_city", "to": "region_prism_waters", "mode": ["water_rail"], "baseMinutes": 120, "bidirectional": true },
+    { "id": "route_mirror_orbit", "from": "region_reflective_city", "to": "region_orbit_city", "mode": ["orbital_elevator"], "baseMinutes": 360, "bidirectional": true },
+    { "id": "route_orbit_cathedral", "from": "region_orbit_city", "to": "region_orbital_cathedral", "mode": ["sealed_shuttle"], "baseMinutes": 120, "bidirectional": true },
+    { "id": "route_orbit_graveyard", "from": "region_orbit_city", "to": "region_starship_graveyard", "mode": ["deep_space_tug"], "baseMinutes": 720, "bidirectional": true }
+  ]
+}

@@ -122,6 +122,9 @@ test("HTTP server delegates public world routes to a focused route module", () =
   assert.match(httpServer, /handleEpochWorldRoutes/);
   assert.match(worldRoutes, /export async function handleEpochWorldRoutes/);
   assert.match(worldRoutes, /\/api\/epoch\/world-overview/);
+  assert.match(worldRoutes, /\/api\/epoch\/world-clock/);
+  assert.match(worldRoutes, /\/api\/epoch\/world-state/);
+  assert.match(worldRoutes, /\/api\/epoch\/world-content/);
   assert.match(worldRoutes, /\/api\/epoch\/archive\//);
   assert.match(worldRoutes, /\/epoch\/world/);
   assert.match(worldRoutes, /\/epoch\/agent\//);
@@ -178,6 +181,8 @@ test("HTTP server delegates operator control-plane routes to a focused route mod
   assert.match(operatorRoutes, /\/api\/epoch\/abuse\/release/);
   assert.match(operatorRoutes, /\/api\/epoch\/operator\/overview/);
   assert.match(operatorRoutes, /\/api\/epoch\/maintenance\/run/);
+  assert.match(operatorRoutes, /\/api\/epoch\/world-clock\/advance/);
+  assert.match(operatorRoutes, /\/api\/epoch\/world-content\/migrate/);
 
   assert.doesNotMatch(httpServer, /if \(method === "GET" && pathname === "\/api\/epoch\/moderation"/);
   assert.doesNotMatch(httpServer, /if \(method === "POST" && pathname === "\/api\/epoch\/moderation\/resolve"/);

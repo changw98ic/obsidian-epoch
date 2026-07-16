@@ -1401,6 +1401,64 @@ test("HTTP operator GET routes reject query-string operator keys", async () => {
   });
 });
 
+test("HTTP exposes living-world reads and advances only from server elapsed time", async () => {
+  let serverNow = "2026-01-01T00:00:00.000Z";
+  const runtime = createAgentWorldRuntime({
+    epoch: {
+      idFactory: createSequentialEpochIdFactory("http_living_world"),
+      operatorKey: "living-world-http-key",
+    },
+    worldClock: { nowReal: () => serverNow },
+  });
+
+  await withHttpServer(runtime, async (baseUrl) => {
+    const initialClock = await getJson(baseUrl, "/api/epoch/world-clock");
+    assert.equal(initialClock.status, 200);
+    assert.equal(initialClock.body.worldMinute, 0);
+
+    const content = await getJson(baseUrl, "/api/epoch/world-content?collection=factions&limit=3");
+    assert.equal(content.status, 200);
+    assert.equal(content.body.collection, "factions");
+    assert.equal(content.body.items.length, 3);
+
+    const rejected = await postJson(baseUrl, "/api/epoch/world-clock/advance", {
+      operatorKey: "living-world-http-key",
+      elapsedWorldMinutes: 60,
+      reason: "query_or_body_secrets_are_not_authority",
+      processedDomains: ["world_simulation"],
+      idempotencyKey: "http-world-advance-rejected",
+    });
+    assert.equal(rejected.status, 403);
+    assert.equal(rejected.body.error, "operator_key_required");
+
+    serverNow = "2026-01-01T00:01:00.000Z";
+    const advanced = await postJson(baseUrl, "/api/epoch/world-clock/advance", {
+      elapsedWorldMinutes: 60,
+      reason: "http_world_tick",
+      processedDomains: ["world_simulation", "trade", "conflict"],
+      idempotencyKey: "http-world-advance-1",
+    }, { "x-epoch-operator-key": "living-world-http-key" });
+    assert.equal(advanced.status, 200);
+    assert.equal(advanced.body.clock.worldMinute, 1_440);
+    assert.ok(advanced.body.events.some((event: { eventType: string }) =>
+      event.eventType === "world_simulation_advanced"));
+
+    const clock = await getJson(baseUrl, "/api/epoch/world-clock");
+    assert.equal(clock.body.worldMinute, 1_440);
+    const state = await getJson(baseUrl, "/api/epoch/world-state?regionId=region_quantum_laboratory&includeShipments=true");
+    assert.equal(state.status, 200);
+    assert.equal(state.body.regions.length, 1);
+    assert.equal(state.body.regions[0].regionId, "region_quantum_laboratory");
+
+    const migrationRejected = await postJson(baseUrl, "/api/epoch/world-content/migrate", {
+      operatorKey: "living-world-http-key",
+      idempotencyKey: "http-world-migrate-rejected",
+    });
+    assert.equal(migrationRejected.status, 403);
+    assert.equal(migrationRejected.body.error, "operator_key_required");
+  });
+});
+
 test("HTTP rotates explorer recovery code and revokes the old credential", async () => {
   const runtime = createAgentWorldRuntime({
     epoch: {
@@ -5252,7 +5310,9 @@ test("HTTP confirms personality drift proposals after anomaly scars", async () =
     assert.equal(beforeConfirm.status, 200);
     assert.equal(beforeConfirm.body.personalityDrifts[0].driftId, driftId);
     assert.equal(beforeConfirm.body.personalityDrifts[0].status, "proposed");
-    assert.deepEqual(beforeConfirm.body.identity.personality.traits, []);
+    const initialTraits = [...beforeConfirm.body.identity.personality.traits];
+    assert.equal(initialTraits.length, 2);
+    assert.ok(!initialTraits.includes(proposalEvent.payload.suggestedTrait));
 
     const missingAuth = await postJson(baseUrl, "/api/epoch/personality/confirm", {
       driftId,
@@ -5271,7 +5331,10 @@ test("HTTP confirms personality drift proposals after anomaly scars", async () =
     assert.equal(confirmed.body.value.status, "confirmed");
 
     const afterConfirm = await getJson(baseUrl, `/api/epoch/identity/${encodeURIComponent(agentId)}`);
-    assert.deepEqual(afterConfirm.body.identity.personality.traits, [proposalEvent.payload.suggestedTrait]);
+    assert.deepEqual(afterConfirm.body.identity.personality.traits, [
+      ...initialTraits,
+      proposalEvent.payload.suggestedTrait,
+    ]);
     assert.equal(afterConfirm.body.identity.personality.latestSourceEventId, proposalEvent.payload.sourceEventId);
   });
 });
@@ -9192,7 +9255,9 @@ test("HTTP MCP persists Agent-native three-phase Journey events and final verifi
     });
     assert.equal(proposedTool.status, 200);
     const proposed = JSON.parse(proposedTool.body.content[0].text);
-    const selected = proposed.proposal.sceneContract.actionOptions[0];
+    const selected = proposed.proposal.sceneContract.actionOptions.find((option: { optionKey: string }) =>
+      option.optionKey === "verify_salt_ledger");
+    assert.ok(selected);
     const committedTool = await postJson(baseUrl, "/api/epoch/mcp/tools/call", {
       name: "obsidian_epoch.commit_journey_action",
       arguments: {
@@ -9220,6 +9285,20 @@ test("HTTP MCP persists Agent-native three-phase Journey events and final verifi
     const settled = JSON.parse(settledTool.body.content[0].text);
     assert.equal(settled.journey.status, "settled");
     assert.equal(settled.finalVerification.page.payload.journey.status, "settled");
+    assert.equal(settled.storyReport.kind, "grounded_story_report");
+    assert.equal(settled.storyReport.version, 3);
+    assert.equal(settled.storyReport.chapters.length, 7);
+    assert.match(settled.storyReport.narrative, /夜班书记珂岚/);
+    assert.match(settled.storyReport.narrative, /核对中出现一处差额/);
+    assert.equal(settled.mission.status, "completed");
+    assert.equal(settled.storyReport.resolution.missionStatus, "completed");
+    assert.equal(
+      settled.finalVerification.page.payload.journey.storyReport.narrative,
+      settled.storyReport.narrative,
+    );
+    assert.equal(settled.interactionLog.kind, "journey_interaction_log");
+    assert.equal(settled.interactionLog.entries.length, 3);
+    assert.equal("interactionLog" in settled.finalVerification.page.payload.journey, false);
     assert.ok(settled.episodes.every((episode: { serverFacts?: unknown; narrative?: unknown }) =>
       episode.serverFacts && episode.narrative));
     canonicalEpisodeEventIds = settled.episodes.flatMap((episode: {
@@ -9233,11 +9312,37 @@ test("HTTP MCP persists Agent-native three-phase Journey events and final verifi
     verificationPageId = settled.finalVerification.page.pageId;
     verificationUrl = settled.finalVerification.page.urlPath;
     assert.equal(settled.journey.verification.urlPath, verificationUrl);
+    for (let repeat = 0; repeat < 2; repeat += 1) {
+      const repeatedTool = await postJson(baseUrl, "/api/epoch/mcp/tools/call", {
+        name: "obsidian_epoch.journey_status",
+        arguments: { journeyId, recoveryCode: recovery },
+      });
+      assert.equal(repeatedTool.status, 200);
+      const repeated = JSON.parse(repeatedTool.body.content[0].text);
+      assert.equal(repeated.finalVerification.page.pageId, verificationPageId);
+      assert.equal(repeated.journey.verification.urlPath, verificationUrl);
+    }
     const publicPage = await getText(baseUrl, verificationUrl);
     assert.equal(publicPage.status, 200);
-    assert.match(publicPage.text, /灰港探索历程/);
-    assert.match(publicPage.text, /到达：灰港|返程：灰港/);
-    assert.match(publicPage.text, /从旅途中寄来/);
+    assert.match(publicPage.text, /完整故事报告/);
+    assert.match(publicPage.text, /这是一份面向玩家的完整故事/);
+    assert.doesNotMatch(publicPage.text, /本局任务|主目标：|成功条件|失败条件|历程时间线/);
+    assert.match(publicPage.text, /夜班书记珂岚/);
+    assert.match(publicPage.text, /代号：/);
+    assert.match(publicPage.text, /轮回第一世/);
+    assert.match(publicPage.text, /故事内容：/);
+    assert.match(publicPage.text, /一、转生与出发/);
+    assert.match(publicPage.text, /三、账房里的盐账/);
+    assert.match(publicPage.text, /四、核对盐账/);
+    assert.match(publicPage.text, /七、结果/);
+    assert.match(publicPage.text, /任务完成度：/);
+    assert.match(publicPage.text, /身份还原度：/);
+    assert.ok(publicPage.text.includes(settled.storyReport.storyElements.time));
+    assert.doesNotMatch(publicPage.text, /世界时间2026年|现实时间|北京时间/u);
+    assert.match(publicPage.text, /获得奖励：/);
+    assert.match(publicPage.text, /其他玩家影响：/);
+    assert.match(publicPage.text, /该身份将无法保留/);
+    assert.match(publicPage.text, /核对中出现一处差额/);
   }, {
     persistJsonl: async (fileName, record) => {
       writes.push({ fileName, record: record as Record<string, any> });
@@ -9264,6 +9369,12 @@ test("HTTP MCP persists Agent-native three-phase Journey events and final verifi
       && record.resultPages.some((page: { pageId?: string }) => page.pageId === verificationPageId));
   assert.ok(verificationCommit, "final Journey event and verification page need one durable append");
   assert.ok(verificationCommit.journeyEvents.length > 0);
+  assert.equal(writes
+    .filter((write) => write.fileName === "command-events.jsonl")
+    .map((write) => write.record)
+    .filter((record) => Array.isArray(record.resultPages)
+      && record.resultPages.some((page: { pageId?: string }) => page.pageId === verificationPageId)).length, 1,
+    "repeated status reads must not append an unchanged verification page");
   const commandEpochEventIds = writes
     .filter((write) => write.fileName === "command-events.jsonl")
     .flatMap((write) => Array.isArray(write.record.epochEvents) ? write.record.epochEvents : [])

@@ -50,7 +50,7 @@ test("journey metrics report interruption budget, template reuse, social episode
   const runtime = createJourneyRuntime({
     idFactory: (kind) => `${kind}_metric_${++sequence}`,
     nowReal: () => "2026-01-01T00:00:00.000Z",
-    nowWorld: () => "2026-01-01T00:00:00.000Z",
+    nowWorld: () => "2026-01-01T08:00:00.000Z",
     pollIntervalMs: 60_000,
   });
   const prepared = runtime.prepare({

@@ -1,5 +1,12 @@
 import type { JourneyProjection } from "./journeyReadModel.ts";
 import { journeyPostcards, OBSIDIAN_WORLD_CALENDAR_VERSION, type JourneyPostcard } from "./journeyAlbumReadModel.ts";
+import {
+  EPOCH_WORLD_CALENDAR_ORIGIN_YEAR,
+  EPOCH_WORLD_MINUTES_PER_YEAR,
+  EPOCH_WORLD_MONTH_NAMES,
+  epochWorldCalendarMoment,
+  epochWorldTimeFromMinute,
+} from "./worldCalendar.ts";
 
 export interface ChronicleParagraph {
   readonly text: string;
@@ -26,19 +33,25 @@ export interface LifeAnnualChronicle {
   readonly reason?: "identity_started_after_year_open" | "year_not_complete";
 }
 
-const MONTH_LABELS = ["一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"] as const;
+const MONTH_LABELS = EPOCH_WORLD_MONTH_NAMES.map((monthName) => `${monthName}月`);
 
 function yearStart(year: number) {
-  return new Date(Date.UTC(year, 0, 1)).toISOString();
+  if (!Number.isSafeInteger(year) || year < EPOCH_WORLD_CALENDAR_ORIGIN_YEAR) {
+    throw new Error("life_chronicle_year_invalid");
+  }
+  return epochWorldTimeFromMinute(
+    (year - EPOCH_WORLD_CALENDAR_ORIGIN_YEAR) * EPOCH_WORLD_MINUTES_PER_YEAR,
+  );
 }
 
 function yearEnd(year: number) {
-  return new Date(Date.UTC(year + 1, 0, 1)).toISOString();
+  return yearStart(year + 1);
 }
 
 function postcardMonth(postcard: JourneyPostcard) {
-  const parsed = Date.parse(postcard.worldTime);
-  return Number.isFinite(parsed) ? new Date(parsed).getUTCMonth() + 1 : undefined;
+  const monthName = epochWorldCalendarMoment(postcard.worldTime)?.monthName;
+  const index = monthName ? EPOCH_WORLD_MONTH_NAMES.indexOf(monthName) : -1;
+  return index >= 0 ? index + 1 : undefined;
 }
 
 function postcardParagraphs(postcard: JourneyPostcard): readonly ChronicleParagraph[] {
@@ -57,7 +70,7 @@ export function monthlyLifeReports(input: {
   readonly projection: JourneyProjection;
 }): readonly LifeChronicleMonth[] {
   const postcards = journeyPostcards(input.projection, input.agentId)
-    .filter((postcard) => new Date(postcard.worldTime).getUTCFullYear() === input.year);
+    .filter((postcard) => epochWorldCalendarMoment(postcard.worldTime)?.year === input.year);
   return MONTH_LABELS.map((label, index) => {
     const month = index + 1;
     const current = postcards.filter((postcard) => postcardMonth(postcard) === month);
@@ -98,7 +111,7 @@ export function buildAnnualLifeChronicle(input: {
   const sourceEventIds = [...new Set(chapters.flatMap((chapter) => chapter.paragraphs.flatMap((paragraph) => paragraph.sourceEventIds)))];
   const journeyCount = new Set(chapters.flatMap((chapter) => chapter.journeyIds)).size;
   const postcardCount = chapters.reduce((sum, chapter) => sum + chapter.postcardIds.length, 0);
-  const title = `${input.year}年 · ${input.identityName}的一整年`;
+  const title = `黑曜历${input.year}年 · ${input.identityName}的一整年`;
   const opening = `${input.identityName}在这一服务器年度留下 ${journeyCount} 次可验证旅程、${postcardCount} 张事实明信片。以下十二章严格按世界时间排列。`;
   const narrative = [
     title,

@@ -6,6 +6,7 @@ import {
   anomalyPersonalityDriftTrait,
   explorerRecoveryRotatedPayload,
   identityArchivedPayload,
+  initialIdentityTraits,
   identityIssuedPayload,
   lifetimeAdjustedPayload,
   openPersonalityDriftForAgent,
@@ -66,12 +67,34 @@ test("identity lifecycle rules plan issued and recovery payloads", () => {
     generation: 2,
     status: "active",
     previousAgentId: "agent_0",
+    personalityTraits: initialIdentityTraits({
+      agentId: "agent_1",
+      identityName: "Archivist",
+      generation: 2,
+    }),
     lifetime: {
       max: 9,
       remaining: 9,
       startedAt: "2026-07-07T01:02:03.000Z",
     },
   });
+
+  const firstTraits = initialIdentityTraits({
+    agentId: "agent_1",
+    identityName: "Archivist",
+    generation: 2,
+  });
+  assert.equal(firstTraits.length, 2);
+  assert.deepEqual(firstTraits, initialIdentityTraits({
+    agentId: "agent_1",
+    identityName: "Archivist",
+    generation: 2,
+  }));
+  assert.notDeepEqual(firstTraits, initialIdentityTraits({
+    agentId: "agent_2",
+    identityName: "Field Scout",
+    generation: 1,
+  }));
 
   assert.deepEqual(explorerRecoveryRotatedPayload({
     explorerId: "explorer_1",
@@ -118,6 +141,11 @@ test("identity lifecycle rules plan identity issue event sequences", () => {
     generation: 2,
     status: "active",
     previousAgentId: "agent_0",
+    personalityTraits: initialIdentityTraits({
+      agentId: "agent_1",
+      identityName: "Archivist",
+      generation: 2,
+    }),
     lifetime: {
       max: 9,
       remaining: 9,
@@ -309,6 +337,11 @@ test("identity lifecycle rules plan reincarnation event sequences", () => {
       knownRegions: ["腐林"],
       scar: "听觉污染传闻",
     },
+    personalityTraits: initialIdentityTraits({
+      agentId: "agent_2",
+      identityName: "Second Archivist",
+      generation: 3,
+    }),
     lifetime: {
       max: 10,
       remaining: 10,

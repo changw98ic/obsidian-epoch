@@ -15,8 +15,38 @@ import { createLoreLedger } from "./lore.ts";
 import { createEpochOperationSwitchRegistry, type EpochOperationGateInput } from "./operationSwitches.ts";
 import { createLegacyOutboxLedger, graphSyncFromOutboxEntries, type LegacyOutboxCreateInput } from "./outbox.ts";
 import { createEpochRuntime } from "./epoch/runtime.ts";
+import { projectEpochEvents } from "./epoch/gameCore.ts";
 import { createAgentCompanionRuntime } from "./epoch/agentCompanionRuntime.ts";
-import type { JourneyRuntimeEvent } from "./epoch/journeyReadModel.ts";
+import type { EpochEvent } from "./epoch/events.ts";
+import {
+  createEpochWorldClockRuntime,
+  type CreateEpochWorldClockRuntimeOptions,
+} from "./epoch/worldClockRules.ts";
+import {
+  createEpochWorldSimulationRuntime,
+  worldSimulationHistoricalSlice,
+  worldSimulationView,
+  type CreateEpochWorldSimulationRuntimeOptions,
+  type EpochWorldConflictEvidence,
+  type EpochWorldSimulationRegionSignal,
+  type MigrateEpochWorldSimulationContentInput,
+} from "./epoch/worldSimulationRules.ts";
+import { epochWorldMinuteFromTime, epochWorldTimeFromMinute } from "./epoch/worldCalendar.ts";
+import {
+  canonicalPlaceContext,
+  loadDefaultWorldContentRegistry,
+  validateWorldContentRegistry,
+  worldContentRegistryView,
+  type WorldContentRegistryViewInput,
+} from "./epoch/worldContentRegistry.ts";
+import { projectJourneyRuntimeEvents, type JourneyRuntimeEvent } from "./epoch/journeyReadModel.ts";
+import {
+  journeyTaskGraphState,
+  nextJourneyTaskObjective,
+  type JourneyTaskEvidenceEpisode,
+  type JourneyGeneratedTaskPlan,
+  type JourneyHiddenTaskSealResolver,
+} from "./epoch/journeyGeneratedTaskRules.ts";
 import { journeyMetricsView } from "./epoch/journeyMetricsReadModel.ts";
 import {
   buildPersistedJourneyNarrative,
@@ -317,6 +347,16 @@ function recordValue(value: unknown): AnyRecord {
   return isRecord(value) ? value : {};
 }
 
+function stringRecord(value: unknown, error: string): Record<string, string> {
+  const input = recordValue(value);
+  const result: Record<string, string> = {};
+  for (const [key, item] of Object.entries(input)) {
+    if (!key.trim() || typeof item !== "string" || !item.trim()) throw new Error(error);
+    result[key.trim()] = item.trim();
+  }
+  return result;
+}
+
 function recordArray(value: unknown): AnyRecord[] {
   return Array.isArray(value) ? value.filter(isRecord) : [];
 }
@@ -336,6 +376,51 @@ function optionalString(value: unknown) {
 function numberValue(value: unknown, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
+}
+
+function compactJourneyDecisionWorldSlice(value: unknown) {
+  const slice = recordValue(value);
+  const sliceHash = optionalString(slice.sliceHash);
+  if (!sliceHash) return undefined;
+  const start = recordValue(slice.start);
+  const end = recordValue(slice.end);
+  const direction = recordValue(slice.direction);
+  const strongestResourceTrends = (field: "stockDelta" | "priceDeltaMilliCoin") =>
+    Object.entries(recordValue(direction[field]))
+      .flatMap(([resourceId, amount]) => typeof amount === "number" && Number.isFinite(amount) && amount !== 0
+        ? [{ resourceId, amount }]
+        : [])
+      .sort((left, right) => Math.abs(right.amount) - Math.abs(left.amount)
+        || left.resourceId.localeCompare(right.resourceId))
+      .slice(0, 6);
+  const regionState = (state: AnyRecord) => ({
+    controllerFactionId: optionalString(state.controllerFactionId),
+    securityBps: numberValue(state.securityBps),
+    unrestBps: numberValue(state.unrestBps),
+    conflictPressureBps: numberValue(state.conflictPressureBps),
+    conflictPhases: Array.isArray(state.conflictPhases)
+      ? state.conflictPhases.filter((phase): phase is string => typeof phase === "string").slice(0, 6)
+      : [],
+  });
+  return {
+    authority: slice.authority,
+    regionId: slice.regionId,
+    startedAtWorldTime: slice.startedAtWorldTime,
+    endedAtWorldTime: slice.endedAtWorldTime,
+    sliceHash,
+    start: regionState(start),
+    end: regionState(end),
+    direction: {
+      controllerChanged: direction.controllerChanged === true,
+      populationDelta: numberValue(direction.populationDelta),
+      treasuryCoinDelta: numberValue(direction.treasuryCoinDelta),
+      securityDeltaBps: numberValue(direction.securityDeltaBps),
+      unrestDeltaBps: numberValue(direction.unrestDeltaBps),
+      conflictPressureDeltaBps: numberValue(direction.conflictPressureDeltaBps),
+      strongestStockDeltas: strongestResourceTrends("stockDelta"),
+      strongestPriceDeltasMilliCoin: strongestResourceTrends("priceDeltaMilliCoin"),
+    },
+  };
 }
 
 function positiveIntegerValue(value: unknown, fallback: number) {
@@ -713,25 +798,286 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         : [],
   });
   const epochOptions = recordValue(options.epoch);
-  const epochRuntime = createEpochRuntime({
-    ...epochOptions,
-    initialEvents: Array.isArray(options.epochEvents)
-      ? options.epochEvents
-      : Array.isArray(epochOptions.initialEvents)
-        ? epochOptions.initialEvents
-        : [],
-    initialResultPages: Array.isArray(options.resultPages)
-      ? options.resultPages
-      : Array.isArray(epochOptions.initialResultPages)
-        ? epochOptions.initialResultPages
-        : [],
-  });
   const journeyOptions = recordValue(options.journey);
+  const worldClockOptions = recordValue(options.worldClock);
+  const worldSimulationOptions = recordValue(options.worldSimulation);
+  const worldContentRegistry = options.worldContentRegistry
+    ? validateWorldContentRegistry(options.worldContentRegistry)
+    : loadDefaultWorldContentRegistry();
+  const initialEpochEvents = (Array.isArray(options.epochEvents)
+    ? options.epochEvents
+    : Array.isArray(epochOptions.initialEvents)
+      ? epochOptions.initialEvents
+      : []) as readonly EpochEvent[];
   const initialJourneyEvents = Array.isArray(options.journeyEvents)
     ? options.journeyEvents as readonly JourneyRuntimeEvent[]
     : Array.isArray(journeyOptions.initialEvents)
       ? journeyOptions.initialEvents as readonly JourneyRuntimeEvent[]
       : [];
+  const initialJourneyProjection = projectJourneyRuntimeEvents(initialJourneyEvents);
+  const sealFromProjection = (
+    projection: typeof initialJourneyProjection,
+    journeyId: string,
+    plan: JourneyGeneratedTaskPlan,
+  ) => projection.journeys[journeyId]?.journey.taskPlan?.hiddenTaskCommitment === plan.hiddenTaskCommitment
+    ? projection.hiddenTaskSeals[journeyId]
+    : undefined;
+  let resolveJourneyHiddenTaskSeal: JourneyHiddenTaskSealResolver = (journeyId, plan) =>
+    sealFromProjection(initialJourneyProjection, journeyId, plan);
+  const epochRuntime = createEpochRuntime({
+    ...epochOptions,
+    initialEvents: initialEpochEvents,
+    initialResultPages: Array.isArray(options.resultPages)
+      ? options.resultPages
+      : Array.isArray(epochOptions.initialResultPages)
+        ? epochOptions.initialResultPages
+        : [],
+    resolveJourneyHiddenTaskSeal: (journeyId, plan) => resolveJourneyHiddenTaskSeal(journeyId, plan),
+  });
+  const worldClockRuntime = createEpochWorldClockRuntime({
+    initialEvents: initialEpochEvents,
+    ...(typeof worldClockOptions.idFactory === "function"
+      ? { idFactory: worldClockOptions.idFactory as CreateEpochWorldClockRuntimeOptions["idFactory"] }
+      : {}),
+    ...(typeof worldClockOptions.nowReal === "function"
+      ? { nowReal: worldClockOptions.nowReal as () => Date | string }
+      : {}),
+    ...(typeof worldClockOptions.speedRatio === "number"
+      ? { speedRatio: worldClockOptions.speedRatio }
+      : {}),
+  });
+  const worldSimulationRuntime = createEpochWorldSimulationRuntime({
+    registry: worldContentRegistry,
+    initialEvents: initialEpochEvents,
+    ...(typeof worldSimulationOptions.idFactory === "function"
+      ? {
+          idFactory: worldSimulationOptions.idFactory as CreateEpochWorldSimulationRuntimeOptions["idFactory"],
+        }
+      : {}),
+    ...(typeof worldSimulationOptions.nowReal === "function"
+      ? { nowReal: worldSimulationOptions.nowReal as () => Date | string }
+      : {}),
+    ...(typeof worldSimulationOptions.checkpointInterval === "number"
+      ? { checkpointInterval: worldSimulationOptions.checkpointInterval }
+      : {}),
+  });
+
+  function currentWorldSimulationSignals() {
+    const projection = projectEpochEvents(epochRuntime.interactionEvents(0));
+    const canonicalFactionIds = new Set(worldContentRegistry.factions.map((faction) => faction.id));
+    const materialRegionIds = new Set(worldContentRegistry.places.map((place) => place.id));
+    type MutableSignal = {
+      regionId: string;
+      controllerFactionId?: string;
+      conflictFactionIds: Set<string>;
+      conflictEvidence: Map<string, EpochWorldConflictEvidence>;
+      anomalyPressureBps: number;
+      contestedResourceNodes: number;
+      openMarketOrders: number;
+      civicSupportBps: number;
+    };
+    const byRegion = new Map<string, MutableSignal>();
+    const signalFor = (regionId: string) => {
+      const existing = byRegion.get(regionId);
+      if (existing) return existing;
+      const created: MutableSignal = {
+        regionId,
+        conflictFactionIds: new Set<string>(),
+        conflictEvidence: new Map<string, EpochWorldConflictEvidence>(),
+        anomalyPressureBps: 0,
+        contestedResourceNodes: 0,
+        openMarketOrders: 0,
+        civicSupportBps: 0,
+      };
+      byRegion.set(regionId, created);
+      return created;
+    };
+    const factionForAgent = (regionId: string, agentId: string) => {
+      const persistent = (projection.factionStandingIdsByAgent[agentId] || [])
+        .map((standingId) => projection.agentFactionStandings[standingId])
+        .filter((standing) => standing?.score > 0 && canonicalFactionIds.has(standing.factionId))
+        .sort((left, right) => right.score - left.score
+          || right.updatedAt.localeCompare(left.updatedAt)
+          || left.factionId.localeCompare(right.factionId))[0];
+      if (persistent) return persistent.factionId;
+      const candidates = Object.values(projection.seasonCampaigns)
+        .filter((season) => season.regionIds.includes(regionId))
+        .flatMap((season) => season.agentStandings
+          .filter((standing) => standing.agentId === agentId && standing.score > 0)
+          .map((standing) => ({
+            factionId: standing.factionId,
+            score: standing.score,
+            createdAt: season.createdAt,
+          })))
+        .sort((left, right) =>
+          right.score - left.score
+          || right.createdAt.localeCompare(left.createdAt)
+          || left.factionId.localeCompare(right.factionId));
+      return candidates[0]?.factionId;
+    };
+    const addConflictEvidence = (
+      regionId: string,
+      evidence: EpochWorldConflictEvidence,
+    ) => {
+      const factionIds = [...new Set(evidence.factionIds.filter((factionId) =>
+        canonicalFactionIds.has(factionId)))].sort();
+      if (factionIds.length < 2) return;
+      const signal = signalFor(regionId);
+      signal.conflictEvidence.set(evidence.evidenceId, { ...evidence, factionIds });
+      for (const factionId of factionIds) signal.conflictFactionIds.add(factionId);
+    };
+    for (const control of Object.values(projection.regionControls)) {
+      const signal = signalFor(control.regionId);
+      if (canonicalFactionIds.has(control.controllingFactionId)) {
+        signal.controllerFactionId = control.controllingFactionId;
+      }
+      if (control.contestedByFactionId) {
+        addConflictEvidence(control.regionId, {
+          evidenceId: `region_control:${control.regionId}:${control.sourceSeasonId}`,
+          cause: "region_control_contest",
+          factionIds: [control.controllingFactionId, control.contestedByFactionId].sort(),
+          pressureBps: 6_000,
+        });
+      }
+    }
+    for (const node of Object.values(projection.resourceNodes)) {
+      if (node.status !== "open" || Number(node.totalScore || 0) <= 0) continue;
+      signalFor(node.regionId).contestedResourceNodes += 1;
+      const factionIds = [...new Set(node.leaderboard
+        .map((standing) => factionForAgent(node.regionId, standing.agentId))
+        .filter((factionId): factionId is string => Boolean(factionId)))].sort();
+      if (factionIds.length >= 2) {
+        addConflictEvidence(node.regionId, {
+          evidenceId: `resource_node:${node.nodeId}`,
+          cause: "resource_contest",
+          factionIds,
+          pressureBps: Math.min(3_000, 1_000 + node.leaderboard.length * 250),
+        });
+      }
+    }
+    for (const anomaly of Object.values(projection.anomalyEvents)) {
+      if (anomaly.status !== "open") continue;
+      signalFor(anomaly.regionId).anomalyPressureBps += 1_500;
+    }
+    for (const order of Object.values(projection.marketOrders)) {
+      if (order.status !== "open") continue;
+      signalFor(order.regionId).openMarketOrders += 1;
+    }
+    for (const season of Object.values(projection.seasonCampaigns)) {
+      if (season.status !== "active" || season.factionIds.length < 2) continue;
+      for (const regionId of season.regionIds) {
+        addConflictEvidence(regionId, {
+          evidenceId: `faction_campaign:${season.seasonId}`,
+          cause: "faction_campaign",
+          factionIds: [...season.factionIds].sort(),
+          pressureBps: 2_500,
+        });
+      }
+    }
+    for (const retaliation of Object.values(projection.retaliationOpportunities)) {
+      if (retaliation.status !== "open") continue;
+      const factionIds = [
+        factionForAgent(retaliation.regionId, retaliation.opportunityAgentId),
+        factionForAgent(retaliation.regionId, retaliation.targetAgentId),
+      ].filter((factionId): factionId is string => Boolean(factionId));
+      const distinctFactionIds = [...new Set(factionIds)].sort();
+      if (distinctFactionIds.length >= 2) {
+        addConflictEvidence(retaliation.regionId, {
+          evidenceId: `retaliation:${retaliation.retaliationId}`,
+          cause: "retaliation",
+          factionIds: distinctFactionIds,
+          pressureBps: 3_000,
+        });
+      }
+    }
+    // Canonical signals must be measured against the materialized cursor, not
+    // against unpersisted server-time catch-up that the simulation has not replayed yet.
+    const currentWorldMinute = worldSimulationRuntime.status().worldMinute;
+    for (const change of Object.values(projection.regionInfluenceChanges)) {
+      if (!change.reason.startsWith("journey_objective:")
+        || change.influenceDelta <= 0
+        || change.worldMinute === undefined) continue;
+      const ageWorldMinutes = currentWorldMinute - change.worldMinute;
+      if (ageWorldMinutes < 0 || ageWorldMinutes > 7 * 24 * 60) continue;
+      const signal = signalFor(change.regionId);
+      signal.civicSupportBps = Math.min(10_000, signal.civicSupportBps + change.influenceDelta * 250);
+    }
+    const regions: EpochWorldSimulationRegionSignal[] = [...byRegion.values()]
+      .filter((signal) => materialRegionIds.has(signal.regionId))
+      .map((signal) => ({
+        regionId: signal.regionId,
+        ...(signal.controllerFactionId ? { controllerFactionId: signal.controllerFactionId } : {}),
+        conflictFactionIds: [...signal.conflictFactionIds].sort(),
+        conflictEvidence: [...signal.conflictEvidence.values()]
+          .sort((left, right) => left.evidenceId.localeCompare(right.evidenceId)),
+        anomalyPressureBps: Math.min(10_000, signal.anomalyPressureBps),
+        contestedResourceNodes: signal.contestedResourceNodes,
+        openMarketOrders: signal.openMarketOrders,
+        civicSupportBps: signal.civicSupportBps,
+      }))
+      .sort((left, right) => left.regionId.localeCompare(right.regionId));
+    return { regions };
+  }
+
+  function advanceCanonicalWorld(input: Parameters<typeof worldClockRuntime.sync>[0]) {
+    const clockCheckpoint = worldClockRuntime.checkpoint();
+    const simulationCheckpoint = worldSimulationRuntime.checkpoint();
+    try {
+      const clockAdvance = worldClockRuntime.sync(input);
+      const simulationIdempotencyKey = `${input.idempotencyKey}:simulation`;
+      const clockEvent = clockAdvance.events.find((event) => event.eventType === "world_clock_advanced");
+      const simulationAdvance = clockEvent?.eventType === "world_clock_advanced"
+        ? worldSimulationRuntime.advance({
+            fromWorldMinute: clockEvent.payload.fromWorldMinute,
+            toWorldMinute: clockEvent.payload.toWorldMinute,
+            sourceClockEventId: clockEvent.eventId,
+            sourceEventIds: input.sourceEventIds,
+            signals: currentWorldSimulationSignals(),
+            idempotencyKey: simulationIdempotencyKey,
+            causationId: input.causationId,
+            correlationId: input.correlationId,
+          })
+        : undefined;
+      const priorSimulation = simulationAdvance
+        ? undefined
+        : worldSimulationRuntime.resultForIdempotencyKey(simulationIdempotencyKey);
+      const events = [
+        ...clockAdvance.events,
+        ...(simulationAdvance?.events || []),
+      ];
+      const result = attachEpochEventsForPersistence({
+        clock: clockAdvance.clock,
+        worldSimulation: simulationAdvance?.simulation
+          ?? priorSimulation?.simulation
+          ?? worldSimulationRuntime.status(),
+        ...(simulationAdvance?.flows || priorSimulation?.flows
+          ? { worldFlows: simulationAdvance?.flows ?? priorSimulation?.flows }
+          : {}),
+        events,
+        duplicate: clockAdvance.duplicate,
+      }, events);
+      epochRuntime.ingestCanonicalEvents(events);
+      return result;
+    } catch (error) {
+      worldSimulationRuntime.rollback(simulationCheckpoint);
+      worldClockRuntime.rollback(clockCheckpoint);
+      throw error;
+    }
+  }
+
+  function migrateCanonicalWorldContent(
+    input: MigrateEpochWorldSimulationContentInput,
+  ) {
+    const simulationCheckpoint = worldSimulationRuntime.checkpoint();
+    try {
+      const result = worldSimulationRuntime.migrateContent(input);
+      epochRuntime.ingestCanonicalEvents(result.events);
+      return result;
+    } catch (error) {
+      worldSimulationRuntime.rollback(simulationCheckpoint);
+      throw error;
+    }
+  }
   let journeyIdSequence = initialJourneyEvents.reduce((highest, event) => {
     const candidates = [event.eventId, event.journeyId];
     for (const candidate of candidates) {
@@ -748,7 +1094,9 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     : undefined;
   const configuredWorldClock = typeof journeyOptions.worldNow === "function"
     ? journeyOptions.worldNow as () => Date | string
-    : configuredJourneyClock;
+    : () => epochWorldTimeFromMinute(worldSimulationRuntime.status().worldMinute);
+  const authoritativeWorldClockEnabled = typeof journeyOptions.worldNow !== "function"
+    && journeyOptions.authoritativeWorldClock !== false;
   const clockIso = (clock: (() => Date | string) | undefined) => {
     const value = clock?.() ?? new Date();
     return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -757,10 +1105,23 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     epoch: {
       progress: epochRuntime.progress,
       verifyExplorerAuth: epochRuntime.verifyExplorerAuth,
-      regionInfo: epochRuntime.regionInfo,
+      regionInfo: (input) => {
+        const info = epochRuntime.regionInfo(input);
+        const regionId = optionalString(recordValue(info).regionId) || optionalString(input?.regionId);
+        const canonicalContent = regionId ? canonicalPlaceContext(worldContentRegistry, regionId) : undefined;
+        const worldState = regionId
+          ? worldSimulationView(worldSimulationRuntime.status(), { regionId }).regions[0]
+          : undefined;
+        return {
+          ...info,
+          ...(canonicalContent ? { canonicalContent, worldContentSourceHash: worldContentRegistry.sourceHash } : {}),
+          ...(worldState ? { worldState } : {}),
+        };
+      },
       agentBriefing: epochRuntime.agentBriefing,
       publicIdentity: epochRuntime.agentPublicIdentity,
       events: epochRuntime.events,
+      getResultPage: epochRuntime.getResultPage,
       interactionEvents: epochRuntime.interactionEvents,
     },
     journeyOptions: {
@@ -769,11 +1130,31 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       nowWorld: () => clockIso(configuredWorldClock),
       initialEvents: initialJourneyEvents,
       canonicalEpochEvents: () => epochRuntime.interactionEvents(0),
+      worldSliceForWindow: ({ regionId, startedAtWorldTime, endedAtWorldTime }) => {
+        try {
+          return worldSimulationHistoricalSlice({
+            events: worldSimulationRuntime.events(),
+            registry: worldContentRegistry,
+            regionId,
+            startedAtWorldTime,
+            endedAtWorldTime,
+            startedAtWorldMinute: epochWorldMinuteFromTime(startedAtWorldTime),
+            endedAtWorldMinute: epochWorldMinuteFromTime(endedAtWorldTime),
+          });
+        } catch (error) {
+          if (error instanceof Error && error.message === "world_simulation_slice_region_not_found") {
+            return undefined;
+          }
+          throw error;
+        }
+      },
       defaultRealDurationMs: positiveNumberValue(journeyOptions.defaultRealDurationMs, 30 * 60 * 1_000),
       defaultWorldDurationMs: positiveNumberValue(journeyOptions.defaultWorldDurationMs, 60 * 60 * 1_000),
       pollIntervalMs: positiveNumberValue(journeyOptions.pollIntervalMs, 5 * 60 * 1_000),
     },
   });
+  resolveJourneyHiddenTaskSeal = (journeyId, plan) =>
+    sealFromProjection(companionRuntime.journeyRuntime().projection(), journeyId, plan);
   const transparencyLedger = createTransparencyLedger({
     initialEntries: cloneRecords(options.transparencyEntries),
     initialAnchors: cloneRecords(options.transparencyAnchors),
@@ -1502,6 +1883,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
           episodeId: episode.episodeId,
           sceneType: episode.type,
           phase: episode.phase ?? "main",
+          ...(proposed.journey.worldMode ? { worldMode: proposed.journey.worldMode } : {}),
           title: episode.title,
           mandate: proposed.journey.mandate,
           worldObjects: episode.worldObjectRefs.map((worldObject) => ({
@@ -1511,6 +1893,12 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
           })),
           sourceFactIds: episode.sourceFactIds,
           expectedVersion: proposed.journey.version,
+          ...(episode.generatedTaskObjective
+            ? { generatedTaskObjective: episode.generatedTaskObjective }
+            : {}),
+          ...(proposed.journey.taskPlan?.routes
+            ? { taskRoutes: proposed.journey.taskPlan.routes }
+            : {}),
         },
         idempotencyKey: `${String(input.idempotencyKey || "").trim()}:proposal:${episode.episodeId}`,
       });
@@ -1558,26 +1946,95 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       expectedVersion: contract.expectedVersion,
       idempotencyKey: `${String(input.idempotencyKey || "").trim()}:hosted:${contract.episodeId}`,
     });
+    const actionEpochEvents = epochEventsForPersistence(action);
     const canonicalEventIds = recordedEpisode?.settlement?.canonicalEventIds
-      ?? epochEventsForPersistence(action).map((event) => event.eventId);
+      ?? actionEpochEvents
+        .filter((event) => [
+          "hosted_action_recorded",
+          "agent_faction_standing_changed",
+          "region_influence_changed",
+          "trace_created",
+        ].includes(event.eventType))
+        .map((event) => event.eventId);
     const agentProgress = recordValue(epochRuntime.progress({ agentId: status.journey.agentId }));
     const agentIdentity = recordValue(agentProgress.identity);
+    const selectedContractAction = contract.actionOptions.find((candidate) =>
+      candidate.actionOptionId === action.value.actionOptionId);
+    const authoritativeCompletionKind = action.value.journeyResolution?.completionKind
+      ?? selectedContractAction?.completionKind;
+    if (selectedContractAction?.taskObjectiveId && !authoritativeCompletionKind) {
+      throw new Error("journey_action_resolution_missing");
+    }
+    const journeyInfluenceEvent = actionEpochEvents.find((event) =>
+      event.eventType === "region_influence_changed"
+      && event.payload.sourceEventType === "hosted_action_recorded"
+      && event.payload.sourceAggregateId === session.sessionId);
+    const journeyFactionStandingEvent = actionEpochEvents.find((event) =>
+      event.eventType === "agent_faction_standing_changed"
+      && event.payload.sourceEventId === actionEpochEvents.find((candidate) =>
+        candidate.eventType === "hosted_action_recorded")?.eventId
+      && event.payload.journeyId === contract.journeyId
+      && event.payload.episodeId === contract.episodeId);
+    const journeyImpactEventIds = journeyInfluenceEvent?.eventType === "region_influence_changed"
+      ? actionEpochEvents.filter((event) => event.eventId === journeyInfluenceEvent.eventId
+        || (event.eventType === "trace_created"
+          && event.payload.relatedInfluenceIds.includes(journeyInfluenceEvent.payload.influenceId)))
+        .map((event) => event.eventId)
+      : [];
+    const regionLabel = episode.worldObjectRefs.find((worldObject) => worldObject.id === session.regionId)?.label
+      || session.regionId;
     const serverFacts = recordedEpisode?.serverFacts ?? buildServerJourneyEpisodeFacts({
       journeyId: contract.journeyId,
       episodeId: episode.episodeId,
       phase: episode.phase ?? "main",
       title: episode.title,
+      premise: contract.premise,
       agent: {
         id: status.journey.agentId,
         ...(optionalString(agentIdentity.identityName) ? { displayName: optionalString(agentIdentity.identityName) } : {}),
       },
       worldObjectRefs: episode.worldObjectRefs,
       action: {
+        ...(selectedContractAction?.optionKey ? { optionKey: selectedContractAction.optionKey } : {}),
         optionLabel: action.value.optionLabel,
+        ...(selectedContractAction?.intent ? { intent: selectedContractAction.intent } : {}),
+        ...(selectedContractAction?.risk ? { risk: selectedContractAction.risk } : {}),
+        ...(selectedContractAction?.targetEntityIds.length
+          ? { targetEntityIds: selectedContractAction.targetEntityIds }
+          : {}),
+        ...(selectedContractAction?.taskObjectiveId
+          ? { taskObjectiveId: selectedContractAction.taskObjectiveId }
+          : {}),
+        ...(authoritativeCompletionKind
+          ? { completionKind: authoritativeCompletionKind }
+          : {}),
+        ...(action.value.journeyResolution
+          ? { resolution: action.value.journeyResolution }
+          : {}),
         outcomeSummary: action.value.outcomeSummary,
         ...(action.value.reward ? { reward: action.value.reward } : {}),
       },
       canonicalEventIds,
+      ...(journeyInfluenceEvent?.eventType === "region_influence_changed" ? {
+        sharedWorldImpact: {
+          regionId: journeyInfluenceEvent.payload.regionId,
+          regionLabel,
+          influenceDelta: journeyInfluenceEvent.payload.influenceDelta,
+          sourceEventIds: journeyImpactEventIds,
+        },
+      } : {}),
+      ...(journeyFactionStandingEvent?.eventType === "agent_faction_standing_changed" ? {
+        factionAlignment: {
+          factionId: journeyFactionStandingEvent.payload.factionId,
+          factionLabel: episode.worldObjectRefs.find((worldObject) =>
+            worldObject.id === journeyFactionStandingEvent.payload.factionId)?.label
+            || journeyFactionStandingEvent.payload.factionId,
+          standingDelta: journeyFactionStandingEvent.payload.standingDelta,
+          standingAfter: journeyFactionStandingEvent.payload.standingAfter,
+          routeId: journeyFactionStandingEvent.payload.routeId,
+          sourceEventIds: [journeyFactionStandingEvent.eventId],
+        },
+      } : {}),
     });
     const narrative = recordedEpisode?.narrative ?? buildPersistedJourneyNarrative({
       serverFacts,
@@ -1589,6 +2046,12 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       settlement: {
         canonicalEventIds,
         outcomeSummary: action.value.outcomeSummary,
+        ...(selectedContractAction?.taskObjectiveId && authoritativeCompletionKind
+          ? { taskObjective: {
+              objectiveId: selectedContractAction.taskObjectiveId,
+              completionKind: authoritativeCompletionKind,
+            } }
+          : {}),
         ...(action.value.reward ? { reward: {
           resourceId: action.value.reward.resourceId,
           amount: action.value.reward.amount,
@@ -1597,38 +2060,184 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       serverFacts,
       narrative,
     };
-    const committed = companionRuntime.commitEpisodes({
+    const committed = recordedEpisode ? status : companionRuntime.commitEpisodes({
       ...input,
       journeyId: contract.journeyId,
       expectedVersion: contract.expectedVersion,
       episodes: [committedEpisode],
       idempotencyKey: `${String(input.idempotencyKey || "").trim()}:journey:${contract.episodeId}`,
     });
+    const worldClockAdvance = authoritativeWorldClockEnabled
+      && status.journey.worldMode !== "mirror"
+      && actionEpochEvents.some((event) => event.eventType === "hosted_action_recorded")
+      ? advanceCanonicalWorld({
+          reason: `journey_action:${contract.phase}:${contract.episodeId}`,
+          processedDomains: ["journey", "npc_schedule", "identity_needs"],
+          sourceEventIds: actionEpochEvents.map((event) => event.eventId),
+          idempotencyKey: `${String(input.idempotencyKey || "").trim()}:world-clock:${contract.episodeId}`,
+          causationId: contract.sceneId,
+          correlationId: status.journey.correlationId,
+        })
+      : undefined;
     const result = {
       ...committed,
       episode: committedEpisode,
       settledAction: action.value,
       sceneContract: contract,
+      ...(worldClockAdvance ? { worldClock: worldClockAdvance.clock } : {}),
       duplicate: Boolean(recordedEpisode),
     };
-    attachEpochEventsForPersistence(result, epochEventsForPersistence(action));
+    attachEpochEventsForPersistence(result, [
+      ...actionEpochEvents,
+      ...(worldClockAdvance ? epochEventsForPersistence(worldClockAdvance) : []),
+    ]);
     return mergeJourneyEventsForPersistence(result, status, committed);
+  }
+
+  function finalizeSettledMirrorWorld(
+    status: ReturnType<typeof companionRuntime.status>,
+    input: AnyRecord,
+  ) {
+    if (status.journey.status !== "settled"
+      || status.journey.worldMode !== "mirror"
+      || status.journey.worldCommit) {
+      return { status };
+    }
+    const settledAtWorldTime = status.journey.settledAtWorldTime;
+    const startedAtWorldTime = status.journey.startedAtWorldTime;
+    if (!settledAtWorldTime || !startedAtWorldTime) throw new Error("journey_mirror_time_window_missing");
+    const statusRecord = recordValue(status);
+    const taskAdjudication = recordValue(statusRecord.taskAdjudication);
+    const completionTier = optionalString(taskAdjudication.tier) || "及格";
+    const performance = recordValue(taskAdjudication.performance);
+    const reportedScoreBps = Number(performance.scoreBps);
+    const completionScoreBps = Number.isSafeInteger(reportedScoreBps)
+      ? Math.max(0, Math.min(10_000, reportedScoreBps))
+      : completionTier === "惊世"
+        ? 10_000
+        : completionTier === "完美"
+          ? 9_500
+          : completionTier === "良好"
+            ? 7_500
+            : 6_000;
+    const evidenceEpisodes = (Array.isArray(statusRecord.episodes)
+      ? statusRecord.episodes
+      : []) as readonly JourneyTaskEvidenceEpisode[];
+    let completedObjectiveIds: readonly string[] = [];
+    let requiredMainObjectiveIds: readonly string[] = [];
+    let mainLineSucceeded = false;
+    if (status.journey.taskPlan) {
+      const graphState = journeyTaskGraphState(status.journey.taskPlan, evidenceEpisodes);
+      const mainCompleted = Number(taskAdjudication.mainCompleted);
+      const mainTotal = Number(taskAdjudication.mainTotal);
+      completedObjectiveIds = Array.isArray(taskAdjudication.completedObjectiveIds)
+        ? taskAdjudication.completedObjectiveIds.filter((value): value is string =>
+            typeof value === "string" && Boolean(value.trim()))
+        : [];
+      requiredMainObjectiveIds = graphState.requiredMainObjectiveIds;
+      mainLineSucceeded = mainTotal > 0 && mainCompleted === mainTotal;
+    } else {
+      const mission = recordValue(statusRecord.mission);
+      mainLineSucceeded = mission.status === "completed"
+        && recordValue(mission.outcome).result === "success";
+      if (mainLineSucceeded) {
+        completedObjectiveIds = ["legacy_main"];
+        requiredMainObjectiveIds = ["legacy_main"];
+      }
+    }
+    const canonEligible = mainLineSucceeded && ["良好", "完美", "惊世"].includes(completionTier);
+    const worldSynchronization = authoritativeWorldClockEnabled
+      ? advanceCanonicalWorld({
+          reason: "journey_canon_commit_materialization",
+          processedDomains: ["economy", "resources", "factions", "conflicts", "world_events"],
+          sourceEventIds: [],
+          idempotencyKey: `${String(input.idempotencyKey || status.journey.journeyId).trim()}:canon-sync`,
+          causationId: status.journey.journeyId,
+          correlationId: status.journey.correlationId,
+        })
+      : undefined;
+    const committedAtWorldTime = status.journey.mirrorTimeRuleVersion === 2
+      ? clockIso(configuredWorldClock)
+      : settledAtWorldTime;
+    let worldSolidification: ReturnType<typeof epochRuntime.solidifyJourneyWorld> | undefined;
+    const worldCommit = canonEligible
+      ? (worldSolidification = epochRuntime.solidifyJourneyWorld({
+          journeyId: status.journey.journeyId,
+          agentId: status.journey.agentId,
+          regionId: status.journey.destinationRegionId,
+          completedObjectiveIds,
+          requiredMainObjectiveIds,
+          mirrorStartedAtWorldTime: startedAtWorldTime,
+          mirrorEndedAtWorldTime: settledAtWorldTime,
+          committedAtWorldTime,
+          completionTier,
+          completionScoreBps,
+          worldSliceHash: status.journey.worldSlice?.sliceHash,
+          correlationId: status.journey.correlationId,
+          causationId: status.journey.journeyId,
+        })).value
+      : {
+          mode: "mirror" as const,
+          status: "discarded" as const,
+          reason: (mainLineSucceeded
+            ? "quality_below_canon_threshold"
+            : "main_incomplete_or_return_failed") as "quality_below_canon_threshold" | "main_incomplete_or_return_failed",
+          regionId: status.journey.destinationRegionId,
+          committedAtWorldTime,
+          influenceDelta: 0,
+          factionStandings: [],
+          npcRelationships: [],
+          sourceEventIds: [],
+        };
+    const worldCommitRecord = companionRuntime.recordWorldCommit({
+      ...input,
+      journeyId: status.journey.journeyId,
+      expectedVersion: status.journey.version,
+      worldCommit,
+      idempotencyKey: `${String(input.idempotencyKey || status.journey.journeyId).trim()}:world-commit`,
+    });
+    return {
+      status: companionRuntime.status({ ...input, journeyId: status.journey.journeyId }),
+      worldSynchronization,
+      worldSolidification,
+      worldCommitRecord,
+    };
   }
 
   function commitJourneyActionRuntime(input: AnyRecord = {}) {
     const session = epochRuntime.journeyHostedSession(input);
-    if (session.sceneContract?.phase !== "main") throw new Error("journey_main_scene_required");
+    if (!session.sceneContract || !["main", "side"].includes(session.sceneContract.phase)) {
+      throw new Error("journey_task_scene_required");
+    }
     const main = commitSingleJourneyStepRuntime(input);
     const current = companionRuntime.status(input);
+    const nextTaskObjective = current.journey.taskPlan
+      ? nextJourneyTaskObjective(
+          current.journey.taskPlan,
+          current.episodes as readonly JourneyTaskEvidenceEpisode[],
+        )
+      : undefined;
+    if (current.journey.taskPlan && nextTaskObjective) {
+      const result = {
+        ...current,
+        objectiveEpisode: main.episode,
+        settledAction: main.settledAction,
+        nextAction: "obsidian_epoch.propose_journey_step",
+      };
+      attachEpochEventsForPersistence(result, epochEventsForPersistence(main));
+      return mergeJourneyEventsForPersistence(result, main, current);
+    }
     const existingReturn = current.episodes.find((episode) => episode.phase === "return");
     if (existingReturn) {
-      return mergeJourneyEventsForPersistence({
+      const result = {
         ...current,
         mainEpisode: main.episode,
         returnEpisode: existingReturn,
         settledAction: main.settledAction,
         duplicate: true,
-      }, main, current);
+      };
+      attachEpochEventsForPersistence(result, epochEventsForPersistence(main));
+      return mergeJourneyEventsForPersistence(result, main, current);
     }
     const returning = companionRuntime.beginReturn({
       ...input,
@@ -1656,25 +2265,132 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       visibleText: `沿已确认路线完成${returnProposal.proposal.episode.title}`,
       idempotencyKey: `${String(input.idempotencyKey || "").trim()}:return`,
     });
+    const settled = returned.journey.taskPlan
+      ? companionRuntime.settleCompleted({
+          ...input,
+          journeyId: returned.journey.journeyId,
+          expectedVersion: returned.journey.version,
+          idempotencyKey: `${String(input.idempotencyKey || "").trim()}:settle-completed`,
+        })
+      : returned;
+    const initialFinalStatus = companionRuntime.status({
+      ...input,
+      journeyId: returned.journey.journeyId,
+    });
+    const mirrorFinalization = finalizeSettledMirrorWorld(initialFinalStatus, input);
+    const finalStatus = mirrorFinalization.status;
+    const finalStatusRecord = recordValue(finalStatus);
+    const taskAdjudication = recordValue(finalStatusRecord.taskAdjudication);
+    const worldSolidification = mirrorFinalization.worldSolidification;
+    const worldCommitRecord = mirrorFinalization.worldCommitRecord;
+    const completionTier = optionalString(taskAdjudication.tier);
+    const rewardSourceEventIds = [...new Set((Array.isArray(finalStatusRecord.episodes)
+      ? finalStatusRecord.episodes
+      : []).flatMap((episodeValue) => {
+        const episode = recordValue(episodeValue);
+        const serverFacts = recordValue(episode.serverFacts);
+        return Array.isArray(serverFacts.sourceEventIds)
+          ? serverFacts.sourceEventIds.filter((eventId): eventId is string => typeof eventId === "string" && Boolean(eventId.trim()))
+          : [];
+      }))];
+    const rewardGrant = completionTier && completionTier !== "未及格"
+      ? epochRuntime.grantJourneyReward({
+          journeyId: returned.journey.journeyId,
+          agentId: returned.journey.agentId,
+          tier: completionTier,
+          taskPlan: returned.journey.taskPlan,
+          hiddenTaskSeal: returned.journey.taskPlan
+            ? resolveJourneyHiddenTaskSeal(returned.journey.journeyId, returned.journey.taskPlan)
+            : undefined,
+          sourceEventIds: rewardSourceEventIds,
+          correlationId: returned.journey.correlationId,
+          causationId: returned.journey.journeyId,
+        })
+      : undefined;
     const result = {
-      ...returned,
+      ...finalStatus,
       mainEpisode: main.episode,
       returnEpisode: returned.episode,
       settledAction: main.settledAction,
       returnAction: returned.settledAction,
+      ...(rewardGrant ? { rewardGrant: {
+        balances: rewardGrant.value,
+        reward: rewardGrant.reward,
+        rewardBundle: rewardGrant.rewardBundle,
+        grantedItems: rewardGrant.grantedItems,
+        duplicate: rewardGrant.duplicate,
+      } } : {}),
+      ...(finalStatus.journey.worldCommit ? { worldCommit: finalStatus.journey.worldCommit } : {}),
       nextAction: "obsidian_epoch.journey_status",
     };
     attachEpochEventsForPersistence(result, [
       ...epochEventsForPersistence(main),
       ...epochEventsForPersistence(returnProposal),
       ...epochEventsForPersistence(returned),
+      ...(mirrorFinalization.worldSynchronization
+        ? epochEventsForPersistence(mirrorFinalization.worldSynchronization)
+        : []),
+      ...(worldSolidification ? epochEventsForPersistence(worldSolidification) : []),
+      ...(rewardGrant ? epochEventsForPersistence(rewardGrant) : []),
     ]);
-    return mergeJourneyEventsForPersistence(result, main, returning, returned);
+    return mergeJourneyEventsForPersistence(
+      result,
+      main,
+      returning,
+      returned,
+      settled,
+      worldCommitRecord,
+      finalStatus,
+    );
+  }
+
+  function synchronizeWorldForJourneyStart(input: AnyRecord) {
+    if (!authoritativeWorldClockEnabled) return undefined;
+    return advanceCanonicalWorld({
+      reason: "journey_world_slice_materialization",
+      processedDomains: ["economy", "resources", "factions", "conflicts", "world_events"],
+      sourceEventIds: [],
+      idempotencyKey: `${String(input.idempotencyKey || "").trim()}:world-slice`,
+      causationId: optionalString(input.causationId),
+      correlationId: optionalString(input.correlationId),
+    });
+  }
+
+  function reserveJourneyWorldWindowRuntime(input: AnyRecord = {}) {
+    assertPublicSafe(input);
+    const worldSynchronization = synchronizeWorldForJourneyStart(input);
+    const current = companionRuntime.status(input);
+    const expectedVersion = Number(input.expectedVersion);
+    const reservation = current.journey.status === "prepared"
+      && (!current.journey.mirrorWindow || expectedVersion !== current.journey.version)
+      ? companionRuntime.reserveJourneyWorldWindow({
+          ...input,
+          idempotencyKey: `${String(input.idempotencyKey || "").trim()}:reserve-world-window`,
+        })
+      : current;
+    const result = {
+      ...reservation,
+      ...(worldSynchronization ? {
+        worldClock: worldSynchronization.clock,
+        worldSimulation: worldSynchronization.worldSimulation,
+      } : {}),
+    };
+    attachEpochEventsForPersistence(
+      result,
+      worldSynchronization ? epochEventsForPersistence(worldSynchronization) : [],
+    );
+    return mergeJourneyEventsForPersistence(result, reservation);
   }
 
   function startJourneyAgentNativeRuntime(input: AnyRecord = {}) {
     assertPublicSafe(input);
-    const started = companionRuntime.start(input);
+    const worldWindow = reserveJourneyWorldWindowRuntime(input);
+    const startInput = {
+      ...input,
+      expectedVersion: worldWindow.journey.mirrorWindow?.startExpectedVersion
+        ?? worldWindow.journey.version,
+    };
+    const started = companionRuntime.start(startInput);
     let current = companionRuntime.status({ ...input, journeyId: started.journey.journeyId });
     let arrivalProposal: ReturnType<typeof proposeJourneyStepRuntime> | undefined;
     let arrival: ReturnType<typeof commitSingleJourneyStepRuntime> | undefined;
@@ -1686,7 +2402,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         idempotencyKey: `${String(input.idempotencyKey || "").trim()}:arrival`,
       });
       const arrivalAction = arrivalProposal.proposal.sceneContract?.actionOptions.find((action) =>
-        action.optionKey === "enter_gray_harbor");
+        action.optionKey === "enter_gray_harbor" || action.optionKey === "enter_destination");
       if (!arrivalAction) throw new Error("journey_arrival_action_missing");
       arrival = commitSingleJourneyStepRuntime({
         ...input,
@@ -1701,6 +2417,11 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       });
       current = companionRuntime.status({ ...input, journeyId: current.journey.journeyId });
     }
+    const journeyEntryReserve = epochRuntime.grantJourneyEntryReserve({
+      ...input,
+      journeyId: started.journey.journeyId,
+      agentId: started.journey.agentId,
+    });
     const awaiting = current.journey.status === "traveling"
       ? companionRuntime.awaitAgent({
           ...input,
@@ -1714,15 +2435,22 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       ...awaiting,
       episodes: companionRuntime.status({ ...input, journeyId: started.journey.journeyId }).episodes,
       arrivalEpisode: arrival?.episode ?? current.episodes.find((episode) => episode.phase === "arrival"),
+      journeyEntryReserve: {
+        balances: journeyEntryReserve.value,
+        reserve: journeyEntryReserve.reserve,
+        duplicate: journeyEntryReserve.duplicate,
+      },
       nextAction: awaiting.journey.status === "awaiting_agent"
         ? "obsidian_epoch.propose_journey_step"
         : "obsidian_epoch.journey_status",
     };
     attachEpochEventsForPersistence(result, [
+      ...epochEventsForPersistence(worldWindow),
       ...(arrivalProposal ? epochEventsForPersistence(arrivalProposal) : []),
       ...(arrival ? epochEventsForPersistence(arrival) : []),
+      ...epochEventsForPersistence(journeyEntryReserve),
     ]);
-    return mergeJourneyEventsForPersistence(result, started, arrival, awaiting);
+    return mergeJourneyEventsForPersistence(result, worldWindow, started, arrival, awaiting);
   }
 
   function recallJourneyRuntime(input: AnyRecord = {}) {
@@ -1899,6 +2627,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         readonly regionLabel?: string;
         readonly currentJourney?: unknown;
         readonly returnedJourneys: readonly unknown[];
+        readonly returnedJourneyReports: readonly unknown[];
         readonly recentEpisodes: readonly unknown[];
         readonly pendingDecisions: readonly unknown[];
         readonly interactionInbox: readonly unknown[];
@@ -1913,13 +2642,37 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       assertPublicSafe(input);
       return companionRuntime.prepare(input);
     },
+    epochJourneyTaskGenerationContext: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return companionRuntime.taskGenerationContext(input);
+    },
+    epochReserveJourneyWorldWindow: (input: AnyRecord = {}) => reserveJourneyWorldWindowRuntime(input),
     epochStartJourney: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
-      return companionRuntime.start(input);
+      const worldWindow = reserveJourneyWorldWindowRuntime(input);
+      const started = companionRuntime.start({
+        ...input,
+        expectedVersion: worldWindow.journey.mirrorWindow?.startExpectedVersion
+          ?? worldWindow.journey.version,
+      });
+      const result = {
+        ...started,
+        worldClock: worldWindow.worldClock,
+        worldSimulation: worldWindow.worldSimulation,
+      };
+      attachEpochEventsForPersistence(
+        result,
+        epochEventsForPersistence(worldWindow),
+      );
+      return mergeJourneyEventsForPersistence(result, worldWindow, started);
     },
     epochStartJourneyAgentNative: (input: AnyRecord = {}) => startJourneyAgentNativeRuntime(input),
     epochProposeJourneyStep: (input: AnyRecord = {}) => proposeJourneyStepRuntime(input),
     epochCommitJourneyAction: (input: AnyRecord = {}) => commitJourneyActionRuntime(input),
+    epochFinalizeSettledMirrorWorld: (
+      status: ReturnType<typeof companionRuntime.status>,
+      input: AnyRecord = {},
+    ) => finalizeSettledMirrorWorld(status, input),
     epochCommitJourneyEpisodes: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
       return companionRuntime.commitEpisodes(input);
@@ -1973,9 +2726,103 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         ),
       };
     },
+    epochWorldClock: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return worldClockRuntime.status();
+    },
+    epochWorldState: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return worldSimulationView(worldSimulationRuntime.status(), {
+        regionId: optionalString(input.regionId),
+        factionId: optionalString(input.factionId),
+        includeShipments: input.includeShipments === true,
+        limit: typeof input.limit === "number" ? input.limit : undefined,
+      });
+    },
+    epochWorldContent: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return worldContentRegistryView(worldContentRegistry, {
+        collection: typeof input.collection === "string"
+          ? input.collection as WorldContentRegistryViewInput["collection"]
+          : undefined,
+        id: optionalString(input.id),
+        query: optionalString(input.query),
+        limit: typeof input.limit === "number" ? input.limit : undefined,
+      });
+    },
+    epochAdvanceWorldClock: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      epochRuntime.operatorOverview({ operatorKey: input.operatorKey, limit: 1 });
+      return advanceCanonicalWorld({
+        reason: optionalString(input.reason) || "operator_world_tick",
+        processedDomains: Array.isArray(input.processedDomains)
+          ? input.processedDomains.filter((value): value is string => typeof value === "string")
+          : ["world_simulation"],
+        sourceEventIds: Array.isArray(input.sourceEventIds)
+          ? input.sourceEventIds.filter((value): value is string => typeof value === "string")
+          : [],
+        idempotencyKey: stringValue(input.idempotencyKey),
+        causationId: optionalString(input.causationId),
+        correlationId: optionalString(input.correlationId),
+      });
+    },
+    epochMigrateWorldContent: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      epochRuntime.operatorOverview({ operatorKey: input.operatorKey, limit: 1 });
+      return migrateCanonicalWorldContent({
+        regionSuccessors: stringRecord(
+          input.regionSuccessors,
+          "world_simulation_region_successors_invalid",
+        ),
+        factionSuccessors: stringRecord(
+          input.factionSuccessors,
+          "world_simulation_faction_successors_invalid",
+        ),
+        idempotencyKey: stringValue(input.idempotencyKey),
+        causationId: optionalString(input.causationId),
+        correlationId: optionalString(input.correlationId),
+      });
+    },
     epochRunMaintenance: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
-      return epochRuntime.runMaintenance(input);
+      const maintenance = epochRuntime.runMaintenance(input);
+      const maintenanceEvents = epochEventsForPersistence(maintenance);
+      if (maintenance.duplicate) {
+        const priorWorldTick = worldClockRuntime.resultForIdempotencyKey(
+          `${stringValue(input.idempotencyKey)}:world-clock`,
+        );
+        const priorSimulation = worldSimulationRuntime.resultForIdempotencyKey(
+          `${stringValue(input.idempotencyKey)}:world-clock:simulation`,
+        );
+        return attachEpochEventsForPersistence({
+          ...maintenance,
+          worldClock: priorWorldTick?.clock ?? worldClockRuntime.status(),
+          worldSimulation: priorSimulation?.simulation ?? worldSimulationRuntime.status(),
+        }, maintenanceEvents);
+      }
+      const worldClockAdvance = advanceCanonicalWorld({
+        reason: "maintenance_world_tick",
+        processedDomains: [
+          "npc_schedule",
+          "identity_needs",
+          "economy",
+          "resources",
+          "weather",
+          "factions",
+          "world_events",
+        ],
+        sourceEventIds: maintenanceEvents.map((event) => event.eventId),
+        idempotencyKey: `${stringValue(input.idempotencyKey)}:world-clock`,
+        causationId: optionalString(input.causationId),
+        correlationId: optionalString(input.correlationId),
+      });
+      return attachEpochEventsForPersistence({
+        ...maintenance,
+        worldClock: worldClockAdvance.clock,
+        worldSimulation: worldClockAdvance.worldSimulation,
+        worldFlows: worldClockAdvance.worldFlows,
+        events: [...maintenance.events, ...worldClockAdvance.events],
+      }, [...maintenanceEvents, ...epochEventsForPersistence(worldClockAdvance)]);
     },
     epochArchiveIdentity: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
@@ -1991,7 +2838,12 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     },
     epochWorldOverview: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
-      return epochRuntime.worldOverview(input);
+      return {
+        ...epochRuntime.worldOverview(input),
+        worldClock: worldClockRuntime.status(),
+        worldSimulation: worldSimulationView(worldSimulationRuntime.status()),
+        worldContent: worldContentRegistryView(worldContentRegistry),
+      };
     },
     epochLoreContributions: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
@@ -2035,7 +2887,17 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     },
     epochRegionInfo: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
-      return epochRuntime.regionInfo(input);
+      const info = epochRuntime.regionInfo(input);
+      const regionId = optionalString(recordValue(info).regionId) || optionalString(input.regionId);
+      const canonicalContent = regionId ? canonicalPlaceContext(worldContentRegistry, regionId) : undefined;
+      const worldState = regionId
+        ? worldSimulationView(worldSimulationRuntime.status(), { regionId }).regions[0]
+        : undefined;
+      return {
+        ...info,
+        ...(canonicalContent ? { canonicalContent, worldContentSourceHash: worldContentRegistry.sourceHash } : {}),
+        ...(worldState ? { worldState } : {}),
+      };
     },
     epochNpcRelationships: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
@@ -2123,6 +2985,14 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     },
     epochSeedSeason: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
+      if (Array.isArray(input.factionIds)) {
+        const canonicalFactionIds = new Set(worldContentRegistry.factions.map((faction) => faction.id));
+        for (const factionId of input.factionIds) {
+          if (typeof factionId !== "string" || !canonicalFactionIds.has(factionId)) {
+            throw new Error(`world_content_faction_not_found:${String(factionId)}`);
+          }
+        }
+      }
       return epochRuntime.seedSeason(input);
     },
     epochContributeSeason: (input: AnyRecord = {}) => {
@@ -2748,7 +3618,7 @@ export const AGENT_WORLD_TOOLS = [
   {
     name: "obsidian_epoch.agent_briefing",
     title: "Agent briefing",
-    description: "Read the owner-authorized companion briefing: identity, current journey, returned journeys, pending decisions, recent episodes and server world context.",
+    description: "Read the owner-authorized companion briefing: identity, current journey, returned journeys with complete server-authored story reports, pending decisions, recent episodes and server world context.",
     inputSchema: objectSchema({
       explorerId: { type: "string" },
       agentId: { type: "string" },
@@ -2761,11 +3631,12 @@ export const AGENT_WORLD_TOOLS = [
   {
     name: "obsidian_epoch.prepare_journey",
     title: "Prepare journey",
-    description: "Owner-authorized safe journey preview. Applies a cautious, balanced, or explorer preset without starting or locking resources.",
+    description: "Owner-authorized mission preview. Records the requested task type and destination map; the route is generated from that map at start and is not a fixed client-authored script.",
     inputSchema: objectSchema({
       agentId: { type: "string" },
       originRegionId: { type: "string" },
       destinationRegionId: { type: "string" },
+      taskType: { type: "string" },
       mandate: { type: "object" },
       presetId: { type: "string", enum: ["cautious", "balanced", "explorer"] },
       policy: { type: "object" },
@@ -2778,14 +3649,18 @@ export const AGENT_WORLD_TOOLS = [
   {
     name: "obsidian_epoch.start_journey",
     title: "Start journey",
-    description: "Owner-authorized journey departure. Records a grounded arrival, pauses at the main event for the Agent, and does not require Sampling.",
+    description: "Owner-authorized departure into a historical mirror. Before Host generation, the server freezes an already-materialized in-game interval and place-specific macro slice, then validates and signs a route grounded in that slice; unavailable or invalid Sampling falls back to a server route seed.",
     inputSchema: objectSchema({
       journeyId: { type: "string" },
       expectedVersion: { type: "number" },
       realDurationMs: { type: "number" },
-      worldDurationMs: { type: "number" },
+      worldDurationMs: {
+        type: "number",
+        description: "Legacy compatibility only. New mirror Journeys ignore this value because the server chooses their in-game end time.",
+      },
       episodeCount: { type: "number" },
       decisionMode: { type: "string", enum: ["agent_native", "host_sampling"] },
+      taskGenerationMode: { type: "string", enum: ["model_sampling", "server_fallback"] },
       recoveryCode: { type: "string" },
       localSecret: { type: "string" },
       idempotencyKey: { type: "string" },
@@ -2794,7 +3669,7 @@ export const AGENT_WORLD_TOOLS = [
   {
     name: "obsidian_epoch.propose_journey_step",
     title: "Propose journey step",
-    description: "Owner-authorized Agent-native proposal for the current journey step. Returns a server-signed SceneContract and concrete action options without committing an outcome.",
+    description: "Owner-authorized proposal for the current mission task. Returns the mission state, a server-signed SceneContract and concrete action options without committing an outcome.",
     inputSchema: objectSchema({
       journeyId: { type: "string" },
       expectedVersion: { type: "number" },
@@ -2806,7 +3681,7 @@ export const AGENT_WORLD_TOOLS = [
   {
     name: "obsidian_epoch.commit_journey_action",
     title: "Commit journey action",
-    description: "Commit one server-signed main journey action. Validates owner, journey version, scene binding, signature, expiry and idempotency before recording the main event and grounded return.",
+    description: "Commit one server-signed main or side objective action. The server validates binding and evidence, advances to the next objective, then adjudicates tier, hidden condition and reward after the final return.",
     inputSchema: objectSchema({
       journeyId: { type: "string" },
       sceneId: { type: "string" },
@@ -2823,7 +3698,7 @@ export const AGENT_WORLD_TOOLS = [
   {
     name: "obsidian_epoch.journey_status",
     title: "Journey status",
-    description: "Read an owner-authorized journey, grounded episodes, pending state and next recommended poll time; due journeys catch up server-side.",
+    description: "Read an owner-authorized mission, staged task statuses, grounded episodes and next poll time; settled missions resolve explicitly to completed or failed and include a complete grounded story report.",
     inputSchema: objectSchema({
       journeyId: { type: "string" },
       recoveryCode: { type: "string" },
@@ -2845,7 +3720,7 @@ export const AGENT_WORLD_TOOLS = [
   {
     name: "obsidian_epoch.journey_album",
     title: "Journey album",
-    description: "Read owner-authorized journey history and grounded episode cards for one persistent identity.",
+    description: "Read owner-authorized journey history, complete grounded story reports and episode cards for one persistent identity.",
     inputSchema: objectSchema({
       agentId: { type: "string" },
       recoveryCode: { type: "string" },
@@ -2945,6 +3820,12 @@ export const AGENT_WORLD_TOOLS = [
       regionControlDecayMinAgeSeconds: { type: "number" },
       abuseDecayLimit: { type: "number" },
       abuseDecayAmount: { type: "number" },
+      worldAdvanceMinutes: {
+        type: "number",
+        minimum: 1,
+        maximum: 43200,
+        description: "Deprecated compatibility field; ignored because elapsed time is server-derived.",
+      },
       idempotencyKey: { type: "string" },
     }, ["operatorKey", "idempotencyKey"]),
   },
@@ -3033,6 +3914,97 @@ export const AGENT_WORLD_TOOLS = [
     inputSchema: objectSchema({
       limit: { type: "number" },
     }),
+  },
+  {
+    name: "obsidian_epoch.world_clock",
+    title: "World clock",
+    description: "Read the Year-1 server-authoritative clock derived at one game day per real minute, including the materialized cursor, pending catch-up and current 60-year timeline cycle.",
+    inputSchema: objectSchema({}),
+  },
+  {
+    name: "obsidian_epoch.world_state",
+    title: "Living world state",
+    description: "Read the replayable server-authoritative regional economy, finite reserves, needs coverage, prices, in-transit shipments, faction logistics and conflict pressure produced by WorldTick.",
+    inputSchema: objectSchema({
+      regionId: { type: "string" },
+      factionId: { type: "string" },
+      includeShipments: { type: "boolean" },
+      limit: { type: "number" },
+    }),
+  },
+  {
+    name: "obsidian_epoch.world_content",
+    title: "Canonical world content",
+    description: "Read the versioned compiled registry for canonical rules, power systems, species, factions, layers, places and permanent routes.",
+    inputSchema: objectSchema({
+      collection: {
+        type: "string",
+        enum: ["rules", "systems", "species", "factions", "layers", "places", "routes"],
+      },
+      id: { type: "string" },
+      query: { type: "string" },
+      limit: { type: "number" },
+    }),
+  },
+  {
+    name: "obsidian_epoch.world_knowledge",
+    title: "Canonical world knowledge",
+    description: "Hybrid lexical and semantic retrieval over the validated canonical registry of world rules, mystery systems, species, factions, layers, places and permanent routes. Results cite stable entity ids and source paths and never include unadmitted client lore.",
+    inputSchema: objectSchema({
+      query: { type: "string", minLength: 1, maxLength: 500 },
+      collection: {
+        type: "string",
+        enum: ["rules", "systems", "species", "factions", "layers", "places", "routes"],
+      },
+      entityId: { type: "string" },
+      regionId: { type: "string" },
+      limit: { type: "number", minimum: 1, maximum: 30 },
+    }, ["query"]),
+  },
+  {
+    name: "obsidian_epoch.world_memory",
+    title: "Solidified world memory",
+    description: "Hybrid lexical and semantic retrieval over active, unexpired journey stories that passed the main-line canon threshold and were solidified into the shared world. Revoked or deleted sharing revisions are removed. Results are derived memory with source page, journey and canonical event ids; they never mutate or overrule the event ledger.",
+    inputSchema: objectSchema({
+      query: { type: "string", minLength: 1, maxLength: 500 },
+      regionId: { type: "string" },
+      fromWorldTime: { type: "string" },
+      toWorldTime: { type: "string" },
+      limit: { type: "number", minimum: 1, maximum: 30 },
+    }, ["query"]),
+  },
+  {
+    name: "obsidian_epoch.advance_world_clock",
+    title: "Synchronize world clock",
+    description: "Operator-gated server-time synchronization. The server derives game time at one game day per real minute, persists a bounded catch-up tick, advances the macro world simulation and exposes crossed 60-year aggregation boundaries. Clients cannot choose elapsed time.",
+    inputSchema: objectSchema({
+      operatorKey: { type: "string" },
+      elapsedWorldMinutes: {
+        type: "number",
+        minimum: 1,
+        maximum: 43200,
+        description: "Deprecated compatibility field; ignored because elapsed time is server-derived.",
+      },
+      reason: { type: "string" },
+      processedDomains: { type: "array", items: { type: "string" } },
+      sourceEventIds: { type: "array", items: { type: "string" } },
+      causationId: { type: "string" },
+      correlationId: { type: "string" },
+      idempotencyKey: { type: "string" },
+    }, ["operatorKey", "reason", "processedDomains", "idempotencyKey"]),
+  },
+  {
+    name: "obsidian_epoch.migrate_world_content",
+    title: "Migrate living world content",
+    description: "Operator-gated explicit migration from the persisted living-world content hash to the loaded canonical registry. Removed region and faction IDs require successor mappings; all genesis resources and currency are audited.",
+    inputSchema: objectSchema({
+      operatorKey: { type: "string" },
+      regionSuccessors: { type: "object", additionalProperties: { type: "string" } },
+      factionSuccessors: { type: "object", additionalProperties: { type: "string" } },
+      causationId: { type: "string" },
+      correlationId: { type: "string" },
+      idempotencyKey: { type: "string" },
+    }, ["operatorKey", "idempotencyKey"]),
   },
   {
     name: "obsidian_epoch.lore_contributions",
@@ -4423,6 +5395,7 @@ export const AGENT_WORLD_TOOLS = [
       operatorKey: { type: "string" },
       regionId: { type: "string" },
       seasonKey: { type: "string" },
+      factionIds: { type: "array", items: { type: "string" } },
       idempotencyKey: { type: "string" },
     }, ["operatorKey", "idempotencyKey"]),
   },
@@ -4577,6 +5550,8 @@ const REJECTED_COMMAND_AUDIT_TOOLS = new Set([
   "obsidian_epoch.archive_identity",
   "obsidian_epoch.reincarnate",
   "obsidian_epoch.run_maintenance",
+  "obsidian_epoch.advance_world_clock",
+  "obsidian_epoch.migrate_world_content",
   "obsidian_epoch.set_downtime",
   "obsidian_epoch.claim_downtime",
   "obsidian_epoch.tick_downtime",
@@ -4668,6 +5643,8 @@ type McpRuntimeOptions = RuntimeOptions & {
   readonly runtime?: unknown;
   readonly recordRejectedCommands?: boolean;
   readonly authoritativeIdentityIssuance?: boolean;
+  readonly worldMemorySearch?: (input: AnyRecord) => Promise<unknown>;
+  readonly worldKnowledgeSearch?: (input: AnyRecord) => Promise<unknown>;
 };
 
 function serverAssignedIdentityInput(input: AnyRecord) {
@@ -4681,6 +5658,8 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
   const runtime = (options.runtime ?? createAgentWorldRuntime(options)) as AgentWorldRuntime;
   const recordRejectedCommands = options.recordRejectedCommands !== false;
   const authoritativeIdentityIssuance = options.authoritativeIdentityIssuance === true;
+  const worldMemorySearch = options.worldMemorySearch;
+  const worldKnowledgeSearch = options.worldKnowledgeSearch;
   const assertLegacyMutationEnabled = () => {
     if (process.env.NODE_ENV === "production") throw new Error(LEGACY_MUTATION_DISABLED_ERROR);
   };
@@ -4691,17 +5670,117 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     const partialPersistence = requestContext?.persistPartial as (((toolName: string, result: unknown) => Promise<void>) & {
       readonly runMutation?: <T>(operation: () => Promise<T> | T) => Promise<T>;
     }) | undefined;
-    const runStage = partialPersistence?.runMutation || (async <T>(operation: () => Promise<T> | T) => operation());
-    const started = samplingRequested && requestContext?.sampling
-      ? await runStage(async () => {
-        const result = runtime.epochStartJourneyAgentNative(args);
-        await partialPersistence?.("obsidian_epoch.start_journey", result);
-        return result;
-      })
-      : runtime.epochStartJourneyAgentNative(args);
+    const runStage = samplingRequested && partialPersistence?.runMutation
+      ? partialPersistence.runMutation
+      : async <T>(operation: () => Promise<T> | T) => operation();
+    const worldWindow = await runStage(async () => {
+      const result = runtime.epochReserveJourneyWorldWindow(args);
+      await partialPersistence?.("obsidian_epoch.start_journey", result);
+      return result;
+    });
+    const boundArgs = {
+      ...args,
+      expectedVersion: worldWindow.journey.mirrorWindow?.startExpectedVersion
+        ?? worldWindow.journey.version,
+    };
+    const taskContext = runtime.epochJourneyTaskGenerationContext(boundArgs);
+    const generatedPlanRequested = args.taskGenerationMode === "model_sampling"
+      || args.taskGenerationMode === "server_fallback"
+      || taskContext.generationRequested === true;
+    let taskProposal: unknown;
+    let taskGeneration: unknown = {
+      ok: false,
+      source: "task_plan_sampling",
+      trust: "untrusted_client",
+      fallback: !generatedPlanRequested
+        ? "legacy_compatibility"
+        : args.taskGenerationMode === "server_fallback"
+          ? "server_fallback_requested"
+          : "capability_absent",
+    };
+    if (generatedPlanRequested && args.taskGenerationMode !== "server_fallback" && requestContext?.sampling
+      && typeof requestContext.sampling.createTaskPlanMessage === "function") {
+      await requestContext.notifyProgress?.(0, "正在根据任务类型与场景地图生成完整任务路线。");
+      const sampledTask = await requestContext.sampling.createTaskPlanMessage({
+        systemPrompt: [
+          "Generate one coherent playable quest route from the supplied task type and exact server map.",
+          "The supplied mirrorWindow and worldSlice are signed historical constraints. Keep the route inside that region and interval, and do not contradict its controller, conflict phase, shortages, prices, security, unrest, or macro direction.",
+          "Treat identityName as the protagonist's server-issued identity. Make the route plausible for that identity without renaming or replacing it.",
+          "Use identityTraits, identityNeeds, lifeGoal, and resources to create genuine tradeoffs rather than two equivalent success buttons. A cautious, exhausted, hungry, poor, ambitious, vengeful, or curious identity should face different sensible choices.",
+          "Return strict JSON only. Use only supplied object ids. Create a task graph with 4-9 main objectives, 2-4 side objectives, and one route-choice objective.",
+          "Include two mutually exclusive choice routes. Each choice route must contain at least two main objectives and be selected by exactly one distinct action on the route-choice objective. If map organizations or factions are available, ground each route with factionObjectId and target that object in its selecting action.",
+          "Include at least one unlock route whose unlockedByObjectiveIds names a side objective; completing that side objective must open one additional main objective. Locked and unselected route objectives are not executed or counted as required by the server.",
+          "Give every objective a global integer stage and prerequisiteObjectiveIds. Every prerequisite, route selection, and side unlock must point from a lower stage to a higher stage.",
+          "Every objective must contain exactly two distinct executable actions grounded in its worldObjectIds.",
+          "Use at least one supplied npc, and vary which supplied cast members appear according to the objective instead of repeating one npc mechanically.",
+          "Describe the achieved result with completionResult.kind (item,knowledge,world_state,service,relationship) and completionResult.returnMode (carry,report,none). Only physical items may use carry; reports, experiments, repairs, trials and relationships normally remain on site or are reported.",
+          "If a supplied object has type agent, it may be involved only through an explicit action target; describe the observable cooperative or competitive effect without inventing consent, resource loss or identity changes.",
+          "Risk labels are non-authoritative hints; the server recomputes risk from task semantics, scene type, action wording, and targeted map objects. Never include completion state, grade/tier, reward, hidden task, hidden condition, or claims that an action already happened.",
+          "Top-level fields: title,premise,primaryObjective,successResult,completionResult,objectives,routes.",
+          "CompletionResult fields: kind,returnMode,summary.",
+          "Route fields: routeId,kind,title,factionObjectId(optional),objectiveIds,unlockedByObjectiveIds. Route kind is choice or unlock.",
+          "Objective fields: objectiveId,kind,sequence,stage,prerequisiteObjectiveIds,title,objective,completionCriteria,sceneType,locationId,worldObjectIds,actions. Objective kind is main,side,choice.",
+          "Action fields: optionKey,label,intent,risk,allowedEffectKinds,targetObjectIds,outcomeSummary,selectsRouteId(optional and allowed only on choice objectives).",
+          "Allowed sceneType: livelihood,commission,world_event,discovery,health,conflict.",
+          "Allowed risk: low,medium,high. Allowed effects: commission_offer,journey_progress,resource_delta,clue_created,relationship_signal,world_reference.",
+        ].join(" "),
+        messages: [{
+          role: "user",
+          text: JSON.stringify({
+            taskType: taskContext.taskType,
+            identityName: taskContext.identityName,
+            identityTraits: taskContext.identityTraits,
+            identityNeeds: taskContext.identityNeeds,
+            lifeGoal: taskContext.lifeGoal,
+            resources: taskContext.resources,
+            scenarioMapId: taskContext.scenarioMapId,
+            mirrorWindow: taskContext.mirrorWindow,
+            worldSlice: taskContext.worldSlice,
+            availableWorldObjects: taskContext.availableWorldObjects.map((object) => ({
+              id: object.id,
+              type: object.type,
+              label: object.label,
+              tags: object.tags,
+            })),
+          }),
+        }],
+        maxTokens: 6_000,
+        temperature: 0.7,
+      }, {
+        activeClientRequest: true,
+        absoluteTimeoutMs: 90_000,
+        softTimeoutMs: 60_000,
+      });
+      taskGeneration = sampledTask;
+      if (sampledTask.ok) taskProposal = sampledTask.proposal;
+    }
+    const startOnce = (startArgs: AnyRecord) => runStage(async () => {
+      const result = runtime.epochStartJourneyAgentNative(startArgs);
+      await partialPersistence?.("obsidian_epoch.start_journey", result);
+      return result;
+    });
+    let started;
+    try {
+      started = await startOnce({
+        ...boundArgs,
+        ...(taskProposal === undefined ? {} : { taskProposal }),
+      });
+    } catch (error: unknown) {
+      const code = errorCodeForRejectedCommand(error);
+      if (taskProposal === undefined || !code.startsWith("journey_task_")) throw error;
+      taskGeneration = {
+        ok: false,
+        source: "task_plan_sampling",
+        trust: "untrusted_client",
+        fallback: "invalid_result",
+        validationError: code,
+      };
+      started = await startOnce(boundArgs);
+    }
     if (!samplingRequested || !requestContext?.sampling) {
       const result = {
         ...started,
+        taskGeneration,
         sampling: {
           ok: false,
           source: "sampling_advice",
@@ -4710,99 +5789,178 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
         },
         nextAction: "obsidian_epoch.propose_journey_step",
       };
-      attachEpochEventsForPersistence(result, epochEventsForPersistence(started));
-      return mergeJourneyEventsForPersistence(result, started);
+      attachEpochEventsForPersistence(result, [
+        ...epochEventsForPersistence(worldWindow),
+        ...epochEventsForPersistence(started),
+      ]);
+      return mergeJourneyEventsForPersistence(result, worldWindow, started);
     }
 
-    const proposal = await runStage(async () => {
-      const result = runtime.epochProposeJourneyStep({
-        ...args,
-        journeyId: started.journey.journeyId,
-        expectedVersion: started.journey.version,
-        idempotencyKey: `${baseIdempotencyKey}:main-proposal`,
-      });
-      await partialPersistence?.("obsidian_epoch.propose_journey_step", result);
-      return result;
-    });
-    const contract = proposal.proposal.sceneContract;
-    if (!contract) throw new Error("journey_scene_contract_not_found");
-    const actionOptions = proposal.proposal.actionOptions.map((option) => ({
-      actionOptionId: option.actionOptionId,
-      label: option.label,
-      risk: option.risk,
-    }));
-    await requestContext.notifyProgress?.(0, "正在请求 Host 为灰港主事件选择服务器签发的行动。");
-    const sampling = await requestContext.sampling.createMessage({
-      systemPrompt: "Choose exactly one server-issued actionOptionId. Return strict JSON with actionOptionId, rationale, confidence, and optional userFacingMessage. Do not invent outcomes, rewards, people, or world facts.",
-      messages: [{
-        role: "user",
-        text: JSON.stringify({
+    let current: { readonly journey: typeof started.journey; readonly nextAction?: string; readonly [key: string]: unknown } = started;
+    let lastProposal: ReturnType<typeof runtime.epochProposeJourneyStep> | undefined;
+    let lastSampling: Awaited<ReturnType<typeof requestContext.sampling.createMessage>> | undefined;
+    const samplingDecisions: unknown[] = [];
+    const committedResults: ReturnType<typeof runtime.epochCommitJourneyAction>[] = [];
+    const maxObjectiveSteps = Number(started.journey.taskPlan?.objectives.length ?? 1);
+    for (let stepIndex = 0; stepIndex < maxObjectiveSteps; stepIndex += 1) {
+      const proposal = await runStage(async () => {
+        const result = runtime.epochProposeJourneyStep({
+          ...args,
           journeyId: started.journey.journeyId,
-          episodeId: proposal.proposal.episode.episodeId,
-          episodeTitle: proposal.proposal.episode.title,
-          scene: {
-            phase: contract.phase,
-            premise: contract.premise,
-            location: contract.location,
-            participants: contract.participants,
-            confirmedFactIds: contract.confirmedFactIds,
-          },
-          actionOptions,
-        }),
-      }],
-      maxTokens: 384,
-    }, {
-      activeClientRequest: true,
-      absoluteTimeoutMs: 60_000,
-      softTimeoutMs: 30_000,
-    });
-    await requestContext.notifyProgress?.(1, sampling.ok
-      ? "Host 选择已校验。"
-      : "Host 选择不可用；保留提案，由 Agent 正常调用 commit_journey_action。");
-    const selected = sampling.ok
-      ? contract.actionOptions.find((option) => option.actionOptionId === sampling.decision.actionOptionId)
-      : undefined;
-    const samplingMessage = sampling.ok ? sampling.decision.userFacingMessage : undefined;
-    if (!selected) {
-      const result = {
-        ...started,
-        proposal: proposal.proposal,
-        sampling: sampling.ok ? {
-          ok: false,
-          source: "sampling_advice",
-          trust: "untrusted_client",
-          fallback: "invalid_action_option",
-        } : sampling,
-        nextAction: "obsidian_epoch.commit_journey_action",
-      };
-      attachEpochEventsForPersistence(result, []);
-      return mergeJourneyEventsForPersistence(result);
-    }
-
-    const committed = await runStage(async () => {
-      const result = runtime.epochCommitJourneyAction({
-        ...args,
-        journeyId: started.journey.journeyId,
-        sceneId: contract.sceneId,
-        episodeId: contract.episodeId,
-        expectedVersion: contract.expectedVersion,
-        actionOptionId: selected.actionOptionId,
-        signature: selected.signature,
-        visibleText: samplingMessage || `旅程主事件：${proposal.proposal.episode.title}`,
-        idempotencyKey: `${baseIdempotencyKey}:main-commit`,
+          expectedVersion: current.journey.version,
+          idempotencyKey: `${baseIdempotencyKey}:objective-${stepIndex + 1}-proposal`,
+        });
+        await partialPersistence?.("obsidian_epoch.propose_journey_step", result);
+        return result;
       });
-      await partialPersistence?.("obsidian_epoch.commit_journey_action", result);
-      return result;
-    });
+      lastProposal = proposal;
+      const contract = proposal.proposal.sceneContract;
+      if (!contract) throw new Error("journey_scene_contract_not_found");
+      const actionOptions = contract.actionOptions.map((option) => ({
+        actionOptionId: option.actionOptionId,
+        label: option.label,
+        intent: option.intent,
+        risk: option.risk,
+        riskTerms: option.riskTerms,
+        decisionEffect: option.completionKind === "skip"
+          ? contract.taskObjective?.kind === "side" ? "skip_optional_side" : "abandon_required_objective"
+          : "attempt_objective",
+      }));
+      const progress = recordValue(runtime.epochProgress({ agentId: started.journey.agentId }));
+      const identity = recordValue(progress.identity);
+      const personality = recordValue(identity.personality);
+      const needs = recordValue(identity.needs);
+      const lifeGoal = recordValue(identity.lifeGoal);
+      const resourceBalances = recordValue(progress.resources);
+      const needLevels = recordValue(needs.levels);
+      const strongestNeeds = Object.entries(needLevels)
+        .filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]))
+        .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+        .slice(0, 6)
+        .map(([need, pressureBps]) => ({ need, pressureBps }));
+      await requestContext.notifyProgress?.(
+        stepIndex / Math.max(1, maxObjectiveSteps),
+        `正在请求 Host 选择第 ${stepIndex + 1}/${maxObjectiveSteps} 个服务器签发行动。`,
+      );
+      const sampling = await requestContext.sampling.createMessage({
+        systemPrompt: [
+          "Choose exactly one server-issued actionOptionId as the server-issued identity, not as a quest-grade optimizer.",
+          "Use the identity's traits, strongest needs, life goal, remaining resources, signed riskTerms, mandate, prior route, and current objective.",
+          "Optional side objectives may be skipped when survival pressure, fatigue, resources, personality, or long-term priorities make that choice credible.",
+          "Do not assume that the highest-risk option is best and do not optimize for a hidden grade.",
+          "Return strict JSON with actionOptionId, rationale, confidence, and optional userFacingMessage. Do not invent completion, outcomes, rewards, hidden tasks, people, or world facts.",
+        ].join(" "),
+        messages: [{
+          role: "user",
+          text: JSON.stringify({
+            journeyId: started.journey.journeyId,
+            episodeId: proposal.proposal.episode.episodeId,
+            episodeTitle: proposal.proposal.episode.title,
+            scene: {
+              phase: contract.phase,
+              premise: contract.premise,
+              location: contract.location,
+              participants: contract.participants,
+              confirmedFactIds: contract.confirmedFactIds,
+              taskObjective: contract.taskObjective,
+            },
+            decisionContext: {
+              identity: {
+                identityName: identity.identityName,
+                traits: Array.isArray(personality.traits) ? personality.traits : [],
+                strongestNeeds,
+                lifeGoal: {
+                  category: lifeGoal.category,
+                  description: lifeGoal.description,
+                  motivation: lifeGoal.motivation,
+                  progressBps: lifeGoal.progressBps,
+                },
+              },
+              resources: resourceBalances,
+              mandate: started.journey.mandate,
+              mirrorWindow: started.journey.mirrorWindow,
+              worldSlice: compactJourneyDecisionWorldSlice(started.journey.worldSlice),
+            },
+            actionOptions,
+          }),
+        }],
+        maxTokens: 384,
+      }, {
+        activeClientRequest: true,
+        absoluteTimeoutMs: 60_000,
+        softTimeoutMs: 30_000,
+      });
+      lastSampling = sampling;
+      const selected = sampling.ok
+        ? contract.actionOptions.find((option) => option.actionOptionId === sampling.decision.actionOptionId)
+        : undefined;
+      if (!selected) {
+        await requestContext.notifyProgress?.(
+          stepIndex / Math.max(1, maxObjectiveSteps),
+          "Host 选择不可用；当前签名提案保持开放，不产生完成结果或奖励。",
+        );
+        const result = {
+          ...current,
+          proposal: proposal.proposal,
+          taskGeneration,
+          sampling: sampling.ok ? {
+            ok: false,
+            source: "sampling_advice",
+            trust: "untrusted_client",
+            fallback: "invalid_action_option",
+          } : sampling,
+          samplingDecisions,
+          nextAction: "obsidian_epoch.commit_journey_action",
+        };
+        attachEpochEventsForPersistence(result, [
+          ...epochEventsForPersistence(worldWindow),
+          ...epochEventsForPersistence(started),
+          ...epochEventsForPersistence(proposal),
+        ]);
+        return mergeJourneyEventsForPersistence(result, worldWindow, started, proposal);
+      }
+      samplingDecisions.push(sampling);
+      const committed = await runStage(async () => {
+        const result = runtime.epochCommitJourneyAction({
+          ...args,
+          journeyId: started.journey.journeyId,
+          sceneId: contract.sceneId,
+          episodeId: contract.episodeId,
+          expectedVersion: contract.expectedVersion,
+          actionOptionId: selected.actionOptionId,
+          signature: selected.signature,
+          visibleText: sampling.ok && sampling.decision.userFacingMessage
+            ? sampling.decision.userFacingMessage
+            : `旅程行动：${proposal.proposal.episode.title}`,
+          idempotencyKey: `${baseIdempotencyKey}:objective-${stepIndex + 1}-commit`,
+        });
+        await partialPersistence?.("obsidian_epoch.commit_journey_action", result);
+        return result;
+      });
+      committedResults.push(committed);
+      current = committed;
+      if (!("nextAction" in committed) || committed.nextAction !== "obsidian_epoch.propose_journey_step") break;
+    }
+    await requestContext.notifyProgress?.(1, "Host 行动选择已逐项校验并提交服务端结算。");
     const result = {
       ...started,
-      ...committed,
-      proposal: proposal.proposal,
-      sampling,
+      ...current,
+      ...(lastProposal ? { proposal: lastProposal.proposal } : {}),
+      taskGeneration,
+      sampling: lastSampling,
+      samplingDecisions,
       nextAction: "obsidian_epoch.journey_status",
     };
-    attachEpochEventsForPersistence(result, partialPersistence ? [] : epochEventsForPersistence(committed));
-    return partialPersistence ? mergeJourneyEventsForPersistence(result) : mergeJourneyEventsForPersistence(result, committed);
+    attachEpochEventsForPersistence(result, [
+      ...epochEventsForPersistence(worldWindow),
+      ...epochEventsForPersistence(started),
+      ...(partialPersistence
+        ? []
+        : committedResults.flatMap((committed) => epochEventsForPersistence(committed))),
+    ]);
+    return partialPersistence
+      ? mergeJourneyEventsForPersistence(result)
+      : mergeJourneyEventsForPersistence(result, worldWindow, started, ...committedResults);
   }
 
   function ensureSettledJourneyVerification(
@@ -4810,14 +5968,30 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     args: AnyRecord,
   ) {
     if (status.journey.status !== "settled") return { status };
+    const mirrorFinalization = runtime.epochFinalizeSettledMirrorWorld(status, args);
+    status = mirrorFinalization.status;
     const existingPage = status.journey.verification
       ? runtime.epochGetResultPage({ pageId: status.journey.verification.pageId })
       : undefined;
     if (existingPage?.payload?.journey?.status === "settled") {
-      return { status, finalVerification: { page: existingPage, duplicate: true } };
+      const existingResult = { status, finalVerification: { page: existingPage, duplicate: true } };
+      attachEpochEventsForPersistence(
+        existingResult,
+        [
+          ...(mirrorFinalization.worldSynchronization
+            ? epochEventsForPersistence(mirrorFinalization.worldSynchronization)
+            : []),
+          ...(mirrorFinalization.worldSolidification
+            ? epochEventsForPersistence(mirrorFinalization.worldSolidification)
+            : []),
+        ],
+      );
+      return mergeJourneyEventsForPersistence(existingResult, mirrorFinalization.worldCommitRecord, status);
     }
     const canonicalEventIds = [...new Set(status.episodes.flatMap((episode) => episode.settlement?.canonicalEventIds || []))];
     const latestSettlement = status.episodes.map((episode) => episode.settlement).filter(Boolean).at(-1);
+    const journeyReward = status.taskAdjudication?.reward ?? latestSettlement?.reward;
+    const journeyRewardBundle = status.taskAdjudication?.rewardBundle;
     const pageInput = {
       ...args,
       correlationId: status.journey.correlationId,
@@ -4829,23 +6003,37 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
         status: status.journey.status,
         objective: status.journey.mandate.objective,
         regionId: status.journey.destinationRegionId,
+        ...(status.journey.worldMode ? { worldMode: status.journey.worldMode } : {}),
+        ...(status.journey.worldCommit ? { worldCommit: status.journey.worldCommit } : {}),
         startedAtWorldTime: status.journey.startedAtWorldTime,
         dueAtWorldTime: status.journey.dueAtWorldTime,
+        ...(status.journey.taskPlan ? { taskPlan: status.journey.taskPlan } : {}),
         episodes: status.episodes.map((episode) => ({
           episodeId: episode.episodeId,
           title: episode.title,
           outcomeKey: episode.outcomeKey,
+          ...(episode.phase ? { phase: episode.phase } : {}),
           participants: episode.worldObjectRefs
             .filter((ref) => ref.type === "agent" || ref.type === "npc")
             .map((ref) => ({ id: ref.id, type: ref.type, label: ref.label })),
           sourceEventIds: [...new Set([...episode.sourceFactIds, ...(episode.settlement?.canonicalEventIds || [])])],
           ...(episode.serverFacts ? { serverFacts: episode.serverFacts } : {}),
           ...(episode.narrative ? { narrative: episode.narrative } : {}),
+          ...(episode.generatedTaskObjective
+            ? { generatedTaskObjective: episode.generatedTaskObjective }
+            : {}),
+          ...(episode.settlement?.reward?.resourceId && episode.settlement.reward.amount
+            ? { settlement: { reward: {
+                resourceId: episode.settlement.reward.resourceId,
+                amount: episode.settlement.reward.amount,
+              } } }
+            : {}),
         })),
         canonicalEventIds,
-        ...(latestSettlement ? { stateDelta: {
-          ...(latestSettlement.outcomeSummary ? { outcomeSummary: latestSettlement.outcomeSummary } : {}),
-          ...(latestSettlement.reward ? { reward: latestSettlement.reward } : {}),
+        ...(latestSettlement || journeyReward || journeyRewardBundle ? { stateDelta: {
+          ...(latestSettlement?.outcomeSummary ? { outcomeSummary: latestSettlement.outcomeSummary } : {}),
+          ...(journeyReward ? { reward: journeyReward } : {}),
+          ...(journeyRewardBundle ? { rewardBundle: journeyRewardBundle } : {}),
         } } : {}),
       },
     };
@@ -4864,9 +6052,25 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       createdAt: finalVerification.page.createdAt,
       idempotencyKey: `${status.journey.journeyId}:link-final-verification`,
     });
-    const linkedStatus = { ...linked, episodes: status.episodes };
+    const linkedStatus = { ...status, ...linked, episodes: status.episodes };
+    attachEpochEventsForPersistence(
+      linkedStatus,
+      [
+        ...(mirrorFinalization.worldSynchronization
+          ? epochEventsForPersistence(mirrorFinalization.worldSynchronization)
+          : []),
+        ...(mirrorFinalization.worldSolidification
+          ? epochEventsForPersistence(mirrorFinalization.worldSolidification)
+          : []),
+      ],
+    );
     return {
-      status: mergeJourneyEventsForPersistence(linkedStatus, status, linked),
+      status: mergeJourneyEventsForPersistence(
+        linkedStatus,
+        mirrorFinalization.worldCommitRecord,
+        status,
+        linked,
+      ),
       finalVerification,
     };
   }
@@ -4874,12 +6078,15 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
   function journeyStatusWithFinalVerification(args: AnyRecord) {
     const initial = runtime.epochJourneyStatus(args);
     const finalized = ensureSettledJourneyVerification(initial, args);
-    return finalized.finalVerification
-      ? mergeJourneyEventsForPersistence({
+    if (finalized.finalVerification) {
+      const result = {
           ...finalized.status,
           finalVerification: finalized.finalVerification,
-        }, initial, finalized.status)
-      : initial;
+      };
+      attachEpochEventsForPersistence(result, epochEventsForPersistence(finalized.status));
+      return mergeJourneyEventsForPersistence(result, initial, finalized.status);
+    }
+    return initial;
   }
 
   function agentBriefingWithFinalVerification(args: AnyRecord) {
@@ -4894,6 +6101,10 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       returnedJourneyVerifications: finalizations.flatMap((finalized) =>
         finalized.finalVerification ? [finalized.finalVerification] : []),
     };
+    attachEpochEventsForPersistence(
+      result,
+      finalizations.flatMap((finalized) => epochEventsForPersistence(finalized.status)),
+    );
     return mergeJourneyEventsForPersistence(result, briefing, ...finalizations.map((finalized) => finalized.status));
   }
   const handlers = new Map<string, (args: AnyRecord) => unknown>([
@@ -4951,6 +6162,19 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     ["obsidian_epoch.change_agent_custody", (args) => runtime.epochChangeAgentCustody(args)],
     ["obsidian_epoch.competitive_ladder", (args) => runtime.epochCompetitiveLadder(args)],
     ["obsidian_epoch.world_overview", (args) => runtime.epochWorldOverview(args)],
+    ["obsidian_epoch.world_clock", (args) => runtime.epochWorldClock(args)],
+    ["obsidian_epoch.world_state", (args) => runtime.epochWorldState(args)],
+    ["obsidian_epoch.world_content", (args) => runtime.epochWorldContent(args)],
+    ["obsidian_epoch.world_knowledge", async (args) => {
+      if (!worldKnowledgeSearch) throw new Error("world_knowledge_unavailable");
+      return worldKnowledgeSearch(args);
+    }],
+    ["obsidian_epoch.world_memory", async (args) => {
+      if (!worldMemorySearch) throw new Error("world_memory_unavailable");
+      return worldMemorySearch(args);
+    }],
+    ["obsidian_epoch.advance_world_clock", (args) => runtime.epochAdvanceWorldClock(args)],
+    ["obsidian_epoch.migrate_world_content", (args) => runtime.epochMigrateWorldContent(args)],
     ["obsidian_epoch.lore_contributions", (args) => runtime.epochLoreContributions(args)],
     ["obsidian_epoch.lore_targets", (args) => runtime.epochLoreTargets(args)],
     ["obsidian_epoch.adjudicate_lore_target", (args) => runtime.epochAdjudicateLoreTarget(args)],

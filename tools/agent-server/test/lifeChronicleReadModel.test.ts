@@ -141,13 +141,17 @@ test("album excludes legacy episodes that have no canonical server fact boundary
 });
 
 test("monthly reports preserve quiet months instead of inventing experiences", () => {
-  const reports = monthlyLifeReports({ agentId: "agent_chronicle", year: 2026, projection: yearFixture() });
+  const projection = yearFixture();
+  const reports = monthlyLifeReports({ agentId: "agent_chronicle", year: 1, projection });
+  const postcardIds = buildJourneyAlbum(projection, "agent_chronicle").postcards
+    .map((postcard) => postcard.postcardId)
+    .sort();
   assert.equal(reports.length, 12);
-  assert.equal(reports[0].postcardIds.length, 3);
-  assert.equal(reports[5].postcardIds.length, 3);
-  assert.equal(reports[11].postcardIds.length, 3);
-  assert.match(reports[1].paragraphs[0].text, /不会用模型补写空白/);
-  assert.deepEqual(reports[1].paragraphs[0].sourceEventIds, []);
+  assert.deepEqual(reports.flatMap((report) => report.postcardIds).sort(), postcardIds);
+  const quietMonth = reports.find((report) => report.postcardIds.length === 0);
+  assert.ok(quietMonth);
+  assert.match(quietMonth.paragraphs[0].text, /不会用模型补写空白/);
+  assert.deepEqual(quietMonth.paragraphs[0].sourceEventIds, []);
 });
 
 test("annual chronicle becomes a complete twelve-chapter story only after the server year closes", () => {
@@ -156,8 +160,8 @@ test("annual chronicle becomes a complete twelve-chapter story only after the se
     agentId: "agent_chronicle",
     identityName: "灯蛾",
     identityStartedAtWorldTime: "2026-01-01T00:00:00.000Z",
-    year: 2026,
-    nowWorld: "2026-12-31T23:59:59.000Z",
+    year: 1,
+    nowWorld: "2026-12-26T23:59:59.000Z",
     projection,
   });
   assert.equal(pending.status, "not_ready");
@@ -167,14 +171,14 @@ test("annual chronicle becomes a complete twelve-chapter story only after the se
     agentId: "agent_chronicle",
     identityName: "灯蛾",
     identityStartedAtWorldTime: "2026-01-01T00:00:00.000Z",
-    year: 2026,
-    nowWorld: "2027-01-01T00:00:00.000Z",
+    year: 1,
+    nowWorld: "2026-12-27T00:00:00.000Z",
     projection,
   });
   assert.equal(chronicle.status, "ready");
   assert.equal(chronicle.chapters?.length, 12);
-  assert.match(chronicle.narrative || "", /2026年 · 灯蛾的一整年/);
-  assert.match(chronicle.narrative || "", /一月[\s\S]*六月[\s\S]*十二月/);
+  assert.match(chronicle.narrative || "", /黑曜历1年 · 灯蛾的一整年/);
+  assert.match(chronicle.narrative || "", /初火月[\s\S]*长昼月[\s\S]*归零月/);
   assert.match(chronicle.narrative || "", /第一次去灰港找活/);
   assert.match(chronicle.narrative || "", /没有可由服务器事件汇总的经历/);
   assert.ok((chronicle.narrative?.length || 0) > 900);
@@ -186,8 +190,8 @@ test("an identity that began midyear cannot claim a complete year", () => {
     agentId: "agent_chronicle",
     identityName: "灯蛾",
     identityStartedAtWorldTime: "2026-03-01T00:00:00.000Z",
-    year: 2026,
-    nowWorld: "2027-02-01T00:00:00.000Z",
+    year: 1,
+    nowWorld: "2026-12-27T00:00:00.000Z",
     projection: yearFixture(),
   });
   assert.equal(chronicle.status, "not_ready");

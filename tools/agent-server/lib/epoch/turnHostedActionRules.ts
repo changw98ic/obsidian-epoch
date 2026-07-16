@@ -585,6 +585,7 @@ export interface HostedActionRecordedPayloadInput {
   readonly explanation: HostedActionRecordedPayload["explanation"];
   readonly visibleText?: string;
   readonly outcomeSummary: string;
+  readonly journeyResolution?: HostedActionRecordedPayload["journeyResolution"];
   readonly reward?: EpochServerReward;
   readonly lifetimeDelta?: number;
   readonly nonEvidence?: boolean;
@@ -607,6 +608,7 @@ export function hostedActionRecordedPayload(input: HostedActionRecordedPayloadIn
     explanation: input.explanation,
     visibleText,
     outcomeSummary: input.outcomeSummary,
+    ...(input.journeyResolution ? { journeyResolution: input.journeyResolution } : {}),
     reward: input.reward,
     lifetimeDelta: input.lifetimeDelta,
     nonEvidence: input.nonEvidence,
@@ -627,6 +629,7 @@ export function hostedActionRecordedPayload(input: HostedActionRecordedPayloadIn
       explanation: input.explanation,
       visibleText,
       outcomeSummary: input.outcomeSummary,
+      ...(input.journeyResolution ? { journeyResolution: input.journeyResolution } : {}),
       reward: input.reward,
       lifetimeDelta: input.lifetimeDelta,
       nonEvidence: input.nonEvidence,
@@ -705,6 +708,7 @@ export function planHostedActionSubmissionEvents(input: PlanHostedActionSubmissi
     explanation: input.explanation,
     visibleText: input.visibleText,
     outcomeSummary: input.outcomeSummary,
+    ...(input.journeyResolution ? { journeyResolution: input.journeyResolution } : {}),
     reward: input.reward,
     lifetimeDelta: input.lifetimeDelta,
     nonEvidence: input.nonEvidence,

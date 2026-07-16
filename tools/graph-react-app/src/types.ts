@@ -847,6 +847,7 @@ export type EpochEventType =
   | "season_objective_completed"
   | "season_campaign_resolved"
   | "season_resolved"
+  | "journey_world_solidified"
   | "region_influence_changed"
   | "trace_created"
   | "region_control_changed"
@@ -3042,6 +3043,32 @@ export interface EpochTurnCard {
   resolution?: EpochTurnResolution;
 }
 
+export interface EpochJourneyActionResolution {
+  ruleVersion: "journey-action-resolution.v1";
+  authority: "server";
+  decisionKeyId: string;
+  inputHash: `sha256:${string}`;
+  outcome: "exceptional_success" | "success" | "partial_success" | "failure" | "skipped";
+  completionKind: "complete" | "failed" | "skip";
+  score: number;
+  difficulty: number;
+  margin: number;
+  factors: {
+    baseCompetence: number;
+    identity: number;
+    resources: number;
+    equipment: number;
+    sceneSupport: number;
+    deterministicVariance: number;
+  };
+  resourceCost?: {
+    resourceId: "stamina";
+    amount: 1;
+    paid: boolean;
+  };
+  summary: string;
+}
+
 export interface EpochHostedActionRecord {
   actionId: string;
   sessionId: string;
@@ -3056,6 +3083,7 @@ export interface EpochHostedActionRecord {
   visibleText?: string;
   explanation: EpochActionExplanation;
   outcomeSummary: string;
+  journeyResolution?: EpochJourneyActionResolution;
   reward?: EpochHostedReward;
   lifetimeDelta?: number;
   recordedAt: string;

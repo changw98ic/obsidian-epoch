@@ -24,6 +24,30 @@ AGENT_SERVER_SQLITE_PATH=../agent-server/data/agent-world.sqlite npm run agent:m
 
 Set `AGENT_SERVER_SQLITE_MIGRATE_JSONL=1` only for an intentional one-time startup migration. Leave it `0` for normal production starts.
 
+The same SQLite file also holds a rebuildable world-memory projection: FTS5
+lexical indexes plus little-endian Float32 embeddings. Set
+`AGENT_SERVER_EMBEDDING_BASE_URL` to the LAN OpenAI-compatible server hosting
+Qwen3-Embedding 8B. The current deployment uses
+`http://192.168.1.7:1235` with model identifier
+`text-embedding-qwen3-embedding-8b`. Every response is required to contain exactly 4096
+finite values; the service records a behavior fingerprint and refuses to mix a
+different model space into an existing index. If the LAN model is unavailable,
+journey settlement and canonical event persistence continue normally, pending
+chunks remain retryable, and retrieval falls back to lexical FTS5.
+Model identity probes run once at startup and then at the bounded
+`AGENT_SERVER_EMBEDDING_VERIFICATION_INTERVAL_MS`; they are not appended to
+retrieval requests. A retrieval sends only an uncached query string, while
+identical query vectors are reused from a bounded in-memory cache controlled by
+`AGENT_SERVER_EMBEDDING_QUERY_CACHE_TTL_MS` and
+`AGENT_SERVER_EMBEDDING_QUERY_CACHE_MAX_ENTRIES`. A corpus with no ready vectors
+uses lexical retrieval without contacting the embedding endpoint.
+For an authenticated LAN endpoint, set `AGENT_SERVER_EMBEDDING_API_KEY_FILE` to
+a regular, non-symlink bearer-token file with mode 0600 or stricter. Compose mounts it through
+`/run/secrets/obsidian_epoch_embedding_api_key`; it is never copied into the
+image or exposed through health output. The service requests container mode
+0400 and also accepts Docker's read-only managed-secret mode when a Compose
+implementation cannot remap file-secret permissions. Leave it blank for an unauthenticated LAN endpoint.
+
 ## Backup Rotation
 
 Run backup rotation from cron, systemd timers or your deployment platform before upgrades and at the cadence your world can afford to lose:
@@ -324,11 +348,11 @@ The player-token ledger deliberately stays outside the canonical world SQLite/JS
 
 ## World Maintenance
 
-The server runs a required maintenance loop in production so canonical world state advances without a player clicking a button. Production startup fails unless `AGENT_SERVER_MAINTENANCE_ENABLED=1` and `AGENT_SERVER_OPERATOR_KEY` is configured. Development remains opt-in. The loop calls the same server-owned tick commands used by MCP/HTTP tools, then appends resulting events to the configured JSONL or SQLite-backed store.
+The server runs a required maintenance loop in production so canonical world state advances without a player clicking a button. Production startup fails unless `AGENT_SERVER_MAINTENANCE_ENABLED=1` and `AGENT_SERVER_OPERATOR_KEY` is configured. Development remains opt-in. The default one-minute pulse synchronizes the fixed server clock at one game day per real minute, then appends the bounded clock and macro-simulation events to the configured JSONL or SQLite-backed store. Caller-supplied elapsed minutes cannot accelerate it.
 
 ```bash
 AGENT_SERVER_MAINTENANCE_ENABLED=1
-AGENT_SERVER_MAINTENANCE_INTERVAL_MS=900000
+AGENT_SERVER_MAINTENANCE_INTERVAL_MS=60000
 AGENT_SERVER_MAINTENANCE_NPC_LIMIT=5
 AGENT_SERVER_MAINTENANCE_MARKET_MAX_AGE_SECONDS=86400
 AGENT_SERVER_MAINTENANCE_MARKET_LIMIT=50

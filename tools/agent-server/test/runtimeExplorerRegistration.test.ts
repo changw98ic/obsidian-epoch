@@ -47,6 +47,8 @@ test("runtime server-registers explorers without trusting caller supplied identi
   assert.equal(result.value.explorerId, result.explorerId);
   assert.notEqual(result.value.identityName, "帝国统帅");
   assert.match(result.value.identityName, /第1世$/);
+  assert.match(result.value.identityName, /(?:组|队|班|所|站|营).+ · 第1世$/u);
+  assert.doesNotMatch(result.value.identityName, /^(?:灰港档案学徒|余烬街临时信使|旧渠巡灯人|雾钟站见习记录员|黑石码头勤务员|北墙药圃助手) · 第1世$/u);
   assert.notEqual(result.value.lifetime.max, 3);
   assert.equal("localSecret" in result, false);
 

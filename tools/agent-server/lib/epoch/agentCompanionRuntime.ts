@@ -6,13 +6,26 @@ import { createDurableAgentInteractionProjection } from "./agentInteractionEnvel
 import type { EpochEvent } from "./events.ts";
 import type { EpochAgentIdentity } from "./gameCore.ts";
 import { buildJourneyAlbum } from "./journeyAlbumReadModel.ts";
+import {
+  buildGroundedJourneyStoryReport,
+  type GroundedJourneyStoryReport,
+} from "./journeyStoryReport.ts";
+import { buildJourneyInteractionLog } from "./journeyInteractionLog.ts";
+import { buildJourneyMission } from "./journeyMissionReadModel.ts";
 import { buildAnnualLifeChronicle, monthlyLifeReports } from "./lifeChronicleReadModel.ts";
 import { buildLineageChronicle, type LineageChronicleEventRef } from "./lineageChronicleReadModel.ts";
 import { publicRegionLabel, publicText } from "./publicVocabulary.ts";
-import { journeyWorldCatalogForRegion } from "./journeyWorldCatalog.ts";
+import { journeyScopedNpcObjects, journeyWorldCatalogForRegion } from "./journeyWorldCatalog.ts";
 import { resolveEpochCanonicalRegionId } from "../regionAliases.ts";
 import { currentMcpRequestAuthContext } from "../mcpRequestAuthContext.ts";
-import type { EpochJourney } from "./journeyRules.ts";
+import type { EpochJourney, JourneyWorldCommit } from "./journeyRules.ts";
+import {
+  adjudicateJourneyTask,
+  buildFallbackJourneyTaskPlan,
+  nextJourneyTaskObjective,
+  validateJourneyTaskProposal,
+} from "./journeyGeneratedTaskRules.ts";
+import { EPOCH_WORLD_CALENDAR_ORIGIN_YEAR, epochWorldCalendarMoment } from "./worldCalendar.ts";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -23,6 +36,8 @@ export interface AgentCompanionEpochSurface {
   readonly agentBriefing: (input?: UnknownRecord) => unknown;
   readonly publicIdentity?: (input?: UnknownRecord) => unknown;
   readonly events: (input?: UnknownRecord) => unknown;
+  /** Returns the immutable result-page revision linked to a settled journey. */
+  readonly getResultPage?: (input?: UnknownRecord) => unknown;
   /** Returns the unfiltered canonical suffix at this absolute offset; providers must never renumber it. */
   readonly interactionEvents?: (offset?: number) => readonly EpochEvent[];
 }
@@ -50,6 +65,44 @@ function isEpochAgentIdentity(value: unknown): value is EpochAgentIdentity {
     && typeof value.generation === "number"
     && (value.status === "active" || value.status === "archived")
     && typeof value.lifetime.startedAt === "string";
+}
+
+function exactStringArray(value: unknown, expected: readonly string[]) {
+  return Array.isArray(value)
+    && value.length === expected.length
+    && value.every((entry, index) => typeof entry === "string" && entry === expected[index]);
+}
+
+function filedStoryReportFromPage(value: unknown, journey: EpochJourney): GroundedJourneyStoryReport | undefined {
+  if (!isRecord(value)
+    || value.pageId !== journey.verification?.pageId
+    || value.status === "deleted"
+    || !isRecord(value.payload)
+    || !isRecord(value.payload.journey)) return undefined;
+  const filedJourney = value.payload.journey;
+  if (filedJourney.journeyId !== journey.journeyId || !Array.isArray(filedJourney.episodes)) return undefined;
+  const filedEpisodeIds = filedJourney.episodes.flatMap((episode) =>
+    isRecord(episode) && typeof episode.episodeId === "string" ? [episode.episodeId] : []);
+  if (!exactStringArray(filedEpisodeIds, journey.episodeIds) || !isRecord(filedJourney.storyReport)) return undefined;
+  const report = filedJourney.storyReport;
+  if (report.kind !== "grounded_story_report"
+    || report.version !== 3
+    || report.journeyId !== journey.journeyId
+    || typeof report.storyId !== "string"
+    || typeof report.title !== "string"
+    || typeof report.summary !== "string"
+    || typeof report.storyContent !== "string"
+    || typeof report.narrative !== "string"
+    || !isRecord(report.profile)
+    || !isRecord(report.storyElements)
+    || !isRecord(report.evaluation)
+    || !isRecord(report.structure)
+    || !isRecord(report.resolution)
+    || !Array.isArray(report.chapters)
+    || !Array.isArray(report.sourceEventIds)
+    || !report.sourceEventIds.every((eventId) => typeof eventId === "string")
+    || !exactStringArray(report.episodeIds, journey.episodeIds)) return undefined;
+  return report as unknown as GroundedJourneyStoryReport;
 }
 
 function requiredString(value: unknown, field: string) {
@@ -188,6 +241,23 @@ const WORLD_COLLECTIONS = [
 function worldObjects(regionInfo: UnknownRecord, regionId: string): readonly JourneyAvailableWorldObject[] {
   const objects: JourneyAvailableWorldObject[] = [...journeyWorldCatalogForRegion(regionId)];
   const knownIds = new Set(objects.map((object) => object.id));
+  const canonicalContent = isRecord(regionInfo.canonicalContent) ? regionInfo.canonicalContent : {};
+  const canonicalFactions = Array.isArray(canonicalContent.factions) ? canonicalContent.factions : [];
+  for (const value of canonicalFactions) {
+    if (!isRecord(value) || typeof value.id !== "string" || typeof value.label !== "string"
+      || knownIds.has(value.id)) continue;
+    knownIds.add(value.id);
+    objects.push({
+      id: value.id,
+      type: "faction",
+      label: value.label,
+      regionId,
+      sourceFactIds: [typeof value.contentHash === "string"
+        ? `world:content:${value.contentHash}`
+        : `world:faction:${value.id}`],
+      tags: ["faction", "canonical_jurisdiction"],
+    });
+  }
   for (const collection of WORLD_COLLECTIONS) {
     const values = regionInfo[collection.key];
     if (!Array.isArray(values)) continue;
@@ -234,19 +304,25 @@ export class AgentCompanionRuntime {
     const agentId = requiredString(input.agentId, "agent_id");
     const { explorerId } = this.#authorizeAgent(input, agentId);
     return this.#idempotently("prepare", explorerId, input, () => {
-      const destinationRegionId = requiredString(input.destinationRegionId ?? input.regionId, "destination_region_id");
+      const destinationRegionId = resolveEpochCanonicalRegionId(
+        requiredString(input.destinationRegionId ?? input.regionId, "destination_region_id"),
+      );
       const originRegionId = typeof input.originRegionId === "string" && input.originRegionId.trim()
-        ? input.originRegionId.trim()
+        ? resolveEpochCanonicalRegionId(input.originRegionId.trim())
         : destinationRegionId;
-      return this.#journey.prepare({
+      const prepared = this.#journey.prepare({
         agentId,
         explorerId,
         originRegionId,
         destinationRegionId,
+        taskType: typeof input.taskType === "string" && input.taskType.trim()
+          ? input.taskType.trim()
+          : undefined,
         mandate: input.mandate,
         policy: input.policy ?? { presetId: input.presetId ?? "cautious" },
         expectedReturn: input.expectedReturn as string | undefined,
       });
+      return { ...prepared, mission: this.#missionForJourney(prepared.journey) };
     });
   }
 
@@ -255,19 +331,71 @@ export class AgentCompanionRuntime {
     const current = this.#journey.status(journeyId);
     this.#authorizeExplorer(input, current.journey.explorerId);
     return this.#idempotently("start", current.journey.explorerId, input, () => {
+      let ready = this.#journey.status(journeyId);
+      const generatedPlanRequested = input.taskProposal !== undefined
+        || input.taskGenerationMode === "model_sampling"
+        || input.taskGenerationMode === "server_fallback"
+        || ready.journey.taskRequest?.generationRequested === true;
+      if (!ready.journey.taskPlan && generatedPlanRequested) {
+        const generation = this.#taskGenerationContext(ready.journey);
+        const taskPlanInstallation = input.taskProposal === undefined
+          ? buildFallbackJourneyTaskPlan({
+              taskType: generation.taskType,
+              scenarioMapId: generation.scenarioMapId,
+              availableWorldObjects: generation.availableWorldObjects,
+            })
+          : validateJourneyTaskProposal({
+              proposal: input.taskProposal,
+              taskType: generation.taskType,
+              scenarioMapId: generation.scenarioMapId,
+              availableWorldObjects: generation.availableWorldObjects,
+              source: "model_sampling",
+            });
+        ready = this.#journey.installTaskPlan({
+          journeyId,
+          expectedVersion: ready.journey.version,
+          taskPlan: taskPlanInstallation.plan,
+          hiddenTaskSeal: taskPlanInstallation.hiddenTaskSeal,
+        });
+      }
       const started = this.#journey.start({
         journeyId,
-        expectedVersion: Number(input.expectedVersion),
+        expectedVersion: ready.journey.version,
         realDurationMs: optionalNumber(input.realDurationMs),
         worldDurationMs: optionalNumber(input.worldDurationMs),
       });
       const scenePlan = this.#composeThreePhasePlan(started.journey);
+      const record = this.#journey.status(journeyId);
       return {
-        ...this.#journey.status(journeyId),
+        ...record,
+        mission: this.#missionForJourney(record.journey),
         scenePlan,
-        nextPollAt: this.#journey.status(journeyId).journey.nextPollAt,
+        nextPollAt: record.journey.nextPollAt,
       };
     });
+  }
+
+  reserveJourneyWorldWindow(input: UnknownRecord = {}) {
+    const journeyId = requiredString(input.journeyId, "id");
+    const current = this.#journey.status(journeyId);
+    this.#authorizeExplorer(input, current.journey.explorerId);
+    return this.#idempotently("reserve-world-window", current.journey.explorerId, input, () => {
+      const reserved = this.#journey.reserveMirrorWindow({
+        journeyId,
+        expectedVersion: Number(input.expectedVersion),
+      });
+      return { ...reserved, mission: this.#missionForJourney(reserved.journey) };
+    });
+  }
+
+  taskGenerationContext(input: UnknownRecord = {}) {
+    const journeyId = requiredString(input.journeyId, "id");
+    const current = this.#journey.status(journeyId);
+    this.#authorizeExplorer(input, current.journey.explorerId);
+    if (current.journey.status === "prepared" && current.journey.version !== Number(input.expectedVersion)) {
+      throw new Error("journey_version_conflict");
+    }
+    return this.#taskGenerationContext(current.journey);
   }
 
   proposeStep(input: UnknownRecord = {}) {
@@ -279,10 +407,26 @@ export class AgentCompanionRuntime {
       throw new Error("journey_step_not_proposable");
     }
     const scenePlan = this.#composeThreePhasePlan(current.journey);
-    const episode = scenePlan.episodes[current.journey.episodeIds.length];
+    const recordedEpisodes = current.journey.episodeIds
+      .map((episodeId) => this.#journey.projection().episodes[episodeId])
+      .filter(Boolean);
+    const episode = current.journey.taskPlan
+      ? current.journey.status === "returning"
+        ? scenePlan.episodes.find((candidate) => candidate.phase === "return")
+        : recordedEpisodes.length === 0
+          ? scenePlan.episodes.find((candidate) => candidate.phase === "arrival")
+          : (() => {
+              const objective = nextJourneyTaskObjective(current.journey.taskPlan as NonNullable<EpochJourney["taskPlan"]>, recordedEpisodes);
+              return objective
+                ? scenePlan.episodes.find((candidate) =>
+                    candidate.generatedTaskObjective?.objectiveId === objective.objectiveId)
+                : undefined;
+            })()
+      : scenePlan.episodes[current.journey.episodeIds.length];
     if (!episode) throw new Error("journey_steps_complete");
     return {
       ...current,
+      mission: this.#missionForJourney(current.journey),
       episode,
       scenePlan,
       stepNumber: current.journey.episodeIds.length + 1,
@@ -297,24 +441,61 @@ export class AgentCompanionRuntime {
     if (!Array.isArray(input.episodes) || input.episodes.length < 1 || input.episodes.length > 3) {
       throw new Error("journey_committed_episodes_invalid");
     }
-    return this.#idempotently("commit_episodes", current.journey.explorerId, input, () =>
-      this.#journey.commitEpisodes(journeyId, Number(input.expectedVersion), input.episodes as readonly JourneySceneEpisode[]));
+    return this.#idempotently("commit_episodes", current.journey.explorerId, input, () => {
+      const committed = this.#journey.commitEpisodes(
+        journeyId,
+        Number(input.expectedVersion),
+        input.episodes as readonly JourneySceneEpisode[],
+      );
+      return { ...committed, mission: this.#missionForJourney(committed.journey) };
+    });
   }
 
   awaitAgent(input: UnknownRecord = {}) {
     const journeyId = requiredString(input.journeyId, "id");
     const current = this.#journey.status(journeyId);
     this.#authorizeExplorer(input, current.journey.explorerId);
-    return this.#idempotently("await_agent", current.journey.explorerId, input, () =>
-      this.#journey.awaitAgent(journeyId, Number(input.expectedVersion)));
+    return this.#idempotently("await_agent", current.journey.explorerId, input, () => {
+      const awaiting = this.#journey.awaitAgent(journeyId, Number(input.expectedVersion));
+      return { ...awaiting, mission: this.#missionForJourney(awaiting.journey) };
+    });
   }
 
   beginReturn(input: UnknownRecord = {}) {
     const journeyId = requiredString(input.journeyId, "id");
     const current = this.#journey.status(journeyId);
     this.#authorizeExplorer(input, current.journey.explorerId);
-    return this.#idempotently("begin_return", current.journey.explorerId, input, () =>
-      this.#journey.beginReturn(journeyId, Number(input.expectedVersion)));
+    return this.#idempotently("begin_return", current.journey.explorerId, input, () => {
+      const returning = this.#journey.beginReturn(journeyId, Number(input.expectedVersion));
+      return { ...returning, mission: this.#missionForJourney(returning.journey) };
+    });
+  }
+
+  settleCompleted(input: UnknownRecord = {}) {
+    const journeyId = requiredString(input.journeyId, "id");
+    const current = this.#journey.status(journeyId);
+    this.#authorizeExplorer(input, current.journey.explorerId);
+    return this.#idempotently("settle_completed", current.journey.explorerId, input, () => {
+      const settled = this.#journey.settleCompleted(journeyId, Number(input.expectedVersion));
+      return { ...settled, mission: this.#missionForJourney(settled.journey) };
+    });
+  }
+
+  recordWorldCommit(input: UnknownRecord = {}) {
+    const journeyId = requiredString(input.journeyId, "id");
+    const current = this.#journey.status(journeyId);
+    this.#authorizeExplorer(input, current.journey.explorerId);
+    if (!input.worldCommit || typeof input.worldCommit !== "object" || Array.isArray(input.worldCommit)) {
+      throw new Error("journey_world_commit_required");
+    }
+    return this.#idempotently("record_world_commit", current.journey.explorerId, input, () => {
+      const recorded = this.#journey.recordWorldCommit({
+        journeyId,
+        expectedVersion: Number(input.expectedVersion),
+        worldCommit: input.worldCommit as JourneyWorldCommit,
+      });
+      return { ...recorded, mission: this.#missionForJourney(recorded.journey) };
+    });
   }
 
   status(input: UnknownRecord = {}) {
@@ -323,9 +504,50 @@ export class AgentCompanionRuntime {
       const record = this.#journey.status(requiredString(input.journeyId, "id"));
       this.#authorizeExplorer(input, record.journey.explorerId);
       const projection = this.#journey.projection();
+      const episodes = record.journey.episodeIds.map((episodeId) => projection.episodes[episodeId]).filter(Boolean);
+      const hiddenTaskSeal = record.journey.taskPlan
+        ? this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, record.journey.taskPlan)
+        : undefined;
+      const mission = buildJourneyMission({
+        journeyId: record.journey.journeyId,
+        journeyStatus: record.journey.status,
+        playerObjective: record.journey.mandate.objective,
+        regionId: record.journey.destinationRegionId,
+        episodes,
+        taskPlan: record.journey.taskPlan,
+        hiddenTaskSeal,
+      });
+      const storyReport = this.#filedStoryReport(record.journey) ?? buildGroundedJourneyStoryReport({
+        journeyId: record.journey.journeyId,
+        status: record.journey.status,
+        objective: record.journey.mandate.objective,
+        regionId: record.journey.destinationRegionId,
+        startedAtWorldTime: record.journey.startedAtWorldTime,
+        dueAtWorldTime: record.journey.dueAtWorldTime,
+        worldCommit: record.journey.worldCommit,
+        episodes,
+        taskPlan: record.journey.taskPlan,
+        hiddenTaskSeal,
+      });
+      const interactionLog = buildJourneyInteractionLog({
+        journeyId: record.journey.journeyId,
+        episodes,
+      });
+      const taskAdjudication = record.journey.taskPlan
+        ? adjudicateJourneyTask({
+            plan: record.journey.taskPlan,
+            episodes,
+            hiddenTaskSeal,
+            revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
+          })
+        : undefined;
       return {
         ...record,
-        episodes: record.journey.episodeIds.map((episodeId) => projection.episodes[episodeId]).filter(Boolean),
+        episodes,
+        mission,
+        ...(taskAdjudication ? { taskAdjudication } : {}),
+        interactionLog,
+        ...(storyReport ? { storyReport } : {}),
         nextPollAt: record.journey.nextPollAt,
       };
     });
@@ -335,11 +557,28 @@ export class AgentCompanionRuntime {
     const record = this.#journey.status(requiredString(input.journeyId, "id"));
     this.#authorizeExplorer(input, record.journey.explorerId);
     const projection = this.#journey.projection();
+    const episodes = record.journey.episodeIds
+      .map((episodeId) => projection.episodes[episodeId])
+      .filter(Boolean);
+    const hiddenTaskSeal = record.journey.taskPlan
+      ? this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, record.journey.taskPlan)
+      : undefined;
     return {
       ...record,
-      episodes: record.journey.episodeIds
-        .map((episodeId) => projection.episodes[episodeId])
-        .filter(Boolean),
+      episodes,
+      mission: this.#missionForJourney(record.journey),
+      interactionLog: buildJourneyInteractionLog({
+        journeyId: record.journey.journeyId,
+        episodes,
+      }),
+      ...(record.journey.taskPlan ? {
+        taskAdjudication: adjudicateJourneyTask({
+          plan: record.journey.taskPlan,
+          episodes,
+          hiddenTaskSeal,
+          revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
+        }),
+      } : {}),
       nextPollAt: record.journey.nextPollAt,
     };
   }
@@ -348,7 +587,8 @@ export class AgentCompanionRuntime {
     const record = this.#journey.status(requiredString(input.journeyId, "id"));
     this.#authorizeExplorer(input, record.journey.explorerId);
     return this.#idempotently("recall", record.journey.explorerId, input, () => {
-      return this.#journey.recall(record.journey.journeyId, Number(input.expectedVersion));
+      const recalled = this.#journey.recall(record.journey.journeyId, Number(input.expectedVersion));
+      return { ...recalled, mission: this.#missionForJourney(recalled.journey) };
     });
   }
 
@@ -370,10 +610,15 @@ export class AgentCompanionRuntime {
     const agentId = requiredString(input.agentId, "agent_id");
     const { explorerId, identity, progress } = this.#authorizeOwnedAgent(input, agentId);
     const projection = this.#journey.projection();
-    const album = buildJourneyAlbum(projection, agentId);
+    const album = buildJourneyAlbum(projection, agentId, {
+      storyReportForJourney: (journey) => this.#filedStoryReport(journey),
+    });
     const nowWorld = this.#journey.nowWorld();
-    const nowYear = new Date(nowWorld).getUTCFullYear();
-    const requestedYear = Number.isInteger(Number(input.year)) ? Number(input.year) : nowYear - 1;
+    const nowYear = epochWorldCalendarMoment(nowWorld)?.year;
+    if (nowYear === undefined) throw new Error("world_time_invalid");
+    const requestedYear = Number.isSafeInteger(Number(input.year))
+      ? Number(input.year)
+      : Math.max(EPOCH_WORLD_CALENDAR_ORIGIN_YEAR, nowYear - 1);
     const lifetime = isRecord(identity.lifetime) ? identity.lifetime : {};
     const identityStartedAt = typeof lifetime.startedAt === "string" ? lifetime.startedAt : nowWorld;
     const identityName = typeof identity.identityName === "string" ? identity.identityName : agentId;
@@ -427,6 +672,7 @@ export class AgentCompanionRuntime {
       const publicBriefing = () => ({
           ...publicBriefingProjection(this.#epoch.publicIdentity?.({ agentId })),
           returnedJourneys: [],
+          returnedJourneyReports: [],
           recentEpisodes: [],
           pendingDecisions: [],
           interactionInbox: [],
@@ -474,12 +720,40 @@ export class AgentCompanionRuntime {
       ]);
       const recentEpisodeIds = new Set([...recentJourneyIds].flatMap((journeyId) =>
         journeyProjection.journeys[journeyId]?.journey.episodeIds || []));
+      const returnedJourneyReports = returned.flatMap((record) => {
+        const episodes = record.journey.episodeIds
+          .map((episodeId) => journeyProjection.episodes[episodeId])
+          .filter(Boolean);
+        const storyReport = this.#filedStoryReport(record.journey) ?? buildGroundedJourneyStoryReport({
+          journeyId: record.journey.journeyId,
+          status: record.journey.status,
+          objective: record.journey.mandate.objective,
+          regionId: record.journey.destinationRegionId,
+          startedAtWorldTime: record.journey.startedAtWorldTime,
+          dueAtWorldTime: record.journey.dueAtWorldTime,
+          worldCommit: record.journey.worldCommit,
+          episodes,
+          taskPlan: record.journey.taskPlan,
+          hiddenTaskSeal: record.journey.taskPlan
+            ? this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, record.journey.taskPlan)
+            : undefined,
+        });
+        return storyReport ? [{
+          journeyId: record.journey.journeyId,
+          storyReport,
+          interactionLog: buildJourneyInteractionLog({
+            journeyId: record.journey.journeyId,
+            episodes,
+          }),
+        }] : [];
+      });
       return {
         ...(isRecord(baseBriefing) ? baseBriefing : {}),
         identityExists: true,
         canonicalAgentId: agentId,
         currentJourney: current?.journey,
         returnedJourneys: returned.map((record) => record.journey),
+        returnedJourneyReports,
         recentEpisodes: Object.values(journeyProjection.episodes)
           .filter((episode) => recentEpisodeIds.has(episode.episodeId)),
         pendingDecisions: [],
@@ -507,6 +781,14 @@ export class AgentCompanionRuntime {
       changedJourneyIds: changedJourneyEvents.map((event) => event.journeyId),
     });
     return journeyProjection;
+  }
+
+  #filedStoryReport(journey: EpochJourney) {
+    if (!journey.verification || !this.#epoch.getResultPage) return undefined;
+    return filedStoryReportFromPage(
+      this.#epoch.getResultPage({ pageId: journey.verification.pageId }),
+      journey,
+    );
   }
 
   #authorizeAgent(input: UnknownRecord, agentId: string) {
@@ -553,8 +835,101 @@ export class AgentCompanionRuntime {
       season: "current",
       resources,
       unresolvedClues: [],
-      availableWorldObjects: worldObjects(regionInfo, canonicalRegionId),
-      episodeCount: 3,
+      availableWorldObjects: journey.taskPlan
+        ? this.#taskGenerationContext(journey).availableWorldObjects
+        : worldObjects(regionInfo, canonicalRegionId),
+      episodeCount: journey.taskPlan ? journey.taskPlan.objectives.length + 2 : 3,
+    });
+  }
+
+  #taskGenerationContext(journey: EpochJourney) {
+    const canonicalRegionId = resolveEpochCanonicalRegionId(journey.destinationRegionId);
+    const regionInfoValue = this.#epoch.regionInfo({
+      regionId: canonicalRegionId,
+      agentId: journey.agentId,
+    });
+    const regionInfo = isRecord(regionInfoValue) ? regionInfoValue : {};
+    const progressValue = this.#epoch.progress({ agentId: journey.agentId });
+    const progress = isRecord(progressValue) ? progressValue : {};
+    const identity = isRecord(progress.identity) ? progress.identity : {};
+    const identityName = typeof identity.identityName === "string" && identity.identityName.trim()
+      ? identity.identityName.trim()
+      : journey.agentId;
+    const personality = isRecord(identity.personality) ? identity.personality : {};
+    const identityTraits = Array.isArray(personality.traits)
+      ? personality.traits.filter((trait): trait is string => typeof trait === "string" && Boolean(trait.trim()))
+      : [];
+    const identityNeeds = isRecord(identity.needs) ? identity.needs : undefined;
+    const lifeGoal = isRecord(identity.lifeGoal) ? identity.lifeGoal : undefined;
+    const resources = isRecord(progress.resources)
+      ? Object.fromEntries(Object.entries(progress.resources)
+          .filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1])))
+      : {};
+    const region: JourneyAvailableWorldObject = {
+      id: canonicalRegionId,
+      type: "region",
+      label: publicRegionLabel(canonicalRegionId),
+      regionId: canonicalRegionId,
+      sourceFactIds: [`world:region:${canonicalRegionId}`],
+      tags: ["region", "scenario_map"],
+    };
+    const taskType = journey.taskRequest?.taskType ?? journey.mandate.objective;
+    const installedObjectIds = new Set(journey.taskPlan?.objectives.flatMap((objective) => objective.worldObjectIds) ?? []);
+    const affiliationScores = new Map<string, number>((Array.isArray(progress.factionStandings)
+      ? progress.factionStandings
+      : []).flatMap((value) => {
+        if (!isRecord(value) || typeof value.factionId !== "string" || typeof value.score !== "number") return [];
+        return [[value.factionId, value.score] as const];
+      }));
+    const mapObjects = worldObjects(regionInfo, canonicalRegionId)
+      .filter((object) =>
+        object.id !== journey.agentId
+        && (object.type !== "npc"
+          || installedObjectIds.has(object.id)
+          || !object.sourceFactIds.some((sourceFactId) => sourceFactId.startsWith("world:catalog:"))))
+      .map((object) => affiliationScores.has(object.id)
+        ? {
+            ...object,
+            tags: [...new Set([...(object.tags || []), "agent_affiliated"])],
+          }
+        : object)
+      .sort((left, right) => (affiliationScores.get(right.id) || 0) - (affiliationScores.get(left.id) || 0));
+    const taskCast = journeyScopedNpcObjects({
+      journeyId: journey.journeyId,
+      regionId: canonicalRegionId,
+      taskType,
+    });
+    const availableWorldObjects = [region, ...mapObjects, ...taskCast].filter((object, index, values) =>
+      values.findIndex((candidate) => candidate.id === object.id) === index);
+    return {
+      taskType,
+      identityName,
+      identityTraits,
+      ...(identityNeeds ? { identityNeeds } : {}),
+      ...(lifeGoal ? { lifeGoal } : {}),
+      resources,
+      scenarioMapId: canonicalRegionId,
+      generationRequested: journey.taskRequest?.generationRequested === true,
+      region,
+      availableWorldObjects,
+      ...(journey.mirrorWindow ? { mirrorWindow: journey.mirrorWindow } : {}),
+      ...(journey.worldSlice ? { worldSlice: journey.worldSlice } : {}),
+    };
+  }
+
+  #missionForJourney(journey: EpochJourney) {
+    const projection = this.#journey.projection();
+    const episodes = journey.episodeIds.map((episodeId) => projection.episodes[episodeId]).filter(Boolean);
+    return buildJourneyMission({
+      journeyId: journey.journeyId,
+      journeyStatus: journey.status,
+      playerObjective: journey.mandate.objective,
+      regionId: journey.destinationRegionId,
+      episodes,
+      taskPlan: journey.taskPlan,
+      hiddenTaskSeal: journey.taskPlan
+        ? this.#journey.hiddenTaskSealForJourney(journey.journeyId, journey.taskPlan)
+        : undefined,
     });
   }
 
@@ -608,6 +983,7 @@ export class AgentCompanionRuntime {
       const value = command.scope === "start"
         ? {
             ...record,
+            mission: this.#missionForJourney(record.journey),
             scenePlan: {
               status: episodes.length ? "ready" : "no_verifiable_world_object",
               candidates: [],
@@ -616,7 +992,7 @@ export class AgentCompanionRuntime {
             },
             nextPollAt: record.journey.nextPollAt,
           }
-        : record;
+        : { ...record, mission: this.#missionForJourney(record.journey) };
       this.#idempotency.set(cacheKey, { subjectHash: command.subjectHash, value });
     }
   }

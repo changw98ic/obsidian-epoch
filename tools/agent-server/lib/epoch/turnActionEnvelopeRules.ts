@@ -72,6 +72,7 @@ export interface HostedActionSignedEnvelopeInput {
   readonly explanation: EpochActionExplanation;
   readonly visibleText?: string;
   readonly outcomeSummary: string;
+  readonly journeyResolution?: HostedActionRecordedPayload["journeyResolution"];
   readonly reward?: EpochServerReward;
   readonly lifetimeDelta?: number;
   readonly nonEvidence?: boolean;
@@ -179,6 +180,7 @@ export function hostedActionSignedEnvelopeContent(input: HostedActionSignedEnvel
     nonEvidence: input.nonEvidence,
     optionLabel: input.optionLabel,
     outcomeSummary: input.outcomeSummary,
+    ...(input.journeyResolution ? { journeyResolution: input.journeyResolution } : {}),
     protocolVersion: HOSTED_ACTION_ENVELOPE_PROTOCOL_VERSION,
     recordedAt: input.recordedAt,
     reward: input.reward,

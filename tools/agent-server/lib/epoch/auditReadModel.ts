@@ -104,6 +104,7 @@ const HIGH_IMPACT_EVENT_TYPES = new Set<EpochEventType>([
   "raid_resolved",
   "relationship_updated",
   "hosted_action_recorded",
+  "journey_world_solidified",
   "attestation_recorded",
   "legend_awarded",
   "moderation_queued",

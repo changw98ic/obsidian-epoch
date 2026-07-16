@@ -84,11 +84,18 @@ export const EPOCH_AGGREGATE_TYPES = [
   "social_hook",
   "season_campaign",
   "season_objective",
+  "world_clock",
+  "world_simulation",
 ] as const;
 
 export type EpochAggregateType = typeof EPOCH_AGGREGATE_TYPES[number];
 
 export const EPOCH_EVENT_TYPES = [
+  "world_clock_initialized",
+  "world_clock_advanced",
+  "world_simulation_initialized",
+  "world_simulation_advanced",
+  "world_simulation_content_migrated",
   "identity_issued",
   "explorer_recovery_rotated",
   "lifetime_adjusted",
@@ -191,6 +198,8 @@ export const EPOCH_EVENT_TYPES = [
   "season_objective_completed",
   "season_campaign_resolved",
   "season_resolved",
+  "agent_faction_standing_changed",
+  "journey_world_solidified",
   "region_influence_changed",
   "trace_created",
   "trace_conflict_deployed",
@@ -444,7 +453,7 @@ export const EPOCH_LORE_ADJUDICATION_STATUSES = ["confirmed", "refuted", "revise
 
 export type EpochLoreAdjudicationStatus = typeof EPOCH_LORE_ADJUDICATION_STATUSES[number];
 
-export type EpochIdKind = "event" | "agent" | "personality_drift" | "npc" | "npc_candidate" | "news" | "page" | "objective" | "race_completion" | "resource_node" | "anomaly" | "order" | "direct_trade" | "bounty" | "party_run" | "party_join_request" | "raid" | "region_revolt" | "retaliation" | "relationship" | "diplomacy" | "turn_card" | "npc_relationship" | "agent_npc_bond" | "npc_memory" | "household" | "organization" | "organization_membership" | "organization_politics" | "npc_career" | "npc_location" | "npc_asset" | "npc_health" | "item" | "social_hook" | "season" | "season_objective" | "region_influence" | "region_control_decay" | "region_control_release" | "trace" | "monument" | "session" | "action" | "server_hosted_job" | "attestation" | "message" | "legend_award" | "moderation" | "risk_review" | "risk_restriction_release" | "abuse_release" | "abuse_decay" | "challenge" | "confirmation" | "confirm_token" | "lore_contribution" | "lore_adjudication" | "command" | "correlation";
+export type EpochIdKind = "event" | "agent" | "personality_drift" | "npc" | "npc_candidate" | "news" | "page" | "objective" | "race_completion" | "resource_node" | "anomaly" | "order" | "direct_trade" | "bounty" | "party_run" | "party_join_request" | "raid" | "region_revolt" | "retaliation" | "relationship" | "diplomacy" | "turn_card" | "npc_relationship" | "agent_npc_bond" | "npc_memory" | "household" | "organization" | "organization_membership" | "organization_politics" | "npc_career" | "npc_location" | "npc_asset" | "npc_health" | "item" | "social_hook" | "season" | "season_objective" | "faction_standing" | "region_influence" | "region_control_decay" | "region_control_release" | "trace" | "monument" | "session" | "action" | "server_hosted_job" | "attestation" | "message" | "legend_award" | "moderation" | "risk_review" | "risk_restriction_release" | "abuse_release" | "abuse_decay" | "challenge" | "confirmation" | "confirm_token" | "lore_contribution" | "lore_adjudication" | "command" | "correlation";
 
 export type EpochIdFactory = (kind: EpochIdKind, seed?: string) => string;
 

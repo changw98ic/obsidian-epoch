@@ -78,6 +78,28 @@ export async function handleEpochOperatorRoutes(context: EpochHttpRouteContext):
     return true;
   }
 
+  if (method === "POST" && pathname === "/api/epoch/world-clock/advance") {
+    const body = await context.readJsonBody(request, context.maxBodyBytes);
+    const result = runtime.epochAdvanceWorldClock({
+      ...body,
+      operatorKey: operatorKeyFromHeaders(request.headers),
+    });
+    const persistedEvents = await context.persistEpochEvents(result);
+    context.sendJson(request, response, 200, { ...result, persistedEvents }, allowedOrigins);
+    return true;
+  }
+
+  if (method === "POST" && pathname === "/api/epoch/world-content/migrate") {
+    const body = await context.readJsonBody(request, context.maxBodyBytes);
+    const result = runtime.epochMigrateWorldContent({
+      ...body,
+      operatorKey: operatorKeyFromHeaders(request.headers),
+    });
+    const persistedEvents = await context.persistEpochEvents(result);
+    context.sendJson(request, response, 200, { ...result, persistedEvents }, allowedOrigins);
+    return true;
+  }
+
   if (method === "POST" && pathname === "/api/epoch/abuse/release") {
     const result = runtime.epochReleaseAbuseRestriction(await context.readJsonBody(request, context.maxBodyBytes));
     await context.persistEpochEvents(result);

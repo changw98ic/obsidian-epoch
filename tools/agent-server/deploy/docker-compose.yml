@@ -36,6 +36,17 @@ services:
       AGENT_SERVER_DATA_DIR: /data
       AGENT_SERVER_SQLITE_PATH: /data/agent-world.sqlite
       AGENT_SERVER_SQLITE_MIGRATE_JSONL: ${AGENT_SERVER_SQLITE_MIGRATE_JSONL:-0}
+      AGENT_SERVER_WORLD_MEMORY_ENABLED: ${AGENT_SERVER_WORLD_MEMORY_ENABLED:-1}
+      AGENT_SERVER_EMBEDDING_BASE_URL: ${AGENT_SERVER_EMBEDDING_BASE_URL:-}
+      AGENT_SERVER_EMBEDDING_MODEL: ${AGENT_SERVER_EMBEDDING_MODEL:-text-embedding-qwen3-embedding-8b}
+      AGENT_SERVER_EMBEDDING_API_KEY_FILE: /run/secrets/obsidian_epoch_embedding_api_key
+      AGENT_SERVER_EMBEDDING_TIMEOUT_MS: ${AGENT_SERVER_EMBEDDING_TIMEOUT_MS:-30000}
+      AGENT_SERVER_EMBEDDING_VERIFICATION_INTERVAL_MS: ${AGENT_SERVER_EMBEDDING_VERIFICATION_INTERVAL_MS:-3600000}
+      AGENT_SERVER_EMBEDDING_QUERY_CACHE_TTL_MS: ${AGENT_SERVER_EMBEDDING_QUERY_CACHE_TTL_MS:-900000}
+      AGENT_SERVER_EMBEDDING_QUERY_CACHE_MAX_ENTRIES: ${AGENT_SERVER_EMBEDDING_QUERY_CACHE_MAX_ENTRIES:-128}
+      AGENT_SERVER_WORLD_MEMORY_BATCH_SIZE: ${AGENT_SERVER_WORLD_MEMORY_BATCH_SIZE:-8}
+      AGENT_SERVER_WORLD_MEMORY_BATCHES_PER_TICK: ${AGENT_SERVER_WORLD_MEMORY_BATCHES_PER_TICK:-4}
+      AGENT_SERVER_WORLD_MEMORY_INTERVAL_MS: ${AGENT_SERVER_WORLD_MEMORY_INTERVAL_MS:-15000}
       SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH:?set immutable release epoch from git show -s --format=%ct HEAD}
       AGENT_EPOCH_CONSOLE_MEDIA_BASE_URL: ${AGENT_EPOCH_CONSOLE_MEDIA_BASE_URL:?set public CDN or object storage base URL for console media assets}
       AGENT_SERVER_OPERATOR_KEY_FILE: /run/secrets/obsidian_epoch_operator_key
@@ -55,7 +66,7 @@ services:
       AGENT_RUNTIME_ACTION_SIGNING_PRIVATE_KEY_PEM_FILE: /run/secrets/obsidian_epoch_runtime_action_signing_private_key
       AGENT_RUNTIME_ACTION_VERIFICATION_PUBLIC_KEYS_FILE: /run/secrets/obsidian_epoch_runtime_action_verification_public_keys
       AGENT_SERVER_MAINTENANCE_ENABLED: ${AGENT_SERVER_MAINTENANCE_ENABLED:-1}
-      AGENT_SERVER_MAINTENANCE_INTERVAL_MS: ${AGENT_SERVER_MAINTENANCE_INTERVAL_MS:-900000}
+      AGENT_SERVER_MAINTENANCE_INTERVAL_MS: ${AGENT_SERVER_MAINTENANCE_INTERVAL_MS:-60000}
       AGENT_SERVER_MAINTENANCE_NPC_REGION_ID: ${AGENT_SERVER_MAINTENANCE_NPC_REGION_ID:-}
       AGENT_SERVER_MAINTENANCE_NPC_LIMIT: ${AGENT_SERVER_MAINTENANCE_NPC_LIMIT:-5}
       AGENT_SERVER_MAINTENANCE_MARKET_MAX_AGE_SECONDS: ${AGENT_SERVER_MAINTENANCE_MARKET_MAX_AGE_SECONDS:-86400}
@@ -84,6 +95,11 @@ services:
         target: obsidian_epoch_operator_key
       - source: obsidian_epoch_mcp_bearer_token
         target: obsidian_epoch_mcp_bearer_token
+      - source: obsidian_epoch_embedding_api_key
+        target: obsidian_epoch_embedding_api_key
+        uid: "65532"
+        gid: "65532"
+        mode: 0400
       - source: obsidian_epoch_registration_secret
         target: obsidian_epoch_registration_secret
       - source: obsidian_epoch_registration_actor_hash_secret
@@ -256,6 +272,8 @@ secrets:
     file: ${AGENT_SERVER_OPERATOR_KEY_FILE:?set path to operator key file}
   obsidian_epoch_mcp_bearer_token:
     file: ${AGENT_SERVER_MCP_BEARER_TOKEN_FILE:?set path to MCP bearer token file}
+  obsidian_epoch_embedding_api_key:
+    file: ${AGENT_SERVER_EMBEDDING_API_KEY_FILE:-./embedding-api-key.empty}
   obsidian_epoch_registration_secret:
     file: ${AGENT_SERVER_REGISTRATION_SECRET_FILE:?set path to registration HMAC secret file}
   obsidian_epoch_registration_actor_hash_secret:

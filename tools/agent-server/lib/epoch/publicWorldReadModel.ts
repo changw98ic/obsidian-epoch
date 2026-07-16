@@ -193,6 +193,8 @@ export interface EpochAgentBriefingView {
   readonly explorerId?: string;
   readonly regionId?: string;
   readonly agentSelfStatement: string;
+  readonly needs?: EpochAgentIdentity["needs"];
+  readonly lifeGoal?: EpochAgentIdentity["lifeGoal"];
   readonly progress: EpochProgressView;
   readonly regionalContext?: EpochResultPageRegionalContext;
   readonly pendingActions: readonly EpochResultPageNextAction[];
@@ -338,6 +340,8 @@ export function createPublicWorldReadModelRuntime(options: EpochPublicWorldReadM
       explorerId: progress.explorerId || identity?.explorerId,
       regionId,
       agentSelfStatement: agentSelfStatement({ identity, progress, regionId }),
+      ...(identity?.needs ? { needs: identity.needs } : {}),
+      ...(identity?.lifeGoal ? { lifeGoal: identity.lifeGoal } : {}),
       progress,
       regionalContext,
       pendingActions,

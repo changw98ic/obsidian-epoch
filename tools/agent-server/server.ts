@@ -6,6 +6,8 @@ import { productionAgentServerConfigFromEnv } from "./lib/productionConfig.ts";
 import { PlayerMcpAccessTokenStore } from "./lib/playerMcpAccessTokenStore.ts";
 import { createEpochMutationCoordinator, createEpochPersistenceGuard } from "./lib/epochPersistence.ts";
 import { maxJsonBodyBytesFromEnv } from "./lib/http/request.ts";
+import { createWorldMemoryRuntime, worldMemoryRuntimeConfigFromEnv } from "./lib/worldMemoryRuntime.ts";
+import { loadDefaultWorldContentRegistry } from "./lib/epoch/worldContentRegistry.ts";
 
 const port = Number(process.env.AGENT_SERVER_PORT || 8787);
 const host = process.env.AGENT_SERVER_HOST || "127.0.0.1";
@@ -39,6 +41,13 @@ async function main() {
       registrationSecret: startupConfig.registrationSecret,
     },
   });
+  const worldContentRegistry = loadDefaultWorldContentRegistry();
+  const worldMemory = persistence.sqlitePath
+    ? createWorldMemoryRuntime(
+        worldMemoryRuntimeConfigFromEnv(persistence.sqlitePath, process.env),
+        { worldContentRegistry },
+      )
+    : undefined;
   const shutdownTimeoutMs = shutdownTimeoutMsFromEnv(process.env.AGENT_SERVER_SHUTDOWN_TIMEOUT_MS);
   let maintenance: ReturnType<typeof startEpochMaintenanceScheduler> | undefined;
   let server: ReturnType<typeof createAgentHttpServer> | undefined;
@@ -47,6 +56,7 @@ async function main() {
   const shutdown = (reason: NodeJS.Signals | "PERSISTENCE_FAILURE", exitCode = 0) => {
     if (exitCode !== 0) process.exitCode = exitCode;
     maintenance?.stop();
+    worldMemory?.stop();
     if (!server || shutdownStarted) return;
     shutdownStarted = true;
     const activeServer = server;
@@ -65,6 +75,7 @@ async function main() {
       void (async () => {
         if (error) throw error;
         await maintenance?.drain();
+        await worldMemory?.drain();
         await mutationCoordinator.drain();
         console.log(`agent-server stopped after ${reason}`);
       })().catch((shutdownError: unknown) => {
@@ -117,13 +128,18 @@ async function main() {
         sqlitePath: persistence.sqlitePath,
       },
       maintenance,
+      worldMemory,
       recovery: persistence.recoveryManifest,
     },
+    worldMemorySearch: worldMemory?.search,
+    worldKnowledgeSearch: worldMemory?.searchKnowledge,
   });
   if (persistenceGuard.failed) {
+    worldMemory?.stop();
     maintenance.stop();
     return;
   }
+  worldMemory?.start();
 
   const onSigterm = () => shutdown("SIGTERM");
   const onSigint = () => shutdown("SIGINT");
@@ -131,6 +147,7 @@ async function main() {
   process.once("SIGINT", onSigint);
   server.on("close", () => {
     maintenance.stop();
+    worldMemory?.stop();
     process.off("SIGTERM", onSigterm);
     process.off("SIGINT", onSigint);
   });

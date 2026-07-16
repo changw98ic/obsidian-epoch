@@ -64,6 +64,7 @@ export const publicEventTypeLabels: Record<string, string> = {
   hosted_session_started: "探索节点生成",
   resource_granted: "收获入账",
   hosted_action_recorded: "托管行动",
+  journey_world_solidified: "镜像对局固化",
   downtime_set: "托管设置",
   downtime_tick_resolved: "托管结算",
   downtime_claimed: "托管领取",

@@ -81,6 +81,7 @@ function focusRegionId(payload: ResultPagePayload) {
 }
 
 function heroTitle(payload: ResultPagePayload) {
+  if (payload.journey?.mission?.title) return publicText(payload.journey.mission.title);
   const region = publicRegionLabel(focusRegionId(payload));
   if (payload.runSummary?.runKind === "one_shot_journey" && region !== "未知区域") {
     return `${region}探索历程`;
@@ -92,6 +93,7 @@ function heroTitle(payload: ResultPagePayload) {
 
 function heroSummary(payload: ResultPagePayload) {
   const region = publicRegionLabel(focusRegionId(payload));
+  if (payload.journey?.storyReport?.summary) return publicText(payload.journey.storyReport.summary);
   const latestHostedAction = payload.focusHostedSession?.actions.at(-1);
   const outcome = payload.focusTurnCard?.resolution?.outcomeSummary
     || latestHostedAction?.outcomeSummary
@@ -208,11 +210,15 @@ export function buildPublicResultViewModel(page: EpochSharedResultPage & { reado
   const payload = page.payload;
   const title = heroTitle(payload);
   const eventCount = payload.receipt.canonicalEvents.length;
-  const statusLabel = payload.runSummary?.runKind === "one_shot_journey" && payload.runSummary.endingReason === "completed"
-    ? "完整历程已结算"
-    : eventCount
-      ? "服务器已结算"
-      : "服务器已记录";
+  const statusLabel = payload.journey?.mission?.status === "completed"
+    ? "任务完成"
+    : payload.journey?.mission?.status === "failed"
+      ? "任务失败"
+      : payload.runSummary?.runKind === "one_shot_journey" && payload.runSummary.endingReason === "completed"
+        ? "完整历程已结算"
+        : eventCount
+          ? "服务器已结算"
+          : "服务器已记录";
   return {
     pageTitle: `${title} - 黑曜纪元结果页`,
     heroTitle: title,

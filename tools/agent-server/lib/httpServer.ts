@@ -42,6 +42,7 @@ import { appendJsonl } from "./store.ts";
 import { redactApiKeys } from "./safety.ts";
 import type { EpochMaintenanceSchedulerStatus } from "./maintenance.ts";
 import type { PlayerMcpAccessTokenStore } from "./playerMcpAccessTokenStore.ts";
+import type { WorldMemoryRuntimeStatus } from "./worldMemoryRuntime.ts";
 import {
   type PublicRegistrationProtectionConfig,
   PERMISSIVE_PUBLIC_REGISTRATION_PROTECTION,
@@ -79,6 +80,8 @@ type HttpServerOptions = {
   playerMcpTokenTtlMs?: number;
   publicRegistrationProtection?: PublicRegistrationProtectionConfig;
   allowLegacyHttpIdentityRegistration?: boolean;
+  worldMemorySearch?: (input: AnyRecord) => Promise<unknown>;
+  worldKnowledgeSearch?: (input: AnyRecord) => Promise<unknown>;
 };
 
 interface AgentHealthOptions {
@@ -88,6 +91,9 @@ interface AgentHealthOptions {
   };
   readonly maintenance?: {
     readonly status: () => EpochMaintenanceSchedulerStatus;
+  };
+  readonly worldMemory?: {
+    readonly status: () => WorldMemoryRuntimeStatus;
   };
   readonly recovery?: () => Promise<RecoveryManifest> | RecoveryManifest;
   readonly recoveryCache?: {
@@ -125,6 +131,23 @@ function maintenanceHealth(input: AgentHealthOptions["maintenance"] | undefined)
         : status.enabled
           ? "ok"
           : "disabled",
+  };
+}
+
+function worldMemoryHealth(input: AgentHealthOptions["worldMemory"] | undefined) {
+  if (!input) return { status: "unconfigured", enabled: false, semanticEnabled: false };
+  const value = input.status();
+  const unrecoveredError = Boolean(value.lastErrorAt
+    && (!value.lastSuccessAt || value.lastErrorAt >= value.lastSuccessAt));
+  return {
+    ...value,
+    status: value.semanticEnabled
+      ? unrecoveredError
+        ? "degraded"
+        : value.inFlight
+          ? "running"
+          : "ok"
+      : "lexical_only",
   };
 }
 
@@ -266,6 +289,7 @@ async function serverHealth(
 ) {
   const store = storeHealth(health?.store, persistJsonl);
   const maintenance = maintenanceHealth(health?.maintenance);
+  const worldMemory = worldMemoryHealth(health?.worldMemory);
   const recovery = await recoveryCache.get();
   const publicRegistration = publicRegistrationHealth(publicRegistrationProtection, playerMcpAccessTokens);
   const persistence = persistenceHealth(persistenceGuard);
@@ -279,6 +303,7 @@ async function serverHealth(
     checks: {
       store,
       maintenance,
+      worldMemory,
       recovery,
       publicRegistration,
       persistence,
@@ -474,19 +499,23 @@ export function parseMcpToolResultPayload(toolResult: unknown) {
 function embeddedResultPages(payload: unknown) {
   const record = recordValue(payload);
   const pages: AnyRecord[] = [];
-  const directPage = recordValue(record.page);
-  if (typeof directPage.pageId === "string") pages.push(directPage);
-  if (typeof record.pageId === "string") pages.push(record);
+  const appendPageResult = (value: unknown) => {
+    const pageResult = recordValue(value);
+    if (pageResult.duplicate === true) return;
+    const nestedPage = recordValue(pageResult.page);
+    if (typeof nestedPage.pageId === "string") {
+      pages.push(nestedPage);
+      return;
+    }
+    if (typeof pageResult.pageId === "string") pages.push(pageResult);
+  };
+  appendPageResult(record);
   for (const key of ["verification", "departureVerification", "finalVerification"] as const) {
-    const page = recordValue(recordValue(record[key]).page);
-    if (typeof page.pageId === "string") pages.push(page);
+    appendPageResult(record[key]);
   }
   const returned = record.returnedJourneyVerifications;
   if (Array.isArray(returned)) {
-    for (const verification of returned) {
-      const page = recordValue(recordValue(verification).page);
-      if (typeof page.pageId === "string") pages.push(page);
-    }
+    for (const verification of returned) appendPageResult(verification);
   }
   return [...new Map(pages.map((page) => [String(page.pageId), page] as const)).values()];
 }
@@ -591,6 +620,8 @@ export function createAgentHttpServer({
   playerMcpTokenTtlMs = DEFAULT_PLAYER_MCP_TOKEN_TTL_MS,
   publicRegistrationProtection = PERMISSIVE_PUBLIC_REGISTRATION_PROTECTION,
   allowLegacyHttpIdentityRegistration = false,
+  worldMemorySearch,
+  worldKnowledgeSearch,
 }: HttpServerOptions) {
   const persistenceGuard = configuredPersistenceGuard || createEpochPersistenceGuard();
   const mutationCoordinator = configuredMutationCoordinator || createEpochMutationCoordinator();
@@ -601,6 +632,8 @@ export function createAgentHttpServer({
     runtime,
     recordRejectedCommands: false,
     authoritativeIdentityIssuance: true,
+    worldMemorySearch,
+    worldKnowledgeSearch,
   });
   const mcpHttpSessions = createMcpHttpSessionRegistry();
   const recoveryCache = createRecoveryHealthCache(

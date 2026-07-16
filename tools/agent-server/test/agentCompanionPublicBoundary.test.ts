@@ -168,6 +168,7 @@ test("foreign Player briefing exposes only an explicit public projection while t
       agent: sensitiveBriefing.publicPages.agent,
     },
     returnedJourneys: [],
+    returnedJourneyReports: [],
     recentEpisodes: [],
     pendingDecisions: [],
     interactionInbox: [],

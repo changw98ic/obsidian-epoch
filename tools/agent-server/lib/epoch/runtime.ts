@@ -72,6 +72,17 @@ import {
   traceConflictTemplateCatalog,
 } from "./gameCore.ts";
 import type { JourneySceneContractSeed } from "./journeySceneContractRules.ts";
+import { JOURNEY_FIRST_ENTRY_RESERVE } from "./journeyActionResolutionRules.ts";
+import {
+  JOURNEY_TIER_REWARDS,
+  deriveJourneyHiddenTask,
+  journeyRewardBundleForPlan,
+  type JourneyCompletionTier,
+  type JourneyGeneratedTaskPlan,
+  type JourneyHiddenTaskSeal,
+  type JourneyHiddenTaskSealResolver,
+  type JourneyRewardBundle,
+} from "./journeyGeneratedTaskRules.ts";
 import {
   anomalyEventInputFromOperatorInput,
   anomalyEventInputFromTemplate,
@@ -498,6 +509,7 @@ function traceConflictTargetFromInput(input: AnyRecord) {
 
 export interface EpochRuntimeOptions extends EpochGameCoreOptions {
   readonly initialResultPages?: readonly EpochSharedResultPage[];
+  readonly resolveJourneyHiddenTaskSeal?: JourneyHiddenTaskSealResolver;
   readonly attestedRunners?: readonly EpochAttestedRunnerConfig[];
   readonly abuseLimits?: EpochRuntimeAbuseLimits;
   readonly operatorKey?: string;
@@ -684,10 +696,18 @@ export interface EpochResultPageJourneyEpisode {
   readonly episodeId: string;
   readonly title: string;
   readonly outcomeKey: string;
+  readonly phase?: "arrival" | "main" | "side" | "return";
   readonly participants: readonly { readonly id: string; readonly type: string; readonly label: string }[];
   readonly sourceEventIds: readonly string[];
   readonly serverFacts?: import("./journeyNarrativeRules.ts").ServerJourneyEpisodeFacts;
   readonly narrative?: import("./journeyNarrativeRules.ts").PersistedJourneyNarrative;
+  readonly generatedTaskObjective?: import("./journeyGeneratedTaskRules.ts").JourneyGeneratedTaskObjective;
+  readonly settlement?: {
+    readonly reward?: {
+      readonly resourceId: import("./protocol.ts").EpochResourceId;
+      readonly amount: number;
+    };
+  };
 }
 
 export interface EpochResultPageJourney {
@@ -696,16 +716,22 @@ export interface EpochResultPageJourney {
   readonly status: string;
   readonly objective: string;
   readonly regionId: string;
+  readonly worldMode?: import("./journeyRules.ts").JourneyWorldMode;
+  readonly worldCommit?: import("./journeyRules.ts").JourneyWorldCommit;
   readonly startedAtWorldTime?: string;
   readonly dueAtWorldTime?: string;
   readonly episodes: readonly EpochResultPageJourneyEpisode[];
   readonly canonicalEventIds: readonly string[];
+  readonly taskPlan?: import("./journeyGeneratedTaskRules.ts").JourneyGeneratedTaskPlan;
+  readonly mission?: import("./journeyMissionReadModel.ts").JourneyMission;
+  readonly storyReport?: import("./journeyStoryReport.ts").GroundedJourneyStoryReport;
   readonly stateDelta?: {
     readonly outcomeSummary?: string;
     readonly reward?: {
       readonly resourceId?: string;
       readonly amount?: number;
     };
+    readonly rewardBundle?: import("./journeyGeneratedTaskRules.ts").JourneyRewardBundle;
   };
 }
 
@@ -830,20 +856,25 @@ export interface EpochResultPageAccessResult {
 const DEFAULT_ATTESTATION_CHALLENGE_TTL_MS = 5 * 60_000;
 const DEFAULT_HIGH_VALUE_CONFIRMATION_TTL_MS = 10 * 60_000;
 const ANOMALY_SKIP_ERRORS = new Set(["anomaly_event_region_open"]);
-const SYSTEM_IDENTITY_ARCHETYPES = [
-  "灰港档案学徒",
-  "余烬街临时信使",
-  "旧渠巡灯人",
-  "雾钟站见习记录员",
-  "黑石码头勤务员",
-  "北墙药圃助手",
+const SYSTEM_IDENTITY_ORIGINS = [
+  "雾钟站", "黑石码头", "镜湖工坊", "赤砂哨所", "北墙温室", "星槎坞",
+  "旧渠", "风蚀塔", "浮桥集市", "月井营地", "灰烬观测站", "回声仓城",
+] as const;
+const SYSTEM_IDENTITY_UNITS = [
+  "第七采样组", "夜航班", "边界测绘队", "临时实验组", "外勤救援队", "遗迹勘探组",
+  "生态观察班", "城外猎行队", "补给调度组", "设备检修班", "入门试炼营", "数据校准所",
+] as const;
+const SYSTEM_IDENTITY_ROLES = [
+  "见习记录员", "样本护送员", "设备检修员", "外勤助理", "试炼候补", "变异兽猎手",
+  "数据校准员", "药圃照料员", "补给联络员", "遗迹勘探员", "安全观察员", "生态采样员",
 ] as const;
 
 function systemAssignedIdentityName(input: { readonly explorerId: string; readonly generation: number }) {
   const digest = sha256Hex(`${input.explorerId}:${input.generation}`);
-  const index = Number.parseInt(digest.slice(0, 8), 16) % SYSTEM_IDENTITY_ARCHETYPES.length;
-  const archetype = SYSTEM_IDENTITY_ARCHETYPES[index] || SYSTEM_IDENTITY_ARCHETYPES[0];
-  return `${archetype} · 第${input.generation}世`;
+  const origin = SYSTEM_IDENTITY_ORIGINS[Number.parseInt(digest.slice(0, 8), 16) % SYSTEM_IDENTITY_ORIGINS.length]!;
+  const unit = SYSTEM_IDENTITY_UNITS[Number.parseInt(digest.slice(8, 16), 16) % SYSTEM_IDENTITY_UNITS.length]!;
+  const role = SYSTEM_IDENTITY_ROLES[Number.parseInt(digest.slice(16, 24), 16) % SYSTEM_IDENTITY_ROLES.length]!;
+  return `${origin}${unit}${role} · 第${input.generation}世`;
 }
 
 export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
@@ -872,6 +903,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     idFactory: options.idFactory,
     initialPages: options.initialResultPages || [],
     canonicalEpochEvents: () => core.project().events,
+    resolveJourneyHiddenTaskSeal: options.resolveJourneyHiddenTaskSeal,
     assertExplorerAuth: explorerAuthRuntime.assertExplorerAuth,
     assertOperatorKey,
     assertCreateAllowed: (input) => assertAbuseAllowed(input, { allowRestrictedScore: true }),
@@ -1181,6 +1213,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     requestConfirmation: highValueConfirmationRuntime.request,
     confirmAction: highValueConfirmationRuntime.confirm,
     confirmations: highValueConfirmationRuntime.list,
+    ingestCanonicalEvents: core.ingestCanonicalEvents,
     events: (input: AnyRecord = {}) => eventsInfoView(core.project(), input),
     interactionEvents: (offset = 0) => core.project().events.slice(offset),
     worldContextVersions: (): EpochWorldContextVersions => publicWorldReadModel.worldContextVersions(),
@@ -1237,6 +1270,127 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
       now: serverIsoTime(clock),
       maxDowntimeSeconds: options.maxDowntimeSeconds,
     }),
+    grantJourneyEntryReserve: (input: AnyRecord = {}) => {
+      const journeyId = assertNonEmptyString(input.journeyId, "journey_id");
+      const agentId = assertNonEmptyString(input.agentId, "agent_id");
+      const grants = JOURNEY_FIRST_ENTRY_RESERVE.flatMap((resource) => {
+        const reason = `journey_entry_reserve:${agentId}:${resource.resourceId}`;
+        const existing = core.project().events.some((event) => event.eventType === "resource_granted"
+          && event.agentId === agentId
+          && event.payload.reason === reason);
+        if (existing) return [];
+        return [commandResult(core.grantResource({
+          agentId,
+          resourceId: resource.resourceId,
+          amount: resource.amount,
+          reason,
+        }, maintenanceContext(input, `${reason}:${journeyId}`)))];
+      });
+      const persistenceEvents = grants.flatMap((grant) => epochEventsForPersistence(grant));
+      const publicEvents = grants.flatMap((grant) => grant.events);
+      return attachEpochEventsForPersistence({
+        value: core.project().resourceBalances[agentId] ?? {},
+        events: publicEvents,
+        projection: grants.at(-1)?.projection ?? publicProjection(core.project()),
+        reserve: JOURNEY_FIRST_ENTRY_RESERVE,
+        duplicate: grants.length === 0,
+      }, persistenceEvents);
+    },
+    solidifyJourneyWorld: (input: AnyRecord = {}) => commandResult(core.solidifyJourneyWorld({
+      journeyId: assertNonEmptyString(input.journeyId, "journey_id"),
+      agentId: assertNonEmptyString(input.agentId, "agent_id"),
+      regionId: assertNonEmptyString(input.regionId, "region_id"),
+      completedObjectiveIds: Array.isArray(input.completedObjectiveIds)
+        ? input.completedObjectiveIds.map((value) => assertNonEmptyString(value, "journey_completed_objective_id"))
+        : [],
+      requiredMainObjectiveIds: Array.isArray(input.requiredMainObjectiveIds)
+        ? input.requiredMainObjectiveIds.map((value) => assertNonEmptyString(value, "journey_required_main_objective_id"))
+        : [],
+      mirrorStartedAtWorldTime: assertNonEmptyString(
+        input.mirrorStartedAtWorldTime,
+        "journey_mirror_started_at_world_time",
+      ),
+      mirrorEndedAtWorldTime: assertNonEmptyString(
+        input.mirrorEndedAtWorldTime,
+        "journey_mirror_ended_at_world_time",
+      ),
+      committedAtWorldTime: assertNonEmptyString(
+        input.committedAtWorldTime,
+        "journey_committed_at_world_time",
+      ),
+      completionTier: assertNonEmptyString(
+        input.completionTier,
+        "journey_completion_tier",
+      ) as "良好" | "完美" | "惊世",
+      completionScoreBps: Number(input.completionScoreBps),
+      ...(typeof input.worldSliceHash === "string"
+        ? { worldSliceHash: input.worldSliceHash as `sha256:${string}` }
+        : {}),
+    }, maintenanceContext(input, `journey_world_solidified:${String(input.journeyId || "").trim()}`))),
+    grantJourneyReward: (input: AnyRecord = {}) => {
+      const journeyId = assertNonEmptyString(input.journeyId, "journey_id");
+      const agentId = assertNonEmptyString(input.agentId, "agent_id");
+      const tier = assertNonEmptyString(input.tier, "journey_completion_tier") as JourneyCompletionTier;
+      if (tier === "未及格" || !(tier in JOURNEY_TIER_REWARDS)) {
+        throw new Error("journey_reward_tier_invalid");
+      }
+      const reward = JOURNEY_TIER_REWARDS[tier as keyof typeof JOURNEY_TIER_REWARDS];
+      const taskPlan = isRecord(input.taskPlan)
+        ? input.taskPlan as unknown as JourneyGeneratedTaskPlan
+        : undefined;
+      const hiddenTaskSeal = isRecord(input.hiddenTaskSeal)
+        ? input.hiddenTaskSeal as unknown as JourneyHiddenTaskSeal
+        : undefined;
+      if (taskPlan) deriveJourneyHiddenTask(taskPlan, hiddenTaskSeal);
+      const rewardBundle: JourneyRewardBundle = taskPlan
+        ? journeyRewardBundleForPlan(taskPlan, tier as Exclude<JourneyCompletionTier, "未及格">)
+        : { resources: [reward], items: [] };
+      const reason = `journey_grade:${journeyId}:${tier}`;
+      const existing = core.project().events.find((event) => event.eventType === "resource_granted"
+        && event.agentId === agentId
+        && event.payload.reason === reason);
+      const resourceGrant = existing
+        ? attachEpochEventsForPersistence({
+            value: core.project().resourceBalances[agentId] ?? {},
+            events: [],
+            projection: publicProjection(core.project()),
+          }, [])
+        : commandResult(core.grantResource({
+            agentId,
+            resourceId: reward.resourceId,
+            amount: reward.amount,
+            reason,
+          }, maintenanceContext(input, reason)));
+      const sourceEventIds = Array.isArray(input.sourceEventIds)
+        ? [...new Set(input.sourceEventIds.filter((value): value is string => typeof value === "string" && Boolean(value.trim())))]
+        : [];
+      if (rewardBundle.items.length > 0 && sourceEventIds.length === 0) {
+        throw new Error("journey_reward_source_event_required");
+      }
+      const itemGrants = rewardBundle.items.map((item) => commandResult(core.createInventoryItem({
+        agentId,
+        itemKey: item.itemKey,
+        displayName: item.displayName,
+        rarity: item.rarity,
+        sourceEventIds,
+      }, maintenanceContext(input, `${reason}:item:${item.itemKey}`))));
+      const persistenceEvents = [
+        ...epochEventsForPersistence(resourceGrant),
+        ...itemGrants.flatMap((grant) => epochEventsForPersistence(grant)),
+      ];
+      const publicEvents = [resourceGrant, ...itemGrants].flatMap((grant) => grant.events);
+      const projection = itemGrants.at(-1)?.projection ?? resourceGrant.projection;
+      return attachEpochEventsForPersistence({
+        ...resourceGrant,
+        events: publicEvents,
+        projection,
+        reward,
+        rewardBundle,
+        grantedItems: itemGrants.map((grant) => grant.value),
+        reason,
+        duplicate: Boolean(existing) && itemGrants.every((grant) => grant.events.length === 0),
+      }, persistenceEvents);
+    },
     agentBriefing,
     agentPublicIdentity,
     hostedSessionWatch,
@@ -1885,6 +2039,10 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
       return idempotently("seed_season", input, () => {
         const regionId = canonicalRegionIdOrDefault(input.regionId, "region_gray_harbor");
         const { seasonKey, template } = runtimeSeasonTemplate(input);
+        const factionIds = Array.isArray(input.factionIds)
+          ? [...new Set(input.factionIds.map((factionId) => assertNonEmptyString(factionId, "season_faction_id")))]
+          : template.factionIds;
+        if (factionIds.length < 2) throw new Error("season_factions_required");
         const seasonInstanceKey = typeof input.seasonInstanceKey === "string" && input.seasonInstanceKey.trim()
           ? input.seasonInstanceKey.trim()
           : `${seasonKey}:${regionId}`;
@@ -1893,7 +2051,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
           title: template.title,
           description: template.description,
           regionIds: [regionId],
-          factionIds: template.factionIds,
+          factionIds,
           resourceId: template.resourceId,
           targetScore: template.targetScore,
           reward: template.reward,
@@ -2454,6 +2612,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         input,
         generatedAt: serverIsoTime(clock),
         maxDowntimeSeconds: options.maxDowntimeSeconds,
+        resolveJourneyHiddenTaskSeal: options.resolveJourneyHiddenTaskSeal,
       });
       return {
         ...payload,

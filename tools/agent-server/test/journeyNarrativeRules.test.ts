@@ -37,7 +37,21 @@ test("converts canonical settlement events into a closed server fact boundary", 
   assert.deepEqual(facts.stateChanges.map((change) => change.stateChangeId), [
     "episode_arrival:outcome", "episode_arrival:reward:coin",
   ]);
+  assert.deepEqual(facts.storyBeat, {
+    phase: "arrival",
+    sceneTitle: "到达：灰港",
+    selectedAction: { label: "按登记路线入港" },
+    outcomeSummary: "灯蛾完成入港登记。",
+  });
   assert.equal(facts.verification.fragment, "episode-episode_arrival");
+  const narrative = buildPersistedJourneyNarrative({ serverFacts: facts }).value;
+  assert.equal(revalidatePersistedJourneyNarrative({
+    serverFacts: {
+      ...facts,
+      storyBeat: { ...facts.storyBeat!, outcomeSummary: "客户端伪造了额外奖励。" },
+    },
+    narrative,
+  }), undefined);
 });
 
 test("wired narrative generation accepts references only and falls back on malformed Sampling", () => {

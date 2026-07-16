@@ -111,6 +111,14 @@ test("public deployment config ships Docker, Compose, env example, and operator 
   assert.match(compose, /\$\{AGENT_SERVER_MCP_BEARER_TOKEN_FILE:\?set path to MCP bearer token file\}/);
   assert.match(compose, /AGENT_SERVER_MCP_PLAYER_TOKEN_JSONL_PATH/);
   assert.match(compose, /AGENT_SERVER_MCP_PLAYER_TOKEN_TTL_SECONDS/);
+  assert.match(compose, /AGENT_SERVER_EMBEDDING_API_KEY_FILE: \/run\/secrets\/obsidian_epoch_embedding_api_key/);
+  assert.match(compose, /AGENT_SERVER_EMBEDDING_MODEL: \$\{AGENT_SERVER_EMBEDDING_MODEL:-text-embedding-qwen3-embedding-8b\}/);
+  assert.match(compose, /AGENT_SERVER_EMBEDDING_VERIFICATION_INTERVAL_MS: \$\{AGENT_SERVER_EMBEDDING_VERIFICATION_INTERVAL_MS:-3600000\}/);
+  assert.match(compose, /AGENT_SERVER_EMBEDDING_QUERY_CACHE_TTL_MS: \$\{AGENT_SERVER_EMBEDDING_QUERY_CACHE_TTL_MS:-900000\}/);
+  assert.match(compose, /AGENT_SERVER_EMBEDDING_QUERY_CACHE_MAX_ENTRIES: \$\{AGENT_SERVER_EMBEDDING_QUERY_CACHE_MAX_ENTRIES:-128\}/);
+  assert.match(compose, /obsidian_epoch_embedding_api_key:/);
+  assert.match(compose, /target: obsidian_epoch_embedding_api_key\s+uid: "65532"\s+gid: "65532"\s+mode: 0400/);
+  assert.doesNotMatch(compose, /AGENT_SERVER_EMBEDDING_API_KEY:/);
   assert.match(compose, /fetch\('http:\/\/127\.0\.0\.1:8787\/api\/health'\)/);
   assert.match(compose, /process\.exit\(response\.ok \? 0 : 1\)/);
   assert.match(compose, /\$\{AGENT_SERVER_REGISTRATION_SECRET_FILE:\?set path to registration HMAC secret file\}/);
@@ -149,7 +157,7 @@ test("public deployment config ships Docker, Compose, env example, and operator 
   assert.match(envExample, /AGENT_SERVER_BACKUP_KEEP_LAST=14/);
   assert.match(envExample, /AGENT_EPOCH_CONSOLE_MEDIA_BASE_URL=https:\/\/cdn\.your-domain\.example\/obsidian-epoch\/assets\/media/);
   assert.match(envExample, /AGENT_SERVER_MAINTENANCE_ENABLED=1/);
-  assert.match(envExample, /AGENT_SERVER_MAINTENANCE_INTERVAL_MS=900000/);
+  assert.match(envExample, /AGENT_SERVER_MAINTENANCE_INTERVAL_MS=60000/);
   assert.match(envExample, /AGENT_SERVER_MAINTENANCE_RESOURCE_NODE_REGION_IDS=/);
   assert.match(envExample, /AGENT_SERVER_MAINTENANCE_RESOURCE_NODE_LIMIT=0/);
   assert.match(envExample, /AGENT_SERVER_MAINTENANCE_RESOURCE_NODE_SETTLEMENT_LIMIT=0/);
@@ -165,6 +173,12 @@ test("public deployment config ships Docker, Compose, env example, and operator 
   assert.match(envExample, /AGENT_SERVER_MCP_BEARER_TOKEN_FILE=/);
   assert.match(envExample, /AGENT_SERVER_MCP_PLAYER_TOKEN_JSONL_PATH=\/data\/player-mcp-access-tokens\.jsonl/);
   assert.match(envExample, /AGENT_SERVER_MCP_PLAYER_TOKEN_TTL_SECONDS=43200/);
+  assert.match(envExample, /AGENT_SERVER_EMBEDDING_API_KEY_FILE=/);
+  assert.match(envExample, /AGENT_SERVER_EMBEDDING_BASE_URL=http:\/\/192\.168\.1\.7:1235/);
+  assert.match(envExample, /AGENT_SERVER_EMBEDDING_MODEL=text-embedding-qwen3-embedding-8b/);
+  assert.match(envExample, /AGENT_SERVER_EMBEDDING_VERIFICATION_INTERVAL_MS=3600000/);
+  assert.match(envExample, /AGENT_SERVER_EMBEDDING_QUERY_CACHE_TTL_MS=900000/);
+  assert.match(envExample, /AGENT_SERVER_EMBEDDING_QUERY_CACHE_MAX_ENTRIES=128/);
   assert.match(envExample, /AGENT_SERVER_REGISTRATION_SECRET_FILE=/);
   assert.match(envExample, /AGENT_SERVER_REGISTRATION_ACTOR_HASH_SECRET_FILE=/);
   assert.match(envExample, /AGENT_SERVER_REGISTRATION_TRUST_PROXY_HOPS=1/);
@@ -183,6 +197,10 @@ test("public deployment config ships Docker, Compose, env example, and operator 
   assert.match(readme, /AGENT_EPOCH_CONSOLE_MEDIA_BASE_URL/);
   assert.match(readme, /AGENT_PUBLIC_SERVER_BASE/);
   assert.match(readme, /AGENT_WORLD_MCP_TOKEN/);
+  assert.match(readme, /AGENT_SERVER_EMBEDDING_API_KEY_FILE/);
+  assert.match(readme, /http:\/\/192\.168\.1\.7:1235/);
+  assert.match(readme, /text-embedding-qwen3-embedding-8b/);
+  assert.match(readme, /\/run\/secrets\/obsidian_epoch_embedding_api_key/);
   assert.match(readme, /AGENT_SERVER_MAINTENANCE_ENABLED=1/);
   assert.match(readme, /AGENT_SERVER_MAINTENANCE_RESOURCE_NODE_REGION_IDS=region_gray_harbor/);
   assert.match(readme, /AGENT_SERVER_MAINTENANCE_RESOURCE_NODE_SETTLEMENT_LIMIT=3/);

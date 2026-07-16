@@ -1667,7 +1667,10 @@ test("Obsidian Epoch downloadable package runs its bundled MCP proxy from the ex
     assert.equal(status.episodes.length, 3);
     const publicResult = await fetch(`${baseUrl}${status.finalVerification.page.urlPath}`);
     assert.equal(publicResult.status, 200);
-    assert.match(await publicResult.text(), /从旅途中寄来/);
+    const publicResultHtml = await publicResult.text();
+    assert.match(publicResultHtml, /这是一份面向玩家的完整故事/);
+    assert.match(publicResultHtml, /完整故事报告/);
+    assert.doesNotMatch(publicResultHtml, /从旅途中寄来|历程时间线/);
   } finally {
     unauthenticatedLines.close();
     unauthenticatedChild.stdin.destroy();

@@ -1,12 +1,19 @@
+import { createHash } from "node:crypto";
+
 import {
   activeJourneyForAgent,
+  installJourneyTaskPlan,
   linkJourneyVerification,
   prepareJourney,
+  recordJourneyWorldCommit,
   recordJourneyEpisode,
   recallJourney,
   startJourney,
   transitionJourney,
   type EpochJourney,
+  type JourneyMirrorWindow,
+  type JourneyWorldSlice,
+  type JourneyWorldCommit,
 } from "./journeyRules.ts";
 import {
   buildJourneyPolicyPreview,
@@ -18,11 +25,18 @@ import { revalidatePersistedJourneyNarrative } from "./journeyNarrativeRules.ts"
 import type { EpochEvent } from "./events.ts";
 import {
   generateJourneySceneEpisodes,
+  generateTaskPlanJourneySceneEpisodes,
   generateThreePhaseJourneySceneEpisodes,
   type JourneySceneGenerationInput,
   type JourneySceneEpisode,
   type JourneyScenePlan,
 } from "./journeySceneRules.ts";
+import {
+  nextJourneyTaskObjective,
+  normalizeJourneyHiddenTaskSeal,
+  type JourneyGeneratedTaskPlan,
+  type JourneyHiddenTaskSeal,
+} from "./journeyGeneratedTaskRules.ts";
 import {
   applyJourneyRuntimeEvent,
   journeyRecordsForAgent,
@@ -31,6 +45,10 @@ import {
   type JourneyRuntimeEvent,
   type JourneyRuntimeRecord,
 } from "./journeyReadModel.ts";
+import {
+  epochWorldMinuteFromTime,
+  epochWorldTimeFromMinute,
+} from "./worldCalendar.ts";
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
 
@@ -41,6 +59,11 @@ export interface JourneyRuntimeOptions {
   readonly initialEvents?: readonly JourneyRuntimeEvent[];
   readonly appendEvents?: (events: readonly JourneyRuntimeEvent[]) => void;
   readonly canonicalEpochEvents?: () => readonly EpochEvent[];
+  readonly worldSliceForWindow?: (input: {
+    readonly regionId: string;
+    readonly startedAtWorldTime: string;
+    readonly endedAtWorldTime: string;
+  }) => JourneyWorldSlice | undefined;
   readonly defaultRealDurationMs?: number;
   readonly defaultWorldDurationMs?: number;
   readonly pollIntervalMs?: number;
@@ -51,9 +74,17 @@ export interface PrepareJourneyRuntimeInput {
   readonly explorerId: string;
   readonly originRegionId: string;
   readonly destinationRegionId: string;
+  readonly taskType?: string;
   readonly mandate?: unknown;
   readonly policy?: unknown;
   readonly expectedReturn?: string;
+}
+
+export interface InstallJourneyTaskPlanRuntimeInput {
+  readonly journeyId: string;
+  readonly expectedVersion: number;
+  readonly taskPlan: JourneyGeneratedTaskPlan;
+  readonly hiddenTaskSeal: JourneyHiddenTaskSeal;
 }
 
 export interface StartJourneyRuntimeInput {
@@ -61,6 +92,11 @@ export interface StartJourneyRuntimeInput {
   readonly expectedVersion: number;
   readonly realDurationMs?: number;
   readonly worldDurationMs?: number;
+}
+
+export interface ReserveJourneyMirrorWindowRuntimeInput {
+  readonly journeyId: string;
+  readonly expectedVersion: number;
 }
 
 export interface JourneyTickResult {
@@ -74,6 +110,12 @@ export interface LinkJourneyVerificationRuntimeInput {
   readonly pageId: string;
   readonly urlPath: string;
   readonly createdAt: string;
+}
+
+export interface RecordJourneyWorldCommitRuntimeInput {
+  readonly journeyId: string;
+  readonly expectedVersion: number;
+  readonly worldCommit: JourneyWorldCommit;
 }
 
 export type JourneyEpisodeContext = Omit<JourneySceneGenerationInput, "mandate">;
@@ -101,6 +143,74 @@ function earlierIso(left: string, right: string) {
   return Date.parse(left) <= Date.parse(right) ? left : right;
 }
 
+const MIRROR_TIME_SLOT_MS = 15 * 60 * 1_000;
+const MIRROR_TIME_SLOT_WORLD_MINUTES = 15;
+const MIRROR_START_SLOT_COUNT = 24 * 4;
+const MIRROR_MIN_DURATION_SLOTS = 3;
+const MIRROR_MAX_DURATION_SLOTS = 12 * 4;
+
+function deterministicSlot(seed: string, slotCount: number) {
+  const digest = createHash("sha256").update(seed).digest();
+  return digest.readUInt32BE(0) % slotCount;
+}
+
+function legacyMirrorTimeWindow(journey: EpochJourney, canonicalNowWorld: string) {
+  const startOffsetSlots = deterministicSlot(
+    `${journey.journeyId}:${journey.destinationRegionId}:${canonicalNowWorld}:mirror-start.v1`,
+    MIRROR_START_SLOT_COUNT,
+  );
+  const durationSlots = MIRROR_MIN_DURATION_SLOTS + deterministicSlot(
+    `${journey.journeyId}:${journey.taskRequest?.taskType ?? journey.mandate.objective}:mirror-duration.v1`,
+    MIRROR_MAX_DURATION_SLOTS - MIRROR_MIN_DURATION_SLOTS + 1,
+  );
+  const startedAtWorldTime = plusMilliseconds(canonicalNowWorld, startOffsetSlots * MIRROR_TIME_SLOT_MS);
+  return {
+    startedAtWorldTime,
+    dueAtWorldTime: plusMilliseconds(startedAtWorldTime, durationSlots * MIRROR_TIME_SLOT_MS),
+  };
+}
+
+function historicalMirrorTimeWindow(journey: EpochJourney, canonicalNowWorld: string) {
+  const canonicalWorldMinute = epochWorldMinuteFromTime(canonicalNowWorld);
+  const availableSlots = Math.floor(canonicalWorldMinute / MIRROR_TIME_SLOT_WORLD_MINUTES);
+  if (availableSlots < MIRROR_MIN_DURATION_SLOTS) {
+    throw new Error("journey_mirror_history_not_ready");
+  }
+  const maximumDurationSlots = Math.min(MIRROR_MAX_DURATION_SLOTS, availableSlots);
+  const durationSlots = MIRROR_MIN_DURATION_SLOTS + deterministicSlot(
+    `${journey.journeyId}:${journey.taskRequest?.taskType ?? journey.mandate.objective}:mirror-duration.v2`,
+    maximumDurationSlots - MIRROR_MIN_DURATION_SLOTS + 1,
+  );
+  const possibleEndSlots = availableSlots - durationSlots + 1;
+  const endSlot = durationSlots + deterministicSlot(
+    `${journey.journeyId}:${journey.destinationRegionId}:${canonicalNowWorld}:mirror-end.v2`,
+    possibleEndSlots,
+  );
+  return {
+    startedAtWorldTime: epochWorldTimeFromMinute(
+      (endSlot - durationSlots) * MIRROR_TIME_SLOT_WORLD_MINUTES,
+    ),
+    dueAtWorldTime: epochWorldTimeFromMinute(endSlot * MIRROR_TIME_SLOT_WORLD_MINUTES),
+  };
+}
+
+function serverMirrorWindow(
+  journey: EpochJourney,
+  canonicalNowWorld: string,
+  startExpectedVersion: number,
+): JourneyMirrorWindow {
+  const selected = historicalMirrorTimeWindow(journey, canonicalNowWorld);
+  return {
+    version: 1,
+    authority: "server_world_clock",
+    selection: "deterministic_random_history",
+    regionId: journey.destinationRegionId,
+    startExpectedVersion,
+    startedAtWorldTime: selected.startedAtWorldTime,
+    endedAtWorldTime: selected.dueAtWorldTime,
+  };
+}
+
 function sameIds(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && new Set(left).size === left.length
     && left.every((id) => right.includes(id));
@@ -126,18 +236,110 @@ function isGroundedJourneyEpisode(
   if (!internallyGrounded || !canonicalEpochEvents) return false;
   const epochEvents = canonicalEpochEvents();
   const epochEventsById = new Map(epochEvents.map((event) => [event.eventId, event]));
-  return canonicalEventIds.every((eventId) => {
-    const event = epochEventsById.get(eventId);
-    if (event?.eventType !== "hosted_action_recorded"
-      || event.correlationId !== journey.correlationId
-      || event.agentId !== journey.agentId) return false;
-    return epochEvents.some((candidate) => candidate.eventType === "hosted_session_started"
+  const beat = validated.serverFacts.storyBeat;
+  if (!beat) return false;
+  const canonicalEvents = canonicalEventIds
+    .map((eventId) => epochEventsById.get(eventId))
+    .filter((event): event is EpochEvent => Boolean(event));
+  if (canonicalEvents.length !== canonicalEventIds.length
+    || canonicalEvents.some((event) => event.correlationId !== journey.correlationId)) return false;
+  const hostedEvents = canonicalEvents.filter((event): event is Extract<EpochEvent, { readonly eventType: "hosted_action_recorded" }> =>
+    event.eventType === "hosted_action_recorded");
+  if (hostedEvents.length !== 1) return false;
+  const event = hostedEvents[0];
+  if (event.agentId !== journey.agentId) return false;
+  const influenceEvents = canonicalEvents.filter((candidate): candidate is Extract<EpochEvent, { readonly eventType: "region_influence_changed" }> =>
+    candidate.eventType === "region_influence_changed");
+  const traceEvents = canonicalEvents.filter((candidate): candidate is Extract<EpochEvent, { readonly eventType: "trace_created" }> =>
+    candidate.eventType === "trace_created");
+  const factionStandingEvents = canonicalEvents.filter((candidate): candidate is Extract<EpochEvent, { readonly eventType: "agent_faction_standing_changed" }> =>
+    candidate.eventType === "agent_faction_standing_changed");
+  if (canonicalEvents.some((candidate) => ![
+    "hosted_action_recorded",
+    "agent_faction_standing_changed",
+    "region_influence_changed",
+    "trace_created",
+  ].includes(candidate.eventType))) return false;
+  if (influenceEvents.some((candidate) =>
+    candidate.agentId !== journey.agentId
+    || candidate.payload.agentId !== journey.agentId
+    || candidate.payload.sourceEventId !== event.eventId
+    || candidate.payload.sourceEventType !== "hosted_action_recorded")) return false;
+  const influenceIds = new Set(influenceEvents.map((candidate) => candidate.payload.influenceId));
+  if (traceEvents.some((candidate) =>
+    candidate.agentId !== journey.agentId
+    || !candidate.payload.participantAgentIds.includes(journey.agentId)
+    || !candidate.payload.sourceEventIds.includes(event.eventId)
+    || candidate.payload.relatedInfluenceIds.some((influenceId) => !influenceIds.has(influenceId)))) return false;
+  if ((influenceEvents.length === 0) !== (traceEvents.length === 0)) return false;
+  if (factionStandingEvents.length > 1 || factionStandingEvents.some((candidate) =>
+    candidate.agentId !== journey.agentId
+    || candidate.payload.agentId !== journey.agentId
+    || candidate.payload.journeyId !== journey.journeyId
+    || candidate.payload.episodeId !== episode.episodeId
+    || candidate.payload.sourceEventId !== event.eventId
+    || candidate.payload.standingDelta <= 0)) return false;
+  const started = epochEvents.find((candidate) => candidate.eventType === "hosted_session_started"
       && candidate.correlationId === journey.correlationId
       && candidate.agentId === journey.agentId
       && candidate.payload.sessionId === event.payload.sessionId
       && candidate.payload.sceneContract?.journeyId === journey.journeyId
       && candidate.payload.sceneContract.episodeId === episode.episodeId);
-  });
+  const signedAction = started?.eventType === "hosted_session_started"
+    ? started.payload.sceneContract?.actionOptions?.find((action) =>
+        action.actionOptionId === event.payload.actionOptionId)
+    : undefined;
+  const legacyUnsignedAction = started?.eventType === "hosted_session_started"
+    && started.payload.sceneContract?.actionOptions === undefined
+    && event.payload.actionOptionId === undefined
+    && event.payload.optionLabel === undefined
+    && event.payload.outcomeSummary === undefined
+    && event.payload.journeyResolution === undefined
+    && episode.generatedTaskObjective === undefined;
+  if (legacyUnsignedAction) {
+    return influenceEvents.length === 0
+      && traceEvents.length === 0
+      && factionStandingEvents.length === 0
+      && beat.selectedAction.taskObjectiveId === undefined
+      && beat.selectedAction.completionKind === undefined;
+  }
+  if (!signedAction
+    || event.payload.optionLabel !== beat.selectedAction.label
+    || event.payload.outcomeSummary !== beat.outcomeSummary
+    || signedAction.optionKey !== beat.selectedAction.optionKey
+    || signedAction.label !== beat.selectedAction.label
+    || !sameIds(signedAction.targetEntityIds, beat.selectedAction.targetEntityIds ?? [])) return false;
+  if (episode.generatedTaskObjective) {
+    const objectiveId = episode.generatedTaskObjective.objectiveId;
+    const resolution = event.payload.journeyResolution;
+    const completionKind = resolution?.completionKind ?? signedAction.completionKind;
+    if (!completionKind
+      || (resolution && (resolution.authority !== "server" || resolution.summary !== event.payload.outcomeSummary))
+      || (signedAction.completionKind === "skip" && completionKind !== "skip")
+      || (!resolution && signedAction.completionKind !== completionKind)) return false;
+    if (beat.selectedAction.resolution !== undefined
+      && JSON.stringify(beat.selectedAction.resolution) !== JSON.stringify(resolution)) return false;
+    const mirrorMode = journey.worldMode === "mirror";
+    if (mirrorMode && (influenceEvents.length || traceEvents.length || factionStandingEvents.length)) return false;
+    if (!mirrorMode && completionKind === "complete" && influenceEvents.length !== 1) return false;
+    if (!mirrorMode && completionKind !== "complete" && influenceEvents.length !== 0) return false;
+    const expectedFactionStanding = !mirrorMode && completionKind === "complete"
+      && episode.generatedTaskObjective.kind === "choice"
+      && Boolean(signedAction.routeSelection?.factionObjectId);
+    if (expectedFactionStanding !== (factionStandingEvents.length === 1)) return false;
+    if (factionStandingEvents[0]
+      && (factionStandingEvents[0].payload.routeId !== signedAction.routeSelection?.routeId
+        || factionStandingEvents[0].payload.factionId !== signedAction.routeSelection?.factionObjectId)) return false;
+    return signedAction.taskObjectiveId === objectiveId
+      && beat.selectedAction.taskObjectiveId === objectiveId
+      && completionKind === beat.selectedAction.completionKind
+      && episode.settlement?.taskObjective?.objectiveId === objectiveId
+      && episode.settlement.taskObjective.completionKind === completionKind;
+  }
+  return influenceEvents.length === 0
+    && factionStandingEvents.length === 0
+    && beat.selectedAction.taskObjectiveId === undefined
+    && beat.selectedAction.completionKind === undefined;
 }
 
 export class JourneyRuntime {
@@ -197,8 +399,15 @@ export class JourneyRuntime {
       status: "draft",
       originRegionId: requiredText(input.originRegionId, "origin_region_id"),
       destinationRegionId: requiredText(input.destinationRegionId, "destination_region_id"),
+      taskRequest: {
+        taskType: requiredText(input.taskType ?? mandate.objective, "task_type"),
+        scenarioMapId: requiredText(input.destinationRegionId, "destination_region_id"),
+        generationRequested: input.taskType !== undefined,
+      },
       mandate,
       policyVersion: Number(policySelection.presetVersion),
+      worldMode: "mirror",
+      mirrorTimeRuleVersion: 2,
       episodeIds: [],
       interactionIds: [],
       sourceEventIds: [],
@@ -217,25 +426,117 @@ export class JourneyRuntime {
     return this.#record(journey.journeyId);
   }
 
+  reserveMirrorWindow(input: ReserveJourneyMirrorWindowRuntimeInput): JourneyRuntimeRecord {
+    const current = this.#record(input.journeyId).journey;
+    if (current.version !== input.expectedVersion) throw new Error("journey_version_conflict");
+    if (current.status !== "prepared" || current.worldMode !== "mirror") {
+      throw new Error("journey_mirror_window_reservation_invalid");
+    }
+    if (current.mirrorWindow) return this.#record(current.journeyId);
+    if (current.mirrorTimeRuleVersion !== 2) return this.#record(current.journeyId);
+    const mirrorWindow = serverMirrorWindow(current, this.nowWorld(), current.version + 1);
+    const worldSlice = this.#options.worldSliceForWindow?.({
+      regionId: current.destinationRegionId,
+      startedAtWorldTime: mirrorWindow.startedAtWorldTime,
+      endedAtWorldTime: mirrorWindow.endedAtWorldTime,
+    });
+    const journey: EpochJourney = {
+      ...current,
+      mirrorWindow,
+      ...(worldSlice ? { worldSlice } : {}),
+      version: current.version + 1,
+    };
+    this.#append([this.#snapshotEvent("journey_world_window_reserved", journey)]);
+    return this.#record(journey.journeyId);
+  }
+
   start(input: StartJourneyRuntimeInput): JourneyRuntimeRecord {
     const current = this.#record(input.journeyId).journey;
     const nowReal = (this.#options.nowReal ?? (() => new Date().toISOString()))();
     const nowWorld = (this.#options.nowWorld ?? this.#options.nowReal ?? (() => new Date().toISOString()))();
     const realDuration = boundedDuration(input.realDurationMs, this.#options.defaultRealDurationMs, "real_duration");
-    const worldDuration = boundedDuration(input.worldDurationMs, this.#options.defaultWorldDurationMs, "world_duration");
     const dueAtRealTime = plusMilliseconds(nowReal, realDuration);
-    const dueAtWorldTime = plusMilliseconds(nowWorld, worldDuration);
+    const mirrorWindow = current.worldMode === "mirror"
+      ? current.mirrorTimeRuleVersion === 2
+        ? current.mirrorWindow
+          ? {
+              startedAtWorldTime: current.mirrorWindow.startedAtWorldTime,
+              dueAtWorldTime: current.mirrorWindow.endedAtWorldTime,
+            }
+          : historicalMirrorTimeWindow(current, nowWorld)
+        : legacyMirrorTimeWindow(current, nowWorld)
+      : {
+          startedAtWorldTime: nowWorld,
+          dueAtWorldTime: plusMilliseconds(
+            nowWorld,
+            boundedDuration(input.worldDurationMs, this.#options.defaultWorldDurationMs, "world_duration"),
+          ),
+        };
     const started = startJourney({
       journey: current,
       expectedVersion: input.expectedVersion,
-      startedAtWorldTime: nowWorld,
-      dueAtWorldTime,
+      startedAtWorldTime: mirrorWindow.startedAtWorldTime,
+      dueAtWorldTime: mirrorWindow.dueAtWorldTime,
       dueAtRealTime,
       nextPollAt: earlierIso(plusMilliseconds(nowReal, this.#options.pollIntervalMs), dueAtRealTime),
     });
-    const journey = { ...started, expectedReturnWorldTime: dueAtWorldTime };
+    const worldSlice = current.worldSlice ?? (current.worldMode === "mirror"
+      ? this.#options.worldSliceForWindow?.({
+          regionId: current.destinationRegionId,
+          startedAtWorldTime: mirrorWindow.startedAtWorldTime,
+          endedAtWorldTime: mirrorWindow.dueAtWorldTime,
+        })
+      : undefined);
+    const journey = {
+      ...started,
+      ...(current.mirrorTimeRuleVersion === 2 && !current.mirrorWindow ? {
+        mirrorWindow: {
+          version: 1 as const,
+          authority: "server_world_clock" as const,
+          selection: "deterministic_random_history" as const,
+          regionId: current.destinationRegionId,
+          startExpectedVersion: current.version,
+          startedAtWorldTime: mirrorWindow.startedAtWorldTime,
+          endedAtWorldTime: mirrorWindow.dueAtWorldTime,
+        },
+      } : {}),
+      expectedReturnWorldTime: mirrorWindow.dueAtWorldTime,
+      ...(worldSlice ? { worldSlice } : {}),
+    };
     this.#append([this.#snapshotEvent("journey_started", journey)]);
     return this.#record(journey.journeyId);
+  }
+
+  installTaskPlan(input: InstallJourneyTaskPlanRuntimeInput): JourneyRuntimeRecord {
+    const current = this.#record(input.journeyId).journey;
+    const journey = installJourneyTaskPlan({
+      journey: current,
+      expectedVersion: input.expectedVersion,
+      taskPlan: input.taskPlan,
+    });
+    if (journey !== current) {
+      const hiddenTaskSeal = normalizeJourneyHiddenTaskSeal(input.taskPlan, input.hiddenTaskSeal);
+      this.#append([this.#snapshotEvent(
+        "journey_task_plan_installed",
+        journey,
+        undefined,
+        undefined,
+        undefined,
+        hiddenTaskSeal,
+      )]);
+    }
+    return this.#record(input.journeyId);
+  }
+
+  hiddenTaskSealForJourney(
+    journeyId: string,
+    taskPlan?: JourneyGeneratedTaskPlan,
+  ): JourneyHiddenTaskSeal | undefined {
+    const record = this.#record(journeyId);
+    if (taskPlan && record.journey.taskPlan?.hiddenTaskCommitment !== taskPlan.hiddenTaskCommitment) {
+      throw new Error("journey_hidden_task_plan_mismatch");
+    }
+    return this.#projection.hiddenTaskSeals[journeyId];
   }
 
   recall(journeyId: string, expectedVersion: number): JourneyRuntimeRecord {
@@ -270,8 +571,42 @@ export class JourneyRuntime {
     return this.#record(journeyId);
   }
 
+  settleCompleted(journeyId: string, expectedVersion: number): JourneyRuntimeRecord {
+    let journey = this.#record(journeyId).journey;
+    if (journey.version !== expectedVersion) throw new Error("journey_version_conflict");
+    if (journey.status === "settled") return this.#record(journeyId);
+    if (journey.status !== "returning" || !this.#hasGroundedThreePhase(journey)) {
+      throw new Error("journey_settlement_not_ready");
+    }
+    const events: JourneyRuntimeEvent[] = [];
+    journey = transitionJourney({ journey, toStatus: "settling", expectedVersion: journey.version });
+    events.push(this.#snapshotEvent("journey_status_changed", journey));
+    journey = transitionJourney({
+      journey,
+      toStatus: "settled",
+      expectedVersion: journey.version,
+      settledAtWorldTime: journey.worldMode === "mirror" ? journey.dueAtWorldTime : this.nowWorld(),
+    });
+    events.push(this.#snapshotEvent("journey_status_changed", journey));
+    this.#append(events);
+    return this.#record(journeyId);
+  }
+
   status(journeyId: string): JourneyRuntimeRecord {
     return this.#record(journeyId);
+  }
+
+  recordWorldCommit(input: RecordJourneyWorldCommitRuntimeInput): JourneyRuntimeRecord {
+    const current = this.#record(input.journeyId).journey;
+    const journey = recordJourneyWorldCommit({
+      journey: current,
+      expectedVersion: input.expectedVersion,
+      worldCommit: input.worldCommit,
+    });
+    if (journey !== current) {
+      this.#append([this.#snapshotEvent("journey_world_commit_recorded", journey)]);
+    }
+    return this.#record(input.journeyId);
   }
 
   linkVerification(input: LinkJourneyVerificationRuntimeInput): JourneyRuntimeRecord {
@@ -321,7 +656,13 @@ export class JourneyRuntime {
   ): JourneyScenePlan {
     const journey = this.#record(journeyId).journey;
     if (journey.version !== expectedVersion) throw new Error("journey_version_conflict");
-    const plan = generateThreePhaseJourneySceneEpisodes({ ...context, mandate: journey.mandate });
+    const plan = journey.taskPlan
+      ? generateTaskPlanJourneySceneEpisodes({
+          plan: journey.taskPlan,
+          region: context.region,
+          availableWorldObjects: context.availableWorldObjects,
+        })
+      : generateThreePhaseJourneySceneEpisodes({ ...context, mandate: journey.mandate });
     const episodes = plan.episodes.map((episode) => ({
       ...episode,
       episodeId: `${journey.journeyId}:${episode.episodeId}`,
@@ -340,11 +681,18 @@ export class JourneyRuntime {
     for (const episode of episodes) {
       if (!episode.episodeId.startsWith(`${journey.journeyId}:`)) throw new Error("journey_episode_id_invalid");
       if (episode.phase) {
-        const expectedPhase = (["arrival", "main", "return"] as const)[journey.episodeIds.length];
+        const recordedEpisodes = journey.episodeIds
+          .map((episodeId) => this.#projection.episodes[episodeId])
+          .filter(Boolean);
+        const expected = this.#expectedEpisode(journey, recordedEpisodes);
+        const expectedPhase = expected.phase;
         if (episode.phase !== expectedPhase) throw new Error("journey_episode_phase_order_invalid");
+        if (expected.objectiveId !== episode.generatedTaskObjective?.objectiveId) {
+          throw new Error("journey_episode_objective_order_invalid");
+        }
         const expectedStatus = episode.phase === "arrival"
           ? "traveling"
-          : episode.phase === "main"
+          : episode.phase === "main" || episode.phase === "side"
             ? "awaiting_agent"
             : "returning";
         if (journey.status !== expectedStatus) throw new Error("journey_episode_phase_status_invalid");
@@ -393,7 +741,7 @@ export class JourneyRuntime {
           journey,
           toStatus: "settled",
           expectedVersion: journey.version,
-          settledAtWorldTime: nowWorld,
+          settledAtWorldTime: journey.worldMode === "mirror" ? journey.dueAtWorldTime : nowWorld,
         });
         events.push(this.#snapshotEvent("journey_status_changed", journey));
         settledJourneyIds.push(journey.journeyId);
@@ -445,21 +793,64 @@ export class JourneyRuntime {
     return record;
   }
 
+  #expectedEpisode(
+    journey: EpochJourney,
+    recordedEpisodes: readonly JourneySceneEpisode[],
+  ): { readonly phase: "arrival" | "main" | "side" | "return"; readonly objectiveId?: string } {
+    if (!journey.taskPlan) {
+      const phase = (["arrival", "main", "return"] as const)[recordedEpisodes.length];
+      if (!phase) throw new Error("journey_steps_complete");
+      return { phase };
+    }
+    if (recordedEpisodes.length === 0) return { phase: "arrival" };
+    if (journey.status === "returning") return { phase: "return" };
+    const objective = nextJourneyTaskObjective(journey.taskPlan, recordedEpisodes);
+    if (!objective) throw new Error("journey_steps_complete");
+    return {
+      phase: objective.kind === "side" ? "side" : "main",
+      objectiveId: objective.objectiveId,
+    };
+  }
+
   #hasGroundedThreePhase(journey: EpochJourney) {
-    if (journey.episodeIds.length !== 3) return false;
-    return journey.episodeIds.every((episodeId, index) => {
-      const episode = this.#projection.episodes[episodeId];
-      return episode?.phase === (["arrival", "main", "return"] as const)[index]
-        && isGroundedJourneyEpisode(journey, episode, this.#options.canonicalEpochEvents);
-    });
+    const episodes = journey.episodeIds
+      .map((episodeId) => this.#projection.episodes[episodeId])
+      .filter((episode): episode is JourneySceneEpisode => Boolean(episode));
+    if (episodes.length !== journey.episodeIds.length) return false;
+    if (!journey.taskPlan) {
+      const expectedPhases = ["arrival", "main", "return"] as const;
+      return episodes.length === expectedPhases.length && episodes.every((episode, index) =>
+        episode.phase === expectedPhases[index]
+        && isGroundedJourneyEpisode(journey, episode, this.#options.canonicalEpochEvents));
+    }
+    const evidence: JourneySceneEpisode[] = [];
+    for (const [index, episode] of episodes.entries()) {
+      const final = index === episodes.length - 1;
+      if (index === 0) {
+        if (episode.phase !== "arrival" || episode.generatedTaskObjective) return false;
+      } else if (episode.phase === "return") {
+        if (!final || nextJourneyTaskObjective(journey.taskPlan, evidence)) return false;
+      } else {
+        const expected = nextJourneyTaskObjective(journey.taskPlan, evidence);
+        if (!expected
+          || episode.generatedTaskObjective?.objectiveId !== expected.objectiveId
+          || episode.phase !== (expected.kind === "side" ? "side" : "main")) return false;
+      }
+      if (!isGroundedJourneyEpisode(journey, episode, this.#options.canonicalEpochEvents)) return false;
+      evidence.push(episode);
+    }
+    return episodes.length >= 3
+      && episodes[0]?.phase === "arrival"
+      && episodes.at(-1)?.phase === "return";
   }
 
   #snapshotEvent(
-    eventType: "journey_prepared" | "journey_started" | "journey_episode_recorded" | "journey_verification_linked" | "journey_status_changed",
+    eventType: "journey_prepared" | "journey_world_window_reserved" | "journey_task_plan_installed" | "journey_started" | "journey_episode_recorded" | "journey_verification_linked" | "journey_status_changed" | "journey_world_commit_recorded",
     journey: EpochJourney,
     policySelection?: JourneyPolicySelection,
     preview?: JourneyRuntimeRecord["preview"],
     episode?: JourneySceneEpisode,
+    hiddenTaskSeal?: JourneyHiddenTaskSeal,
   ): JourneyRuntimeEvent {
     return {
       eventId: this.#options.idFactory("event"),
@@ -472,6 +863,7 @@ export class JourneyRuntime {
       ...(policySelection ? { policySelection } : {}),
       ...(preview ? { preview } : {}),
       ...(episode ? { episode } : {}),
+      ...(hiddenTaskSeal ? { hiddenTaskSeal } : {}),
     };
   }
 

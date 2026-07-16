@@ -599,6 +599,11 @@ test("a Journey episode involving another Agent appears in that Agent's inbox", 
   });
   const grounded = (episode: typeof plan.episodes[number]) => {
     const canonicalEventId = `epoch_${episode.phase}_${episode.episodeId}`;
+    const actionOptionId = `action_${canonicalEventId}`;
+    const optionKey = `social_${episode.phase || "main"}`;
+    const optionLabel = episode.title;
+    const outcomeSummary = `${episode.title}完成`;
+    const targetEntityIds = episode.worldObjectRefs.map((ref) => ref.id);
     const serverFacts = buildServerJourneyEpisodeFacts({
       journeyId: started.journey.journeyId,
       episodeId: episode.episodeId,
@@ -606,7 +611,7 @@ test("a Journey episode involving another Agent appears in that Agent's inbox", 
       title: episode.title,
       agent: { id: "agent_a" },
       worldObjectRefs: episode.worldObjectRefs,
-      action: { optionLabel: episode.title, outcomeSummary: `${episode.title}完成` },
+      action: { optionKey, optionLabel, targetEntityIds, outcomeSummary },
       canonicalEventIds: [canonicalEventId],
     });
     const sessionId = `session_${canonicalEventId}`;
@@ -621,7 +626,11 @@ test("a Journey episode involving another Agent appears in that Agent's inbox", 
       causationId: episode.episodeId,
       correlationId: started.journey.correlationId,
       createdAt: "2026-07-12T00:00:00.000Z",
-      payload: { sessionId, sceneContract: { journeyId: started.journey.journeyId, episodeId: episode.episodeId } },
+      payload: { sessionId, sceneContract: {
+        journeyId: started.journey.journeyId,
+        episodeId: episode.episodeId,
+        actionOptions: [{ actionOptionId, optionKey, label: optionLabel, targetEntityIds }],
+      } },
     } as unknown as EpochEvent, {
       eventId: canonicalEventId,
       eventType: "hosted_action_recorded",
@@ -633,12 +642,12 @@ test("a Journey episode involving another Agent appears in that Agent's inbox", 
       causationId: episode.episodeId,
       correlationId: started.journey.correlationId,
       createdAt: "2026-07-12T00:00:00.000Z",
-      payload: { sessionId },
+      payload: { sessionId, actionOptionId, optionLabel, outcomeSummary },
     } as unknown as EpochEvent);
     return {
       ...episode,
       sourceFactIds: [...new Set([...episode.sourceFactIds, canonicalEventId])],
-      settlement: { canonicalEventIds: [canonicalEventId], outcomeSummary: `${episode.title}完成` },
+      settlement: { canonicalEventIds: [canonicalEventId], outcomeSummary },
       serverFacts,
       narrative: buildPersistedJourneyNarrative({ serverFacts }).value,
     };

@@ -236,6 +236,30 @@ export interface HostedSocialHookSideEffectEventsInput {
   readonly recordedAt: string;
 }
 
+export interface JourneyNpcRelationshipSolidificationEventsInput {
+  readonly makeEvent: EpochEventFactory;
+  readonly bondId: string;
+  readonly memoryId: string;
+  readonly journeyId: string;
+  readonly agentId: string;
+  readonly explorerId: string;
+  readonly npcId: string;
+  readonly npcRegionId: string;
+  readonly npcDisplayName: string;
+  readonly identityName: string;
+  readonly previousScore: number;
+  readonly risks: readonly HostedActionRisk[];
+  readonly objectiveTitles: readonly string[];
+  readonly sourceEventIds: readonly string[];
+  readonly recordedAt: string;
+}
+
+export interface JourneyNpcRelationshipSolidificationEvents {
+  readonly events: readonly EpochEvent[];
+  readonly scoreDelta: number;
+  readonly scoreAfter: number;
+}
+
 export function relationshipScoreDelta(kind: EpochRelationshipKind, focusSpent: number): number {
   if (kind === "hostility") return focusSpent * -2;
   if (kind === "alliance") return focusSpent * 2;
@@ -627,6 +651,50 @@ export function planHostedSocialHookSideEffectEvents(input: HostedSocialHookSide
     }),
     regionInfluenceChangedEvent(input.makeEvent, input.regionId, influencePayload, input.agentId),
   ];
+}
+
+export function planJourneyNpcRelationshipSolidificationEvents(
+  input: JourneyNpcRelationshipSolidificationEventsInput,
+): JourneyNpcRelationshipSolidificationEvents {
+  const scoreDelta = Math.min(10, input.risks.reduce((total, risk) =>
+    total + hostedSocialHookScoreDelta(risk), 0));
+  const scoreAfter = input.previousScore + scoreDelta;
+  const bondPayload: AgentNpcBondUpdatedPayload = {
+    bondId: input.bondId,
+    agentId: input.agentId,
+    explorerId: input.explorerId,
+    npcId: input.npcId,
+    npcRegionId: input.npcRegionId,
+    kind: "friend",
+    focusSpent: 0,
+    previousScore: input.previousScore,
+    scoreDelta,
+    scoreAfter,
+    reason: `journey_solidified:${input.journeyId}`,
+    updatedAt: input.recordedAt,
+  };
+  const memoryPayload: NpcMemoryRecordedPayload = {
+    memoryId: input.memoryId,
+    npcId: input.npcId,
+    regionId: input.npcRegionId,
+    summary: `${input.npcDisplayName}记住了${input.identityName}在固化对局中完成“${input.objectiveTitles.join("、")}”。`,
+    importance: input.risks.includes("high") || input.objectiveTitles.length > 1 ? "high" : "medium",
+    sourceEventIds: uniqueValues(input.sourceEventIds),
+    recordedAt: input.recordedAt,
+  };
+  return {
+    events: [
+      input.makeEvent("agent_npc_bond_updated", input.bondId, bondPayload, {
+        aggregateType: "agent_npc_bond",
+        agentId: input.agentId,
+      }),
+      input.makeEvent("npc_memory_recorded", input.memoryId, memoryPayload, {
+        aggregateType: "npc",
+      }),
+    ],
+    scoreDelta,
+    scoreAfter,
+  };
 }
 
 export function consumedSocialHookIdsForAgentRegion(

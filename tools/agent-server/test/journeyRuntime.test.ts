@@ -49,6 +49,9 @@ function canonicalEpochEventsFor(events: readonly JourneyRuntimeEvent[]): readon
     if (!journey) return [];
     return (episode.settlement?.canonicalEventIds || []).flatMap((eventId) => {
       const sessionId = `session_${episode.episodeId}`;
+      const beat = episode.serverFacts?.storyBeat;
+      if (!beat) return [];
+      const actionOptionId = `action_${eventId}`;
       const common = {
         aggregateType: "hosted_session",
         aggregateId: sessionId,
@@ -63,12 +66,26 @@ function canonicalEpochEventsFor(events: readonly JourneyRuntimeEvent[]): readon
         ...common,
         eventId: `started_${eventId}`,
         eventType: "hosted_session_started",
-        payload: { sessionId, sceneContract: { journeyId: journey.journeyId, episodeId: episode.episodeId } },
+        payload: { sessionId, sceneContract: {
+          journeyId: journey.journeyId,
+          episodeId: episode.episodeId,
+          actionOptions: [{
+            actionOptionId,
+            optionKey: beat.selectedAction.optionKey,
+            label: beat.selectedAction.label,
+            targetEntityIds: beat.selectedAction.targetEntityIds ?? [],
+          }],
+        } },
       }, {
         ...common,
         eventId,
         eventType: "hosted_action_recorded",
-        payload: { sessionId },
+        payload: {
+          sessionId,
+          actionOptionId,
+          optionLabel: beat.selectedAction.label,
+          outcomeSummary: beat.outcomeSummary,
+        },
       }] as unknown as readonly EpochEvent[];
     });
   });
@@ -80,6 +97,11 @@ function groundedEpisode(
   episode: JourneySceneEpisode,
 ) {
   const canonicalEventId = `epoch_${episode.phase}_${episode.episodeId}`;
+  const actionOptionId = `action_${canonicalEventId}`;
+  const optionKey = `test_${episode.phase || "main"}`;
+  const optionLabel = `完成${episode.title}`;
+  const outcomeSummary = `${episode.title}已由服务器确认。`;
+  const targetEntityIds = episode.worldObjectRefs.map((ref) => ref.id);
   const serverFacts = buildServerJourneyEpisodeFacts({
     journeyId,
     episodeId: episode.episodeId,
@@ -87,7 +109,7 @@ function groundedEpisode(
     title: episode.title,
     agent: { id: "agent_1", displayName: "旅人" },
     worldObjectRefs: episode.worldObjectRefs,
-    action: { optionLabel: `完成${episode.title}`, outcomeSummary: `${episode.title}已由服务器确认。` },
+    action: { optionKey, optionLabel, targetEntityIds, outcomeSummary },
     canonicalEventIds: [canonicalEventId],
   });
   const journey = runtime.status(journeyId).journey;
@@ -105,7 +127,11 @@ function groundedEpisode(
     causationId: episode.episodeId,
     correlationId: journey.correlationId,
     createdAt: "2026-07-12T00:00:00.000Z",
-    payload: { sessionId, sceneContract: { journeyId, episodeId: episode.episodeId } },
+    payload: { sessionId, sceneContract: {
+      journeyId,
+      episodeId: episode.episodeId,
+      actionOptions: [{ actionOptionId, optionKey, label: optionLabel, targetEntityIds }],
+    } },
   } as unknown as EpochEvent, {
     eventId: canonicalEventId,
     eventType: "hosted_action_recorded",
@@ -117,12 +143,12 @@ function groundedEpisode(
     causationId: episode.episodeId,
     correlationId: journey.correlationId,
     createdAt: "2026-07-12T00:00:00.000Z",
-    payload: { sessionId },
+    payload: { sessionId, actionOptionId, optionLabel, outcomeSummary },
   } as unknown as EpochEvent);
   return {
     ...episode,
     sourceFactIds: [...new Set([...episode.sourceFactIds, canonicalEventId])],
-    settlement: { canonicalEventIds: [canonicalEventId], outcomeSummary: `${episode.title}已由服务器确认。` },
+    settlement: { canonicalEventIds: [canonicalEventId], outcomeSummary },
     serverFacts,
     narrative: buildPersistedJourneyNarrative({ serverFacts }).value,
   };
@@ -198,7 +224,7 @@ test("prepare applies a safe preset and returns a human-readable zero-question p
   assert.equal(prepared.journey.synchronousQuestionCount, 0);
 });
 
-test("start freezes real/world due times and tick settles exactly once after due", () => {
+test("start freezes a server-randomized mirror window and tick settles exactly once after real due time", () => {
   const runtime = runtimeAt("2026-07-12T00:00:00.000Z", "2026-01-01T08:00:00.000Z");
   const prepared = runtime.prepare({
     agentId: "agent_1",
@@ -208,8 +234,19 @@ test("start freezes real/world due times and tick settles exactly once after due
   });
   const started = runtime.start({ journeyId: prepared.journey.journeyId, expectedVersion: 1 });
   assert.equal(started.journey.status, "traveling");
+  assert.equal(started.journey.worldMode, "mirror");
+  assert.equal(started.journey.mirrorTimeRuleVersion, 2);
   assert.equal(started.journey.dueAtRealTime, "2026-07-12T00:30:00.000Z");
-  assert.equal(started.journey.dueAtWorldTime, "2026-01-01T09:00:00.000Z");
+  const mirrorStart = Date.parse(started.journey.startedAtWorldTime || "");
+  const mirrorEnd = Date.parse(started.journey.dueAtWorldTime || "");
+  const canonicalStart = Date.parse("2026-01-01T08:00:00.000Z");
+  const worldOrigin = Date.parse("2026-01-01T00:00:00.000Z");
+  assert.ok(mirrorStart >= worldOrigin && mirrorStart < mirrorEnd);
+  assert.ok(mirrorEnd <= canonicalStart);
+  assert.equal((mirrorStart - worldOrigin) % (15 * 60 * 1_000), 0);
+  assert.ok(mirrorEnd - mirrorStart >= 45 * 60 * 1_000);
+  assert.ok(mirrorEnd - mirrorStart <= 12 * 60 * 60 * 1_000);
+  assert.equal((mirrorEnd - mirrorStart) % (15 * 60 * 1_000), 0);
   assert.equal(started.journey.nextPollAt, "2026-07-12T00:05:00.000Z");
   assert.equal(started.journey.expectedReturnWorldTime, started.journey.dueAtWorldTime);
   finishGroundedThreePhases(runtime, started.journey.journeyId, started.journey.version);
@@ -225,6 +262,10 @@ test("start freezes real/world due times and tick settles exactly once after due
   assert.equal(settled.events.length, 2);
   assert.deepEqual(settled.settledJourneyIds, [prepared.journey.journeyId]);
   assert.equal(runtime.status(prepared.journey.journeyId).journey.status, "settled");
+  assert.equal(
+    runtime.status(prepared.journey.journeyId).journey.settledAtWorldTime,
+    started.journey.dueAtWorldTime,
+  );
   assert.deepEqual(runtime.tick({
     nowReal: "2026-07-12T01:00:00.000Z",
     nowWorld: "2026-01-01T10:00:00.000Z",

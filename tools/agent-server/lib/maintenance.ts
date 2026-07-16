@@ -44,6 +44,8 @@ export interface EpochMaintenanceConfig {
   readonly regionControlDecayMinAgeSeconds?: number;
   readonly abuseDecayLimit?: number;
   readonly abuseDecayAmount?: number;
+  /** @deprecated v2 derives elapsed world time from the server clock. */
+  readonly worldAdvanceMinutes?: number;
   readonly runOnStart: boolean;
   readonly operatorKey?: string;
 }
@@ -92,7 +94,25 @@ export interface EpochMaintenanceTickSummary {
     readonly events: number;
     readonly decayed: number;
   };
+  readonly worldClock?: {
+    readonly events: number;
+    readonly persistedEvents: number;
+    readonly elapsedWorldMinutes: number;
+    readonly worldMinute: number;
+  };
+  readonly worldSimulation?: {
+    readonly events: number;
+    readonly persistedEvents: number;
+    readonly regions: number;
+    readonly factions: number;
+    readonly shipments: number;
+    readonly departedShipments: number;
+    readonly arrivedShipments: number;
+    readonly tradeCoinTransferred: number;
+    readonly worldMinute: number;
+  };
   readonly persistedEvents: number;
+  readonly totalPersistedEvents?: number;
 }
 
 export interface EpochMaintenanceSchedulerStatus {
@@ -138,7 +158,8 @@ interface StartEpochMaintenanceSchedulerOptions extends RunEpochMaintenanceTickO
 
 const DEFAULT_MAINTENANCE_CONFIG: EpochMaintenanceConfig = {
   enabled: false,
-  intervalMs: 15 * 60 * 1000,
+  // One scheduler pulse per real minute matches one black-calendar day.
+  intervalMs: 60 * 1000,
   npcLimit: 5,
   marketMaxAgeSeconds: 24 * 60 * 60,
   marketLimit: 50,
@@ -159,6 +180,7 @@ const DEFAULT_MAINTENANCE_CONFIG: EpochMaintenanceConfig = {
   regionControlDecayMinAgeSeconds: 7 * 24 * 60 * 60,
   abuseDecayLimit: 0,
   abuseDecayAmount: 1,
+  worldAdvanceMinutes: 15,
   runOnStart: false,
 };
 
@@ -320,6 +342,12 @@ export function epochMaintenanceConfigFromEnv(env: Record<string, string | undef
       DEFAULT_MAINTENANCE_CONFIG.abuseDecayAmount || 1,
       1,
       10,
+    ),
+    worldAdvanceMinutes: envPositiveInteger(
+      env.AGENT_SERVER_MAINTENANCE_WORLD_ADVANCE_MINUTES,
+      DEFAULT_MAINTENANCE_CONFIG.worldAdvanceMinutes || 15,
+      1,
+      30 * 24 * 60,
     ),
     runOnStart: envEnabled(env.AGENT_SERVER_MAINTENANCE_RUN_ON_START),
     operatorKey: envOptionalString(env.AGENT_SERVER_OPERATOR_KEY),
@@ -567,6 +595,30 @@ async function runEpochMaintenanceTickUnlocked({
     : { events: [], value: [] };
   const abusePersistedEvents = await persistResult(abuseDecay);
 
+  const worldClock = runtime.epochAdvanceWorldClock({
+    operatorKey: config.operatorKey,
+    reason: "scheduled_maintenance_world_tick",
+    processedDomains: [
+      "npc_schedule",
+      "identity_needs",
+      "economy",
+      "resources",
+      "weather",
+      "factions",
+      "world_events",
+    ],
+    idempotencyKey: `maintenance:${tickId}:world-clock`,
+    causationId: `maintenance:${tickId}`,
+    correlationId: `maintenance:${tickId}`,
+  });
+  const worldClockPersistedEvents = await persistResult(worldClock);
+  const worldClockEvents = worldClock.events.filter((event: { eventType?: unknown }) =>
+    event.eventType === "world_clock_initialized" || event.eventType === "world_clock_advanced");
+  const worldSimulationEvents = worldClock.events.filter((event: { eventType?: unknown }) =>
+    event.eventType === "world_simulation_initialized" || event.eventType === "world_simulation_advanced");
+  const elapsedWorldMinutes = worldClockEvents.reduce((total, event) =>
+    total + (event.eventType === "world_clock_advanced" ? event.payload.elapsedWorldMinutes : 0), 0);
+
   const persistedEvents = npcPersistedEvents
     + marketPersistedEvents
     + directTradePersistedEvents
@@ -622,7 +674,29 @@ async function runEpochMaintenanceTickUnlocked({
       events: abuseDecay.events.length,
       decayed: abuseDecay.value.length,
     },
+    worldClock: {
+      events: worldClockEvents.length,
+      persistedEvents: worldClockEvents.length,
+      elapsedWorldMinutes,
+      worldMinute: worldClock.clock.worldMinute,
+    },
+    worldSimulation: {
+      events: worldSimulationEvents.length,
+      persistedEvents: worldSimulationEvents.length,
+      regions: worldClock.worldSimulation.regions.length,
+      factions: worldClock.worldSimulation.factions.length,
+      shipments: worldClock.worldSimulation.shipments.length,
+      departedShipments: worldClock.worldFlows?.departedShipmentCount
+        ?? worldClock.worldFlows?.departedShipments.length
+        ?? 0,
+      arrivedShipments: worldClock.worldFlows?.arrivedShipmentCount
+        ?? worldClock.worldFlows?.arrivedShipments.length
+        ?? 0,
+      tradeCoinTransferred: worldClock.worldFlows?.tradeCoinTransferred || 0,
+      worldMinute: worldClock.worldSimulation.worldMinute,
+    },
     persistedEvents,
+    totalPersistedEvents: persistedEvents + worldClockPersistedEvents,
   };
 }
 

@@ -8,6 +8,7 @@ import { createAgentWorldMcpRuntime, createAgentWorldRuntime } from "../lib/mcpT
 import { createSequentialEpochIdFactory } from "../lib/epoch/protocol.ts";
 import { epochEventsForPersistence } from "../lib/epoch/runtimePublicProjectionRules.ts";
 import { journeyEventsForPersistence } from "../lib/epoch/journeyPersistence.ts";
+import { JOURNEY_TASK_OBJECTIVE_LIMITS } from "../lib/epoch/journeyGeneratedTaskRules.ts";
 import type { EpochEvent } from "../lib/epoch/events.ts";
 
 function payload(result: { readonly content: readonly { readonly text: string }[] }) {
@@ -181,6 +182,44 @@ test("MCP exposes an Agent-native start, propose, and commit journey flow", asyn
   }));
   assert.deepEqual(status.episodes.map((episode: { phase: string }) => episode.phase),
     ["arrival", "main", "return"]);
+  assert.equal(status.storyReport.kind, "grounded_story_report");
+  assert.equal(status.storyReport.version, 3);
+  assert.equal(status.storyReport.journeyId, status.journey.journeyId);
+  assert.deepEqual(Object.keys(status.storyReport.structure), ["desire", "obstacle", "choice", "consequence"]);
+  assert.equal(status.storyReport.profile.objective, "找稳定工作");
+  assert.match(status.storyReport.profile.codeName, /^X-/);
+  assert.equal(status.storyReport.profile.reincarnation, "轮回第一世");
+  assert.equal(status.storyReport.evaluation.taskCompletionGrade, "F");
+  assert.equal(status.storyReport.evaluation.identityFidelityPercent, 40);
+  assert.equal(status.interactionLog.kind, "journey_interaction_log");
+  assert.equal(status.interactionLog.version, 1);
+  assert.equal(status.interactionLog.journeyId, status.journey.journeyId);
+  assert.deepEqual(status.interactionLog.entries.map((entry: { phase: string }) => entry.phase),
+    ["arrival", "main", "return"]);
+  assert.equal(status.interactionLog.entries[1].selectedAction.label, selected.label);
+  assert.match(status.storyReport.narrative, /该局目标：找稳定工作/);
+  assert.match(status.storyReport.narrative, /任务完成度：F/);
+  assert.match(status.storyReport.storyContent, /向夜班书记珂岚询问当日仍缺人手的班次/);
+  assert.deepEqual(status.storyReport.chapters.map((chapter: { key: string }) => chapter.key), [
+    "departure", "arrival", "encounter", "decision", "consequence", "return", "aftermath",
+  ]);
+  assert.equal(status.storyReport.storyContent.split("\n\n").length, 7);
+  assert.match(status.storyReport.storyContent, /灰港民务账房/);
+  assert.match(status.storyReport.storyContent, /灰港民务所/);
+  assert.match(status.storyReport.storyContent, /夜班书记珂岚/);
+  assert.doesNotMatch(status.storyReport.storyContent, /任务|目标|委托|完成标准|成功条件|失败条件|结算|可追溯/);
+  assert.doesNotMatch(status.storyReport.storyContent, /否则|足以证明|返程时限已经逼近|终于|冲突/);
+  assert.deepEqual(
+    new Set(status.storyReport.sourceEventIds),
+    new Set(status.episodes.flatMap((episode: { serverFacts: { sourceEventIds: string[] } }) =>
+      episode.serverFacts.sourceEventIds)),
+  );
+  assert.doesNotMatch(status.storyReport.narrative, /\b(?:epoch|region|journey|episode)_[a-z0-9_]+\b/);
+  assert.equal(
+    status.finalVerification.page.payload.journey.storyReport.narrative,
+    status.storyReport.narrative,
+  );
+  assert.equal("interactionLog" in status.finalVerification.page.payload.journey, false);
   assert.ok(status.episodes.every((episode: { serverFacts?: unknown; narrative?: unknown }) =>
     episode.serverFacts && episode.narrative));
   const canonicalEvents = mcp.runtime.epochEvents({ limit: 1_000 }).events;
@@ -211,6 +250,10 @@ test("MCP exposes an Agent-native start, propose, and commit journey flow", asyn
   }));
   assert.equal(album.journeys.length, 1);
   assert.equal(album.postcards.length, 3);
+  assert.equal(album.currentYear, 1);
+  assert.equal(album.annualChronicle.year, 1);
+  assert.equal(album.journeys[0].storyReport.narrative, status.storyReport.narrative);
+  assert.deepEqual(album.journeys[0].interactionLog, status.interactionLog);
   assert.deepEqual(album.postcards.map((postcard: { narrative: string }) => postcard.narrative),
     status.episodes.map((episode: { narrative: { postcard?: { text: string } } }) => episode.narrative.postcard?.text));
 
@@ -221,6 +264,824 @@ test("MCP exposes an Agent-native start, propose, and commit journey flow", asyn
   }));
   assert.deepEqual(briefing.recentEpisodes.map((episode: { narrative: unknown }) => episode.narrative),
     status.episodes.map((episode: { narrative: unknown }) => episode.narrative));
+  assert.equal(briefing.returnedJourneyReports[0].journeyId, status.journey.journeyId);
+  assert.equal(briefing.returnedJourneyReports[0].storyReport.narrative, status.storyReport.narrative);
+  assert.deepEqual(briefing.returnedJourneyReports[0].interactionLog, status.interactionLog);
+});
+
+test("a safe full clear is graded good instead of becoming an automatic perfect result", async () => {
+  const { mcp, agentId, ownerRecovery } = await fixture();
+  const prepared = payload(await mcp.callTool("obsidian_epoch.prepare_journey", {
+    agentId,
+    destinationRegionId: "region_quantum_laboratory",
+    taskType: "辅助完成一次实验",
+    mandate: { objective: "辅助完成一次实验", priorities: ["experiment", "safe_return"] },
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "prepare-generated-route",
+  }));
+  let current = payload(await mcp.callTool("obsidian_epoch.start_journey", {
+    journeyId: prepared.journey.journeyId,
+    expectedVersion: prepared.journey.version,
+    taskGenerationMode: "server_fallback",
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "start-generated-route",
+  }));
+  assert.deepEqual(current.journeyEntryReserve.reserve, [
+    { resourceId: "focus", amount: 2 },
+    { resourceId: "stamina", amount: 1 },
+  ]);
+  assert.equal(current.journeyEntryReserve.balances.focus, 2);
+  assert.equal(current.journeyEntryReserve.balances.stamina, 1);
+  assert.equal(current.journeyEntryReserve.duplicate, false);
+  assert.equal(current.scenePlan.episodes[0].phase, "arrival");
+  assert.equal(current.scenePlan.episodes.at(-1).phase, "return");
+  assert.ok(current.journey.taskPlan.objectives.length > 5);
+  assert.ok(current.journey.taskPlan.routes.some((route: { kind: string }) => route.kind === "choice"));
+  assert.ok(current.journey.taskPlan.routes.some((route: { kind: string }) => route.kind === "unlock"));
+  assert.equal("hiddenTask" in current.journey.taskPlan, false);
+
+  let sideRewardCount = 0;
+  for (let index = 0; current.journey.status !== "settled" && index < current.journey.taskPlan.objectives.length; index += 1) {
+    const proposed = payload(await mcp.callTool("obsidian_epoch.propose_journey_step", {
+      journeyId: current.journey.journeyId,
+      expectedVersion: current.journey.version,
+      recoveryCode: ownerRecovery,
+      idempotencyKey: `propose-generated-route-${index}`,
+    }));
+    const selected = proposed.proposal.sceneContract.actionOptions.find((option: {
+      completionKind?: string;
+      routeSelection?: { factionObjectId?: string };
+    }) => option.completionKind !== "skip" && Boolean(option.routeSelection?.factionObjectId))
+      ?? proposed.proposal.sceneContract.actionOptions.find((option: { completionKind?: string; risk: string }) =>
+        option.completionKind !== "skip" && option.risk === "low")
+      ?? proposed.proposal.sceneContract.actionOptions.find((option: { completionKind?: string }) =>
+        option.completionKind !== "skip");
+    assert.ok(selected);
+    assert.equal(selected.completionKind, undefined);
+    current = payload(await mcp.callTool("obsidian_epoch.commit_journey_action", {
+      journeyId: current.journey.journeyId,
+      sceneId: proposed.proposal.sceneContract.sceneId,
+      episodeId: proposed.proposal.episode.episodeId,
+      expectedVersion: proposed.proposal.expectedVersion,
+      actionOptionId: selected.actionOptionId,
+      signature: selected.signature,
+      recoveryCode: ownerRecovery,
+      idempotencyKey: `commit-generated-route-${index}`,
+    }));
+    assert.equal(current.settledAction.journeyResolution.authority, "server");
+    assert.equal(current.settledAction.journeyResolution.completionKind, "complete");
+    if (proposed.proposal.episode.phase === "side") {
+      assert.deepEqual(current.settledAction.reward, {
+        resourceId: "coin",
+        amount: 1,
+        reason: `journey_side_objective:${current.journey.journeyId}:${proposed.proposal.episode.generatedTaskObjective.objectiveId}`,
+      });
+      sideRewardCount += 1;
+    }
+    if (current.journey.status !== "settled") {
+      const mirrorEvents = mcp.runtime.epochEvents({ limit: 1_000 }).events.filter((event: {
+        correlationId?: string;
+      }) => event.correlationId === current.journey.correlationId);
+      assert.equal(mirrorEvents.some((event: { eventType: string }) => [
+        "journey_world_solidified",
+        "region_influence_changed",
+        "agent_faction_standing_changed",
+        "agent_npc_bond_updated",
+        "npc_memory_recorded",
+        "world_clock_advanced",
+        "world_simulation_advanced",
+      ].includes(event.eventType)), false);
+    }
+  }
+
+  assert.equal(current.journey.status, "settled");
+  const executedObjectiveIds = new Set(current.episodes.flatMap((episode: {
+    generatedTaskObjective?: { objectiveId: string };
+  }) => episode.generatedTaskObjective ? [episode.generatedTaskObjective.objectiveId] : []));
+  const choiceEpisode = current.episodes.find((episode: {
+    generatedTaskObjective?: { kind: string };
+  }) => episode.generatedTaskObjective?.kind === "choice");
+  const choiceObjective = current.journey.taskPlan.objectives.find((objective: { kind: string }) => objective.kind === "choice");
+  const selectedChoiceAction = choiceObjective.actions.find((action: { optionKey: string }) =>
+    action.optionKey === choiceEpisode.serverFacts.storyBeat.selectedAction.optionKey);
+  const selectedRoute = current.journey.taskPlan.routes.find((route: { routeId: string }) =>
+    route.routeId === selectedChoiceAction.selectsRouteId);
+  assert.ok(selectedRoute.factionObjectId);
+  const unselectedRoutes = current.journey.taskPlan.routes.filter((route: { kind: string; routeId: string }) =>
+    route.kind === "choice" && route.routeId !== selectedRoute.routeId);
+  assert.ok(selectedRoute.objectiveIds.every((objectiveId: string) => executedObjectiveIds.has(objectiveId)));
+  assert.ok(unselectedRoutes.every((route: { objectiveIds: string[] }) =>
+    route.objectiveIds.every((objectiveId) => !executedObjectiveIds.has(objectiveId))));
+  const unlockedRoute = current.journey.taskPlan.routes.find((route: { kind: string }) => route.kind === "unlock");
+  assert.ok(unlockedRoute.objectiveIds.every((objectiveId: string) => executedObjectiveIds.has(objectiveId)));
+  assert.equal(current.episodes.length, executedObjectiveIds.size + 2);
+  assert.equal(current.taskAdjudication.mainCompleted, current.taskAdjudication.mainTotal);
+  assert.equal(current.taskAdjudication.sideCompleted, 2);
+  assert.equal(sideRewardCount, 2);
+  assert.equal(current.taskAdjudication.tier, "良好");
+  assert.equal(current.taskAdjudication.performance.perfectEligible, false);
+  assert.equal(current.taskAdjudication.performance.completedByRisk.low, executedObjectiveIds.size);
+  assert.equal(current.taskAdjudication.performance.completedByRisk.medium, 0);
+  assert.equal(current.taskAdjudication.performance.completedByRisk.high, 0);
+  assert.equal(current.taskAdjudication.hiddenTask.revealed, true);
+  assert.ok(current.rewardGrant);
+  assert.equal(current.rewardGrant.grantedItems.length, 0);
+  assert.equal(current.taskAdjudication.rewardBundle.items.length, 0);
+  assert.ok(current.storyReport.evaluation.rewards.resources.some((reward: { resourceId: string; amount: number }) =>
+    reward.resourceId === current.taskAdjudication.reward.resourceId
+      && reward.amount >= current.taskAdjudication.reward.amount));
+  assert.ok(current.storyReport.evaluation.rewards.resources.some((reward: { resourceId: string; amount: number }) =>
+    reward.resourceId === "coin" && reward.amount >= 2));
+  assert.match(current.storyReport.evaluation.rewards.summary, /金币|以太|传说/u);
+  assert.match(current.storyReport.evaluation.playerImpact.summary, /其他玩家/u);
+  assert.match(current.storyReport.evaluation.playerImpact.summary, /量子实验室地区影响/u);
+  assert.doesNotMatch(
+    current.storyReport.evaluation.playerImpact.summary,
+    /\b(?:region|organization|npc)_[a-z0-9_]+\b/u,
+  );
+  assert.equal(current.storyReport.evaluation.playerImpact.scope, "shared_world");
+  assert.match(current.storyReport.narrative, /任务完成度：良好/u);
+  assert.match(current.storyReport.narrative, /评分依据：/u);
+  assert.equal(current.worldCommit.status, "solidified");
+  assert.equal(current.journey.worldCommit.commitEventId, current.worldCommit.commitEventId);
+  assert.ok(current.worldCommit.npcRelationships.length > 0);
+  assert.match(current.storyReport.narrative, /世界固化：/u);
+  assert.match(current.storyReport.narrative, /NPC关系：/u);
+  assert.doesNotMatch(current.storyReport.narrative, /。；/u);
+  const regionInfo = mcp.runtime.epochRegionInfo({
+    regionId: "region_quantum_laboratory",
+    activityLimit: 100,
+    influenceLimit: 100,
+    traceLimit: 100,
+  });
+  const journeyActivities = regionInfo.activities.filter((activity: { kind: string }) => activity.kind === "journey");
+  const journeyInfluence = regionInfo.influenceChanges.filter((change: { reason: string }) =>
+    change.reason.startsWith(`journey_objective:${current.journey.journeyId}:`));
+  const journeyTraces = regionInfo.traces.filter((trace: { title: string }) =>
+    trace.title.startsWith("旅程留下影响："));
+  assert.equal(journeyActivities.length, 1);
+  assert.equal(journeyActivities[0].title, "镜像对局固化");
+  assert.equal(journeyInfluence.length, executedObjectiveIds.size);
+  assert.equal(journeyTraces.length, executedObjectiveIds.size);
+  assert.ok(journeyInfluence.every((change: { influenceDelta: number }) =>
+    change.influenceDelta >= 1 && change.influenceDelta <= 5));
+  const progress = mcp.runtime.epochProgress({ agentId });
+  const factionStanding = progress.factionStandings.find((standing: { factionId: string }) =>
+    standing.factionId === selectedRoute.factionObjectId);
+  assert.ok(factionStanding);
+  assert.equal(factionStanding.score, 100);
+  assert.ok(factionStanding.routeIds.includes(selectedRoute.routeId));
+  assert.ok(factionStanding.journeyIds.includes(current.journey.journeyId));
+  assert.equal(choiceEpisode.serverFacts.stateChanges.some((change: { stateChangeId: string }) =>
+    change.stateChangeId.includes(":faction_alignment:")), false);
+  assert.ok(current.worldCommit.factionStandings.some((standing: { factionId: string; routeId: string }) =>
+    standing.factionId === selectedRoute.factionObjectId && standing.routeId === selectedRoute.routeId));
+  const nextPrepared = payload(await mcp.callTool("obsidian_epoch.prepare_journey", {
+    agentId,
+    destinationRegionId: "region_quantum_laboratory",
+    taskType: "复查后续实验",
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "prepare-affiliation-followup",
+  }));
+  const nextContext = mcp.runtime.epochJourneyTaskGenerationContext({
+    journeyId: nextPrepared.journey.journeyId,
+    expectedVersion: nextPrepared.journey.version,
+    recoveryCode: ownerRecovery,
+  });
+  const affiliatedObject = nextContext.availableWorldObjects.find((object: { id: string }) =>
+    object.id === selectedRoute.factionObjectId);
+  assert.ok(affiliatedObject?.tags?.includes("agent_affiliated"));
+  const replayEvents = mcp.runtime.epochEvents({ limit: 100 }).events.slice().reverse();
+  const replayedRuntime = createAgentWorldRuntime({ epochEvents: replayEvents });
+  assert.deepEqual(
+    replayedRuntime.epochProgress({ agentId }).factionStandings,
+    progress.factionStandings,
+  );
+  assert.equal(current.interactionLog.kind, "journey_interaction_log");
+  assert.equal(current.interactionLog.entries.filter((entry: { phase: string }) => entry.phase === "main").length,
+    current.taskAdjudication.mainTotal + current.taskAdjudication.bonusMainTotal);
+  assert.equal(current.interactionLog.entries.filter((entry: { phase: string }) => entry.phase === "side").length, 2);
+  assert.equal(current.interactionLog.entries.length, current.episodes.length);
+  assert.equal(current.storyReport.chapters[0].key, "departure");
+  assert.equal(current.storyReport.chapters[1].key, "arrival");
+  assert.equal(current.storyReport.chapters.at(-1).key, "return");
+  assert.equal(current.storyReport.chapters.filter((chapter: { key: string }) => chapter.key === "side_quest").length, 2);
+  const actionChapterLeads = current.storyReport.chapters
+    .filter((chapter: { key: string }) => ["encounter", "objective", "side_quest"].includes(chapter.key))
+    .map((chapter: { text: string }) => chapter.text.split("。")[0]);
+  assert.equal(new Set(actionChapterLeads).size, actionChapterLeads.length);
+  const playerStoryText = [
+    current.storyReport.storyContent,
+    ...current.storyReport.chapters.map((chapter: { title: string }) => chapter.title),
+  ].join("\n");
+  assert.doesNotMatch(
+    playerStoryText,
+    /任务|主线|支线|本局|互斥路线|对应路线|签名行动|行动事件|服务端/u,
+  );
+  assert.doesNotMatch(current.storyReport.storyContent, /选择了「|主线：|支线：|服务端最终评定|对应奖励/u);
+  assert.match(current.storyReport.storyContent, /为了.*，你离开落脚处/u);
+  assert.doesNotMatch(current.storyReport.storyContent, /处理完前一件事后/u);
+  assert.doesNotMatch(current.storyReport.storyContent, /主实验结束后/u);
+  assert.doesNotMatch(
+    current.storyReport.storyContent,
+    /只进入这一条不同方案|转入选定方案|也在这里|地图中|你由现场参与者/u,
+  );
+  assert.doesNotMatch(current.storyReport.storyContent, /接着，你随后|没有立刻离开。.*没有立即离开/u);
+  assert.doesNotMatch(current.storyReport.storyContent, /也随你一起被带了回来|这一世里的这段经历至此结束/u);
+  assert.doesNotMatch(current.storyReport.storyContent, /带着带回/u);
+  assert.doesNotMatch(current.storyReport.storyContent, /带着.+(?:记录|报告|数据|复核单).+回到落脚处/u);
+  assert.match(current.storyReport.storyContent, /(?:确认.+(?:提交|归档)|记下.+回执).+回到落脚处。$/u);
+
+  const firstProgress = payload(await mcp.callTool("obsidian_epoch.progress", { agentId }));
+  const resourceId = current.taskAdjudication.reward.resourceId;
+  const balance = firstProgress.resources[resourceId];
+  const inventoryCount = firstProgress.inventoryItems.length;
+  const finalized = payload(await mcp.callTool("obsidian_epoch.journey_status", {
+    journeyId: current.journey.journeyId,
+    recoveryCode: ownerRecovery,
+  }));
+  assert.equal(finalized.storyReport.mission.status, "completed");
+  assert.equal(finalized.storyReport.resolution.missionStatus, "completed");
+  assert.equal(finalized.finalVerification.page.payload.journey.episodes[0].phase, "arrival");
+  assert.equal(finalized.finalVerification.page.payload.journey.episodes.at(-1).phase, "return");
+  const filedStatus = payload(await mcp.callTool("obsidian_epoch.journey_status", {
+    journeyId: current.journey.journeyId,
+    recoveryCode: ownerRecovery,
+  }));
+  assert.deepEqual(filedStatus.storyReport, finalized.finalVerification.page.payload.journey.storyReport);
+  const repeatedProgress = payload(await mcp.callTool("obsidian_epoch.progress", { agentId }));
+  assert.equal(repeatedProgress.resources[resourceId], balance);
+  assert.equal(repeatedProgress.inventoryItems.length, inventoryCount);
+});
+
+test("an optional side objective can be declined without abandoning the required main route", async () => {
+  const { mcp, agentId, ownerRecovery } = await fixture();
+  const prepared = payload(await mcp.callTool("obsidian_epoch.prepare_journey", {
+    agentId,
+    destinationRegionId: "region_quantum_laboratory",
+    taskType: "辅助完成一次实验",
+    mandate: {
+      objective: "优先完成实验主线，资源不足时放弃额外协助",
+      priorities: ["experiment", "preserve_resources"],
+    },
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "prepare-generated-optional-side-skip",
+  }));
+  let current = payload(await mcp.callTool("obsidian_epoch.start_journey", {
+    journeyId: prepared.journey.journeyId,
+    expectedVersion: prepared.journey.version,
+    taskGenerationMode: "server_fallback",
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "start-generated-optional-side-skip",
+  }));
+
+  let skippedSideObjectiveId: string | undefined;
+  for (let index = 0; current.journey.status !== "settled" && index < 20; index += 1) {
+    const proposed = payload(await mcp.callTool("obsidian_epoch.propose_journey_step", {
+      journeyId: current.journey.journeyId,
+      expectedVersion: current.journey.version,
+      recoveryCode: ownerRecovery,
+      idempotencyKey: `propose-generated-optional-side-skip-${index}`,
+    }));
+    const objective = proposed.proposal.episode.generatedTaskObjective;
+    const selected = objective?.kind === "side" && skippedSideObjectiveId === undefined
+      ? proposed.proposal.sceneContract.actionOptions.find((option: { completionKind?: string }) =>
+          option.completionKind === "skip")
+      : proposed.proposal.sceneContract.actionOptions.find((option: { completionKind?: string; risk: string }) =>
+          option.completionKind !== "skip" && option.risk === "low")
+        ?? proposed.proposal.sceneContract.actionOptions.find((option: { completionKind?: string }) =>
+          option.completionKind !== "skip");
+    assert.ok(selected);
+    if (objective?.kind === "side" && skippedSideObjectiveId === undefined) {
+      skippedSideObjectiveId = objective.objectiveId;
+      assert.equal(selected.completionKind, "skip");
+      assert.match(selected.label, /继续主线/u);
+    }
+    current = payload(await mcp.callTool("obsidian_epoch.commit_journey_action", {
+      journeyId: current.journey.journeyId,
+      sceneId: proposed.proposal.sceneContract.sceneId,
+      episodeId: proposed.proposal.episode.episodeId,
+      expectedVersion: proposed.proposal.expectedVersion,
+      actionOptionId: selected.actionOptionId,
+      signature: selected.signature,
+      recoveryCode: ownerRecovery,
+      idempotencyKey: `commit-generated-optional-side-skip-${index}`,
+    }));
+  }
+
+  assert.ok(skippedSideObjectiveId);
+  assert.equal(current.journey.status, "settled");
+  assert.equal(current.taskAdjudication.mainCompleted, current.taskAdjudication.mainTotal);
+  assert.equal(current.taskAdjudication.sideCompleted, 0);
+  assert.equal(current.taskAdjudication.tier, "及格");
+  assert.equal(current.worldCommit.status, "discarded");
+  assert.equal(current.worldCommit.reason, "quality_below_canon_threshold");
+  assert.equal(current.worldCommit.sourceEventIds.length, 0);
+  assert.match(current.storyReport.narrative, /评分低于正史固化门槛/u);
+  assert.equal(mcp.runtime.epochEvents({
+    eventType: "journey_world_solidified",
+    limit: 100,
+  }).events.some((event) => event.eventType === "journey_world_solidified"
+    && event.payload.journeyId === current.journey.journeyId), false);
+  assert.ok(current.taskAdjudication.performance.skippedActions >= 1);
+  assert.ok(current.interactionLog.entries.some((entry: {
+    objective?: { objectiveId: string };
+    outcomeSummary: string;
+  }) => entry.objective?.objectiveId === skippedSideObjectiveId
+    && /跳过/u.test(entry.outcomeSummary)));
+  assert.match(current.storyReport.storyContent, /没有参加这次额外协助，把精力留给接下来的行动/u);
+  assert.doesNotMatch(current.storyReport.storyContent, /需求、资源和长期目标|支线|主线|服务器|记录为跳过/u);
+});
+
+test("a server-signed skipped main objective fails the generated run without inventing a returned result", async () => {
+  const { mcp, agentId, ownerRecovery } = await fixture();
+  const prepared = payload(await mcp.callTool("obsidian_epoch.prepare_journey", {
+    agentId,
+    destinationRegionId: "region_quantum_laboratory",
+    taskType: "辅助完成一次实验",
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "prepare-generated-skipped-main",
+  }));
+  let current = payload(await mcp.callTool("obsidian_epoch.start_journey", {
+    journeyId: prepared.journey.journeyId,
+    expectedVersion: prepared.journey.version,
+    taskGenerationMode: "server_fallback",
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "start-generated-skipped-main",
+  }));
+
+  for (let index = 0; current.journey.status !== "settled" && index < current.journey.taskPlan.objectives.length; index += 1) {
+    const proposed = payload(await mcp.callTool("obsidian_epoch.propose_journey_step", {
+      journeyId: current.journey.journeyId,
+      expectedVersion: current.journey.version,
+      recoveryCode: ownerRecovery,
+      idempotencyKey: `propose-generated-skipped-main-${index}`,
+    }));
+    const selected = index === 0
+      ? proposed.proposal.sceneContract.actionOptions.find((option: { completionKind?: string }) =>
+          option.completionKind === "skip")
+      : proposed.proposal.sceneContract.actionOptions.find((option: { completionKind?: string; risk: string }) =>
+          option.completionKind !== "skip" && option.risk === "low")
+        ?? proposed.proposal.sceneContract.actionOptions.find((option: { completionKind?: string }) =>
+          option.completionKind !== "skip");
+    assert.ok(selected);
+    current = payload(await mcp.callTool("obsidian_epoch.commit_journey_action", {
+      journeyId: current.journey.journeyId,
+      sceneId: proposed.proposal.sceneContract.sceneId,
+      episodeId: proposed.proposal.episode.episodeId,
+      expectedVersion: proposed.proposal.expectedVersion,
+      actionOptionId: selected.actionOptionId,
+      signature: selected.signature,
+      recoveryCode: ownerRecovery,
+      idempotencyKey: `commit-generated-skipped-main-${index}`,
+    }));
+  }
+
+  assert.equal(current.journey.status, "settled");
+  assert.equal(current.taskAdjudication.mainCompleted, 0);
+  assert.equal(current.taskAdjudication.tier, "未及格");
+  assert.equal(current.mission.status, "failed");
+  assert.equal(current.rewardGrant, undefined);
+  assert.equal(current.episodes[1].serverFacts.storyBeat.selectedAction.completionKind, "skip");
+  assert.match(current.storyReport.storyContent, /没有继续眼前的行动，随后开始准备返程/u);
+  assert.doesNotMatch(current.storyReport.storyContent, /记录为跳过|服务器|开始收束本局行动/u);
+  assert.match(current.storyReport.storyContent, /没有把沿途留下的记录当成已经办成的结果。$/u);
+  assert.doesNotMatch(current.storyReport.chapters.at(-1).text, /已经在现场归档|带着.+回到落脚处/u);
+  assert.match(current.storyReport.narrative, /任务完成度：未及格/u);
+  assert.equal(current.worldCommit.status, "discarded");
+  assert.deepEqual(current.worldCommit.sourceEventIds, []);
+  assert.match(current.storyReport.narrative, /本局镜像未固化/u);
+  const failedMirrorEvents = mcp.runtime.epochEvents({ limit: 1_000 }).events.filter((event: {
+    correlationId?: string;
+  }) => event.correlationId === current.journey.correlationId);
+  assert.equal(failedMirrorEvents.some((event: { eventType: string }) => [
+    "journey_world_solidified",
+    "region_influence_changed",
+    "agent_faction_standing_changed",
+    "agent_npc_bond_updated",
+    "npc_memory_recorded",
+    "world_clock_advanced",
+    "world_simulation_advanced",
+  ].includes(event.eventType)), false);
+});
+
+test("Host Sampling partial persistence retains every generated objective action event", async () => {
+  const { mcp, agentId, ownerRecovery } = await fixture();
+  const prepared = payload(await mcp.callTool("obsidian_epoch.prepare_journey", {
+    agentId,
+    destinationRegionId: "region_starship_graveyard",
+    taskType: "参加打捞队入门试炼",
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "prepare-generated-staged-persistence",
+  }));
+  const session = createMcpSession({ sessionId: "generated_staged_persistence", transport: "stdio" });
+  session.acceptInitialize({
+    protocolVersion: "2025-06-18",
+    capabilities: { sampling: {} },
+    clientInfo: { name: "generated-staged-persistence-host", version: "1" },
+  });
+  session.acceptInitializedNotification();
+  const sent: Record<string, unknown>[] = [];
+  let requestSequence = 0;
+  const manager = createMcpServerRequestManager({
+    send: (message) => { sent.push(message); },
+    requestIdFactory: () => `generated-staged-${++requestSequence}`,
+  });
+  const partials: { readonly toolName: string; readonly result: unknown }[] = [];
+  const responsePromise = handleMcpJsonRpcMessage(mcp, {
+    jsonrpc: "2.0",
+    id: 601,
+    method: "tools/call",
+    params: {
+      name: "obsidian_epoch.start_journey",
+      arguments: {
+        journeyId: prepared.journey.journeyId,
+        expectedVersion: prepared.journey.version,
+        taskGenerationMode: "server_fallback",
+        decisionMode: "host_sampling",
+        recoveryCode: ownerRecovery,
+        idempotencyKey: "start-generated-staged-persistence",
+      },
+    },
+  }, {
+    session,
+    sampling: createMcpSamplingClient({ session, requestManager: manager }),
+    persistPartial: async (toolName, result) => { partials.push({ toolName, result }); },
+  });
+
+  let responseSettled = false;
+  void responsePromise.then(
+    () => { responseSettled = true; },
+    () => { responseSettled = true; },
+  );
+  let index = 0;
+  while (!responseSettled) {
+    while (sent.length <= index && !responseSettled) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    if (responseSettled) break;
+    const requestBound = JOURNEY_TASK_OBJECTIVE_LIMITS.mainMax
+      + JOURNEY_TASK_OBJECTIVE_LIMITS.sideMax
+      + JOURNEY_TASK_OBJECTIVE_LIMITS.choiceMax;
+    if (index >= requestBound) throw new Error("generated_staged_sampling_request_bound_exceeded");
+    const request = sent[index] as {
+      readonly id: string;
+      readonly params: {
+        readonly systemPrompt?: string;
+        readonly messages: readonly { readonly content: { readonly text: string } }[];
+      };
+    };
+    const prompt = JSON.parse(request.params.messages[0]!.content.text);
+    if (index === 0) {
+      assert.match(request.params.systemPrompt || "", /not as a quest-grade optimizer/u);
+      assert.equal(typeof prompt.decisionContext.identity.identityName, "string");
+      assert.ok(Array.isArray(prompt.decisionContext.identity.traits));
+      assert.ok(Array.isArray(prompt.decisionContext.identity.strongestNeeds));
+      assert.equal(typeof prompt.decisionContext.resources, "object");
+      assert.match(prompt.decisionContext.worldSlice.sliceHash, /^sha256:/u);
+      assert.equal(typeof prompt.decisionContext.worldSlice.direction, "object");
+      assert.ok(JSON.stringify(prompt.decisionContext.worldSlice).length < 2_000);
+      assert.ok(prompt.actionOptions.every((option: {
+        intent?: string;
+        decisionEffect?: string;
+      }) => typeof option.intent === "string" && typeof option.decisionEffect === "string"));
+    }
+    manager.handleResponse({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        role: "assistant",
+        content: { type: "text", text: JSON.stringify({
+          actionOptionId: (prompt.actionOptions.find((option: {
+            risk: string;
+            decisionEffect: string;
+          }) => option.risk === "low" && option.decisionEffect === "attempt_objective")
+            ?? prompt.actionOptions.find((option: { decisionEffect: string }) =>
+              option.decisionEffect === "attempt_objective")
+            ?? prompt.actionOptions[0]).actionOptionId,
+          rationale: "选择服务器签发的完成行动",
+          confidence: 0.95,
+        }) },
+        model: "staged-persistence-host",
+        stopReason: "endTurn",
+      },
+    });
+    index += 1;
+  }
+
+  const response = await responsePromise;
+  assert.ok(response && "result" in response);
+  const result = payload(response.result as { readonly content: readonly { readonly text: string }[] });
+  assert.equal(result.journey.status, "settled");
+  const committedPartials = partials.filter((partial) =>
+    partial.toolName === "obsidian_epoch.commit_journey_action");
+  assert.ok(committedPartials.length >= 5);
+  assert.equal(committedPartials.length, sent.length);
+  assert.equal(committedPartials.length, result.samplingDecisions.length);
+  for (const partial of committedPartials) {
+    assert.ok(epochEventsForPersistence(partial.result).some((event) =>
+      event.eventType === "hosted_action_recorded"));
+  }
+  manager.close();
+});
+
+test("task type and server map are sent to Host Sampling and the validated model blueprint is persisted", async () => {
+  const { mcp, agentId, ownerRecovery } = await fixture();
+  const prepared = payload(await mcp.callTool("obsidian_epoch.prepare_journey", {
+    agentId,
+    destinationRegionId: "region_quantum_laboratory",
+    taskType: "辅助完成一次实验",
+    mandate: { objective: "辅助完成一次实验" },
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "prepare-model-blueprint",
+  }));
+  const session = createMcpSession({ sessionId: "task_blueprint_sampling", transport: "stdio" });
+  session.acceptInitialize({
+    protocolVersion: "2025-06-18",
+    capabilities: { sampling: {} },
+    clientInfo: { name: "test-host", version: "1" },
+  });
+  session.acceptInitializedNotification();
+  const sent: Record<string, unknown>[] = [];
+  const manager = createMcpServerRequestManager({
+    send: (message) => { sent.push(message); },
+    requestIdFactory: () => "server-task-blueprint",
+  });
+  const sampling = createMcpSamplingClient({ session, requestManager: manager });
+  const responsePromise = handleMcpJsonRpcMessage(mcp, {
+    jsonrpc: "2.0",
+    id: 501,
+    method: "tools/call",
+    params: {
+      name: "obsidian_epoch.start_journey",
+      arguments: {
+        journeyId: prepared.journey.journeyId,
+        expectedVersion: prepared.journey.version,
+        taskGenerationMode: "model_sampling",
+        recoveryCode: ownerRecovery,
+        idempotencyKey: "start-model-blueprint",
+      },
+    },
+  }, { session, sampling });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  const request = JSON.parse(JSON.stringify(sent[0]));
+  const prompt = JSON.parse(request.params.messages[0].content.text);
+  assert.equal(prompt.taskType, "辅助完成一次实验");
+  assert.equal(prompt.identityName, "灯蛾");
+  assert.equal(prompt.scenarioMapId, "region_quantum_laboratory");
+  assert.ok(prompt.availableWorldObjects.some((object: { id: string }) => object.id === "device_phase_stabilizer"));
+  const taskNpc = prompt.availableWorldObjects.find((object: { type: string; id: string; label: string }) =>
+    object.type === "npc");
+  assert.ok(taskNpc);
+  assert.notEqual(taskNpc.id, "npc_chief_researcher_linduo");
+  const objectiveSeeds = [
+    { id: "main_prepare", kind: "main", sequence: 1, title: "检查实验舱" },
+    { id: "main_calibrate", kind: "main", sequence: 2, title: "校准稳定器" },
+    { id: "main_verify", kind: "main", sequence: 3, title: "核验样本数据" },
+    { id: "side_log", kind: "side", sequence: 1, title: "整理实验日志" },
+    { id: "side_reset", kind: "side", sequence: 2, title: "复位实验台" },
+  ] as const;
+  const proposal = {
+    title: "相位样本协作实验",
+    premise: `${taskNpc.label}正在相位实验舱进行样本测试，需要助手完成检查、校准和核验。`,
+    primaryObjective: "协助完成第七码样本测试并提交记录。",
+    successResult: "第七码样本测试记录",
+    completionResult: { kind: "knowledge", returnMode: "report", summary: "第七码样本测试记录" },
+    objectives: objectiveSeeds.map((seed) => ({
+      objectiveId: seed.id,
+      kind: seed.kind,
+      sequence: seed.sequence,
+      title: seed.title,
+      objective: `在相位实验舱完成${seed.title}。`,
+      completionCriteria: `${seed.title}产生签名行动记录。`,
+      sceneType: "commission",
+      locationId: "location_quantum_phase_chamber",
+      worldObjectIds: ["location_quantum_phase_chamber", taskNpc.id, "device_phase_stabilizer"],
+      actions: [0, 1].map((choice) => ({
+        optionKey: `${seed.id}_choice_${choice + 1}`,
+        label: `与${taskNpc.label}在相位实验舱执行${seed.title}方案${choice + 1}`,
+        intent: `只操作相位稳定器并按${taskNpc.label}确认的顺序完成${seed.title}。`,
+        risk: choice === 0 ? "low" : "medium",
+        allowedEffectKinds: ["journey_progress", "world_reference"],
+        targetObjectIds: ["location_quantum_phase_chamber", taskNpc.id, "device_phase_stabilizer"],
+        outcomeSummary: `身份与${taskNpc.label}在相位实验舱完成了${seed.title}方案${choice + 1}，记录已保存。`,
+      })),
+    })),
+  };
+  manager.handleResponse({
+    jsonrpc: "2.0",
+    id: request.id,
+    result: {
+      role: "assistant",
+      content: { type: "text", text: JSON.stringify(proposal) },
+      model: "host-model",
+      stopReason: "endTurn",
+    },
+  });
+  const response = await responsePromise;
+  assert.ok(response && "result" in response);
+  const result = payload(response.result as { readonly content: readonly { readonly text: string }[] });
+  assert.equal(result.taskGeneration.ok, true);
+  assert.equal(result.journey.taskPlan.source, "model_sampling");
+  assert.equal(result.journey.taskPlan.objectives.length, 5);
+  assert.deepEqual(result.scenePlan.episodes.map((episode: { phase: string }) => episode.phase), [
+    "arrival", "main", "main", "main", "side", "side", "return",
+  ]);
+  assert.equal("reward" in result.journey.taskPlan, false);
+  assert.equal("hiddenTask" in result.journey.taskPlan, false);
+});
+
+test("one Journey is a complete mission with explicit tasks, stakes, criteria, and a terminal result", async () => {
+  const { mcp, agentId, ownerRecovery, advance } = await fixture();
+  const prepared = payload(await mcp.callTool("obsidian_epoch.prepare_journey", {
+    agentId,
+    destinationRegionId: "灰港",
+    mandate: { objective: "找稳定工作", priorities: ["work"], avoid: ["conflict"] },
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "prepare-complete-mission",
+  }));
+
+  assert.equal(prepared.mission.kind, "journey_mission");
+  assert.equal(prepared.mission.version, 1);
+  assert.equal(prepared.mission.status, "briefing");
+  assert.match(prepared.mission.primaryObjective, /灰港民务所/);
+  assert.match(prepared.mission.primaryObjective, /完成一项.*登记.*事务/);
+  assert.ok(prepared.mission.stakes.length >= 20);
+  assert.ok(prepared.mission.successCriteria.length >= 3);
+  assert.ok(prepared.mission.failureConditions.length >= 3);
+  assert.ok(prepared.mission.failureConsequences.length >= 1);
+  assert.deepEqual(prepared.mission.tasks.map((task: { taskId: string; status: string }) =>
+    [task.taskId, task.status]), [
+    ["reach_civic_ledger", "pending"],
+    ["complete_registered_work", "pending"],
+    ["return_with_record", "pending"],
+  ]);
+
+  const started = payload(await mcp.callTool("obsidian_epoch.start_journey", {
+    journeyId: prepared.journey.journeyId,
+    expectedVersion: prepared.journey.version,
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "start-complete-mission",
+  }));
+  assert.equal(started.mission.status, "active");
+  assert.deepEqual(started.mission.tasks.map((task: { status: string }) => task.status),
+    ["completed", "active", "pending"]);
+  assert.equal(started.mission.currentTaskId, "complete_registered_work");
+
+  const proposed = payload(await mcp.callTool("obsidian_epoch.propose_journey_step", {
+    journeyId: started.journey.journeyId,
+    expectedVersion: started.journey.version,
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "propose-complete-mission",
+  }));
+  assert.equal(proposed.mission.currentTaskId, "complete_registered_work");
+  const selected = proposed.proposal.sceneContract.actionOptions.find((option: { optionKey: string }) =>
+    option.optionKey === "verify_salt_ledger");
+  assert.ok(selected);
+
+  await mcp.callTool("obsidian_epoch.commit_journey_action", {
+    journeyId: started.journey.journeyId,
+    sceneId: proposed.proposal.sceneContract.sceneId,
+    episodeId: proposed.proposal.episode.episodeId,
+    expectedVersion: proposed.proposal.expectedVersion,
+    actionOptionId: selected.actionOptionId,
+    signature: selected.signature,
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "commit-complete-mission",
+  });
+  advance("2026-07-12T00:45:00.000Z", "2026-01-01T09:30:00.000Z");
+
+  const status = payload(await mcp.callTool("obsidian_epoch.journey_status", {
+    journeyId: prepared.journey.journeyId,
+    recoveryCode: ownerRecovery,
+  }));
+  assert.equal(status.journey.status, "settled");
+  assert.equal(status.mission.status, "completed");
+  assert.deepEqual(status.mission.tasks.map((task: { status: string }) => task.status),
+    ["completed", "completed", "completed"]);
+  assert.equal(status.mission.outcome.result, "success");
+  assert.equal(status.mission.outcome.decisiveActionOptionKey, "verify_salt_ledger");
+  assert.equal(status.storyReport.mission.status, "completed");
+  assert.equal(status.storyReport.resolution.missionStatus, "completed");
+  assert.equal(status.storyReport.profile.objective, "找稳定工作");
+  assert.equal(status.storyReport.evaluation.taskCompletionGrade, "C");
+  assert.match(status.storyReport.narrative, /任务完成度：C/);
+  assert.doesNotMatch(status.storyReport.storyContent, /任务|目标|委托|成功条件|失败条件|结算|可追溯/);
+  assert.deepEqual(status.finalVerification.page.payload.journey.mission, status.mission);
+  assert.equal(status.finalVerification.page.payload.runSummary.runKind, "one_shot_journey");
+  assert.equal(status.finalVerification.page.payload.runSummary.endingReason, "completed");
+});
+
+test("a real non-Gray-Harbor journey runs the quantum experiment route end to end", async () => {
+  const { mcp, agentId, ownerRecovery, advance } = await fixture();
+  const prepared = payload(await mcp.callTool("obsidian_epoch.prepare_journey", {
+    agentId,
+    destinationRegionId: "region_quantum_laboratory",
+    mandate: { objective: "协助完成一次相位实验并带回实验记录", priorities: ["experiment", "safe_return"] },
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "prepare-quantum-experiment",
+  }));
+  assert.equal(prepared.mission.title, "相位样本协助实验");
+  assert.equal(prepared.mission.tasks[1].taskId, "complete_primary_task");
+
+  const started = payload(await mcp.callTool("obsidian_epoch.start_journey", {
+    journeyId: prepared.journey.journeyId,
+    expectedVersion: prepared.journey.version,
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "start-quantum-experiment",
+  }));
+  assert.equal(started.episodes[0].serverFacts.storyBeat.selectedAction.optionKey, "enter_destination");
+
+  const proposed = payload(await mcp.callTool("obsidian_epoch.propose_journey_step", {
+    journeyId: started.journey.journeyId,
+    expectedVersion: started.journey.version,
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "propose-quantum-experiment",
+  }));
+  assert.equal(proposed.proposal.sceneContract.location.label, "相位实验舱");
+  assert.deepEqual(proposed.proposal.sceneContract.actionOptions.map((option: { optionKey: string }) => option.optionKey), [
+    "assist_phase_experiment", "monitor_sample_seven", "withdraw_from_phase_test",
+  ]);
+  const selected = proposed.proposal.sceneContract.actionOptions.find((option: { optionKey: string }) =>
+    option.optionKey === "assist_phase_experiment");
+  assert.ok(selected);
+  await mcp.callTool("obsidian_epoch.commit_journey_action", {
+    journeyId: started.journey.journeyId,
+    sceneId: proposed.proposal.sceneContract.sceneId,
+    episodeId: proposed.proposal.episode.episodeId,
+    expectedVersion: proposed.proposal.expectedVersion,
+    actionOptionId: selected.actionOptionId,
+    signature: selected.signature,
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "commit-quantum-experiment",
+  });
+  advance("2026-07-12T00:45:00.000Z", "2026-01-01T09:30:00.000Z");
+
+  const status = payload(await mcp.callTool("obsidian_epoch.journey_status", {
+    journeyId: prepared.journey.journeyId,
+    recoveryCode: ownerRecovery,
+  }));
+  assert.equal(status.mission.status, "completed");
+  assert.equal(status.mission.outcome.decisiveActionOptionKey, "assist_phase_experiment");
+  assert.match(status.storyReport.storyContent, /相位实验舱/);
+  assert.match(status.storyReport.storyContent, /首席实验员林铎/);
+  assert.match(status.storyReport.storyContent, /三组传感数据/);
+  assert.match(status.storyReport.storyContent, /第七码样本测试记录/);
+  assert.doesNotMatch(status.storyReport.storyContent, /灰港|民务账房|盐票账册/u);
+  assert.equal(status.storyReport.evaluation.taskCompletionGrade, "C");
+});
+
+test("a settled Journey that misses the core task is reported as a failed run", async () => {
+  const { mcp, agentId, ownerRecovery, advance } = await fixture();
+  const prepared = payload(await mcp.callTool("obsidian_epoch.prepare_journey", {
+    agentId,
+    destinationRegionId: "灰港",
+    mandate: { objective: "找稳定工作", priorities: ["work"] },
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "prepare-failed-mission",
+  }));
+  const started = payload(await mcp.callTool("obsidian_epoch.start_journey", {
+    journeyId: prepared.journey.journeyId,
+    expectedVersion: prepared.journey.version,
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "start-failed-mission",
+  }));
+  const proposed = payload(await mcp.callTool("obsidian_epoch.propose_journey_step", {
+    journeyId: started.journey.journeyId,
+    expectedVersion: started.journey.version,
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "propose-failed-mission",
+  }));
+  const selected = proposed.proposal.sceneContract.actionOptions.find((option: { optionKey: string }) =>
+    option.optionKey === "leave_without_commitment");
+  assert.ok(selected);
+  await mcp.callTool("obsidian_epoch.commit_journey_action", {
+    journeyId: started.journey.journeyId,
+    sceneId: proposed.proposal.sceneContract.sceneId,
+    episodeId: proposed.proposal.episode.episodeId,
+    expectedVersion: proposed.proposal.expectedVersion,
+    actionOptionId: selected.actionOptionId,
+    signature: selected.signature,
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "commit-failed-mission",
+  });
+  advance("2026-07-12T00:45:00.000Z", "2026-01-01T09:30:00.000Z");
+
+  const status = payload(await mcp.callTool("obsidian_epoch.journey_status", {
+    journeyId: prepared.journey.journeyId,
+    recoveryCode: ownerRecovery,
+  }));
+  assert.equal(status.journey.status, "settled");
+  assert.equal(status.mission.status, "failed");
+  assert.equal(status.mission.outcome.result, "failure");
+  assert.deepEqual(status.mission.tasks.map((task: { status: string }) => task.status),
+    ["completed", "failed", "completed"]);
+  assert.equal(status.storyReport.resolution.missionStatus, "failed");
+  assert.equal(status.storyReport.evaluation.taskCompletionGrade, "F");
+  assert.match(status.storyReport.narrative, /任务完成度：F/);
+  assert.doesNotMatch(status.storyReport.storyContent, /任务|目标|委托|成功|失败|结算|可追溯/);
+  assert.equal(status.finalVerification.page.payload.runSummary.runKind, "one_shot_journey");
+  assert.equal(status.finalVerification.page.payload.runSummary.endingReason, "early_exit");
 });
 
 test("journey proposal and commit reject stale, forged, cross-scene, unauthorized, and expired inputs", async () => {
@@ -456,8 +1317,10 @@ test("an archived identity keeps its grounded album inside the reincarnated line
   const album = payload(await context.mcp.callTool("obsidian_epoch.journey_album", {
     agentId: context.agentId,
     recoveryCode: context.ownerRecovery,
-    year: 2025,
+    year: 1,
   }));
+  assert.equal(album.currentYear, 1);
+  assert.equal(album.annualChronicle.year, 1);
   assert.equal(album.postcards.length, 3);
   assert.equal(album.lineageChronicle.generations.length, 2);
   assert.equal(album.lineageChronicle.generations[0].agentId, context.agentId);
@@ -871,6 +1734,10 @@ test("Agent A journey encounter appears in Agent B briefing without direct model
     recoveryCode: recoveryA,
     deferReturnDelivery: true,
   }));
+  const storyReportA = briefingA.returnedJourneyReports[0].storyReport;
+  assert.equal(storyReportA.evaluation.playerImpact.scope, "direct");
+  assert.deepEqual(storyReportA.evaluation.playerImpact.affectedPlayers, ["留守者 B"]);
+  assert.match(storyReportA.evaluation.playerImpact.summary, /交互收件箱/u);
 
   const briefingB = payload(await mcp.callTool("obsidian_epoch.agent_briefing", {
     agentId: identityB.value.agentId,

@@ -258,7 +258,9 @@ test("public pairing server-issues identity before minting a short-lived player 
 });
 
 test("player MCP bearer authorizes only its explorer without exposing owner secrets to tool arguments", async () => {
-  const runtime = createAgentWorldRuntime();
+  const runtime = createAgentWorldRuntime({
+    journey: { worldNow: () => "2026-01-01T08:00:00.000Z" },
+  });
   const explorerA = "explorer_player_token_a";
   const explorerB = "explorer_player_token_b";
   const issuedA = runtime.epochIdentity({

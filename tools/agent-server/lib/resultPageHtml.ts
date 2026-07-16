@@ -382,6 +382,13 @@ function journeyEventEntry(event: ResultPagePayload["progress"]["latestEvents"][
         body: publicNarrativeText(stringPayload(payload, "outcomeSummary") || stringPayload(payload, "visibleText")),
       };
     }
+    case "journey_world_solidified":
+      return {
+        entryId: event.eventId,
+        occurredAt,
+        title: "镜像对局固化",
+        body: `主线完成并安全返程，${region}地区影响 +${numberPayload(payload, "influenceDelta")}，NPC 关系 ${Array.isArray(payload.npcRelationships) ? payload.npcRelationships.length : 0} 项。`,
+      };
     case "hosted_session_started":
       return undefined;
     case "resource_granted":
@@ -485,6 +492,62 @@ function journeyTimelineSection(payload: ResultPagePayload) {
       </ol>
     </section>
   `;
+}
+
+function journeyStorySection(payload: ResultPagePayload) {
+  const report = payload.journey?.storyReport;
+  if (!report) return "";
+  if (!report.profile || !report.evaluation) {
+    return `
+      <section class="journey-story">
+        <div>
+          <span class="eyebrow">服务器叙事</span>
+          <h2>完整故事报告</h2>
+        </div>
+        <h3>${escapeHtml(report.title)}</h3>
+        <p class="journey-story-summary">${escapeHtml(report.summary)}</p>
+        <div class="journey-story-body">
+          ${report.chapters.map((chapter) => `
+            <article class="journey-story-chapter">
+              <h4>${escapeHtml(chapter.title)}</h4>
+              <p>${escapeHtml(chapter.text)}</p>
+            </article>`).join("")}
+        </div>
+      </section>`;
+  }
+  return `
+    <section class="journey-story">
+      <div>
+        <span class="eyebrow">服务器叙事</span>
+        <h2>完整故事报告</h2>
+      </div>
+      <div class="journey-story-profile">
+        <p><b>代号：</b>${escapeHtml(report.profile.codeName)}</p>
+        <p>${escapeHtml(report.profile.reincarnation)}。</p>
+        <p><b>身份：</b>${escapeHtml(report.profile.identity)}</p>
+        <p><b>该局目标：</b>${escapeHtml(report.profile.objective)}</p>
+      </div>
+      <h3 class="journey-story-content-heading">故事内容：</h3>
+      <div class="journey-story-body">
+        ${report.chapters.map((chapter) => `
+          <article class="journey-story-chapter">
+            <h4>${escapeHtml(chapter.title)}</h4>
+            <p>${escapeHtml(chapter.text)}</p>
+          </article>`).join("")}
+      </div>
+      <div class="journey-story-evaluation">
+        <h3>评价：</h3>
+        <p><b>任务完成度：</b>${escapeHtml(report.evaluation.taskCompletionGrade)}</p>
+        <p><b>身份还原度：</b>${escapeHtml(String(report.evaluation.identityFidelityPercent))}%</p>
+        ${report.evaluation.rewards
+          ? `<p><b>获得奖励：</b>${escapeHtml(report.evaluation.rewards.summary)}</p>`
+          : ""}
+        ${report.evaluation.playerImpact
+          ? `<p><b>其他玩家影响：</b>${escapeHtml(report.evaluation.playerImpact.summary)}</p>`
+          : ""}
+        <p class="journey-story-warning"><b>警告：</b>${escapeHtml(report.evaluation.warning)}</p>
+      </div>
+    </section>`;
 }
 
 function nextActionReason(action: ResultPagePayload["nextActions"][number]) {
@@ -722,8 +785,9 @@ export function renderEpochResultPageHtml(page: RenderableResultPage) {
   const progress = page.payload.progress;
   const focus = resultFocusSummary(page.payload);
   const view = buildPublicResultViewModel(page);
-  const title = view.heroTitle;
-  const heroSummary = view.heroSummary;
+  const playerStory = page.payload.journey?.storyReport;
+  const title = playerStory?.title || view.heroTitle;
+  const heroSummary = playerStory?.summary || view.heroSummary;
   const trustLabel = view.verification.label;
   const heroMedia = epochPageSceneMediaForKey("result_page");
   if (!heroMedia) throw new Error("epoch_page_scene_media_missing:result_page");
@@ -944,6 +1008,48 @@ export function renderEpochResultPageHtml(page: RenderableResultPage) {
     .journey-timeline li em {
       grid-column: 3;
     }
+    .journey-story h3 {
+      margin: 22px 0 8px;
+      font-size: clamp(20px, 3vw, 28px);
+    }
+    .journey-story-profile, .journey-story-evaluation {
+      margin-top: 20px;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255, 255, 255, .025);
+    }
+    .journey-story-profile p, .journey-story-evaluation p {
+      margin: 6px 0;
+      color: var(--text);
+      line-height: 1.65;
+    }
+    .journey-story-content-heading { color: var(--gold); }
+    .journey-story-evaluation h3 { margin-top: 0; }
+    .journey-story-warning { color: #eea08f !important; }
+    .journey-story-summary {
+      color: var(--soft);
+      font-size: 16px;
+      line-height: 1.7;
+    }
+    .journey-story-body {
+      margin-top: 20px;
+      padding-left: 18px;
+      border-left: 2px solid rgba(216, 166, 94, .48);
+    }
+    .journey-story-chapter + .journey-story-chapter { margin-top: 24px; }
+    .journey-story-chapter h4 {
+      margin: 0 0 8px;
+      color: var(--gold);
+      font-size: 14px;
+      letter-spacing: .08em;
+    }
+    .journey-story-chapter p {
+      margin: 0;
+      color: var(--text);
+      font-size: 17px;
+      line-height: 1.9;
+    }
     .journey-timeline time {
       color: var(--muted);
       font-size: 13px;
@@ -1104,18 +1210,19 @@ export function renderEpochResultPageHtml(page: RenderableResultPage) {
       <h1>${escapeHtml(title)}</h1>
       <p class="public-safe-summary">${escapeHtml(heroSummary)}</p>
       <div class="summary">
-        <span><em>行动</em><b>${escapeHtml(publicActionLabel(focus.actionLabel))}</b></span>
+        <span><em>${playerStory ? "身份" : "行动"}</em><b>${escapeHtml(playerStory?.profile?.identity || publicActionLabel(focus.actionLabel))}</b></span>
         <span><em>区域</em><b>${escapeHtml(shortRegionLabel(focus.regionId))}</b></span>
         <span><em>奖励</em><b>${escapeHtml(`${focus.reward} / ${focus.lifetime}`)}</b></span>
         <span><em>结算</em><b>${escapeHtml(`${trustLabel} · ${playModeLabel(page.payload.receipt.playMode)}`)}</b></span>
         <span><em>生成</em><b>${dateLabel(page.createdAt)}</b></span>
       </div>
-      <div class="meta">这是一张可分享的探索历程摘要。</div>
+      <div class="meta">${playerStory ? "这是一份面向玩家的完整故事。" : "这是一张可分享的探索历程摘要。"}</div>
     </header>
     ${navigationSection(page.payload)}
-    ${journeyTimelineSection(page.payload)}
+    ${journeyStorySection(page.payload)}
+    ${page.payload.journey ? "" : journeyTimelineSection(page.payload)}
     ${turnCardSection(page.payload.focusTurnCard)}
-    ${hostedSessionSection(page.payload.focusHostedSession)}
+    ${page.payload.journey ? "" : hostedSessionSection(page.payload.focusHostedSession)}
     <section class="next-actions">
       <div>
         <span class="eyebrow">下一步</span>

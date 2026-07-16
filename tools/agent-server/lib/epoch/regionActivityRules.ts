@@ -11,7 +11,8 @@ export type EpochRegionActivityKind =
   | "diplomacy"
   | "organization_politics"
   | "season"
-  | "market";
+  | "market"
+  | "journey";
 
 export type EpochRegionActivitySourceEventType =
   | "downtime_tick_resolved"
@@ -62,7 +63,9 @@ export type EpochRegionActivitySourceEventType =
   | "season_contribution_recorded"
   | "season_objective_completed"
   | "season_campaign_resolved"
-  | "season_resolved";
+  | "season_resolved"
+  | "hosted_action_recorded"
+  | "journey_world_solidified";
 
 export interface EpochRegionActivity {
   readonly activityId: string;

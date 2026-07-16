@@ -8,6 +8,7 @@ import type {
 } from "./runtime.ts";
 import type { EpochWorldOverviewRecentResult } from "./publicWorldReadModel.ts";
 import type { EpochEvent } from "./events.ts";
+import type { JourneyHiddenTaskSealResolver } from "./journeyGeneratedTaskRules.ts";
 import { createEpochResultPageReadModel } from "./resultPageReadModel.ts";
 import { assertEpochResultPagePayload } from "./resultPagePayloadRules.ts";
 import {
@@ -67,6 +68,7 @@ export interface ResultPageRuntimeStoreOptions {
   readonly assertOperatorKey: (input: AnyRecord) => void;
   readonly assertCreateAllowed?: (input: AnyRecord) => void;
   readonly canonicalEpochEvents?: () => readonly EpochEvent[];
+  readonly resolveJourneyHiddenTaskSeal?: JourneyHiddenTaskSealResolver;
 }
 
 function issueResultPagePublishTokenValue() {
@@ -123,7 +125,11 @@ export function createResultPageRuntimeStore(options: ResultPageRuntimeStoreOpti
       return;
     }
     if (!page.payload) throw new Error("result_page_payload_missing");
-    assertEpochResultPagePayload(page.payload, options.canonicalEpochEvents?.() || []);
+    assertEpochResultPagePayload(
+      page.payload,
+      options.canonicalEpochEvents?.() || [],
+      options.resolveJourneyHiddenTaskSeal,
+    );
     if (stableResultPageJson(page.publicSafeSummary) !== stableResultPageJson(page.payload.publicSafeSummary)) {
       throw new Error("result_page_revision_invalid");
     }

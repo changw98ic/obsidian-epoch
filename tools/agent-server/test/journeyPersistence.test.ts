@@ -90,6 +90,57 @@ test("Journey JSONL records hydrate a linked verification URL after restart", ()
   assert.equal(restored.projection().events.length, events.length);
 });
 
+test("dynamic task plan command events hydrate across a process restart", () => {
+  const runtime = fixture();
+  const prepared = runtime.prepare({
+    agentId: "agent_persist",
+    destinationRegionId: "region_starship_graveyard",
+    taskType: "参加打捞队入门试炼",
+    recoveryCode: "owner-credential",
+    idempotencyKey: "prepare-dynamic-command-envelope",
+  });
+  const started = runtime.start({
+    journeyId: prepared.journey.journeyId,
+    expectedVersion: prepared.journey.version,
+    taskGenerationMode: "server_fallback",
+    recoveryCode: "owner-credential",
+    idempotencyKey: "start-dynamic-command-envelope",
+  });
+  const journeyEvents = [prepared, started].flatMap(journeyEventsForPersistence);
+  assert.ok(journeyEvents.some((event) => event.eventType === "journey_task_plan_installed"));
+
+  const loaded = hydrateAgentRuntimeOptions({
+    commandEvents: [{
+      type: "agent_command_commit",
+      version: 1,
+      command: "obsidian_epoch.start_journey",
+      commandId: "dynamic-command-envelope",
+      journeyEvents,
+      epochEvents: [],
+      resultPages: [],
+    }],
+  });
+  const restored = createJourneyRuntime({
+    idFactory: (kind) => `${kind}_restored_dynamic`,
+    initialEvents: loaded.journeyEvents,
+  });
+  const restoredJourney = restored.status(prepared.journey.journeyId).journey;
+  assert.equal(restoredJourney.status, "traveling");
+  assert.deepEqual(restoredJourney.taskPlan, started.journey.taskPlan);
+  assert.ok(restoredJourney.taskPlan?.routes?.some((route) => route.kind === "choice"));
+  assert.ok(restoredJourney.taskPlan?.routes?.some((route) => route.kind === "unlock"));
+
+  const withoutInstallationSeal = journeyEvents.map((event) => {
+    if (event.eventType !== "journey_task_plan_installed") return event;
+    const { hiddenTaskSeal: _seal, ...eventWithoutSeal } = event;
+    return eventWithoutSeal;
+  });
+  assert.throws(() => createJourneyRuntime({
+    idFactory: (kind) => `${kind}_missing_seal`,
+    initialEvents: withoutInstallationSeal,
+  }), /journey_hidden_task_commitment_invalid/u);
+});
+
 test("SQLite stores and hydrates Journey event records", async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "journey-sqlite-"));
   const dbPath = path.join(tempDir, "agent-world.sqlite");
@@ -108,6 +159,18 @@ test("SQLite stores and hydrates Journey event records", async () => {
     assert.equal(loaded.journeyEvents.length, 1);
     assert.equal(loaded.journeyEvents[0].eventId, event.eventId);
     assert.equal(readSqliteJsonlRecords(dbPath, "journey-events.jsonl").length, 1);
+    const db = new DatabaseSync(dbPath);
+    try {
+      const indexed = db.prepare(`
+        SELECT event_id, journey_id, journey_version
+        FROM journey_events
+      `).get() as { event_id: string; journey_id: string; journey_version: number };
+      assert.equal(indexed.event_id, event.eventId);
+      assert.equal(indexed.journey_id, event.journeyId);
+      assert.equal(indexed.journey_version, "journey" in event ? event.journey.version : null);
+    } finally {
+      db.close();
+    }
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
@@ -281,6 +344,10 @@ test("SQLite concurrent appends preserve every record with a unique continuous l
         ORDER BY line_number
       `).all() as { line_number: number }[];
       assert.deepEqual(rows.map((row) => row.line_number), Array.from({ length: count }, (_, index) => index + 1));
+      const commandCount = db.prepare("SELECT COUNT(*) AS count FROM command_commits").get() as { count: number };
+      const pageCount = db.prepare("SELECT COUNT(*) AS count FROM result_pages").get() as { count: number };
+      assert.equal(Number(commandCount.count), count);
+      assert.equal(Number(pageCount.count), count);
     } finally {
       db.close();
     }

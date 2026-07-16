@@ -1,3 +1,5 @@
+import type { JourneyActionResolution } from "./journeyActionResolutionRules.ts";
+
 export const JOURNEY_NARRATIVE_STANCES = ["cautious", "hopeful", "concerned", "curious"] as const;
 export const JOURNEY_POSTCARD_TONES = ["plain", "warm", "wry"] as const;
 
@@ -35,6 +37,26 @@ export interface JourneyNarrativeVerificationAnchor {
   readonly fragment: string;
 }
 
+export interface JourneyEpisodeStoryBeat {
+  readonly phase: "arrival" | "main" | "side" | "return";
+  readonly sceneTitle: string;
+  readonly scenePremise?: string;
+  readonly selectedAction: {
+    readonly optionKey?: string;
+    readonly label: string;
+    readonly intent?: string;
+    readonly risk?: "low" | "medium" | "high";
+    readonly targetEntityIds?: readonly string[];
+    /** Server-signed generated-task binding. Absent on legacy journey actions. */
+    readonly taskObjectiveId?: string;
+    /** Server settlement classification; the client/model cannot supply this field. */
+    readonly completionKind?: "complete" | "failed" | "skip";
+    /** Exact server resolution copied from the canonical hosted-action event. */
+    readonly resolution?: JourneyActionResolution;
+  };
+  readonly outcomeSummary: string;
+}
+
 export interface ServerJourneyEpisodeFacts {
   readonly journeyId: string;
   readonly episodeId: string;
@@ -44,6 +66,7 @@ export interface ServerJourneyEpisodeFacts {
   readonly stateChanges: readonly JourneyNarrativeStateChange[];
   readonly sourceEventIds: readonly string[];
   readonly verification: JourneyNarrativeVerificationAnchor;
+  readonly storyBeat?: JourneyEpisodeStoryBeat;
 }
 
 export interface SamplingNarrativeInterpretationDraft {
@@ -123,16 +146,38 @@ export type PersistedJourneyNarrative = GroundedJourneyNarrative | JourneyNarrat
 export interface CanonicalJourneyEpisodeFactInput {
   readonly journeyId: string;
   readonly episodeId: string;
-  readonly phase: "arrival" | "main" | "return";
+  readonly phase: "arrival" | "main" | "side" | "return";
   readonly title: string;
+  readonly premise?: string;
   readonly agent: { readonly id: string; readonly displayName?: string };
   readonly worldObjectRefs: readonly { readonly id: string; readonly type: string; readonly label: string }[];
   readonly action: {
+    readonly optionKey?: string;
     readonly optionLabel: string;
+    readonly intent?: string;
+    readonly risk?: "low" | "medium" | "high";
+    readonly targetEntityIds?: readonly string[];
+    readonly taskObjectiveId?: string;
+    readonly completionKind?: "complete" | "failed" | "skip";
+    readonly resolution?: JourneyActionResolution;
     readonly outcomeSummary: string;
     readonly reward?: { readonly resourceId?: string; readonly amount?: number };
   };
   readonly canonicalEventIds: readonly string[];
+  readonly sharedWorldImpact?: {
+    readonly regionId: string;
+    readonly regionLabel: string;
+    readonly influenceDelta: number;
+    readonly sourceEventIds: readonly string[];
+  };
+  readonly factionAlignment?: {
+    readonly factionId: string;
+    readonly factionLabel: string;
+    readonly standingDelta: number;
+    readonly standingAfter: number;
+    readonly routeId: string;
+    readonly sourceEventIds: readonly string[];
+  };
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -204,7 +249,7 @@ export function buildServerJourneyEpisodeFacts(input: CanonicalJourneyEpisodeFac
     entities.set(`reward:${rewardId}`, { entityId: `reward:${rewardId}`, kind: "reward", displayName: rewardId });
   }
   const entityIds = [...entities.keys()];
-  const phaseLabel = { arrival: "抵达", main: "行动", return: "返程" }[input.phase];
+  const phaseLabel = { arrival: "抵达", main: "行动", side: "支线", return: "返程" }[input.phase];
   const confirmedFact: JourneyNarrativeFact = {
     factId: `${input.episodeId}:settlement`,
     text: `${agent.displayName}在「${input.title}」的${phaseLabel}片段选择了「${input.action.optionLabel}」；服务器结算：${input.action.outcomeSummary}`,
@@ -225,6 +270,34 @@ export function buildServerJourneyEpisodeFacts(input: CanonicalJourneyEpisodeFac
       sourceEventIds: canonicalEventIds,
     });
   }
+  if (input.sharedWorldImpact && input.sharedWorldImpact.influenceDelta > 0) {
+    const impactSourceEventIds = cleanUnique(input.sharedWorldImpact.sourceEventIds)
+      .filter((eventId) => canonicalEventIds.includes(eventId));
+    const impactEntityIds = [agent.entityId, input.sharedWorldImpact.regionId]
+      .filter((entityId) => entities.has(entityId));
+    if (impactSourceEventIds.length > 0 && impactEntityIds.length > 0) {
+      stateChanges.push({
+        stateChangeId: `${input.episodeId}:shared_world_impact`,
+        summary: `服务器已将本次成功行动记为${input.sharedWorldImpact.regionLabel}地区影响 +${Math.floor(input.sharedWorldImpact.influenceDelta)}；该共享记录会影响其他玩家看到的地区状态。`,
+        entityIds: impactEntityIds,
+        sourceEventIds: impactSourceEventIds,
+      });
+    }
+  }
+  if (input.factionAlignment && input.factionAlignment.standingDelta > 0) {
+    const alignmentSourceEventIds = cleanUnique(input.factionAlignment.sourceEventIds)
+      .filter((eventId) => canonicalEventIds.includes(eventId));
+    const alignmentEntityIds = [agent.entityId, input.factionAlignment.factionId]
+      .filter((entityId) => entities.has(entityId));
+    if (alignmentSourceEventIds.length > 0 && alignmentEntityIds.length === 2) {
+      stateChanges.push({
+        stateChangeId: `${input.episodeId}:faction_alignment:${input.factionAlignment.routeId}`,
+        summary: `身份选择了${input.factionAlignment.factionLabel}对应的路线；服务器阵营声望 +${Math.floor(input.factionAlignment.standingDelta)}，当前为 ${Math.floor(input.factionAlignment.standingAfter)}。该选择会参与后续任务与世界冲突判定。`,
+        entityIds: alignmentEntityIds,
+        sourceEventIds: alignmentSourceEventIds,
+      });
+    }
+  }
   const fragment = `episode-${encodeURIComponent(input.episodeId)}`;
   return {
     journeyId: input.journeyId,
@@ -239,6 +312,26 @@ export function buildServerJourneyEpisodeFacts(input: CanonicalJourneyEpisodeFac
       journeyId: input.journeyId,
       episodeId: input.episodeId,
       fragment,
+    },
+    storyBeat: {
+      phase: input.phase,
+      sceneTitle: input.title.trim(),
+      ...(input.premise?.trim() ? { scenePremise: input.premise.trim() } : {}),
+      selectedAction: {
+        ...(input.action.optionKey?.trim() ? { optionKey: input.action.optionKey.trim() } : {}),
+        label: input.action.optionLabel.trim(),
+        ...(input.action.intent?.trim() ? { intent: input.action.intent.trim() } : {}),
+        ...(input.action.risk ? { risk: input.action.risk } : {}),
+        ...(input.action.targetEntityIds?.length
+          ? { targetEntityIds: cleanUnique(input.action.targetEntityIds) }
+          : {}),
+        ...(input.action.taskObjectiveId?.trim()
+          ? { taskObjectiveId: input.action.taskObjectiveId.trim() }
+          : {}),
+        ...(input.action.completionKind ? { completionKind: input.action.completionKind } : {}),
+        ...(input.action.resolution ? { resolution: input.action.resolution } : {}),
+      },
+      outcomeSummary: input.action.outcomeSummary.trim(),
     },
   };
 }
@@ -350,6 +443,46 @@ function assertServerFacts(input: ServerJourneyEpisodeFacts): void {
     if (item.entityIds.some((id) => !allowedEntityIds.has(id))) throw new Error("journey_narrative_server_entity_unknown");
     if (!item.sourceEventIds.length || item.sourceEventIds.some((id) => !allowedSourceEventIds.has(id))) {
       throw new Error("journey_narrative_server_source_event_unknown");
+    }
+  }
+  if (input.storyBeat) {
+    const beat = input.storyBeat;
+    const agentName = input.allowedEntities.find((entity) => entity.kind === "agent")?.displayName;
+    const phaseLabel = { arrival: "抵达", main: "行动", side: "支线", return: "返程" }[beat.phase];
+    const expectedFact = agentName
+      ? `${agentName}在「${beat.sceneTitle}」的${phaseLabel}片段选择了「${beat.selectedAction.label}」；服务器结算：${beat.outcomeSummary}`
+      : "";
+    const outcomeChange = input.stateChanges.find((change) => change.stateChangeId.endsWith(":outcome"));
+    if (!["arrival", "main", "side", "return"].includes(beat.phase)
+      || !nonEmpty(beat.sceneTitle)
+      || !nonEmpty(beat.selectedAction.label)
+      || !nonEmpty(beat.outcomeSummary)
+      || !expectedFact
+      || input.confirmedFacts[0]?.text !== expectedFact
+      || outcomeChange?.summary !== beat.outcomeSummary
+      || (beat.scenePremise !== undefined && !nonEmpty(beat.scenePremise))
+      || (beat.selectedAction.optionKey !== undefined && !nonEmpty(beat.selectedAction.optionKey))
+      || (beat.selectedAction.intent !== undefined && !nonEmpty(beat.selectedAction.intent))
+      || (beat.selectedAction.risk !== undefined && !["low", "medium", "high"].includes(beat.selectedAction.risk))
+      || ((beat.selectedAction.taskObjectiveId === undefined)
+        !== (beat.selectedAction.completionKind === undefined))
+      || (beat.selectedAction.taskObjectiveId !== undefined
+        && (!nonEmpty(beat.selectedAction.taskObjectiveId)
+          || !["main", "side"].includes(beat.phase)))
+      || (beat.selectedAction.completionKind !== undefined
+        && !["complete", "failed", "skip"].includes(beat.selectedAction.completionKind))
+      || (beat.selectedAction.resolution !== undefined
+        && (beat.selectedAction.resolution.authority !== "server"
+          || beat.selectedAction.resolution.completionKind !== beat.selectedAction.completionKind
+          || !Number.isFinite(beat.selectedAction.resolution.score)
+          || !Number.isFinite(beat.selectedAction.resolution.difficulty)
+          || !Number.isFinite(beat.selectedAction.resolution.margin)
+          || beat.selectedAction.resolution.score - beat.selectedAction.resolution.difficulty
+            !== beat.selectedAction.resolution.margin))
+      || (beat.selectedAction.targetEntityIds !== undefined
+        && (beat.selectedAction.targetEntityIds.some((id) => !allowedEntityIds.has(id))
+          || new Set(beat.selectedAction.targetEntityIds).size !== beat.selectedAction.targetEntityIds.length))) {
+      throw new Error("journey_narrative_story_beat_invalid");
     }
   }
 }

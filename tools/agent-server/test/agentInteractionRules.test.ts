@@ -21,6 +21,7 @@ import {
   planDiplomacyProposalEvents,
   planDiplomacyResponseEvents,
   planHostedSocialHookSideEffectEvents,
+  planJourneyNpcRelationshipSolidificationEvents,
   hostedSocialHookScoreDelta,
   isChildNpc,
   planAgentNpcBondUpdateEvents,
@@ -337,6 +338,46 @@ test("agent interaction rules plan hosted social hook side-effect event sequence
   assert.equal(events[2].aggregateType, "region");
   assert.equal(events[2].agentId, "agent_1");
   assert.equal((events[2].payload as { readonly sourceEventType?: string }).sourceEventType, "hosted_action_recorded");
+});
+
+test("agent interaction rules plan mirror solidification bonds and memories", () => {
+  const idFactory = createSequentialEpochIdFactory("journey_npc_relationship_rules");
+  const makeEvent = eventFactory(() => new Date("2026-07-06T01:25:00.000Z"), idFactory, {
+    actorExplorerId: "system",
+    trustClass: "system_worker",
+    causationId: "cmd_journey_solidify",
+    correlationId: "corr_journey_solidify",
+  });
+
+  const planned = planJourneyNpcRelationshipSolidificationEvents({
+    makeEvent,
+    bondId: "bond_1",
+    memoryId: "memory_1",
+    journeyId: "journey_1",
+    agentId: "agent_1",
+    explorerId: "explorer_1",
+    npcId: "npc_1",
+    npcRegionId: "region_quantum_laboratory",
+    npcDisplayName: "实验员林铎",
+    identityName: "实验协作员",
+    previousScore: 4,
+    risks: ["low", "high", "high", "high", "high"],
+    objectiveTitles: ["校准相位阵列", "保护第七样本"],
+    sourceEventIds: ["event_action_1", "event_action_1", "event_action_2"],
+    recordedAt: "2026-07-06T01:25:00.000Z",
+  });
+
+  assert.equal(planned.scoreDelta, 10);
+  assert.equal(planned.scoreAfter, 14);
+  assert.deepEqual(planned.events.map((event) => event.eventType), [
+    "agent_npc_bond_updated",
+    "npc_memory_recorded",
+  ]);
+  assert.deepEqual((planned.events[1].payload as { readonly sourceEventIds?: readonly string[] }).sourceEventIds, [
+    "event_action_1",
+    "event_action_2",
+  ]);
+  assert.equal((planned.events[1].payload as { readonly importance?: string }).importance, "high");
 });
 
 test("agent interaction rules plan diplomacy payloads", () => {

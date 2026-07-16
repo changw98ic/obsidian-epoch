@@ -1,11 +1,19 @@
 import type { EpochJourney } from "./journeyRules.ts";
 import type { JourneyPolicyPreview, JourneyPolicySelection } from "./journeyPolicyRules.ts";
 import type { JourneySceneEpisode } from "./journeySceneRules.ts";
+import {
+  deriveJourneyHiddenTask,
+  normalizeJourneyHiddenTaskSeal,
+  type JourneyHiddenTaskSeal,
+} from "./journeyGeneratedTaskRules.ts";
 
 export type JourneyRuntimeEventType =
   | "journey_prepared"
+  | "journey_world_window_reserved"
+  | "journey_task_plan_installed"
   | "journey_started"
   | "journey_episode_recorded"
+  | "journey_world_commit_recorded"
   | "journey_verification_linked"
   | "journey_status_changed"
   | "journey_return_delivered";
@@ -26,11 +34,13 @@ interface JourneyRuntimeEventBase {
 }
 
 export interface JourneySnapshotEvent extends JourneyRuntimeEventBase {
-  readonly eventType: "journey_prepared" | "journey_started" | "journey_episode_recorded" | "journey_verification_linked" | "journey_status_changed";
+  readonly eventType: "journey_prepared" | "journey_world_window_reserved" | "journey_task_plan_installed" | "journey_started" | "journey_episode_recorded" | "journey_world_commit_recorded" | "journey_verification_linked" | "journey_status_changed";
   readonly journey: EpochJourney;
   readonly episode?: JourneySceneEpisode;
   readonly policySelection?: JourneyPolicySelection;
   readonly preview?: JourneyPolicyPreview;
+  /** Server-only; present only on journey_task_plan_installed. */
+  readonly hiddenTaskSeal?: JourneyHiddenTaskSeal;
 }
 
 export interface JourneyReturnDeliveredEvent extends JourneyRuntimeEventBase {
@@ -52,6 +62,8 @@ export interface JourneyProjection {
   readonly episodes: Readonly<Record<string, JourneySceneEpisode>>;
   readonly journeyIdsByAgent: Readonly<Record<string, readonly string[]>>;
   readonly deliveredReturnIds: ReadonlySet<string>;
+  /** Server-only seal material, scoped to the runtime projection and journey. */
+  readonly hiddenTaskSeals: Readonly<Record<string, JourneyHiddenTaskSeal>>;
 }
 
 export function emptyJourneyProjection(): JourneyProjection {
@@ -61,6 +73,7 @@ export function emptyJourneyProjection(): JourneyProjection {
     episodes: {},
     journeyIdsByAgent: {},
     deliveredReturnIds: new Set(),
+    hiddenTaskSeals: {},
   };
 }
 
@@ -100,6 +113,20 @@ export function applyJourneyRuntimeEvent(
   } else if (event.episode) {
     throw new Error("journey_event_episode_not_allowed");
   }
+  let hiddenTaskSeals = projection.hiddenTaskSeals;
+  if (event.eventType === "journey_task_plan_installed") {
+    if (!event.journey.taskPlan) throw new Error("journey_event_task_plan_required");
+    if (event.hiddenTaskSeal) {
+      const normalized = normalizeJourneyHiddenTaskSeal(event.journey.taskPlan, event.hiddenTaskSeal);
+      hiddenTaskSeals = { ...hiddenTaskSeals, [event.journeyId]: normalized };
+    } else {
+      // Legacy task-plan events used a directly enumerable commitment. New
+      // sealed plans fail closed when their installation seal is absent.
+      deriveJourneyHiddenTask(event.journey.taskPlan);
+    }
+  } else if (event.hiddenTaskSeal) {
+    throw new Error("journey_event_hidden_task_seal_not_allowed");
+  }
   const ids = projection.journeyIdsByAgent[event.agentId] ?? [];
   return {
     ...projection,
@@ -116,6 +143,7 @@ export function applyJourneyRuntimeEvent(
       ...projection.journeyIdsByAgent,
       [event.agentId]: ids.includes(event.journeyId) ? ids : [...ids, event.journeyId],
     },
+    hiddenTaskSeals,
   };
 }
 

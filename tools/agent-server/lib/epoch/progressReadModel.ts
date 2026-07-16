@@ -16,6 +16,7 @@ import {
   identitySlotsForExplorer,
   sourceEventsMentionAgent,
   type EpochAgentIdentity,
+  type EpochAgentFactionStanding,
   type EpochIdentitySlotState,
   type EpochInventoryItem,
   type EpochPersonalityDrift,
@@ -64,6 +65,7 @@ export interface EpochProgressView {
   readonly claimableLegendNews: readonly EpochClaimableLegendNewsInfo[];
   readonly downtimeDiaryEntries: readonly EpochDowntimeDiaryEntry[];
   readonly personalityDrifts: readonly EpochPersonalityDrift[];
+  readonly factionStandings: readonly EpochAgentFactionStanding[];
   readonly identitySlots?: EpochIdentitySlotState;
   readonly latestEvents: readonly EpochProjection["events"][number][];
 }
@@ -212,6 +214,14 @@ export function progressView(
         .slice(0, diaryLimit)
       : [],
     personalityDrifts: personalityDriftsView(projection, input.agentId, diaryLimit),
+    factionStandings: input.agentId
+      ? (projection.factionStandingIdsByAgent[input.agentId] || [])
+        .map((standingId) => projection.agentFactionStandings[standingId])
+        .filter(Boolean)
+        .sort((left, right) => right.score - left.score
+          || right.updatedAt.localeCompare(left.updatedAt)
+          || left.factionId.localeCompare(right.factionId))
+      : [],
     identitySlots: explorerId ? identitySlotsForExplorer(projection, explorerId) : undefined,
     latestEvents: latestEvents(projection, {
       agentId: input.agentId,

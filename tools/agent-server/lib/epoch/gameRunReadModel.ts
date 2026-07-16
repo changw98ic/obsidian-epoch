@@ -108,6 +108,7 @@ function runStatusForPage(page: EpochSharedResultPage): EpochGameRunStatus {
 }
 
 function finalOutcomeSummary(payload: EpochResultPagePayload) {
+  if (payload.journey?.mission?.outcome?.summary) return publicText(payload.journey.mission.outcome.summary);
   if (payload.runSummary?.runKind === "one_shot_journey" && payload.runSummary.endingReason === "completed") {
     return "完整历程已结算。";
   }

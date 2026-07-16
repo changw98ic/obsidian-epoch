@@ -5,6 +5,7 @@ import { createEpochGameCore, epochShopOffersForRegion, previewEpochDowntime, ty
 import type { EpochEvent } from "../lib/epoch/events.ts";
 import { assertNpcRelationshipKind, createSequentialEpochIdFactory, type EpochClock, type EpochCommandContext } from "../lib/epoch/protocol.ts";
 import { createEpochRuntime } from "../lib/epoch/runtime.ts";
+import { JOURNEY_FIRST_ENTRY_RESERVE } from "../lib/epoch/journeyActionResolutionRules.ts";
 
 type ResourceSpentEvent = Extract<EpochEvent, { readonly eventType: "resource_spent" }>;
 type OrganizationTreasuryChangedEvent = Extract<EpochEvent, { readonly eventType: "organization_treasury_changed" }>;
@@ -149,6 +150,41 @@ test("epoch core issues server-owned identities and builds lineage from events",
     throw new Error("expected_identity_issued_event");
   }
   assert.equal(projected.events[0].payload.agentId, issued.value.agentId);
+});
+
+test("the first Agent-native journey reserve is ledger-backed, identity-scoped, and replay-idempotent", () => {
+  const core = createEpochGameCore({
+    idFactory: createSequentialEpochIdFactory("journey_reserve_identity"),
+  });
+  const identity = core.issueIdentity({
+    explorerId: "explorer_journey_reserve",
+    identityName: "旅程准备金校验员",
+  }, userContext);
+  assert.equal(core.project().resourceBalances[identity.value.agentId], undefined);
+
+  const runtime = createEpochRuntime({
+    initialEvents: identity.events,
+    idFactory: createSequentialEpochIdFactory("journey_reserve_runtime"),
+  });
+  const first = runtime.grantJourneyEntryReserve({
+    journeyId: "journey_reserve_1",
+    agentId: identity.value.agentId,
+  });
+  assert.deepEqual(first.reserve, JOURNEY_FIRST_ENTRY_RESERVE);
+  assert.deepEqual(first.value, { focus: 2, stamina: 1 });
+  assert.deepEqual(first.events.map((event) => event.eventType), ["resource_granted", "resource_granted"]);
+  assert.equal(first.duplicate, false);
+
+  const replayed = createEpochRuntime({
+    initialEvents: [...identity.events, ...first.events],
+    idFactory: createSequentialEpochIdFactory("journey_reserve_replay"),
+  }).grantJourneyEntryReserve({
+    journeyId: "journey_reserve_2",
+    agentId: identity.value.agentId,
+  });
+  assert.deepEqual(replayed.value, { focus: 2, stamina: 1 });
+  assert.deepEqual(replayed.events, []);
+  assert.equal(replayed.duplicate, true);
 });
 
 test("lifetime exhaustion archives an identity and automatically issues the next server identity", () => {
@@ -3730,7 +3766,9 @@ test("anomaly lifetime risk proposes personality drift before owner confirmation
   assert.ok(proposalEvent.payload.sourceEventId);
   const driftId = proposalEvent.payload.driftId;
   assert.equal(core.project().personalityDrifts[driftId].status, "proposed");
-  assert.deepEqual(core.project().identities[identity.value.agentId].personality.traits, []);
+  const initialTraits = [...core.project().identities[identity.value.agentId].personality.traits];
+  assert.equal(initialTraits.length, 2);
+  assert.ok(!initialTraits.includes(proposalEvent.payload.suggestedTrait));
 
   assert.throws(() => anomalyCore.confirmPersonalityDrift({
     driftId,
@@ -3747,7 +3785,10 @@ test("anomaly lifetime risk proposes personality drift before owner confirmation
   });
   assert.deepEqual(confirmed.events.map((event: { eventType: string }) => event.eventType), ["personality_drift_confirmed"]);
   assert.equal(confirmed.value.status, "confirmed");
-  assert.deepEqual(core.project().identities[identity.value.agentId].personality.traits, [proposalEvent.payload.suggestedTrait]);
+  assert.deepEqual(core.project().identities[identity.value.agentId].personality.traits, [
+    ...initialTraits,
+    proposalEvent.payload.suggestedTrait,
+  ]);
   assert.equal(core.project().identities[identity.value.agentId].personality.latestSourceEventId, proposalEvent.payload.sourceEventId);
 });
 
@@ -4482,7 +4523,9 @@ test("severe relationship hostility proposes target personality drift before own
   assert.equal(proposalEvent.payload.sourceEventId, relationshipEvent.eventId);
   const driftId = proposalEvent.payload.driftId;
   assert.equal(core.project().personalityDrifts[driftId].status, "proposed");
-  assert.deepEqual(core.project().identities[target.value.agentId].personality.traits, []);
+  const initialTraits = [...core.project().identities[target.value.agentId].personality.traits];
+  assert.equal(initialTraits.length, 2);
+  assert.ok(!initialTraits.includes(proposalEvent.payload.suggestedTrait));
 
   assert.throws(() => relationshipCore.confirmPersonalityDrift({
     driftId,
@@ -4498,7 +4541,10 @@ test("severe relationship hostility proposes target personality drift before own
     actorExplorerId: "explorer_betrayed",
   });
   assert.deepEqual(confirmed.events.map((event: { eventType: string }) => event.eventType), ["personality_drift_confirmed"]);
-  assert.deepEqual(core.project().identities[target.value.agentId].personality.traits, [proposalEvent.payload.suggestedTrait]);
+  assert.deepEqual(core.project().identities[target.value.agentId].personality.traits, [
+    ...initialTraits,
+    proposalEvent.payload.suggestedTrait,
+  ]);
   assert.equal(core.project().identities[target.value.agentId].personality.latestSourceEventId, relationshipEvent.eventId);
 });
 

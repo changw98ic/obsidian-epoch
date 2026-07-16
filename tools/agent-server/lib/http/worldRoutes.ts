@@ -26,6 +26,33 @@ export async function handleEpochWorldRoutes(context: EpochHttpRouteContext): Pr
     return true;
   }
 
+  if (method === "GET" && pathname === "/api/epoch/world-clock") {
+    context.sendJson(request, response, 200, runtime.epochWorldClock(), allowedOrigins);
+    return true;
+  }
+
+  if (method === "GET" && pathname === "/api/epoch/world-state") {
+    const params = context.queryParams(request);
+    context.sendJson(request, response, 200, runtime.epochWorldState({
+      regionId: params.get("regionId") || undefined,
+      factionId: params.get("factionId") || undefined,
+      includeShipments: params.get("includeShipments") === "true",
+      limit: params.get("limit") ? Number(params.get("limit")) : undefined,
+    }), allowedOrigins);
+    return true;
+  }
+
+  if (method === "GET" && pathname === "/api/epoch/world-content") {
+    const params = context.queryParams(request);
+    context.sendJson(request, response, 200, runtime.epochWorldContent({
+      collection: params.get("collection") || undefined,
+      id: params.get("id") || undefined,
+      query: params.get("query") || undefined,
+      limit: params.get("limit") ? Number(params.get("limit")) : undefined,
+    }), allowedOrigins);
+    return true;
+  }
+
   if (method === "GET" && pathname.startsWith("/api/epoch/archive/")) {
     const agentId = finalPathSegment(pathname);
     const archive = runtime.epochIdentityArchive({ agentId, limit: 30 });

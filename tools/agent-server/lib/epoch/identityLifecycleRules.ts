@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   type EpochEvent,
   type ExplorerRecoveryRotatedPayload,
@@ -18,6 +20,39 @@ const PERSONALITY_DRIFT_SOURCE_EVENT_TYPES: ReadonlySet<EpochEvent["eventType"]>
 
 export const PERSONALITY_DRIFT_COOLDOWN_SECONDS = 7 * 24 * 60 * 60;
 export const RELATIONSHIP_PERSONALITY_DRIFT_HOSTILITY_THRESHOLD = -4;
+
+const INITIAL_TEMPERAMENT_TRAITS = [
+  "谨慎",
+  "果断",
+  "好奇",
+  "耐心",
+  "务实",
+  "重情",
+  "守序",
+  "敢于冒险",
+] as const;
+
+function occupationalIdentityTrait(identityName: string): string {
+  if (/救援|护送|照护|治疗|rescue|escort|medic|care/iu.test(identityName)) return "愿意帮助他人";
+  if (/勘探|测绘|侦察|外勤|scout|explor|field/iu.test(identityName)) return "行动导向";
+  if (/实验|研究|记录|档案|采样|测绘|research|archiv|record|sample/iu.test(identityName)) return "重视证据";
+  if (/检修|工匠|维修|工程|repair|engineer|craft/iu.test(identityName)) return "讲求实用";
+  if (/试炼|候补|学徒|见习|trial|novice|apprentice/iu.test(identityName)) return "渴望证明自己";
+  if (/贸易|调度|补给|商|trade|supply|merchant/iu.test(identityName)) return "看重稳定收益";
+  return "适应新环境";
+}
+
+export function initialIdentityTraits(input: {
+  readonly agentId: string;
+  readonly identityName: string;
+  readonly generation: number;
+}): readonly string[] {
+  const digest = createHash("sha256")
+    .update(`${input.agentId}\u001f${input.identityName}\u001f${input.generation}`, "utf8")
+    .digest();
+  const temperament = INITIAL_TEMPERAMENT_TRAITS[digest.readUInt32BE(0) % INITIAL_TEMPERAMENT_TRAITS.length];
+  return [occupationalIdentityTrait(input.identityName), temperament];
+}
 
 export interface PersonalityDriftStateForRules {
   readonly status?: string;
@@ -178,6 +213,11 @@ export function identityIssuedPayload(input: IdentityIssuedPayloadInput): Identi
     status: "active",
     previousAgentId: input.previousAgentId,
     ...(input.inheritance ? { inheritance: input.inheritance } : {}),
+    personalityTraits: initialIdentityTraits({
+      agentId: input.agentId,
+      identityName: input.identityName,
+      generation: input.generation,
+    }),
     lifetime: {
       max: input.maxLifetime,
       remaining: input.maxLifetime,

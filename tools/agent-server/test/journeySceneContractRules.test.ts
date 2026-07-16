@@ -14,11 +14,13 @@ import {
   GRAY_HARBOR_LIVELIHOOD_ACTION_RECIPES,
   buildJourneySceneContract,
   isJourneySceneActionLabelSpecific,
+  journeySceneActionSignedContent,
   journeySceneHostedActionOptions,
   verifyJourneySceneActionSignature,
   type JourneySceneContractBuildInput,
   type JourneySceneContractWorldObject,
 } from "../lib/epoch/journeySceneContractRules.ts";
+import { signedEnvelopeContentHash } from "../lib/epoch/turnActionEnvelopeRules.ts";
 
 const WORLD_OBJECTS: readonly JourneySceneContractWorldObject[] = [
   {
@@ -89,7 +91,7 @@ function input(overrides: Partial<JourneySceneContractBuildInput> = {}): Journey
     sourceFactIds: WORLD_OBJECTS.flatMap((object) => object.sourceFactIds),
     expectedVersion: 3,
     expiresAt: "2026-07-13T08:00:00.000Z",
-    ruleVersion: "journey-scene-contract.v1",
+    ruleVersion: "journey-scene-contract.v2",
     ...overrides,
   };
 }
@@ -326,9 +328,133 @@ test("signature binds risk, targets, preconditions, effects, and visible action 
   assert.equal(verifies(original), true);
   assert.equal(verifies({ ...original, label: `${original.label}并领取十枚钱币` }), false);
   assert.equal(verifies({ ...original, risk: "high" }), false);
+  assert.equal(verifies({
+    ...original,
+    riskTerms: {
+      ...original.riskTerms,
+      successReward: { resourceId: "coin", amount: 99 },
+    },
+  }), false);
   assert.equal(verifies({ ...original, targetEntityIds: ["npc_invented"] }), false);
   assert.equal(verifies({ ...original, preconditionRefs: ["event_invented"] }), false);
   assert.equal(verifies({ ...original, allowedEffectKinds: ["resource_delta"] }), false);
+});
+
+test("persisted v1 scene actions remain verifiable while v2 makes risk terms mandatory", () => {
+  const legacySignedContent = journeySceneActionSignedContent({
+    agentId: "agent_legacy_fixture",
+    sceneId: "scene_legacy_fixture",
+    expectedVersion: 3,
+    expiresAt: "2026-07-13T08:00:00.000Z",
+    ruleVersion: "journey-scene-contract.v1",
+    signatureVersion: 1,
+    signingPurpose: "journey_scene_action",
+    signingKeyId: "legacy-key-id",
+    action: {
+      actionOptionId: "action_legacy_fixture",
+      optionKey: "legacy_option",
+      label: "legacy label",
+      intent: "legacy intent",
+      risk: "medium",
+      preconditionRefs: ["event_legacy"],
+      allowedEffectKinds: ["journey_progress", "world_reference"],
+      targetEntityIds: ["npc_legacy"],
+    },
+  });
+  assert.deepEqual(legacySignedContent, {
+    actionOptionId: "action_legacy_fixture",
+    agentId: "agent_legacy_fixture",
+    allowedEffectKinds: ["journey_progress", "world_reference"],
+    expectedVersion: 3,
+    expiresAt: "2026-07-13T08:00:00.000Z",
+    intent: "legacy intent",
+    label: "legacy label",
+    optionKey: "legacy_option",
+    preconditionRefs: ["event_legacy"],
+    risk: "medium",
+    ruleVersion: "journey-scene-contract.v1",
+    sceneId: "scene_legacy_fixture",
+    signatureVersion: 1,
+    signingKeyId: "legacy-key-id",
+    signingPurpose: "journey_scene_action",
+    targetEntityIds: ["npc_legacy"],
+  });
+  assert.equal(
+    signedEnvelopeContentHash(legacySignedContent),
+    "sha256:b777f8b18f0ce4bc1e59c1a7b656693383d1a07c87b209c7f90e5c49abe72d21",
+  );
+
+  const legacy = buildJourneySceneContract(input({ ruleVersion: "journey-scene-contract.v1" }));
+  assert.ok(legacy.actionOptions.every((action) => action.riskTerms === undefined));
+  assert.ok(legacy.actionOptions.every((action) => verifyJourneySceneActionSignature({
+    agentId: input().agentId,
+    contract: legacy,
+    action,
+  })));
+
+  const current = buildJourneySceneContract(input());
+  const action = current.actionOptions.find((candidate) => candidate.risk !== "low")
+    ?? current.actionOptions[0];
+  assert.ok(action.riskTerms);
+  assert.equal(verifyJourneySceneActionSignature({
+    agentId: input().agentId,
+    contract: current,
+    action: { ...action, riskTerms: undefined },
+  }), false);
+});
+
+test("generated faction route selection is server-bound into the signed action", () => {
+  const generatedTaskObjective = {
+    objectiveId: "choice_faction_route",
+    kind: "choice" as const,
+    sequence: 1,
+    title: "选择合作阵营",
+    objective: "在现场选择一条阵营合作路线。",
+    completionCriteria: "签名行动明确绑定唯一阵营路线。",
+    sceneType: "livelihood" as const,
+    locationId: "location_gray_harbor_civic_ledger",
+    worldObjectIds: [
+      "location_gray_harbor_civic_ledger",
+      "organization_gray_harbor_civic_office",
+    ],
+    actions: [{
+      optionKey: "choose_civic_office_route",
+      label: "接受灰港民务所的合作路线",
+      intent: "确认合作边界后进入该路线。",
+      risk: "low" as const,
+      allowedEffectKinds: ["journey_progress" as const],
+      targetObjectIds: ["organization_gray_harbor_civic_office"],
+      outcomeSummary: "身份确认与灰港民务所合作。",
+      selectsRouteId: "route_civic_office",
+    }],
+  };
+  const contract = buildJourneySceneContract(input({
+    generatedTaskObjective,
+    taskRoutes: [{
+      routeId: "route_civic_office",
+      kind: "choice",
+      title: "灰港民务所路线",
+      factionObjectId: "organization_gray_harbor_civic_office",
+      objectiveIds: [],
+      unlockedByObjectiveIds: [],
+    }],
+  }));
+  const selected = contract.actionOptions.find((action) =>
+    action.optionKey === "choose_civic_office_route");
+  assert.ok(selected);
+  assert.deepEqual(selected.routeSelection, {
+    routeId: "route_civic_office",
+    factionObjectId: "organization_gray_harbor_civic_office",
+  });
+  assert.equal(verifyJourneySceneActionSignature({ agentId: input().agentId, contract, action: selected }), true);
+  assert.equal(verifyJourneySceneActionSignature({
+    agentId: input().agentId,
+    contract,
+    action: {
+      ...selected,
+      routeSelection: { routeId: "route_invented", factionObjectId: "organization_gray_harbor_civic_office" },
+    },
+  }), false);
 });
 
 test("fails closed when required world roles or canonical source facts are absent", () => {
@@ -365,7 +491,7 @@ test("region, organization, and npc are sufficient; document and workplace refs 
 
 test("different rule versions and world facts produce different signed contracts", () => {
   const baseline = buildJourneySceneContract(input());
-  const nextRules = buildJourneySceneContract(input({ ruleVersion: "journey-scene-contract.v2" }));
+  const nextRules = buildJourneySceneContract(input({ ruleVersion: "journey-scene-contract.v3-test" }));
   assert.notEqual(nextRules.sceneId, baseline.sceneId);
   assert.notEqual(nextRules.actionOptions[0].signature, baseline.actionOptions[0].signature);
 
@@ -425,4 +551,218 @@ test("hosted_session_started persists and rehydrates the exact signed scene cont
     rehydrated.project().hostedSessions[started.value.sessionId].sceneContract,
     started.value.sceneContract,
   );
+});
+
+test("a selected high-risk generated action is resolved by the server and replays as failed", () => {
+  const core = createEpochGameCore({
+    clock: () => new Date("2026-07-12T00:00:00.000Z"),
+    idFactory: createSequentialEpochIdFactory("journey_resolution_persistence"),
+  });
+  const context = {
+    actorExplorerId: "explorer_resolution_persistence",
+    trustClass: "user_verified_web" as const,
+    causationId: "cmd_resolution_persistence",
+    correlationId: "corr_resolution_persistence",
+  };
+  const identity = core.issueIdentity({
+    explorerId: context.actorExplorerId,
+    identityName: "未准备的装置助手",
+  }, context);
+  const stamina = core.grantResource({
+    agentId: identity.value.agentId,
+    resourceId: "stamina",
+    amount: 1,
+    reason: "journey_high_risk_test_seed",
+  }, { ...context, actorExplorerId: "system", trustClass: "system_worker" });
+  const generatedTaskObjective = {
+    objectiveId: "main_high_risk_calibration",
+    kind: "main" as const,
+    sequence: 1,
+    title: "校准高风险盐票装置",
+    objective: "在账房内完成高风险装置校准。",
+    completionCriteria: "装置稳定并留下现场复核记录。",
+    sceneType: "livelihood" as const,
+    locationId: "location_gray_harbor_civic_ledger",
+    worldObjectIds: [
+      "location_gray_harbor_civic_ledger",
+      "npc_night_clerk_kelan",
+      "document_gray_harbor_salt_ledger",
+    ],
+    actions: [{
+      optionKey: "calibrate_high_risk_ledger_device",
+      label: "在珂岚监督下校准高风险盐票装置",
+      intent: "先核对安全边界，再尝试完成装置校准。",
+      risk: "high" as const,
+      allowedEffectKinds: ["journey_progress" as const],
+      targetObjectIds: ["npc_night_clerk_kelan", "document_gray_harbor_salt_ledger"],
+      outcomeSummary: "身份完成装置校准，珂岚确认盐票装置已经稳定。",
+    }],
+  };
+  const buildInput = input({ generatedTaskObjective });
+  const started = core.startHostedSession({
+    agentId: identity.value.agentId,
+    regionId: "region_gray_harbor",
+    mandate: generatedTaskObjective.objective,
+    journeyScene: {
+      seed: buildInput.seed,
+      journeyId: buildInput.journeyId,
+      episodeId: buildInput.episodeId,
+      sceneType: buildInput.sceneType,
+      phase: "main",
+      title: buildInput.title,
+      mandate: buildInput.mandate,
+      worldObjects: buildInput.worldObjects,
+      sourceFactIds: buildInput.sourceFactIds,
+      expectedVersion: buildInput.expectedVersion,
+      generatedTaskObjective,
+    },
+  }, context);
+  const selected = started.value.sceneContract?.actionOptions.find((action) =>
+    action.optionKey === generatedTaskObjective.actions[0].optionKey);
+  assert.ok(selected);
+  assert.equal(selected.completionKind, undefined);
+
+  const committed = core.submitHostedAction({
+    sessionId: started.value.sessionId,
+    actionOptionId: selected.actionOptionId,
+    journeyValidation: {
+      journeyId: buildInput.journeyId,
+      episodeId: buildInput.episodeId,
+      expectedVersion: buildInput.expectedVersion,
+    },
+  }, context);
+
+  assert.equal(committed.value.journeyResolution?.authority, "server");
+  assert.equal(committed.value.journeyResolution?.completionKind, "failed");
+  assert.deepEqual(committed.value.journeyResolution?.resourceCost, {
+    resourceId: "stamina",
+    amount: 1,
+    paid: true,
+  });
+  assert.notEqual(committed.value.outcomeSummary, generatedTaskObjective.actions[0].outcomeSummary);
+  assert.match(committed.value.outcomeSummary, /未完成/u);
+  assert.equal(committed.events[0].eventType, "hosted_action_recorded");
+  assert.deepEqual(committed.events[0].payload.journeyResolution, committed.value.journeyResolution);
+  assert.equal(committed.events[1]?.eventType, "resource_spent");
+  assert.equal(core.project().resourceBalances[identity.value.agentId]?.stamina, 0);
+
+  const replayed = createEpochGameCore({
+    initialEvents: [...identity.events, ...stamina.events, ...started.events, ...committed.events],
+  }).project().hostedSessions[started.value.sessionId].actions[0];
+  assert.deepEqual(replayed.journeyResolution, committed.value.journeyResolution);
+  assert.equal(replayed.outcomeSummary, committed.value.outcomeSummary);
+});
+
+test("a completed cost-bearing journey action spends its cost and grants the signed risk premium", () => {
+  const core = createEpochGameCore({
+    clock: () => new Date("2026-07-12T00:00:00.000Z"),
+    idFactory: createSequentialEpochIdFactory("journey_risk_reward"),
+  });
+  const context = {
+    actorExplorerId: "explorer_journey_risk_reward",
+    trustClass: "user_verified_web" as const,
+    causationId: "cmd_journey_risk_reward",
+    correlationId: "corr_journey_risk_reward",
+  };
+  const systemContext = {
+    ...context,
+    actorExplorerId: "system",
+    trustClass: "system_worker" as const,
+  };
+  const identity = core.issueIdentity({
+    explorerId: context.actorExplorerId,
+    identityName: "账房风险校验员",
+  }, context);
+  for (const resource of [
+    { resourceId: "focus" as const, amount: 4 },
+    { resourceId: "stamina" as const, amount: 4 },
+    { resourceId: "aether" as const, amount: 4 },
+  ]) {
+    core.grantResource({
+      agentId: identity.value.agentId,
+      ...resource,
+      reason: `journey_risk_reward_seed:${resource.resourceId}`,
+    }, systemContext);
+  }
+
+  const objective = (objectiveId: string, risk: "low" | "medium") => ({
+    objectiveId,
+    kind: "main" as const,
+    sequence: objectiveId === "main_prepare" ? 1 : 2,
+    title: objectiveId === "main_prepare" ? "整理校准记录" : "复核校准结果",
+    objective: objectiveId === "main_prepare" ? "先整理账房校准记录。" : "复核账房校准结果。",
+    completionCriteria: "行动结果进入服务器记录。",
+    sceneType: "livelihood" as const,
+    locationId: "location_gray_harbor_civic_ledger",
+    worldObjectIds: [
+      "location_gray_harbor_civic_ledger",
+      "npc_night_clerk_kelan",
+      "document_gray_harbor_salt_ledger",
+    ],
+    actions: [{
+      optionKey: `${objectiveId}_action`,
+      label: objectiveId === "main_prepare" ? "与珂岚整理校准记录" : "与珂岚复核校准结果",
+      intent: "依据账册完成现场核验。",
+      risk,
+      allowedEffectKinds: ["journey_progress" as const],
+      targetObjectIds: ["npc_night_clerk_kelan", "document_gray_harbor_salt_ledger"],
+      outcomeSummary: objectiveId === "main_prepare"
+        ? "身份与珂岚整理了校准记录。"
+        : "身份与珂岚完成了校准结果复核。",
+    }],
+  });
+  const commitObjective = (generatedTaskObjective: ReturnType<typeof objective>, expectedVersion: number) => {
+    const buildInput = input({
+      episodeId: `episode_${generatedTaskObjective.objectiveId}`,
+      expectedVersion,
+      generatedTaskObjective,
+    });
+    const session = core.startHostedSession({
+      agentId: identity.value.agentId,
+      regionId: "region_gray_harbor",
+      mandate: generatedTaskObjective.objective,
+      journeyScene: {
+        seed: buildInput.seed,
+        journeyId: buildInput.journeyId,
+        episodeId: buildInput.episodeId,
+        sceneType: buildInput.sceneType,
+        phase: "main",
+        title: generatedTaskObjective.title,
+        mandate: buildInput.mandate,
+        worldObjects: buildInput.worldObjects,
+        sourceFactIds: buildInput.sourceFactIds,
+        expectedVersion: buildInput.expectedVersion,
+        generatedTaskObjective,
+      },
+    }, context);
+    const selected = session.value.sceneContract?.actionOptions.find((action) =>
+      action.optionKey === generatedTaskObjective.actions[0].optionKey);
+    assert.ok(selected);
+    return core.submitHostedAction({
+      sessionId: session.value.sessionId,
+      actionOptionId: selected.actionOptionId,
+      journeyValidation: {
+        journeyId: buildInput.journeyId,
+        episodeId: buildInput.episodeId,
+        expectedVersion: buildInput.expectedVersion,
+      },
+    }, context);
+  };
+
+  const prepared = commitObjective(objective("main_prepare", "low"), 1);
+  assert.equal(prepared.value.journeyResolution?.completionKind, "complete");
+  const resolved = commitObjective(objective("main_resolve", "medium"), 2);
+  assert.equal(resolved.value.journeyResolution?.completionKind, "complete");
+  assert.deepEqual(resolved.value.journeyResolution?.riskPremium, { resourceId: "coin", amount: 1 });
+  assert.deepEqual(resolved.value.reward, {
+    resourceId: "coin",
+    amount: 1,
+    reason: `journey_risk_reward:${input().journeyId}:main_resolve:medium`,
+  });
+  assert.ok(resolved.events.some((event) => event.eventType === "resource_spent"
+    && event.payload.resourceId === "focus"));
+  assert.ok(resolved.events.some((event) => event.eventType === "resource_granted"
+    && event.payload.resourceId === "coin"));
+  assert.equal(core.project().resourceBalances[identity.value.agentId]?.focus, 3);
+  assert.equal(core.project().resourceBalances[identity.value.agentId]?.coin, 1);
 });

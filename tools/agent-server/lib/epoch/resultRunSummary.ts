@@ -29,16 +29,28 @@ interface ResultRunSummaryProgress {
   readonly latestEvents: readonly ResultRunSummaryEvent[];
 }
 
+interface ResultRunSummaryJourney {
+  readonly startedAtWorldTime?: string;
+  readonly dueAtWorldTime?: string;
+  readonly mission?: {
+    readonly title: string;
+    readonly status: "briefing" | "active" | "completed" | "failed";
+    readonly tasks: readonly unknown[];
+  };
+}
+
 export function buildEpochResultPageRunSummary(input: Record<string, unknown>, {
   generatedAt,
   progress,
   focusTurnCard,
   focusHostedSession,
+  journey,
 }: {
   readonly generatedAt: string;
   readonly progress: ResultRunSummaryProgress;
   readonly focusTurnCard?: EpochTurnCard;
   readonly focusHostedSession?: EpochHostedSession;
+  readonly journey?: ResultRunSummaryJourney;
 }): EpochResultPageRunSummary {
   const requestedStepCount = Number(input.stepCount);
   const requestedStepCountValue = Number.isFinite(requestedStepCount)
@@ -49,14 +61,18 @@ export function buildEpochResultPageRunSummary(input: Record<string, unknown>, {
     : 0;
   const hostedActionCount = focusHostedSession?.actions.length || 0;
   const visibleEventCount = progress.latestEvents.length;
-  const stepCount = focusTurnCard
+  const stepCount = journey?.mission?.tasks.length
+    ? journey.mission.tasks.length
+    : focusTurnCard
     ? 1
     : requestedStepCountValue || Math.max(
       hostedActionCount,
       Math.min(Math.max(focusedEventCount, visibleEventCount), 12),
       1,
     );
-  const runKind: EpochResultPageRunKind = focusTurnCard
+  const runKind: EpochResultPageRunKind = journey
+    ? "one_shot_journey"
+    : focusTurnCard
     ? "single_turn"
     : focusHostedSession
       ? "hosted_journey"
@@ -71,16 +87,22 @@ export function buildEpochResultPageRunSummary(input: Record<string, unknown>, {
   };
   return {
     runKind,
-    title: titleByKind[runKind],
-    startedAt: focusHostedSession?.startedAt
+    title: journey?.mission?.title || titleByKind[runKind],
+    startedAt: journey?.startedAtWorldTime
+      || focusHostedSession?.startedAt
       || focusTurnCard?.createdAt
       || progress.latestEvents.at(-1)?.createdAt
       || generatedAt,
-    settledAt: focusHostedSession?.completedAt
+    settledAt: journey?.dueAtWorldTime
+      || focusHostedSession?.completedAt
       || focusTurnCard?.resolvedAt
       || progress.latestEvents[0]?.createdAt
       || generatedAt,
     stepCount,
-    endingReason: runKind === "agent_snapshot" ? "snapshot" : "completed",
+    endingReason: journey?.mission?.status === "failed"
+      ? "early_exit"
+      : runKind === "agent_snapshot"
+        ? "snapshot"
+        : "completed",
   };
 }
