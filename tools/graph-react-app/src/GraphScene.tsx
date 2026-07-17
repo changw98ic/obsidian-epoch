@@ -16,11 +16,60 @@ import {
   randomOffset,
 } from "./graphUtils";
 
-type ForceGraphInstance = any;
+type ForceGraphData = { nodes: GraphNode[]; links: GraphLink[] };
+type GraphForce = {
+  strength: (accessor: (node: GraphNode) => number) => void;
+  distance: (accessor: (link: GraphLink) => number) => void;
+};
+type ForceGraphInstance = {
+  controls: () => object;
+  camera: () => THREE.Camera;
+  cameraPosition: (position: { x: number; y: number; z: number }, lookAt?: { x: number; y: number; z: number }, transitionMs?: number) => ForceGraphInstance;
+  d3Force: (forceName: string) => unknown;
+  scene: () => THREE.Scene;
+  width: (value: number) => ForceGraphInstance;
+  height: (value: number) => ForceGraphInstance;
+  backgroundColor: (value: string) => ForceGraphInstance;
+  nodeId: (value: string) => ForceGraphInstance;
+  nodeLabel: (accessor: (node: GraphNode) => string) => ForceGraphInstance;
+  nodeThreeObject: (accessor: (node: GraphNode) => THREE.Object3D) => ForceGraphInstance;
+  linkVisibility: (accessor: (link: GraphLink) => boolean) => ForceGraphInstance;
+  linkWidth: (accessor: (link: GraphLink) => number) => ForceGraphInstance;
+  linkOpacity: (value: number) => ForceGraphInstance;
+  linkColor: (accessor: (link: GraphLink) => string) => ForceGraphInstance;
+  linkMaterial: (accessor: (link: GraphLink) => THREE.Material) => ForceGraphInstance;
+  linkDirectionalParticles: (accessor: (link: GraphLink) => number) => ForceGraphInstance;
+  linkDirectionalParticleSpeed: (accessor: (link: GraphLink) => number) => ForceGraphInstance;
+  linkDirectionalParticleWidth: (accessor: (link: GraphLink) => number) => ForceGraphInstance;
+  linkDirectionalParticleColor: (accessor: (link: GraphLink) => string) => ForceGraphInstance;
+  onNodeHover: (callback: (node: GraphNode | null, previousNode: GraphNode | null) => void) => ForceGraphInstance;
+  onNodeClick: (callback: (node: GraphNode, event: MouseEvent) => void) => ForceGraphInstance;
+  onBackgroundClick: (callback: (event: MouseEvent) => void) => ForceGraphInstance;
+  graphData: {
+    (): ForceGraphData;
+    (data: ForceGraphData): ForceGraphInstance;
+  };
+  _destructor?: () => void;
+};
+type GraphControls = {
+  enabled: boolean;
+  enableRotate: boolean;
+  enableZoom: boolean;
+  enablePan: boolean;
+  screenSpacePanning: boolean;
+  autoRotate: boolean;
+  autoRotateSpeed: number;
+  mouseButtons?: Partial<Record<"LEFT" | "RIGHT", number>>;
+  touches?: Partial<Record<"ONE" | "TWO", number>>;
+};
 type FocusRequest = { id?: string } | null | undefined;
 
+function graphControls(graph: ForceGraphInstance): GraphControls {
+  return graph.controls() as GraphControls;
+}
+
 function enableGraphNavigation(graph: ForceGraphInstance) {
-  const controls = graph.controls();
+  const controls = graphControls(graph);
   controls.enabled = true;
   controls.enableRotate = true;
   controls.enableZoom = true;
@@ -46,11 +95,11 @@ function exposeQaBridge(graph: ForceGraphInstance | null) {
       z: graph.camera().position.z,
     }),
     controls: () => ({
-      enabled: graph.controls().enabled,
-      enableRotate: graph.controls().enableRotate,
-      enableZoom: graph.controls().enableZoom,
-      enablePan: graph.controls().enablePan,
-      autoRotate: graph.controls().autoRotate,
+      enabled: graphControls(graph).enabled,
+      enableRotate: graphControls(graph).enableRotate,
+      enableZoom: graphControls(graph).enableZoom,
+      enablePan: graphControls(graph).enablePan,
+      autoRotate: graphControls(graph).autoRotate,
     }),
   };
 }
@@ -100,7 +149,7 @@ export default function GraphScene({
   const graphRef = useRef<ForceGraphInstance | null>(null);
   const textureCacheRef = useRef<Map<string, THREE.Texture>>(new Map());
   const occlusionTextureCacheRef = useRef<Map<string, THREE.Texture>>(new Map());
-  const animatedObjectsRef = useRef<Set<any>>(new Set());
+  const animatedObjectsRef = useRef<Set<THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>>>(new Set());
   const selectedRef = useRef<GraphNode | null>(selectedNode);
   const hoverRef = useRef<GraphNode | null>(hoverNode);
   const indexesRef = useRef<GraphIndexes>(indexes);
@@ -391,19 +440,19 @@ export default function GraphScene({
     const fg = graphRef.current;
     if (!fg) return;
     fg
-      .nodeThreeObject((node) => makeNodeObject(node))
-      .linkVisibility((link) => linkVisibleFor(link))
-      .linkWidth((link) => linkWidthFor(link))
-      .linkColor((link) => linkColorFor(link))
-      .linkMaterial((link) => linkMaterialFor(link))
-      .linkDirectionalParticles((link) => particleCountFor(link));
+      .nodeThreeObject((node: GraphNode) => makeNodeObject(node))
+      .linkVisibility((link: GraphLink) => linkVisibleFor(link))
+      .linkWidth((link: GraphLink) => linkWidthFor(link))
+      .linkColor((link: GraphLink) => linkColorFor(link))
+      .linkMaterial((link: GraphLink) => linkMaterialFor(link))
+      .linkDirectionalParticles((link: GraphLink) => particleCountFor(link));
   }
 
   function focusCamera(node: GraphNode | null | undefined) {
     const fg = graphRef.current;
     if (!fg || !node) return;
     enableGraphNavigation(fg);
-    fg.controls().autoRotate = false;
+    graphControls(fg).autoRotate = false;
     const distance = node.hasImage ? 190 : 155;
     const len = Math.hypot(node.x || 1, node.y || 1, node.z || 1);
     const ratio = 1 + distance / len;
@@ -415,7 +464,7 @@ export default function GraphScene({
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return undefined;
-    const fg = ForceGraph3D()(el)
+    const fg = (ForceGraph3D()(el) as unknown as ForceGraphInstance)
       .backgroundColor("rgba(0,0,0,0)")
       .nodeId("id")
       .nodeLabel((node) => `${node.label}\n${node.typeLabel}\n${node.summary || ""}`)
@@ -440,18 +489,21 @@ export default function GraphScene({
       .onBackgroundClick(() => {
         onClearFocus();
         enableGraphNavigation(fg);
-        fg.controls().autoRotate = viewState.mode === "featured";
+        graphControls(fg).autoRotate = viewState.mode === "featured";
       });
 
     graphRef.current = fg;
     exposeQaBridge(fg);
-    fg.d3Force("charge").strength((node) => (node.featured ? -150 : -48));
-    fg.d3Force("link").distance((link) => (isStoryLink(link) ? 68 : link.semantic ? 86 : 46));
-    fg.d3Force("center").strength(0.02);
+    const chargeForce = fg.d3Force("charge") as Pick<GraphForce, "strength"> | undefined;
+    const linkForce = fg.d3Force("link") as Pick<GraphForce, "distance"> | undefined;
+    const centerForce = fg.d3Force("center") as { strength: (value: number) => void } | undefined;
+    chargeForce?.strength((node) => (node.featured ? -150 : -48));
+    linkForce?.distance((link) => (isStoryLink(link) ? 68 : link.semantic ? 86 : 46));
+    centerForce?.strength(0.02);
     fg.cameraPosition({ x: 0, y: -44, z: 520 }, { x: 0, y: 58, z: 20 });
     enableGraphNavigation(fg);
-    fg.controls().autoRotate = true;
-    fg.controls().autoRotateSpeed = 0.28;
+    graphControls(fg).autoRotate = true;
+    graphControls(fg).autoRotateSpeed = 0.28;
 
     fg.scene().fog = new THREE.FogExp2(0x05090a, 0.00145);
     fg.scene().add(new THREE.AmbientLight(0xc7ccd8, 1.05));
@@ -474,7 +526,7 @@ export default function GraphScene({
     let running = true;
     const tick = () => {
       if (!running) return;
-      animatedObjectsRef.current.forEach((object: any) => {
+      animatedObjectsRef.current.forEach((object) => {
         if (!object.parent) {
           animatedObjectsRef.current.delete(object);
           return;
@@ -504,7 +556,7 @@ export default function GraphScene({
     updateVisuals();
     enableGraphNavigation(graphRef.current);
     exposeQaBridge(graphRef.current);
-    graphRef.current.controls().autoRotate = viewState.mode === "featured" && !selectedRef.current;
+    graphControls(graphRef.current).autoRotate = viewState.mode === "featured" && !selectedRef.current;
   }, [graphData, viewState.mode]);
 
   useEffect(() => {

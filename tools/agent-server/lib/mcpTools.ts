@@ -1,5 +1,12 @@
 import { adjudicateRun } from "./adjudicator.ts";
-import { buildPublicWorldView, createCommunityLedger } from "./community.ts";
+import {
+  buildPublicWorldView,
+  createCommunityLedger,
+  publicCommunityMutationResult,
+  type CommunityAbuseContext,
+  type CommunityAbuseContextInput,
+  type CommunityAbuseContextResolver,
+} from "./community.ts";
 import {
   buildLegacyMultiAgentReservation,
   buildLegacyRunCapabilityEnvelope,
@@ -54,6 +61,7 @@ import {
   buildServerJourneyEpisodeFacts,
 } from "./epoch/journeyNarrativeRules.ts";
 import { currentMcpRequestContext } from "./mcpRequestContext.ts";
+import { currentMcpRequestAuthContext } from "./mcpRequestAuthContext.ts";
 import {
   EPOCH_ACTIVE_IDENTITY_TOOL_NAMES,
   EPOCH_ARCHIVED_IDENTITY_RECOMMENDED_TOOLS,
@@ -477,6 +485,110 @@ function publicWorldView({
   });
 }
 
+function uniqueCommunityExplorerIds(values: readonly unknown[], excludedExplorerId: string) {
+  return [...new Set(values
+    .map((value) => stringValue(value))
+    .filter((value) => value && value !== excludedExplorerId))];
+}
+
+function communityTargetExplorerIds({
+  targetType,
+  targetId,
+  actorExplorerId,
+  loreState,
+  factionState,
+  submittedRuns,
+  communityState,
+  relationshipGraph,
+}: {
+  readonly targetType: string;
+  readonly targetId: string;
+  readonly actorExplorerId: string;
+  readonly loreState: AnyRecord;
+  readonly factionState: AnyRecord;
+  readonly submittedRuns: readonly AnyRecord[];
+  readonly communityState: AnyRecord;
+  readonly relationshipGraph: AnyRecord;
+}) {
+  const candidateExplorerIds: unknown[] = [];
+  if (targetType === "run") {
+    candidateExplorerIds.push(...submittedRuns
+      .filter((run) => stringValue(run.runTicket) === targetId)
+      .filter((run) => run.visibility === "public"
+        || run.worldImpact === "review_candidate"
+        || recordValue(run.failurePublication).publicArchive === true)
+      .map((run) => run.explorerId));
+  }
+  const claims = recordArray(loreState.claims);
+  if (targetType === "claim") {
+    const claim = claims.find((item) => stringValue(item.claimId) === targetId);
+    candidateExplorerIds.push(...recordArray(claim?.sources).map((source) => source.explorerId));
+  }
+  if (targetType === "conflict") {
+    const conflict = recordArray(loreState.conflicts)
+      .find((item) => stringValue(item.conflictId) === targetId);
+    const claimIds = Array.isArray(conflict?.claimIds) ? conflict.claimIds.map(String) : [];
+    for (const claim of claims) {
+      if (!claimIds.includes(stringValue(claim.claimId))) continue;
+      candidateExplorerIds.push(...recordArray(claim.sources).map((source) => source.explorerId));
+    }
+  }
+  if (targetType === "faction") {
+    const faction = recordArray(factionState.factions)
+      .find((item) => stringValue(item.factionId) === targetId);
+    candidateExplorerIds.push(...recordArray(faction?.sources).map((source) => source.explorerId));
+  }
+  if (targetType === "comment") {
+    const comment = recordArray(communityState.comments)
+      .find((item) => stringValue(item.commentId) === targetId);
+    candidateExplorerIds.push(comment?.explorerId);
+  }
+  for (const relationship of recordArray(relationshipGraph.relationships)) {
+    if (stringValue(relationship.sourceAgentId) === targetId) candidateExplorerIds.push(relationship.sourceExplorerId);
+    if (stringValue(relationship.targetAgentId) === targetId) candidateExplorerIds.push(relationship.targetExplorerId);
+  }
+  return uniqueCommunityExplorerIds(candidateExplorerIds, actorExplorerId);
+}
+
+function runtimeCommunityAbuseContext({
+  input,
+  loreState,
+  factionState,
+  submittedRuns,
+  communityState,
+  relationshipGraph,
+  configuredResolver,
+}: {
+  readonly input: CommunityAbuseContextInput;
+  readonly loreState: AnyRecord;
+  readonly factionState: AnyRecord;
+  readonly submittedRuns: readonly AnyRecord[];
+  readonly communityState: AnyRecord;
+  readonly relationshipGraph: AnyRecord;
+  readonly configuredResolver?: CommunityAbuseContextResolver;
+}): CommunityAbuseContext | undefined {
+  const configured = configuredResolver?.(input) || {};
+  const targetExplorerIds = communityTargetExplorerIds({
+    targetType: input.targetType,
+    targetId: input.targetId,
+    actorExplorerId: input.explorerId,
+    loreState,
+    factionState,
+    submittedRuns,
+    communityState,
+    relationshipGraph,
+  });
+  const derivedAgainstExplorerId = targetExplorerIds.length === 1
+    ? targetExplorerIds[0]
+    : undefined;
+  if (!derivedAgainstExplorerId && !configured.againstExplorerId && !configured.groupId) return undefined;
+  return {
+    ...(derivedAgainstExplorerId ? { againstExplorerId: derivedAgainstExplorerId } : {}),
+    ...(configured.againstExplorerId ? { againstExplorerId: configured.againstExplorerId } : {}),
+    ...(configured.groupId ? { groupId: configured.groupId } : {}),
+  };
+}
+
 function legacyFailurePublication(adjudication: AnyRecord) {
   const publication = recordValue(adjudication.failurePublication);
   return stringValue(publication.selectedMode) ? publication : null;
@@ -789,7 +901,15 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
   const loreLedger = createLoreLedger(recordValue(options.loreState), { operationSwitches });
   const progressionLedger = createProgressionLedger(recordValue(options.progression));
   const factionLedger = createFactionLedger(recordValue(options.factions));
-  const communityLedger = createCommunityLedger(recordValue(options.community));
+  const communityOptions = recordValue(options.community);
+  const configuredCommunityAbuseResolver = typeof communityOptions.resolveAbuseContext === "function"
+    ? communityOptions.resolveAbuseContext as CommunityAbuseContextResolver
+    : undefined;
+  let resolveCommunityAbuseContext: CommunityAbuseContextResolver | undefined;
+  const communityLedger = createCommunityLedger({
+    ...communityOptions,
+    resolveAbuseContext: (input: CommunityAbuseContextInput) => resolveCommunityAbuseContext?.(input),
+  });
   const experienceLedger = createExperienceLedger(recordValue(options.experience));
   const outboxOptions = recordValue(options.outbox);
   const outboxLedger = createLegacyOutboxLedger({
@@ -1166,6 +1286,15 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
   const repairTickets = cloneRecords(options.repairTickets);
   const feedbackEvents = cloneRecords(options.feedbackEvents);
   const contextSnapshotLedger = cloneRecords(options.contextSnapshots);
+  resolveCommunityAbuseContext = (input) => runtimeCommunityAbuseContext({
+    input,
+    loreState: recordValue(loreLedger.state()),
+    factionState: recordValue(factionLedger.state()),
+    submittedRuns,
+    communityState: recordValue(communityLedger.state()),
+    relationshipGraph: recordValue(epochRuntime.relationships()),
+    configuredResolver: configuredCommunityAbuseResolver,
+  });
   const legacyRunSubmissionQuota = recordValue(options.legacyRunSubmissionQuota);
   const ticketOptions = recordValue(options.tickets);
   const legacyRunSubmissionQuotaDisabled = legacyRunSubmissionQuota.disabled === true;
@@ -2560,7 +2689,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     },
     communityReact: (input: AnyRecord) => {
       assertPublicSafe(input);
-      return communityLedger.react(input);
+      return publicCommunityMutationResult(communityLedger.react(input));
     },
     communityComment: (input: AnyRecord) => {
       assertPublicSafe(input);
@@ -2569,6 +2698,16 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     communityFlag: (input: AnyRecord) => {
       assertPublicSafe(input);
       return communityLedger.flag(input);
+    },
+    communityModerate: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      // Reuse the canonical operator-key check so the legacy community queue
+      // has the same fail-closed boundary as Epoch moderation endpoints.
+      epochRuntime.operatorOverview({
+        operatorKey: input.operatorKey,
+        limit: 1,
+      });
+      return communityLedger.moderate(input);
     },
     communityThread: ({ targetId }: AnyRecord) => communityLedger.threadFor(targetId),
     communityModeration: () => ({ queue: communityLedger.moderationQueue() }),
@@ -3542,24 +3681,53 @@ export const AGENT_WORLD_TOOLS = [
   {
     name: "agent_world.community_react",
     title: "Community reaction",
-    description: "Record an explorer reaction to a public claim, conflict, faction, or run.",
+    description: "Record a player-authenticated reaction to a public claim, conflict, faction, or run. The explorer is derived from the player bearer token; supplied explorerId values are ignored.",
     inputSchema: objectSchema({
       targetType: { type: "string" },
       targetId: { type: "string" },
-      explorerId: { type: "string" },
       reaction: { type: "string" },
-    }, ["targetType", "targetId", "explorerId", "reaction"]),
+    }, ["targetType", "targetId", "reaction"]),
   },
   {
     name: "agent_world.community_comment",
     title: "Community comment",
-    description: "Add a short public discussion comment to a world object.",
+    description: "Add a player-authenticated short public discussion comment to a world object. The explorer is derived from the player bearer token; supplied explorerId values are ignored.",
     inputSchema: objectSchema({
       targetType: { type: "string" },
       targetId: { type: "string" },
-      explorerId: { type: "string" },
       body: { type: "string" },
-    }, ["targetType", "targetId", "explorerId", "body"]),
+    }, ["targetType", "targetId", "body"]),
+  },
+  {
+    name: "agent_world.community_flag",
+    title: "Community flag",
+    description: "Queue a player-authenticated moderation flag for a public world object or comment. The explorer is derived from the player bearer token; supplied explorerId values are ignored.",
+    inputSchema: objectSchema({
+      targetType: { type: "string" },
+      targetId: { type: "string" },
+      reason: { type: "string" },
+      idempotencyKey: { type: "string" },
+    }, ["targetType", "targetId", "reason"]),
+  },
+  {
+    name: "agent_world.community_moderation",
+    title: "Community moderation queue",
+    description: "Read the player-community moderation queue. Requires the server-side operator key.",
+    inputSchema: objectSchema({
+      operatorKey: { type: "string" },
+    }, ["operatorKey"]),
+  },
+  {
+    name: "agent_world.community_moderate",
+    title: "Resolve community moderation",
+    description: "Operator-gated community moderation disposition. Resolve closes a queue item without changing the subject; hide or restore changes the public subject visibility.",
+    inputSchema: objectSchema({
+      operatorKey: { type: "string" },
+      flagId: { type: "string" },
+      action: { type: "string", enum: ["resolve", "restore", "hide"] },
+      note: { type: "string" },
+      idempotencyKey: { type: "string" },
+    }, ["operatorKey", "flagId", "action"]),
   },
   {
     name: "agent_world.community_thread",
@@ -5668,6 +5836,16 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
   const assertLegacyMutationEnabled = () => {
     if (process.env.NODE_ENV === "production") throw new Error(LEGACY_MUTATION_DISABLED_ERROR);
   };
+  const authenticatedCommunityInput = (args: AnyRecord) => {
+    const requestAuth = currentMcpRequestAuthContext();
+    if (requestAuth?.kind !== "player") throw new Error("community_auth_player_required");
+    const sanitized: AnyRecord = { ...args, explorerId: requestAuth.explorerId, tokenId: requestAuth.tokenId };
+    // Abuse-detector relationship fields are server-owned.  A client may not
+    // self-assert a target or group in order to manufacture or suppress flags.
+    delete sanitized.againstExplorerId;
+    delete sanitized.groupId;
+    return sanitized;
+  };
   async function startJourneyWithSampling(args: AnyRecord) {
     const requestContext = currentMcpRequestContext();
     const samplingRequested = args.decisionMode === "host_sampling";
@@ -6178,8 +6356,14 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     ["agent_world.public_world", () => runtime.publicWorld()],
     ["agent_world.progression_state", (args) => runtime.progressionState(args)],
     ["agent_world.operation_check", (args) => runtime.operationCheck(args)],
-    ["agent_world.community_react", (args) => runtime.communityReact(args)],
-    ["agent_world.community_comment", (args) => runtime.communityComment(args)],
+    ["agent_world.community_react", (args) => runtime.communityReact(authenticatedCommunityInput(args))],
+    ["agent_world.community_comment", (args) => runtime.communityComment(authenticatedCommunityInput(args))],
+    ["agent_world.community_flag", (args) => runtime.communityFlag(authenticatedCommunityInput(args))],
+    ["agent_world.community_moderation", (args) => {
+      runtime.epochOperatorOverview({ operatorKey: args.operatorKey, limit: 1 });
+      return runtime.communityModeration();
+    }],
+    ["agent_world.community_moderate", (args) => runtime.communityModerate(args)],
     ["agent_world.community_thread", (args) => runtime.communityThread(args)],
     ["agent_world.transparency_verify", () => runtime.transparencyVerify()],
     ["obsidian_epoch.quickstart", (args) => epochQuickstart(args)],

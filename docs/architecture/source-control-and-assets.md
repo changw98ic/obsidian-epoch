@@ -12,6 +12,17 @@ must not depend on a developer workstation's generated HTML, hashed Vite
 assets, copied media tree, local runtime ledgers, browser profiles, or batch
 generation diagnostics.
 
+`00_总览/world-map-data.json` is checked rather than regenerated inside the
+production Docker build. CI first runs `npm run world-map-data:check` against
+the complete source checkout. The Docker build stage also receives only the
+Markdown/source subset and versioned object-storage manifest needed by that
+check, so `npm run build:container` cannot package a stale map even when a
+release image is built outside CI. Those source inputs never enter the final
+runtime stage. The map generator resolves image names through the versioned
+object-storage manifest, not by scanning whichever original image files happen
+to exist locally. This makes the checked JSON reproducible in an image-less CI
+checkout while keeping the runtime image boundary intact.
+
 ## Generated files
 
 The following paths are reproducible outputs or local execution state and stay
@@ -28,6 +39,13 @@ outside Git:
 regenerates only the console HTML, JavaScript, CSS, and data required by the
 runtime image while intentionally skipping the large media copy. Production
 serves media from the configured HTTPS CDN/object-storage base.
+
+`npm run build:container` runs the same freshness check before Vite builds the
+container export. Run `npm run world-map-data:check` directly when CI is not in
+the path. It compares the tracked canonical map JSON byte-for-byte with a
+deterministic reconstruction from the source corpus and fails without
+modifying the worktree when the map is stale. Run `npm run
+world-map-data:generate` to refresh it intentionally.
 
 ## Original media
 

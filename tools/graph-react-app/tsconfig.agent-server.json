@@ -14,7 +14,20 @@
     "types": ["node"]
   },
   "include": [
-    "../agent-server/**/*.ts",
+    "../agent-server/*.ts",
+    "../agent-server/lib/**/*.ts",
+    "../agent-server/package/**/*.ts",
     "scripts/*.ts"
+  ],
+  "exclude": [
+    "../agent-server/test/**/*.ts",
+    "../agent-server/**/*.test.ts",
+    "../agent-server/**/*.test.tsx",
+    "../agent-server/**/*.spec.ts",
+    "../agent-server/**/*.spec.tsx",
+    "scripts/**/*.test.ts",
+    "scripts/**/*.test.tsx",
+    "scripts/**/*.spec.ts",
+    "scripts/**/*.spec.tsx"
   ]
 }

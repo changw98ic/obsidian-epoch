@@ -17,8 +17,6 @@ declare module "three-spritetext" {
   }
 }
 
-declare module "3d-force-graph";
-
 declare module "three/examples/jsm/controls/OrbitControls" {
   export { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 }

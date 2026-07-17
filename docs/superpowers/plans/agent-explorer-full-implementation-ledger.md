@@ -98,7 +98,7 @@ Completed local core implementation; agent-facing MCP correction recorded.
   - Reactions update per explorer/target rather than duplicating votes.
   - Comments and moderation flags create reviewable discussion hooks.
   - `GET /api/world/browser`, `GET /api/world/runs`, `GET /api/world/source-graph`, `GET /api/world/claims/:id`, `GET /api/world/conflicts/:id`, and `GET /api/world/factions/:id` are available.
-  - `POST /api/community/reaction`, `POST /api/community/comment`, `POST /api/community/flag`, `GET /api/community/thread`, and `GET /api/community/moderation` are available.
+  - `POST /api/community/reaction`, `POST /api/community/comment`, and `POST /api/community/flag` require `Authorization: Bearer <player-token>`; their actor is derived from that token and any request-body `explorerId` is ignored. Missing bearer credentials return `401 community_auth_required`; malformed, expired, or revoked credentials return `403 community_auth_invalid`. `GET /api/community/thread` remains public and read-only, but omits `hidden_pending_review` reactions from its returned reactions, counts, and attention score. `GET /api/community/moderation` requires `x-epoch-operator-key` and returns `403 operator_key_required` without a valid configured operator key.
   - Frontend Agent Explorer can load public world index and source graph counts.
 - Phase 8 gated audio/TTS experience:
   - `tools/agent-server/lib/experience.mjs`

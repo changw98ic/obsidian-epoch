@@ -2,6 +2,21 @@ import { createHash } from "node:crypto";
 
 type UnknownRecord = Record<string, unknown>;
 
+export type CommunityAbuseContextInput = {
+  readonly targetType: string;
+  readonly targetId: string;
+  readonly explorerId: string;
+};
+
+export type CommunityAbuseContext = {
+  readonly againstExplorerId?: string;
+  readonly groupId?: string;
+};
+
+export type CommunityAbuseContextResolver = (
+  input: CommunityAbuseContextInput,
+) => CommunityAbuseContext | undefined;
+
 function isRecord(value: unknown): value is UnknownRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -81,8 +96,94 @@ const DISPUTE_REACTIONS = new Set([
   "反证",
 ]);
 
+/**
+ * Community writes deliberately accept a small, closed set of public object
+ * types.  The ledger is also used directly by tests and by the MCP runtime,
+ * so validation lives here rather than only in an HTTP adapter.
+ */
+export const COMMUNITY_TARGET_TYPES = ["claim", "conflict", "faction", "run", "comment"] as const;
+const COMMUNITY_TARGET_TYPE_SET = new Set<string>(COMMUNITY_TARGET_TYPES);
+const COMMUNITY_MAX_TARGET_ID_LENGTH = 128;
+const COMMUNITY_MAX_REACTION_LENGTH = 64;
+const COMMUNITY_MAX_REASON_LENGTH = 240;
+const COMMUNITY_MAX_COMMENT_LENGTH = 600;
+const COMMUNITY_MAX_IDEMPOTENCY_KEY_LENGTH = 128;
+const COMMUNITY_MAX_OPERATOR_NOTE_LENGTH = 600;
+const COMMUNITY_DEFAULT_RATE_WINDOW_MS = 60 * 1_000;
+const COMMUNITY_DEFAULT_RATE_MAX_ACTIONS = 30;
+const COMMUNITY_DEFAULT_IDEMPOTENCY_ENTRIES = 2_000;
+
+export class CommunityRateLimitError extends Error {
+  readonly code = "community_rate_limited";
+  readonly retryAfterMs: number;
+  readonly retryAt: string;
+
+  constructor(retryAfterMs: number, retryAt: string) {
+    super("community_rate_limited");
+    this.name = "CommunityRateLimitError";
+    this.retryAfterMs = retryAfterMs;
+    this.retryAt = retryAt;
+  }
+}
+
 function stringValue(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function positiveIntegerValue(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+}
+
+function safeDate(now: unknown) {
+  const date = now instanceof Date ? now : new Date(String(now));
+  return Number.isFinite(date.getTime()) ? date : new Date();
+}
+
+function communityField(value: unknown, field: string, maxLength: number) {
+  if (typeof value !== "string") throw new Error(`community_${field}_required`);
+  const normalized = value.trim();
+  if (!normalized) throw new Error(`community_${field}_required`);
+  if (normalized.length > maxLength) throw new Error(`community_${field}_too_long`);
+  if (/[\u0000-\u001f\u007f]/u.test(normalized)) throw new Error(`community_${field}_invalid`);
+  return normalized;
+}
+
+function optionalCommunityField(value: unknown, field: string, maxLength: number) {
+  if (value === undefined || value === null || value === "") return undefined;
+  return communityField(value, field, maxLength);
+}
+
+function communityTargetType(value: unknown) {
+  const targetType = communityField(value, "target_type", 32).toLocaleLowerCase("en-US");
+  if (!COMMUNITY_TARGET_TYPE_SET.has(targetType)) throw new Error("community_target_type_invalid");
+  return targetType;
+}
+
+function idempotencyKey(input: UnknownRecord, fingerprint: string) {
+  const explicit = optionalCommunityField(input.idempotencyKey, "idempotency_key", COMMUNITY_MAX_IDEMPOTENCY_KEY_LENGTH);
+  return explicit ? `explicit:${explicit}` : `derived:${fingerprint}`;
+}
+
+function publicCommunityRecord(record: UnknownRecord) {
+  const publicRecord = { ...record };
+  delete publicRecord.idempotentReplay;
+  delete publicRecord._communityIdempotencyKey;
+  delete publicRecord._communityIdempotencyFingerprint;
+  return publicRecord;
+}
+
+/**
+ * Mutation responses may be returned directly by HTTP/MCP adapters. Keep
+ * detector relationship context and moderation reason codes operator-only;
+ * the ledger state and moderation queue retain the authoritative evidence.
+ */
+export function publicCommunityMutationResult(value: unknown) {
+  const publicRecord = publicCommunityRecord(recordValue(value));
+  delete publicRecord.againstExplorerId;
+  delete publicRecord.groupId;
+  delete publicRecord.disputeAbuseFlags;
+  delete publicRecord.reviewStatus;
+  return publicRecord;
 }
 
 function isDisputeReaction(value: unknown) {
@@ -257,6 +358,19 @@ export function createCommunityLedger(options: UnknownRecord = {}) {
   const reactions = new Map<string, UnknownRecord>();
   const comments = recordArray(options.comments).map((comment) => ({ ...comment }));
   const flags = recordArray(options.flags).map((flag) => ({ ...flag }));
+  const abuseContextResolver = typeof options.resolveAbuseContext === "function"
+    ? options.resolveAbuseContext as CommunityAbuseContextResolver
+    : undefined;
+  const rateLimitOptions = recordValue(options.rateLimit);
+  const rateWindowMs = positiveIntegerValue(rateLimitOptions.windowMs, COMMUNITY_DEFAULT_RATE_WINDOW_MS);
+  const rateMaxActions = positiveIntegerValue(rateLimitOptions.maxActions, COMMUNITY_DEFAULT_RATE_MAX_ACTIONS);
+  const idempotencyEntryLimit = positiveIntegerValue(
+    rateLimitOptions.idempotencyEntries,
+    COMMUNITY_DEFAULT_IDEMPOTENCY_ENTRIES,
+  );
+  const clock = typeof options.now === "function" ? options.now as () => Date : () => new Date();
+  const rateBuckets = new Map<string, number[]>();
+  const idempotencyRecords = new Map<string, { readonly fingerprint: string; readonly record: UnknownRecord }>();
 
   for (const reaction of recordArray(options.reactions)) {
     if (reaction?.targetType && reaction?.targetId && reaction?.explorerId) {
@@ -264,16 +378,142 @@ export function createCommunityLedger(options: UnknownRecord = {}) {
     }
   }
 
-  function react({ targetType, targetId, explorerId, reaction, againstExplorerId, groupId }: UnknownRecord) {
-    const key = `${targetType}:${targetId}:${explorerId}`;
-    const updatedAt = new Date().toISOString();
-    const record = {
+  function nowDate() {
+    return safeDate(clock());
+  }
+
+  function rememberIdempotency(key: string, fingerprint: string, record: UnknownRecord) {
+    idempotencyRecords.set(key, { fingerprint, record: { ...record } });
+    while (idempotencyRecords.size > idempotencyEntryLimit) {
+      const oldest = idempotencyRecords.keys().next().value;
+      if (typeof oldest !== "string") break;
+      idempotencyRecords.delete(oldest);
+    }
+  }
+
+  function replayIdempotency(key: string, fingerprint: string) {
+    const stored = idempotencyRecords.get(key);
+    if (!stored) return undefined;
+    if (stored.fingerprint !== fingerprint) throw new Error("community_idempotency_conflict");
+    return { ...publicCommunityRecord(stored.record), idempotentReplay: true };
+  }
+
+  function hydrateIdempotency(action: "reaction" | "comment" | "flag", record: UnknownRecord) {
+    const actor = stringValue(record.explorerId);
+    if (!actor) return;
+    const fingerprint = stringValue(record._communityIdempotencyFingerprint) || (
+      action === "reaction"
+        ? [stringValue(record.targetType), stringValue(record.targetId), actor, stringValue(record.reaction)].join("\u001f")
+        : [stringValue(record.targetType), stringValue(record.targetId), actor, stringValue(action === "comment" ? record.body : record.reason)].join("\u001f")
+    );
+    const key = stringValue(record._communityIdempotencyKey) || `derived:${fingerprint}`;
+    rememberIdempotency(`${action}:${actor}:${key}`, fingerprint, record);
+  }
+
+  function reserveRate(actors: readonly string[], nowMs: number) {
+    const keys = [...new Set(actors.filter(Boolean))];
+    const recentByActor = keys.map((actor) => ({
+      actor,
+      recent: (rateBuckets.get(actor) || []).filter((timestamp) => timestamp > nowMs - rateWindowMs),
+    }));
+    const limited = recentByActor.find(({ recent }) => recent.length >= rateMaxActions);
+    if (limited) {
+      const retryAtMs = Math.min(...limited.recent) + rateWindowMs;
+      const retryAfterMs = Math.max(1, retryAtMs - nowMs);
+      for (const { actor, recent } of recentByActor) rateBuckets.set(actor, recent);
+      throw new CommunityRateLimitError(retryAfterMs, new Date(retryAtMs).toISOString());
+    }
+    for (const { actor, recent } of recentByActor) {
+      recent.push(nowMs);
+      rateBuckets.set(actor, recent);
+    }
+  }
+
+  function validatedActor(input: UnknownRecord) {
+    const actor = communityField(input.explorerId, "explorer_id", COMMUNITY_MAX_TARGET_ID_LENGTH);
+    const tokenId = optionalCommunityField(input.tokenId, "token_id", COMMUNITY_MAX_TARGET_ID_LENGTH);
+    // Keep both server-derived scopes: a token bucket limits one credential,
+    // while an explorer bucket prevents rotating credentials from bypassing
+    // the same community write budget.
+    return { actor, tokenId, rateActors: tokenId ? [actor, tokenId] : [actor] };
+  }
+
+  function applyTargetDisposition(targetType: string, targetId: string, action: "restore" | "hide") {
+    if (targetType === "comment") {
+      const comment = comments.find((candidate) => candidate.commentId === targetId);
+      if (comment) comment.status = action === "hide" ? "hidden" : "visible";
+      return;
+    }
+    for (const reaction of reactions.values()) {
+      if (reaction.targetType !== targetType || reaction.targetId !== targetId) continue;
+      reaction.visibility = action === "hide" ? "hidden" : "visible";
+      reaction.reviewStatus = action === "hide" ? "operator_hidden" : "none";
+    }
+  }
+
+  function appendDisputeFlag(record: UnknownRecord, disputeAbuseFlags: readonly string[], createdAt: string) {
+    const targetType = stringValue(record.targetType);
+    const targetId = stringValue(record.targetId);
+    const explorerId = stringValue(record.explorerId);
+    const flagId = id("flag", [targetType, targetId, explorerId, disputeAbuseFlags.join(",")]);
+    if (flags.some((candidate) => candidate.flagId === flagId)) return;
+    flags.push({
+      flagId,
       targetType,
       targetId,
       explorerId,
-      ...(againstExplorerId ? { againstExplorerId } : {}),
-      ...(groupId ? { groupId } : {}),
-      reaction,
+      reason: `dispute_abuse:${disputeAbuseFlags.join("+")}`,
+      status: "queued",
+      disputeAbuseFlags: [...disputeAbuseFlags],
+      createdAt,
+    });
+  }
+
+  for (const reaction of reactions.values()) hydrateIdempotency("reaction", reaction);
+  for (const comment of comments) hydrateIdempotency("comment", comment);
+  for (const flag of flags) hydrateIdempotency("flag", flag);
+
+  function react(input: UnknownRecord) {
+    const normalizedTargetType = communityTargetType(input.targetType);
+    const normalizedTargetId = communityField(input.targetId, "target_id", COMMUNITY_MAX_TARGET_ID_LENGTH);
+    const { actor, rateActors } = validatedActor(input);
+    const normalizedReaction = communityField(input.reaction, "reaction", COMMUNITY_MAX_REACTION_LENGTH);
+    // Once a resolver is configured, relationship and group context comes
+    // exclusively from that server-owned callback. Public adapters may still
+    // pass untrusted fields for backwards compatibility, but they are ignored
+    // before abuse detection.
+    const abuseContext = abuseContextResolver
+      ? abuseContextResolver({
+          targetType: normalizedTargetType,
+          targetId: normalizedTargetId,
+          explorerId: actor,
+        }) || {}
+      : input;
+    const normalizedAgainstExplorerId = optionalCommunityField(
+      abuseContext.againstExplorerId,
+      "against_explorer_id",
+      COMMUNITY_MAX_TARGET_ID_LENGTH,
+    );
+    const normalizedGroupId = optionalCommunityField(abuseContext.groupId, "group_id", COMMUNITY_MAX_TARGET_ID_LENGTH);
+    const key = `${normalizedTargetType}:${normalizedTargetId}:${actor}`;
+    const fingerprint = [normalizedTargetType, normalizedTargetId, actor, normalizedReaction].join("\u001f");
+    const replayKey = idempotencyKey(input, fingerprint);
+    const replay = replayIdempotency(`reaction:${actor}:${replayKey}`, fingerprint);
+    if (replay) return { ...replay, reactionPolicy: quickReactionPolicy() };
+    const existing = reactions.get(key);
+    if (existing && existing.reaction === normalizedReaction) {
+      rememberIdempotency(`reaction:${actor}:${replayKey}`, fingerprint, existing);
+      return { status: "recorded", ...publicCommunityRecord(existing), idempotentReplay: true, reactionPolicy: quickReactionPolicy() };
+    }
+    const updatedAt = nowDate().toISOString();
+    reserveRate(rateActors, Date.parse(updatedAt));
+    const record = {
+      targetType: normalizedTargetType,
+      targetId: normalizedTargetId,
+      explorerId: actor,
+      ...(normalizedAgainstExplorerId ? { againstExplorerId: normalizedAgainstExplorerId } : {}),
+      ...(normalizedGroupId ? { groupId: normalizedGroupId } : {}),
+      reaction: normalizedReaction,
       visibility: "visible",
       reviewStatus: "none",
       disputeAbuseFlags: [] as string[],
@@ -284,81 +524,156 @@ export function createCommunityLedger(options: UnknownRecord = {}) {
       record.visibility = "hidden_pending_review";
       record.reviewStatus = "queued";
       record.disputeAbuseFlags = disputeAbuseFlags;
-      flags.push({
-        flagId: id("flag", [targetType, targetId, explorerId, disputeAbuseFlags.join(","), String(flags.length)]),
-        targetType,
-        targetId,
-        explorerId,
-        reason: `dispute_abuse:${disputeAbuseFlags.join("+")}`,
-        status: "queued",
-        disputeAbuseFlags,
-        createdAt: updatedAt,
-      });
+      appendDisputeFlag(record, disputeAbuseFlags, updatedAt);
     }
-    reactions.set(key, record);
-    return { status: "recorded", ...record, reactionPolicy: quickReactionPolicy() };
+    const storedRecord = {
+      ...record,
+      _communityIdempotencyKey: replayKey,
+      _communityIdempotencyFingerprint: fingerprint,
+    };
+    reactions.set(key, storedRecord);
+    rememberIdempotency(`reaction:${actor}:${replayKey}`, fingerprint, storedRecord);
+    return { status: "recorded", ...publicCommunityRecord(record), reactionPolicy: quickReactionPolicy() };
   }
 
-  function comment({ targetType, targetId, explorerId, body }: UnknownRecord) {
-    const commentId = id("comment", [targetType, targetId, explorerId, body, String(comments.length)]);
+  function comment(input: UnknownRecord) {
+    const normalizedTargetType = communityTargetType(input.targetType);
+    const normalizedTargetId = communityField(input.targetId, "target_id", COMMUNITY_MAX_TARGET_ID_LENGTH);
+    const { actor, rateActors } = validatedActor(input);
+    const normalizedBody = communityField(input.body, "body", COMMUNITY_MAX_COMMENT_LENGTH);
+    const fingerprint = [normalizedTargetType, normalizedTargetId, actor, normalizedBody].join("\u001f");
+    const replayKey = idempotencyKey(input, fingerprint);
+    const key = `comment:${actor}:${replayKey}`;
+    const replay = replayIdempotency(key, fingerprint);
+    if (replay) return replay;
+    reserveRate(rateActors, nowDate().getTime());
+    const commentId = id("comment", [normalizedTargetType, normalizedTargetId, actor, normalizedBody, replayKey]);
+    const existing = comments.find((candidate) => candidate.commentId === commentId);
+    if (existing) {
+      rememberIdempotency(key, fingerprint, existing);
+      return { ...publicCommunityRecord(existing), idempotentReplay: true };
+    }
     const record = {
       commentId,
-      targetType,
-      targetId,
-      explorerId,
-      body: String(body || "").trim().slice(0, 600),
+      targetType: normalizedTargetType,
+      targetId: normalizedTargetId,
+      explorerId: actor,
+      body: normalizedBody,
       status: "visible",
-      createdAt: new Date().toISOString(),
+      createdAt: nowDate().toISOString(),
     };
-    comments.push(record);
-    return { ...record };
+    const storedRecord = {
+      ...record,
+      _communityIdempotencyKey: replayKey,
+      _communityIdempotencyFingerprint: fingerprint,
+    };
+    comments.push(storedRecord);
+    rememberIdempotency(key, fingerprint, storedRecord);
+    return publicCommunityRecord(record);
   }
 
-  function flag({ targetType, targetId, explorerId, reason }: UnknownRecord) {
+  function flag(input: UnknownRecord) {
+    const normalizedTargetType = communityTargetType(input.targetType);
+    const normalizedTargetId = communityField(input.targetId, "target_id", COMMUNITY_MAX_TARGET_ID_LENGTH);
+    const { actor, rateActors } = validatedActor(input);
+    const normalizedReason = communityField(input.reason, "reason", COMMUNITY_MAX_REASON_LENGTH);
+    const fingerprint = [normalizedTargetType, normalizedTargetId, actor, normalizedReason].join("\u001f");
+    const replayKey = idempotencyKey(input, fingerprint);
+    const key = `flag:${actor}:${replayKey}`;
+    const replay = replayIdempotency(key, fingerprint);
+    if (replay) return replay;
+    reserveRate(rateActors, nowDate().getTime());
+    const flagId = id("flag", [normalizedTargetType, normalizedTargetId, actor, normalizedReason, replayKey]);
+    const existing = flags.find((candidate) => candidate.flagId === flagId);
+    if (existing) {
+      rememberIdempotency(key, fingerprint, existing);
+      return { ...publicCommunityRecord(existing), idempotentReplay: true };
+    }
     const record = {
-      flagId: id("flag", [targetType, targetId, explorerId, reason, String(flags.length)]),
-      targetType,
-      targetId,
-      explorerId,
-      reason,
+      flagId,
+      targetType: normalizedTargetType,
+      targetId: normalizedTargetId,
+      explorerId: actor,
+      reason: normalizedReason,
       status: "queued",
-      createdAt: new Date().toISOString(),
+      createdAt: nowDate().toISOString(),
     };
-    flags.push(record);
-    return { ...record };
+    const storedRecord = {
+      ...record,
+      _communityIdempotencyKey: replayKey,
+      _communityIdempotencyFingerprint: fingerprint,
+    };
+    flags.push(storedRecord);
+    rememberIdempotency(key, fingerprint, storedRecord);
+    return publicCommunityRecord(record);
+  }
+
+  function moderate(input: UnknownRecord) {
+    const flagId = communityField(input.flagId, "flag_id", COMMUNITY_MAX_TARGET_ID_LENGTH);
+    const actionValue = stringValue(input.action || input.resolution).toLocaleLowerCase("en-US");
+    if (actionValue !== "resolve" && actionValue !== "restore" && actionValue !== "hide") {
+      throw new Error("community_moderation_action_invalid");
+    }
+    const desiredStatus = actionValue === "resolve"
+      ? "resolved"
+      : actionValue === "hide"
+        ? "hidden"
+        : "restored";
+    const index = flags.findIndex((candidate) => candidate.flagId === flagId);
+    if (index < 0) throw new Error("community_moderation_item_not_found");
+    const current = flags[index];
+    if (current.status === desiredStatus) {
+      return { ...publicCommunityRecord(current), idempotentReplay: true };
+    }
+    const note = optionalCommunityField(input.note, "moderation_note", COMMUNITY_MAX_OPERATOR_NOTE_LENGTH);
+    if (actionValue === "hide" || actionValue === "restore") {
+      applyTargetDisposition(
+        communityTargetType(current.targetType),
+        communityField(current.targetId, "target_id", COMMUNITY_MAX_TARGET_ID_LENGTH),
+        actionValue,
+      );
+    }
+    const updated = {
+      ...current,
+      status: desiredStatus,
+      resolution: actionValue,
+      ...(note ? { note } : {}),
+      resolvedAt: nowDate().toISOString(),
+    };
+    flags[index] = updated;
+    return publicCommunityRecord(updated);
   }
 
   function threadFor(targetId: unknown) {
     const targetReactions = Array.from(reactions.values()).filter((reaction) => reaction.targetId === targetId);
+    const visibleReactions = targetReactions.filter((reaction) =>
+      reaction.visibility !== "hidden_pending_review" && reaction.visibility !== "hidden");
+    const publicReactions = visibleReactions.map((reaction) => {
+      const publicRecord = publicCommunityRecord(reaction);
+      delete publicRecord.againstExplorerId;
+      delete publicRecord.groupId;
+      delete publicRecord.disputeAbuseFlags;
+      delete publicRecord.reviewStatus;
+      return publicRecord;
+    });
     const reactionCounts: Record<string, number> = {};
-    for (const reaction of targetReactions) {
+    for (const reaction of visibleReactions) {
       const reactionKey = String(reaction.reaction || "unknown");
       reactionCounts[reactionKey] = (reactionCounts[reactionKey] || 0) + 1;
     }
     const attentionScore = Object.values(reactionCounts).reduce((total, count) => total + count, 0);
-    const hiddenReactions = targetReactions.filter((reaction) => reaction.visibility === "hidden_pending_review");
-    const disputeAbuseFlagCounts: Record<string, number> = {};
-    for (const reaction of hiddenReactions) {
-      for (const flag of Array.isArray(reaction.disputeAbuseFlags) ? reaction.disputeAbuseFlags : []) {
-        const flagKey = String(flag);
-        disputeAbuseFlagCounts[flagKey] = (disputeAbuseFlagCounts[flagKey] || 0) + 1;
-      }
-    }
     return {
       targetId,
-      reactions: targetReactions.map((reaction) => ({ ...reaction })),
+      reactions: publicReactions,
       reactionCounts,
       reactionPolicy: quickReactionPolicy(),
       sortSignals: {
         attentionScore,
         reactionCounts: { ...reactionCounts },
       },
-      disputeAbuseSummary: {
-        hiddenReactions: hiddenReactions.length,
-        queuedForReview: hiddenReactions.length > 0,
-        flags: disputeAbuseFlagCounts,
-      },
-      comments: comments.filter((comment) => comment.targetId === targetId && comment.status === "visible").map((item) => ({ ...item })),
+      comments: comments
+        .filter((comment) => comment.targetId === targetId && comment.status === "visible")
+        .map((item) => publicCommunityRecord(item)),
     };
   }
 
@@ -366,8 +681,11 @@ export function createCommunityLedger(options: UnknownRecord = {}) {
     react,
     comment,
     flag,
+    moderate,
     threadFor,
-    moderationQueue: () => flags.filter((flagItem) => flagItem.status === "queued").map((flagItem) => ({ ...flagItem })),
+    moderationQueue: () => flags
+      .filter((flagItem) => flagItem.status === "queued")
+      .map((flagItem) => publicCommunityRecord(flagItem)),
     state: () => ({
       reactions: Array.from(reactions.values()).map((reaction) => ({ ...reaction })),
       comments: comments.map((comment) => ({ ...comment })),

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFile, mkdir, mkdtemp, readFile, rename, rm, stat } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -125,29 +125,30 @@ test("a failed ledger append does not poison later token writes or fake revocati
   });
 });
 
-test("restart atomically removes an incomplete trailing line before later appends and a second restart", async () => {
+test("restart fails closed for every existing token after an incomplete trailing ledger line", async () => {
   await withTempStorePath(async (jsonlPath) => {
     const store = await PlayerMcpAccessTokenStore.open({ jsonlPath, now: fixedNow("2026-01-01T00:00:00.000Z") });
-    const issued = await store.issue({ explorerId: "explorer_partial_ledger", ttlMs: 60_000 });
-    const completeLedger = await readFile(jsonlPath, "utf8");
-    await appendFile(jsonlPath, '{"type":"issue"', "utf8");
+    const first = await store.issue({ explorerId: "explorer_partial_ledger", ttlMs: 60_000 });
+    const second = await store.issue({ explorerId: "explorer_partial_other", ttlMs: 60_000 });
+    await appendFile(jsonlPath, `{"type":"revokeToken","tokenId":"${first.record.tokenId}"`, "utf8");
 
     const recovered = await PlayerMcpAccessTokenStore.open({
       jsonlPath,
       now: fixedNow("2026-01-01T00:00:01.000Z"),
     });
-    assert.equal(recovered.authenticate(issued.bearerToken)?.tokenId, issued.record.tokenId);
-    assert.equal(await readFile(jsonlPath, "utf8"), completeLedger);
+    assert.equal(recovered.authenticate(first.bearerToken), null);
+    assert.equal(recovered.authenticate(second.bearerToken), null);
+    assert.match(await readFile(jsonlPath, "utf8"), /"type":"revokeAll"/);
     assert.equal((await stat(jsonlPath)).mode & 0o777, 0o600);
 
-    await recovered.revokeToken(issued.record.tokenId);
+    const replacement = await recovered.issue({ explorerId: "explorer_recovered", ttlMs: 60_000 });
     const restarted = await PlayerMcpAccessTokenStore.open({
       jsonlPath,
       now: fixedNow("2026-01-01T00:00:02.000Z"),
     });
-    assert.equal(restarted.authenticate(issued.bearerToken), null);
-    assert.equal(restarted.get(issued.record.tokenId)?.revokedAt, "2026-01-01T00:00:01.000Z");
-    assert.equal((await readFile(jsonlPath, "utf8")).split("\n").filter(Boolean).length, 2);
+    assert.equal(restarted.authenticate(first.bearerToken), null);
+    assert.equal(restarted.authenticate(second.bearerToken), null);
+    assert.equal(restarted.authenticate(replacement.bearerToken)?.tokenId, replacement.record.tokenId);
 
     await appendFile(jsonlPath, '{"type":"issue"}\n', "utf8");
     await assert.rejects(
@@ -155,6 +156,57 @@ test("restart atomically removes an incomplete trailing line before later append
       /player_mcp_token_ledger_corrupt/,
     );
   });
+});
+
+test("rejects valid JSON ledger records with malformed or noncanonical expiry timestamps", async () => {
+  await withTempStorePath(async (jsonlPath) => {
+    const bearerToken = "valid-player-bearer-token-for-timestamp-validation";
+    const record = {
+      tokenId: "token_invalid_expiry",
+      explorerId: "explorer_invalid_expiry",
+      issuedAt: "2026-01-01T00:00:00.000Z",
+      tokenHash: hashBearerToken(bearerToken),
+    };
+
+    for (const expiresAt of ["not-a-timestamp", "2026-01-01T00:01:00Z"]) {
+      await writeFile(
+        jsonlPath,
+        `${JSON.stringify({ type: "issue", record: { ...record, expiresAt } })}\n`,
+        "utf8",
+      );
+      await assert.rejects(
+        () => PlayerMcpAccessTokenStore.open({ jsonlPath }),
+        /player_mcp_token_ledger_corrupt/,
+      );
+    }
+  });
+});
+
+test("authentication fails closed when an invalid expiry bypasses ledger validation", async () => {
+  const bearerToken = "valid-player-bearer-token-for-memory-validation";
+  const tokenHash = hashBearerToken(bearerToken);
+  const store = await PlayerMcpAccessTokenStore.open({ now: fixedNow("2026-01-01T00:00:00.000Z") });
+  const unsafeStore = store as unknown as {
+    recordsByTokenId: Map<string, {
+      tokenId: string;
+      explorerId: string;
+      issuedAt: string;
+      expiresAt: string;
+      tokenHash: string;
+      revokedAt?: string;
+    }>;
+    tokenIdByHash: Map<string, string>;
+  };
+  unsafeStore.recordsByTokenId.set("token_invalid_expiry", {
+    tokenId: "token_invalid_expiry",
+    explorerId: "explorer_invalid_expiry",
+    issuedAt: "2026-01-01T00:00:00.000Z",
+    expiresAt: "not-a-timestamp",
+    tokenHash,
+  });
+  unsafeStore.tokenIdByHash.set(tokenHash, "token_invalid_expiry");
+
+  assert.equal(store.authenticate(bearerToken), null);
 });
 
 test("persists one shared quota for pairing registration and player token issuance across restart", async () => {

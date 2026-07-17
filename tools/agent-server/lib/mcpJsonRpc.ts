@@ -129,6 +129,22 @@ export async function handleMcpJsonRpcMessage(
     }
     const messageText = errorMessage(error);
     if (messageText.startsWith("unknown_tool:")) return mcpJsonRpcErrorResponse(id, -32602, messageText);
+    if (messageText === "community_auth_player_required") {
+      return mcpJsonRpcErrorResponse(id, -32001, messageText);
+    }
+    if (messageText === "community_rate_limited") {
+      const retryAfterMs = isRecord(error) && Number.isSafeInteger(error.retryAfterMs)
+        ? Number(error.retryAfterMs)
+        : 1_000;
+      const retryAt = isRecord(error) && typeof error.retryAt === "string" ? error.retryAt : undefined;
+      return mcpJsonRpcErrorResponse(id, -32003, messageText, {
+        retryAfterMs,
+        ...(retryAt ? { retryAt } : {}),
+      });
+    }
+    if (messageText.startsWith("community_")) {
+      return mcpJsonRpcErrorResponse(id, -32602, messageText);
+    }
     if (isRecord(error) && error.code === "api_key_detected") return mcpJsonRpcErrorResponse(id, -32602, "api_key_detected");
     if (parameterErrorCodes().includes(messageText)) {
       return mcpJsonRpcErrorResponse(id, -32602, messageText);

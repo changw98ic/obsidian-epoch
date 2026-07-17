@@ -166,7 +166,128 @@ test("community dispute reactions hide retaliation, burst objections, and group 
   assert.equal(pileOn.disputeAbuseFlags.includes("group_pile_on"), true);
 
   const thread = ledger.threadFor("claim_pile_on");
-  assert.equal(thread.disputeAbuseSummary.hiddenReactions, 1);
-  assert.equal(thread.disputeAbuseSummary.queuedForReview, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(thread, "disputeAbuseSummary"), false);
+  assert.equal(JSON.stringify(thread).includes("short_burst_objections"), false);
+  assert.equal(thread.reactions.length, 2);
+  assert.equal(thread.reactions.some((reaction) => reaction.visibility === "hidden_pending_review"), false);
+  assert.deepEqual(thread.reactionCounts, { "不可信": 1, refute: 1 });
+  assert.equal(thread.sortSignals.attentionScore, 2);
   assert.equal(ledger.moderationQueue().filter((item) => String(item.reason).startsWith("dispute_abuse:")).length, 3);
+});
+
+test("community mutation inputs are bounded and target types are closed", () => {
+  const ledger = createCommunityLedger();
+
+  assert.throws(
+    () => ledger.react({ targetType: "npc", targetId: "npc_1", explorerId: "explorer_a", reaction: "useful" }),
+    /community_target_type_invalid/,
+  );
+  assert.throws(
+    () => ledger.comment({ targetType: "claim", targetId: "claim_1", explorerId: "explorer_a", body: "   " }),
+    /community_body_required/,
+  );
+  assert.throws(
+    () => ledger.flag({ targetType: "claim", targetId: "claim_1", explorerId: "explorer_a", reason: "x".repeat(241) }),
+    /community_reason_too_long/,
+  );
+  assert.throws(
+    () => ledger.comment({ targetType: "claim", targetId: "claim_1", explorerId: "explorer_a", body: "x".repeat(601) }),
+    /community_body_too_long/,
+  );
+});
+
+test("community comments and flags are replay-safe and reject idempotency conflicts", () => {
+  const ledger = createCommunityLedger();
+
+  const firstComment = ledger.comment({
+    targetType: "claim",
+    targetId: "claim_idempotent",
+    explorerId: "explorer_a",
+    body: "same comment",
+    idempotencyKey: "comment-1",
+  });
+  const replayComment = ledger.comment({
+    targetType: "claim",
+    targetId: "claim_idempotent",
+    explorerId: "explorer_a",
+    body: "same comment",
+    idempotencyKey: "comment-1",
+  });
+  assert.equal(replayComment.commentId, firstComment.commentId);
+  assert.equal(ledger.state().comments.length, 1);
+  assert.throws(
+    () => ledger.comment({
+      targetType: "claim",
+      targetId: "claim_idempotent",
+      explorerId: "explorer_a",
+      body: "different comment",
+      idempotencyKey: "comment-1",
+    }),
+    /community_idempotency_conflict/,
+  );
+
+  const firstFlag = ledger.flag({
+    targetType: "comment",
+    targetId: firstComment.commentId,
+    explorerId: "explorer_b",
+    reason: "low_signal",
+    idempotencyKey: "flag-1",
+  });
+  const replayFlag = ledger.flag({
+    targetType: "comment",
+    targetId: firstComment.commentId,
+    explorerId: "explorer_b",
+    reason: "low_signal",
+    idempotencyKey: "flag-1",
+  });
+  assert.equal(replayFlag.flagId, firstFlag.flagId);
+  assert.equal(ledger.state().flags.length, 1);
+});
+
+test("community mutations use a configurable per-token in-memory quota", () => {
+  let now = new Date("2026-01-01T00:00:00.000Z");
+  const ledger = createCommunityLedger({
+    now: () => now,
+    rateLimit: { windowMs: 1_000, maxActions: 2 },
+  });
+
+  ledger.react({ targetType: "claim", targetId: "claim_rate_1", explorerId: "explorer_rate", reaction: "useful" });
+  ledger.comment({ targetType: "claim", targetId: "claim_rate_1", explorerId: "explorer_rate", body: "one" });
+  assert.throws(
+    () => ledger.flag({ targetType: "claim", targetId: "claim_rate_1", explorerId: "explorer_rate", reason: "spam" }),
+    (error: unknown) => error instanceof Error && error.message === "community_rate_limited"
+      && (error as { readonly retryAfterMs?: number }).retryAfterMs === 1_000,
+  );
+
+  now = new Date(now.getTime() + 1_001);
+  const afterWindow = ledger.flag({ targetType: "claim", targetId: "claim_rate_1", explorerId: "explorer_rate", reason: "spam" });
+  assert.equal(afterWindow.status, "queued");
+});
+
+test("operator community moderation can hide, restore, and resolve queue items", () => {
+  const ledger = createCommunityLedger();
+  const comment = ledger.comment({
+    targetType: "claim",
+    targetId: "claim_moderation",
+    explorerId: "explorer_a",
+    body: "moderate me",
+  });
+  const flag = ledger.flag({
+    targetType: "comment",
+    targetId: comment.commentId,
+    explorerId: "explorer_b",
+    reason: "low_signal",
+  });
+
+  const hidden = ledger.moderate({ flagId: flag.flagId, action: "hide" });
+  assert.equal(hidden.status, "hidden");
+  assert.equal(ledger.threadFor("claim_moderation").comments.length, 0);
+
+  const restored = ledger.moderate({ flagId: flag.flagId, action: "restore" });
+  assert.equal(restored.status, "restored");
+  assert.equal(ledger.threadFor("claim_moderation").comments.length, 1);
+
+  const resolved = ledger.moderate({ flagId: flag.flagId, action: "resolve" });
+  assert.equal(resolved.status, "resolved");
+  assert.equal(ledger.moderationQueue().length, 0);
 });

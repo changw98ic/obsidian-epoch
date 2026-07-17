@@ -39,6 +39,11 @@ jobs:
       - name: Verify clean tracked release source
         run: npm run check:release-source -- --revision "$GITHUB_SHA" --repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
 
+      - name: Verify deterministic tracked world map data
+        run: |
+          npm run world-map-data:test
+          npm run world-map-data:check
+
       - name: Audit locked npm dependencies and generate source SBOM
         run: |
           npm audit --audit-level=high

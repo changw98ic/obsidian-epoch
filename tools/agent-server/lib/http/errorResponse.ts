@@ -281,6 +281,39 @@ const BAD_REQUEST_HTTP_ERROR_CODES = new Set([
   "turn_card_sequence_required",
   "turn_resolution_projection_failed",
   "web_bridge_session_required",
+  "community_target_type_invalid",
+  "community_target_id_required",
+  "community_target_id_too_long",
+  "community_target_id_invalid",
+  "community_explorer_id_required",
+  "community_explorer_id_too_long",
+  "community_explorer_id_invalid",
+  "community_token_id_too_long",
+  "community_token_id_invalid",
+  "community_reaction_required",
+  "community_reaction_too_long",
+  "community_reaction_invalid",
+  "community_against_explorer_id_too_long",
+  "community_against_explorer_id_invalid",
+  "community_group_id_too_long",
+  "community_group_id_invalid",
+  "community_body_required",
+  "community_body_too_long",
+  "community_body_invalid",
+  "community_reason_required",
+  "community_reason_too_long",
+  "community_reason_invalid",
+  "community_idempotency_key_too_long",
+  "community_idempotency_key_invalid",
+  "community_idempotency_conflict",
+  "community_target_not_found",
+  "community_flag_id_required",
+  "community_flag_id_too_long",
+  "community_flag_id_invalid",
+  "community_moderation_note_too_long",
+  "community_moderation_note_invalid",
+  "community_moderation_action_invalid",
+  "community_moderation_item_not_found",
 ]);
 
 export interface HttpErrorResponse {
@@ -350,6 +383,19 @@ export function classifyHttpError(error: unknown): HttpErrorResponse {
       headers: { "retry-after": String(Math.max(1, Math.ceil(retryAfterMs / 1_000))) },
     };
   }
+  if (message === "community_rate_limited") {
+    const retry = rateLimitRetry(error);
+    const retryAfterMs = retry?.retryAfterMs || 1_000;
+    return {
+      statusCode: 429,
+      body: {
+        error: "community_rate_limited",
+        retryAfterMs,
+        ...(retry ? { retryAt: retry.retryAt } : {}),
+      },
+      headers: { "retry-after": String(Math.max(1, Math.ceil(retryAfterMs / 1_000))) },
+    };
+  }
   if (message.startsWith("trace_conflict_deploy_rate_limited:")) {
     const retryAt = message.slice("trace_conflict_deploy_rate_limited:".length);
     const retryTimestamp = Date.parse(retryAt);
@@ -380,6 +426,19 @@ export function classifyHttpError(error: unknown): HttpErrorResponse {
   }
   if (message === "explorer_auth_invalid") {
     return { statusCode: 403, body: { error: "explorer_auth_invalid" } };
+  }
+  if (message === "community_auth_required") {
+    return {
+      statusCode: 401,
+      body: { error: "community_auth_required" },
+      headers: { "www-authenticate": "Bearer realm=\"obsidian-epoch-community\"" },
+    };
+  }
+  if (message === "community_auth_invalid" || message === "community_auth_player_required") {
+    return { statusCode: 403, body: { error: message } };
+  }
+  if (message.startsWith("community_")) {
+    return { statusCode: 400, body: { error: message } };
   }
   if (message === "player_mcp_access_token_not_found") {
     return { statusCode: 404, body: { error: "player_mcp_access_token_not_found" } };

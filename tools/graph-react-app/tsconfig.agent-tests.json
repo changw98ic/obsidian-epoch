@@ -1,0 +1,25 @@
+{
+  "extends": "./tsconfig.agent-server.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "noUncheckedIndexedAccess": false
+  },
+  "include": [
+    "../agent-server/test/communityQuota.test.ts",
+    "../agent-server/test/communityAuthorityContext.test.ts",
+    "../agent-server/test/communityPersistenceGuard.test.ts",
+    "../agent-server/test/deploy-config.test.ts",
+    "../agent-server/test/httpErrorResponse.test.ts",
+    "../agent-server/test/mcpHttpSampling.test.ts",
+    "../agent-server/test/mcpHttpTransport.test.ts",
+    "../agent-server/test/mcpJsonRpcSession.test.ts",
+    "../agent-server/test/mcpSampling.test.ts",
+    "../agent-server/test/playerMcpAccessTokenStore.test.ts",
+    "../agent-server/test/playerMcpHttpAuth.test.ts",
+    "../agent-server/test/release-source.test.ts",
+    "../agent-server/test/server-shutdown.test.ts",
+    "../agent-server/test/server-transport-shutdown.test.ts",
+    "../agent-server/test/server.test.ts"
+  ],
+  "exclude": ["dist", "node_modules"]
+}

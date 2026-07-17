@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
-import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
@@ -13,6 +12,38 @@ import { createAgentHttpServer } from "../lib/httpServer.ts";
 import { createAgentWorldMcpRuntime } from "../lib/mcpTools.ts";
 import { EPOCH_CONTEXT_PACK_VERSION } from "../lib/worldContextVersions.ts";
 import { handleJsonRpcMessage } from "../mcp.ts";
+
+// Resolve the child-process loader from the repository rather than from the
+// caller's cwd.  The stdio tests are also run directly from the repository
+// root, where `node --import tsx` cannot resolve the package installed under
+// tools/graph-react-app.
+const MCP_ENTRYPOINT = fileURLToPath(new URL("../mcp.ts", import.meta.url));
+const TSX_LOADER = fileURLToPath(new URL("../../graph-react-app/node_modules/tsx/dist/loader.mjs", import.meta.url));
+
+function nextStdioResponseLine(child: ChildProcess, lines: readline.Interface) {
+  return new Promise<string>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      lines.off("line", onLine);
+      child.off("error", onError);
+      child.off("exit", onExit);
+    };
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback();
+    };
+    const onLine = (line: string) => finish(() => resolve(line));
+    const onError = (error: Error) => finish(() => reject(error));
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => finish(() => {
+      reject(new Error(`stdio_mcp_child_exited:${code ?? signal ?? "unknown"}`));
+    });
+    lines.once("line", onLine);
+    child.once("error", onError);
+    child.once("exit", onExit);
+  });
+}
 
 function publicRun({
   explorerId = "explorer_agent_001",
@@ -11308,15 +11339,14 @@ test("MCP stdio reports Epoch validation failures as parameter errors", async ()
 });
 
 test("stdio MCP server handles initialize, tools/list, and tools/call", async () => {
-  const child = spawn(process.execPath, ["--import", "tsx", fileURLToPath(new URL("../mcp.ts", import.meta.url))], {
+  const child = spawn(process.execPath, ["--import", TSX_LOADER, MCP_ENTRYPOINT], {
     stdio: ["pipe", "pipe", "pipe"],
   });
   const lines = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
 
   async function request(id: number, method: string, params?: Record<string, any>) {
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-    const [line] = await once(lines, "line");
-    return JSON.parse(line);
+    return JSON.parse(await nextStdioResponseLine(child, lines));
   }
 
   try {
@@ -11369,7 +11399,7 @@ test("stdio MCP uses AGENT_WORLD_SERVER as canonical server when configured", as
   });
   assert.equal(pairingResponse.status, 201);
   const paired = await pairingResponse.json();
-  const child = spawn(process.execPath, ["--import", "tsx", fileURLToPath(new URL("../mcp.ts", import.meta.url))], {
+  const child = spawn(process.execPath, ["--import", TSX_LOADER, MCP_ENTRYPOINT], {
     stdio: ["pipe", "pipe", "pipe"],
     env: {
       ...process.env,
@@ -11380,8 +11410,7 @@ test("stdio MCP uses AGENT_WORLD_SERVER as canonical server when configured", as
 
   async function request(id: number, method: string, params?: Record<string, any>) {
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-    const [line] = await once(lines, "line");
-    return JSON.parse(line);
+    return JSON.parse(await nextStdioResponseLine(child, lines));
   }
 
   try {

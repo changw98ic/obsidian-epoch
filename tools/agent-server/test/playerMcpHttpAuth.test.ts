@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,12 +7,14 @@ import test from "node:test";
 import { createAgentHttpServer } from "../lib/httpServer.ts";
 import { MCP_PROTOCOL_VERSION, createAgentWorldRuntime } from "../lib/mcpTools.ts";
 import { PlayerMcpAccessTokenStore } from "../lib/playerMcpAccessTokenStore.ts";
+import { hydrateAgentRuntimeOptions } from "../lib/store.ts";
 import {
   type PublicRegistrationProtectionConfig,
   publicRegistrationInviteActorHash,
 } from "../lib/publicRegistrationProtection.ts";
 
 const BOOTSTRAP_TOKEN = "bootstrap-mcp-token-at-least-32-characters";
+const COMMUNITY_MODERATION_OPERATOR_KEY = "community-moderation-operator-key-at-least-32-characters";
 
 function recoveryCode(explorerId: string, localSecret: string): string {
   return Buffer.from(JSON.stringify({ explorerId, localSecret }), "utf8").toString("base64");
@@ -361,6 +363,289 @@ test("player MCP bearer authorizes only its explorer without exposing owner secr
     assert.equal(bootstrapWithoutOwnerProof.status, 401);
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("community writes require a player bearer principal and ignore supplied explorerId", async () => {
+  const runtime = createAgentWorldRuntime({
+    epoch: { operatorKey: COMMUNITY_MODERATION_OPERATOR_KEY },
+  });
+  const ownerExplorerId = "explorer_community_owner";
+  const spoofedExplorerId = "explorer_community_spoofed";
+  const tokenStore = await PlayerMcpAccessTokenStore.open();
+  const ownerToken = await tokenStore.issue({ explorerId: ownerExplorerId, ttlMs: 60_000 });
+  const server = createAgentHttpServer({
+    runtime,
+    mcpBearerToken: BOOTSTRAP_TOKEN,
+    playerMcpAccessTokens: tokenStore,
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const anonymousWrites = [
+      ["/api/community/reaction", {
+        targetType: "claim",
+        targetId: "claim_community_auth",
+        explorerId: spoofedExplorerId,
+        reaction: "useful",
+      }],
+      ["/api/community/comment", {
+        targetType: "claim",
+        targetId: "claim_community_auth",
+        explorerId: spoofedExplorerId,
+        body: "未认证写入不能进入公开讨论。",
+      }],
+      ["/api/community/flag", {
+        targetType: "comment",
+        targetId: "comment_community_auth",
+        explorerId: spoofedExplorerId,
+        reason: "low_signal",
+      }],
+    ] as const;
+    for (const [path, body] of anonymousWrites) {
+      const response = await postJson(baseUrl, path, body);
+      assert.equal(response.status, 401);
+      assert.equal(response.body.error, "community_auth_required");
+      assert.equal(response.headers.get("www-authenticate"), "Bearer realm=\"obsidian-epoch-community\"");
+    }
+
+    const invalidBearer = await postJson(baseUrl, "/api/community/comment", {
+      targetType: "claim",
+      targetId: "claim_community_auth",
+      explorerId: spoofedExplorerId,
+      body: "无效令牌不能写入公开讨论。",
+    }, { authorization: "Bearer not-a-valid-player-token" });
+    assert.equal(invalidBearer.status, 403);
+    assert.equal(invalidBearer.body.error, "community_auth_invalid");
+
+    const authorization = { authorization: `Bearer ${ownerToken.bearerToken}` };
+    const comment = await postJson(baseUrl, "/api/community/comment", {
+      targetType: "claim",
+      targetId: "claim_community_auth",
+      explorerId: spoofedExplorerId,
+      body: "写入者必须来自令牌主体。",
+    }, authorization);
+    assert.equal(comment.status, 200);
+    assert.equal(comment.body.explorerId, ownerExplorerId);
+
+    const reaction = await postJson(baseUrl, "/api/community/reaction", {
+      targetType: "claim",
+      targetId: "claim_community_auth",
+      explorerId: spoofedExplorerId,
+      reaction: "useful",
+    }, authorization);
+    assert.equal(reaction.status, 200);
+    assert.equal(reaction.body.explorerId, ownerExplorerId);
+    assert.equal(Object.prototype.hasOwnProperty.call(reaction.body, "againstExplorerId"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(reaction.body, "groupId"), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(reaction.body, "disputeAbuseFlags"), false);
+
+    const flag = await postJson(baseUrl, "/api/community/flag", {
+      targetType: "comment",
+      targetId: comment.body.commentId,
+      explorerId: spoofedExplorerId,
+      reason: "low_signal",
+    }, authorization);
+    assert.equal(flag.status, 200);
+    assert.equal(flag.body.explorerId, ownerExplorerId);
+
+    const invalidTargetType = await postJson(baseUrl, "/api/community/reaction", {
+      targetType: "npc",
+      targetId: "claim_community_auth",
+      reaction: "useful",
+    }, authorization);
+    assert.equal(invalidTargetType.status, 400);
+    assert.equal(invalidTargetType.body.error, "community_target_type_invalid");
+
+    const oversizedComment = await postJson(baseUrl, "/api/community/comment", {
+      targetType: "claim",
+      targetId: "claim_community_auth",
+      body: "x".repeat(601),
+      idempotencyKey: "oversized-comment",
+    }, authorization);
+    assert.equal(oversizedComment.status, 400);
+    assert.equal(oversizedComment.body.error, "community_body_too_long");
+
+    const publicModeration = await fetch(`${baseUrl}/api/community/moderation`);
+    assert.equal(publicModeration.status, 403);
+    assert.equal((await publicModeration.json() as Record<string, unknown>).error, "operator_key_required");
+
+    const operatorModeration = await fetch(`${baseUrl}/api/community/moderation`, {
+      headers: { "x-epoch-operator-key": COMMUNITY_MODERATION_OPERATOR_KEY },
+    });
+    const moderationPayload = await operatorModeration.json() as { readonly queue: readonly { readonly flagId: string }[] };
+    assert.equal(operatorModeration.status, 200);
+    assert.equal(moderationPayload.queue[0]?.flagId, flag.body.flagId);
+
+    const hideModeration = await postJson(baseUrl, "/api/community/moderation/hide", {
+      flagId: flag.body.flagId,
+      note: "operator hide",
+    }, { "x-epoch-operator-key": COMMUNITY_MODERATION_OPERATOR_KEY });
+    assert.equal(hideModeration.status, 200);
+    assert.equal(hideModeration.body.status, "hidden");
+    const hiddenThreadResponse = await fetch(`${baseUrl}/api/community/thread?targetId=claim_community_auth`);
+    const hiddenThread = await hiddenThreadResponse.json() as { readonly comments: readonly unknown[] };
+    assert.equal(hiddenThread.comments.length, 0);
+
+    const restoreModeration = await postJson(baseUrl, "/api/community/moderation/restore", {
+      flagId: flag.body.flagId,
+    }, { "x-epoch-operator-key": COMMUNITY_MODERATION_OPERATOR_KEY });
+    assert.equal(restoreModeration.status, 200);
+    assert.equal(restoreModeration.body.status, "restored");
+    const resolveModeration = await postJson(baseUrl, "/api/community/moderation/resolve", {
+      flagId: flag.body.flagId,
+    }, { "x-epoch-operator-key": COMMUNITY_MODERATION_OPERATOR_KEY });
+    assert.equal(resolveModeration.status, 200);
+    assert.equal(resolveModeration.body.status, "resolved");
+
+    const publicThreadResponse = await fetch(`${baseUrl}/api/community/thread?targetId=claim_community_auth`);
+    const publicThread = await publicThreadResponse.json() as {
+      readonly comments: readonly { readonly explorerId: string }[];
+      readonly reactions: readonly { readonly explorerId: string }[];
+    };
+    assert.equal(publicThreadResponse.status, 200);
+    assert.equal(publicThread.comments[0]?.explorerId, ownerExplorerId);
+    assert.equal(publicThread.reactions[0]?.explorerId, ownerExplorerId);
+    assert.equal(Object.prototype.hasOwnProperty.call(publicThread, "disputeAbuseSummary"), false);
+
+    const mcpReaction = await postTool(baseUrl, ownerToken.bearerToken, "agent_world.community_react", {
+      targetType: "claim",
+      targetId: "claim_community_mcp_auth",
+      explorerId: spoofedExplorerId,
+      reaction: "needs_evidence",
+    });
+    assert.equal(mcpReaction.status, 200);
+    const mcpReactionPayload = JSON.parse(String((mcpReaction.body.content as Array<{ text: string }>)[0]?.text));
+    assert.equal(mcpReactionPayload.explorerId, ownerExplorerId);
+
+    const bootstrapMcpWrite = await postTool(baseUrl, BOOTSTRAP_TOKEN, "agent_world.community_comment", {
+      targetType: "claim",
+      targetId: "claim_community_mcp_auth",
+      explorerId: spoofedExplorerId,
+      body: "Bootstrap MCP 令牌不代表玩家身份。",
+    });
+    assert.equal(bootstrapMcpWrite.status, 403);
+    assert.equal(bootstrapMcpWrite.body.error, "community_auth_player_required");
+
+    const bootstrapJsonRpcWrite = await postMcpTool(baseUrl, BOOTSTRAP_TOKEN, "agent_world.community_react", {
+      targetType: "claim",
+      targetId: "claim_community_mcp_auth",
+      explorerId: spoofedExplorerId,
+      reaction: "useful",
+    });
+    assert.equal(bootstrapJsonRpcWrite.status, 200);
+    assert.equal((bootstrapJsonRpcWrite.body.error as Record<string, unknown>).code, -32001);
+    assert.equal((bootstrapJsonRpcWrite.body.error as Record<string, unknown>).message, "community_auth_player_required");
+
+    await tokenStore.revokeToken(ownerToken.record.tokenId);
+    const revokedBearer = await postJson(baseUrl, "/api/community/comment", {
+      targetType: "claim",
+      targetId: "claim_community_auth",
+      body: "已撤销的令牌不能继续写入。",
+    }, authorization);
+    assert.equal(revokedBearer.status, 403);
+    assert.equal(revokedBearer.body.error, "community_auth_invalid");
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("community moderation fails closed when no operator key is configured", async () => {
+  const server = createAgentHttpServer({ runtime: createAgentWorldRuntime() });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/community/moderation`, {
+      headers: { "x-epoch-operator-key": COMMUNITY_MODERATION_OPERATOR_KEY },
+    });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json() as Record<string, unknown>).error, "operator_key_required");
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("MCP community writes persist direct and Streamable JSON-RPC mutations across a runtime restart", async () => {
+  const ownerExplorerId = "explorer_community_persistence_owner";
+  const directory = await mkdtemp(join(tmpdir(), "mcp-community-persistence-"));
+  const communityPath = join(directory, "community.jsonl");
+  const tokenStore = await PlayerMcpAccessTokenStore.open();
+  const ownerToken = await tokenStore.issue({ explorerId: ownerExplorerId, ttlMs: 60_000 });
+  const firstServer = createAgentHttpServer({
+    runtime: createAgentWorldRuntime(),
+    playerMcpAccessTokens: tokenStore,
+    persistJsonl: async (fileName, record) => {
+      if (fileName === "community.jsonl" && record && typeof record === "object" && !Array.isArray(record)) {
+        await appendFile(communityPath, `${JSON.stringify(record)}\n`, "utf8");
+      }
+    },
+  });
+  await new Promise<void>((resolve) => firstServer.listen(0, "127.0.0.1", resolve));
+  const firstAddress = firstServer.address() as AddressInfo;
+  const firstBaseUrl = `http://127.0.0.1:${firstAddress.port}`;
+
+  try {
+    try {
+      const directReaction = await postTool(firstBaseUrl, ownerToken.bearerToken, "agent_world.community_react", {
+        targetType: "claim",
+        targetId: "claim_mcp_persistence",
+        explorerId: "explorer_spoofed_direct_mcp",
+        reaction: "useful",
+      });
+      assert.equal(directReaction.status, 200, JSON.stringify(directReaction.body));
+
+      const streamableComment = await postMcpTool(firstBaseUrl, ownerToken.bearerToken, "agent_world.community_comment", {
+        targetType: "claim",
+        targetId: "claim_mcp_persistence",
+        explorerId: "explorer_spoofed_streamable_mcp",
+        body: "这条 MCP 留言必须在重启后仍然存在。",
+      });
+      assert.equal(streamableComment.status, 200, JSON.stringify(streamableComment.body));
+      assert.equal(streamableComment.body.jsonrpc, "2.0");
+    } finally {
+      await new Promise<void>((resolve, reject) => firstServer.close((error) => error ? reject(error) : resolve()));
+    }
+
+    const communityRecords = (await readFile(communityPath, "utf8"))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    assert.deepEqual(communityRecords.map((record) => record.action), ["reaction", "comment"]);
+    const latestState = communityRecords.at(-1)?.state as {
+      readonly reactions?: readonly { readonly explorerId: string; readonly targetId: string }[];
+      readonly comments?: readonly { readonly explorerId: string; readonly targetId: string; readonly body: string }[];
+    };
+    assert.equal(latestState.reactions?.[0]?.explorerId, ownerExplorerId);
+    assert.equal(latestState.reactions?.[0]?.targetId, "claim_mcp_persistence");
+    assert.equal(latestState.comments?.[0]?.explorerId, ownerExplorerId);
+    assert.equal(latestState.comments?.[0]?.targetId, "claim_mcp_persistence");
+    assert.equal(latestState.comments?.[0]?.body, "这条 MCP 留言必须在重启后仍然存在。");
+
+    const restartedServer = createAgentHttpServer({
+      runtime: createAgentWorldRuntime(hydrateAgentRuntimeOptions({ community: communityRecords })),
+    });
+    await new Promise<void>((resolve) => restartedServer.listen(0, "127.0.0.1", resolve));
+    const restartedAddress = restartedServer.address() as AddressInfo;
+    const restartedBaseUrl = `http://127.0.0.1:${restartedAddress.port}`;
+    try {
+      const threadResponse = await fetch(`${restartedBaseUrl}/api/community/thread?targetId=claim_mcp_persistence`);
+      const thread = await threadResponse.json() as {
+        readonly reactions: readonly { readonly explorerId: string; readonly targetId: string }[];
+        readonly comments: readonly { readonly explorerId: string; readonly targetId: string; readonly body: string }[];
+      };
+      assert.equal(threadResponse.status, 200);
+      assert.equal(thread.reactions[0]?.explorerId, ownerExplorerId);
+      assert.equal(thread.reactions[0]?.targetId, "claim_mcp_persistence");
+      assert.equal(thread.comments[0]?.explorerId, ownerExplorerId);
+      assert.equal(thread.comments[0]?.targetId, "claim_mcp_persistence");
+      assert.equal(thread.comments[0]?.body, "这条 MCP 留言必须在重启后仍然存在。");
+    } finally {
+      await new Promise<void>((resolve, reject) => restartedServer.close((error) => error ? reject(error) : resolve()));
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });
 

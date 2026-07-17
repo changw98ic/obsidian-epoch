@@ -10,6 +10,7 @@ import { createSequentialEpochIdFactory, type EpochClock } from "../lib/epoch/pr
 import { createAgentHttpServer, parseMcpToolResultPayload } from "../lib/httpServer.ts";
 import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
 import { obsidianEpochInstallSurface } from "../lib/packageArchive.ts";
+import { PlayerMcpAccessTokenStore } from "../lib/playerMcpAccessTokenStore.ts";
 import { renderEpochRegionPublicPageHtml } from "../lib/publicWorldPageHtml.ts";
 import { unavailableRecoveryManifest } from "../lib/recovery.ts";
 import { appendSqliteJsonl, loadAgentRuntimeOptionsFromSqlite } from "../lib/sqliteStore.ts";
@@ -10405,6 +10406,11 @@ test("JSONL records hydrate issued tickets and public submitted runs", async () 
 
 test("HTTP persistence records mutable ledger state snapshots", async () => {
   const writes: { fileName: string; record: Record<string, any> }[] = [];
+  const playerMcpAccessTokens = await PlayerMcpAccessTokenStore.open();
+  const communityAccessToken = await playerMcpAccessTokens.issue({
+    explorerId: "explorer_operator",
+    ttlMs: 60_000,
+  });
   const runtime = createAgentWorldRuntime({
     progression: {
       initialExplorers: [{
@@ -10428,6 +10434,7 @@ test("HTTP persistence records mutable ledger state snapshots", async () => {
 
   const server = createAgentHttpServer({
     runtime,
+    playerMcpAccessTokens,
     persistJsonl: async (fileName, record) => {
       writes.push({ fileName, record: record as Record<string, any> });
     },
@@ -10450,12 +10457,13 @@ test("HTTP persistence records mutable ledger state snapshots", async () => {
         originClaimIds: ["claim_echo_tree"],
       },
     });
-    await postJson(baseUrl, "/api/community/comment", {
+    const communityComment = await postJson(baseUrl, "/api/community/comment", {
       targetType: "claim",
       targetId: "claim_echo_tree",
       explorerId: "explorer_operator",
       body: "这条证据需要保留声纹。",
-    });
+    }, { authorization: `Bearer ${communityAccessToken.bearerToken}` });
+    assert.equal(communityComment.status, 200);
     await postJson(baseUrl, "/api/experience/voice", {
       explorerId: "explorer_operator",
       voiceId: "archive_voice",

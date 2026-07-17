@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { appendFile, mkdir, open as openFile, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open as openFile, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import {
   type PublicCredentialAction,
@@ -80,12 +80,17 @@ interface RevokeExplorerEvent {
   readonly revokedAt: string;
 }
 
+interface RevokeAllTokensEvent {
+  readonly type: "revokeAll";
+  readonly revokedAt: string;
+}
+
 interface PublicCredentialAdmissionEvent {
   readonly type: "publicCredentialAdmission";
   readonly record: PublicCredentialAdmissionRecord;
 }
 
-type TokenStoreEvent = IssueTokenEvent | RevokeTokenEvent | RevokeExplorerEvent | PublicCredentialAdmissionEvent;
+type TokenStoreEvent = IssueTokenEvent | RevokeTokenEvent | RevokeExplorerEvent | RevokeAllTokensEvent | PublicCredentialAdmissionEvent;
 
 export function validatePlayerMcpAccessTokenLedgerContent(content: string) {
   if (content.length > 0 && !/\r?\n$/.test(content)) {
@@ -215,11 +220,13 @@ export class PlayerMcpAccessTokenStore {
     const nowMs = this.now().getTime();
     const tokenId = this.tokenIdByHash.get(tokenHash);
     const matchedRecord = tokenId ? this.recordsByTokenId.get(tokenId) : undefined;
-    if (!matchedRecord || !constantTimeHashEquals(tokenHash, matchedRecord.tokenHash)) return null;
+    if (!Number.isFinite(nowMs) || !matchedRecord || !isStoredRecord(matchedRecord)) return null;
+    if (!constantTimeHashEquals(tokenHash, matchedRecord.tokenHash)) return null;
     if (matchedRecord.revokedAt !== undefined) {
       return null;
     }
-    if (Date.parse(matchedRecord.expiresAt) <= nowMs) {
+    const expiresAtMs = parseCanonicalTimestamp(matchedRecord.expiresAt);
+    if (expiresAtMs === undefined || expiresAtMs <= nowMs) {
       return null;
     }
 
@@ -295,7 +302,9 @@ export class PlayerMcpAccessTokenStore {
       } catch {
         const isIncompleteTrailingLine = index === lines.length - 1 && !hasCompleteTrailingLine;
         if (isIncompleteTrailingLine) {
-          repairedContent = content.slice(0, content.lastIndexOf("\n") + 1);
+          const revokeAll: RevokeAllTokensEvent = { type: "revokeAll", revokedAt: this.now().toISOString() };
+          repairedContent = `${content.slice(0, content.lastIndexOf("\n") + 1)}${JSON.stringify(revokeAll)}\n`;
+          events.push(revokeAll);
           break;
         }
         throw new Error("player_mcp_token_ledger_corrupt");
@@ -317,6 +326,12 @@ export class PlayerMcpAccessTokenStore {
     await mkdir(directory, { recursive: true, mode: 0o700 });
     try {
       await writeFile(temporaryPath, content, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      const temporaryFile = await openFile(temporaryPath, "r");
+      try {
+        await temporaryFile.sync();
+      } finally {
+        await temporaryFile.close();
+      }
       await rename(temporaryPath, this.jsonlPath);
     } finally {
       await rm(temporaryPath, { force: true });
@@ -335,7 +350,13 @@ export class PlayerMcpAccessTokenStore {
       return;
     }
     await mkdir(dirname(this.jsonlPath), { recursive: true, mode: 0o700 });
-    await appendFile(this.jsonlPath, `${JSON.stringify(event)}\n`, { encoding: "utf8", mode: 0o600 });
+    const file = await openFile(this.jsonlPath, "a", 0o600);
+    try {
+      await file.writeFile(`${JSON.stringify(event)}\n`, "utf8");
+      await file.sync();
+    } finally {
+      await file.close();
+    }
   }
 
   private async commitEvent(event: TokenStoreEvent): Promise<void> {
@@ -370,6 +391,15 @@ export class PlayerMcpAccessTokenStore {
 
     if (event.type === "publicCredentialAdmission") {
       this.publicCredentialAdmissions.push(event.record);
+      return;
+    }
+
+    if (event.type === "revokeAll") {
+      for (const record of this.recordsByTokenId.values()) {
+        if (record.revokedAt === undefined) {
+          this.recordsByTokenId.set(record.tokenId, { ...record, revokedAt: event.revokedAt });
+        }
+      }
       return;
     }
 
@@ -446,11 +476,14 @@ function parseTokenStoreEvent(value: unknown): TokenStoreEvent {
   if (value.type === "issue" && isStoredRecord(value.record)) {
     return { type: "issue", record: value.record };
   }
-  if (value.type === "revokeToken" && typeof value.tokenId === "string" && typeof value.revokedAt === "string") {
+  if (value.type === "revokeToken" && typeof value.tokenId === "string" && isCanonicalTimestamp(value.revokedAt)) {
     return { type: "revokeToken", tokenId: value.tokenId, revokedAt: value.revokedAt };
   }
-  if (value.type === "revokeExplorer" && typeof value.explorerId === "string" && typeof value.revokedAt === "string") {
+  if (value.type === "revokeExplorer" && typeof value.explorerId === "string" && isCanonicalTimestamp(value.revokedAt)) {
     return { type: "revokeExplorer", explorerId: value.explorerId, revokedAt: value.revokedAt };
+  }
+  if (value.type === "revokeAll" && isCanonicalTimestamp(value.revokedAt)) {
+    return { type: "revokeAll", revokedAt: value.revokedAt };
   }
   if (value.type === "publicCredentialAdmission" && isPublicCredentialAdmissionRecord(value.record)) {
     return { type: "publicCredentialAdmission", record: value.record };
@@ -501,12 +534,23 @@ function isStoredRecord(value: unknown): value is StoredPlayerMcpAccessTokenReco
   return (
     typeof value.tokenId === "string" &&
     typeof value.explorerId === "string" &&
-    typeof value.issuedAt === "string" &&
-    typeof value.expiresAt === "string" &&
+    isCanonicalTimestamp(value.issuedAt) &&
+    isCanonicalTimestamp(value.expiresAt) &&
     typeof value.tokenHash === "string" &&
-    (value.revokedAt === undefined || typeof value.revokedAt === "string") &&
+    (value.revokedAt === undefined || isCanonicalTimestamp(value.revokedAt)) &&
     isSha256Hash(value.tokenHash)
   );
+}
+
+function isCanonicalTimestamp(value: unknown): value is string {
+  return parseCanonicalTimestamp(value) !== undefined;
+}
+
+function parseCanonicalTimestamp(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const timestampMs = Date.parse(value);
+  if (!Number.isFinite(timestampMs)) return undefined;
+  return new Date(timestampMs).toISOString() === value ? timestampMs : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

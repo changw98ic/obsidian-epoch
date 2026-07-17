@@ -1,4 +1,4 @@
-import { createAgentHttpServer } from "./lib/httpServer.ts";
+import { createAgentHttpServer, disposeAgentHttpServerTransport } from "./lib/httpServer.ts";
 import { epochMaintenanceConfigFromEnv, startEpochMaintenanceScheduler } from "./lib/maintenance.ts";
 import { createAgentWorldRuntime } from "./lib/mcpTools.ts";
 import { createAgentPersistenceFromEnv } from "./lib/persistenceConfig.ts";
@@ -61,6 +61,7 @@ async function main() {
     shutdownStarted = true;
     const activeServer = server;
     console.log(`agent-server received ${reason}; draining connections for up to ${shutdownTimeoutMs}ms`);
+    disposeAgentHttpServerTransport(activeServer);
 
     const forceExitTimer = setTimeout(() => {
       console.error(`agent-server graceful shutdown timed out after ${shutdownTimeoutMs}ms`);

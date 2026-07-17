@@ -49,7 +49,7 @@ import {
 } from "./publicRegistrationProtection.ts";
 import { epochEventsForPersistence } from "./epoch/runtimePublicProjectionRules.ts";
 import { journeyEventsForPersistence } from "./epoch/journeyPersistence.ts";
-import { createMcpHttpSessionRegistry } from "./mcpHttpTransport.ts";
+import { createMcpHttpSessionRegistry, type McpHttpSessionRegistry } from "./mcpHttpTransport.ts";
 import {
   createEpochMutationCoordinator,
   createEpochPersistenceGuard,
@@ -63,6 +63,16 @@ import {
 
 type AgentWorldRuntime = ReturnType<typeof createAgentWorldRuntime>;
 type PersistEpochResult = (result: unknown) => Promise<number>;
+
+const mcpHttpSessionRegistries = new WeakMap<http.Server, McpHttpSessionRegistry>();
+
+/** Ends MCP SSE streams and cancels their pending server requests before HTTP shutdown waits on them. */
+export function disposeAgentHttpServerTransport(server: http.Server) {
+  const registry = mcpHttpSessionRegistries.get(server);
+  if (!registry) return false;
+  registry.dispose();
+  return true;
+}
 
 type HttpServerOptions = {
   runtime: AgentWorldRuntime;
@@ -316,7 +326,28 @@ const DEFAULT_ALLOWED_ORIGINS = ["http://127.0.0.1:5173", "http://localhost:5173
 const DEFAULT_MAX_BODY_BYTES = 1_000_000;
 const DEFAULT_PLAYER_MCP_TOKEN_TTL_MS = 12 * 60 * 60 * 1_000;
 
-async function persistRunSettlement(persistJsonl: typeof appendJsonl | null, body: AnyRecord, settlement: unknown, runtime: AgentWorldRuntime) {
+async function persistJsonlWithGuard(
+  persistJsonl: typeof appendJsonl | null,
+  persistenceGuard: EpochPersistenceGuard,
+  fileName: string,
+  record: unknown,
+) {
+  persistenceGuard.assertHealthy();
+  if (!persistJsonl) return;
+  try {
+    await persistJsonl(fileName, record);
+  } catch (error) {
+    throw persistenceGuard.trip(error);
+  }
+}
+
+async function persistRunSettlement(
+  persistJsonl: typeof appendJsonl | null,
+  persistenceGuard: EpochPersistenceGuard,
+  body: AnyRecord,
+  settlement: unknown,
+  runtime: AgentWorldRuntime,
+) {
   const settlementRecord = recordValue(settlement);
   const lore = recordValue(settlementRecord.lore);
   const progression = recordValue(settlementRecord.progression);
@@ -331,8 +362,9 @@ async function persistRunSettlement(persistJsonl: typeof appendJsonl | null, bod
     : typeof body.contextVersion === "string"
       ? { ...sequenceNormalizedRun, contextVersion: body.contextVersion }
       : sequenceNormalizedRun;
+  persistenceGuard.assertHealthy();
   if (!persistJsonl || settlementRecord.duplicate) return;
-  await persistJsonl("runs.jsonl", {
+  await persistJsonlWithGuard(persistJsonl, persistenceGuard, "runs.jsonl", {
     type: settlementRecord.state === "archived" ? "run_archived" : "run_submitted",
     runTicket: settlementRecord.runTicket === null ? undefined : body.runTicket,
     archiveId: settlementRecord.archiveId,
@@ -349,7 +381,7 @@ async function persistRunSettlement(persistJsonl: typeof appendJsonl | null, bod
     settledAt: settlementRecord.settledAt,
   });
   if (Array.isArray(lore.decisions) && lore.decisions.length) {
-    await persistJsonl("lore.jsonl", {
+    await persistJsonlWithGuard(persistJsonl, persistenceGuard, "lore.jsonl", {
       type: "lore_admission",
       runTicket: body.runTicket,
       lore,
@@ -358,7 +390,7 @@ async function persistRunSettlement(persistJsonl: typeof appendJsonl | null, bod
     });
   }
   if (Number(progression.pointsAwarded || 0) > 0) {
-    await persistJsonl("progression.jsonl", {
+    await persistJsonlWithGuard(persistJsonl, persistenceGuard, "progression.jsonl", {
       type: "progression_awarded",
       runTicket: body.runTicket,
       progression,
@@ -366,18 +398,28 @@ async function persistRunSettlement(persistJsonl: typeof appendJsonl | null, bod
       submittedAt: settlementRecord.submittedAt,
     });
   }
-  await persistOutboxEntries(persistJsonl, recordArray(recordValue(settlementRecord.outbox).entries));
+  await persistOutboxEntries(persistJsonl, persistenceGuard, recordArray(recordValue(settlementRecord.outbox).entries));
 }
 
-async function persistStateSnapshot(persistJsonl: typeof appendJsonl | null, fileName: string, record: unknown) {
-  if (persistJsonl) await persistJsonl(fileName, record);
+async function persistStateSnapshotWithGuard(
+  persistJsonl: typeof appendJsonl | null,
+  persistenceGuard: EpochPersistenceGuard,
+  fileName: string,
+  record: unknown,
+) {
+  await persistJsonlWithGuard(persistJsonl, persistenceGuard, fileName, record);
 }
 
-async function persistContextSnapshot(persistJsonl: typeof appendJsonl | null, contextPackage: unknown) {
+async function persistContextSnapshot(
+  persistJsonl: typeof appendJsonl | null,
+  persistenceGuard: EpochPersistenceGuard,
+  contextPackage: unknown,
+) {
+  persistenceGuard.assertHealthy();
   if (!persistJsonl) return;
   const snapshot = recordValue(recordValue(contextPackage).contextSnapshot);
   if (!optionalString(snapshot.snapshotId)) return;
-  await persistJsonl("context-snapshots.jsonl", {
+  await persistJsonlWithGuard(persistJsonl, persistenceGuard, "context-snapshots.jsonl", {
     type: "context_snapshot",
     snapshot,
   });
@@ -392,11 +434,16 @@ async function persistEpochEvents(
   return persistEpochEventBatchWithGuard(persistEpochEventBatch, persistenceGuard, events);
 }
 
-async function persistOutboxEntries(persistJsonl: typeof appendJsonl | null, entries: readonly AnyRecord[]) {
+async function persistOutboxEntries(
+  persistJsonl: typeof appendJsonl | null,
+  persistenceGuard: EpochPersistenceGuard,
+  entries: readonly AnyRecord[],
+) {
+  persistenceGuard.assertHealthy();
   if (!persistJsonl) return 0;
   let count = 0;
   for (const entry of entries) {
-    await persistJsonl("outbox.jsonl", { type: "outbox_event", ...entry });
+    await persistJsonlWithGuard(persistJsonl, persistenceGuard, "outbox.jsonl", { type: "outbox_event", ...entry });
     count += 1;
   }
   return count;
@@ -524,6 +571,7 @@ async function persistMcpToolPayload(
   persistJsonl: typeof appendJsonl | null,
   persistEpochResult: PersistEpochResult,
   persistenceGuard: EpochPersistenceGuard,
+  runtime: AgentWorldRuntime,
   toolName: string,
   toolResult: unknown,
   payloadShape: "mcp_tool_result" | "raw_internal_partial" = "mcp_tool_result",
@@ -564,8 +612,30 @@ async function persistMcpToolPayload(
     if (toolName !== "obsidian_epoch.create_result_page" && toolName !== "obsidian_epoch.start_journey") return;
   }
   if (toolName === "agent_world.context_package") {
-    await persistContextSnapshot(persistJsonl, payload);
+    await persistContextSnapshot(persistJsonl, persistenceGuard, payload);
     return;
+  }
+  const communityAction = toolName === "agent_world.community_react"
+    ? "reaction"
+    : toolName === "agent_world.community_comment"
+      ? "comment"
+      : toolName === "agent_world.community_flag"
+        ? "flag"
+        : toolName === "agent_world.community_moderate"
+          ? "moderation"
+          : undefined;
+  if (communityAction && persistJsonl) {
+    persistenceGuard.assertHealthy();
+    try {
+      await persistJsonl("community.jsonl", {
+        type: "community_state",
+        action: communityAction,
+        result: payload,
+        state: runtime.communityState(),
+      });
+    } catch (error) {
+      throw persistenceGuard.trip(error);
+    }
   }
   if (requiresCommandEnvelope) return;
   for (const key of ["verification", "departureVerification", "finalVerification"] as const) {
@@ -590,6 +660,7 @@ async function persistMcpJsonRpcPayload(
   persistJsonl: typeof appendJsonl | null,
   persistEpochResult: PersistEpochResult,
   persistenceGuard: EpochPersistenceGuard,
+  runtime: AgentWorldRuntime,
   requestBody: AnyRecord,
   jsonRpcResult: unknown,
 ) {
@@ -598,7 +669,7 @@ async function persistMcpJsonRpcPayload(
   const params = recordValue(requestBody.params);
   const toolName = typeof params.name === "string" ? params.name : "";
   if (!toolName || !resultRecord.result) return;
-  await persistMcpToolPayload(persistJsonl, persistEpochResult, persistenceGuard, toolName, resultRecord.result);
+  await persistMcpToolPayload(persistJsonl, persistEpochResult, persistenceGuard, runtime, toolName, resultRecord.result);
 }
 
 export function createAgentHttpServer({
@@ -689,9 +760,9 @@ export function createAgentHttpServer({
       playerMcpAccessTokens,
       publicServerBase: publicServerBase(request, canonicalPublicServerBase),
       persistMcpJsonRpcPayload: (requestBody, jsonRpcResult) =>
-        persistMcpJsonRpcPayload(persistJsonl, persistEpochResult, persistenceGuard, requestBody, jsonRpcResult),
+        persistMcpJsonRpcPayload(persistJsonl, persistEpochResult, persistenceGuard, runtime, requestBody, jsonRpcResult),
       persistMcpToolPayload: (toolName, toolResult, payloadShape) =>
-        persistMcpToolPayload(persistJsonl, persistEpochResult, persistenceGuard, toolName, toolResult, payloadShape),
+        persistMcpToolPayload(persistJsonl, persistEpochResult, persistenceGuard, runtime, toolName, toolResult, payloadShape),
       sendEmpty,
     })) {
       return;
@@ -990,10 +1061,14 @@ export function createAgentHttpServer({
       maxBodyBytes,
       persistEpochEvents: persistEpochResult,
       persistEpochResultPage: (result) => persistEpochResultPage(persistJsonl, result),
-      persistRunSettlement: (body, settlement) => persistRunSettlement(persistJsonl, body, settlement, runtime),
-      persistContextSnapshot: (contextPackage) => persistContextSnapshot(persistJsonl, contextPackage),
-      persistStateSnapshot: (fileName, record) => persistStateSnapshot(persistJsonl, fileName, record),
-      persistOutboxEntries: (entries) => persistOutboxEntries(persistJsonl, entries),
+      playerMcpAccessTokens,
+      persistRunSettlement: (body, settlement) =>
+        persistRunSettlement(persistJsonl, persistenceGuard, body, settlement, runtime),
+      persistContextSnapshot: (contextPackage) =>
+        persistContextSnapshot(persistJsonl, persistenceGuard, contextPackage),
+      persistStateSnapshot: (fileName, record) =>
+        persistStateSnapshotWithGuard(persistJsonl, persistenceGuard, fileName, record),
+      persistOutboxEntries: (entries) => persistOutboxEntries(persistJsonl, persistenceGuard, entries),
       readJsonBody,
       sendJson,
       sendHtml,
@@ -1036,6 +1111,19 @@ export function createAgentHttpServer({
       }
       sendJson(request, response, 500, { error: "internal_error" }, allowedOrigins);
     });
+  });
+  mcpHttpSessionRegistries.set(server, mcpHttpSessions);
+  // `http.Server.close()` waits for open keep-alive/SSE connections before it
+  // emits `close`. Dispose the MCP registry before delegating so callers that
+  // close a server directly cannot be held open by an active SSE stream.
+  const closeServer = server.close.bind(server);
+  server.close = ((callback?: (error?: Error) => void) => {
+    disposeAgentHttpServerTransport(server);
+    return closeServer(callback);
+  }) as typeof server.close;
+  server.once("close", () => {
+    disposeAgentHttpServerTransport(server);
+    mcpHttpSessionRegistries.delete(server);
   });
   server.keepAliveTimeout = 65_000;
   server.headersTimeout = 66_000;

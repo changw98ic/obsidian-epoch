@@ -14,6 +14,7 @@ import type { McpHttpSessionRegistry, McpHttpSessionRecord } from "../mcpHttpTra
 import { MCP_SESSION_PROTOCOL_VERSION } from "../mcpSession.ts";
 import type { EpochMutationCoordinator } from "../epochPersistence.ts";
 import { type EpochHttpRouteContext } from "./httpRouteTypes.ts";
+import { bearerTokenFromRequest } from "./playerBearerPrincipal.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -119,14 +120,6 @@ const PROTECTED_MCP_PATHS = new Set([
   "/api/epoch/mcp/tools/call",
 ]);
 
-function requestBearerToken(request: IncomingMessage): string | undefined {
-  const rawHeader = request.headers.authorization;
-  const authorization = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
-  if (!authorization?.startsWith("Bearer ")) return undefined;
-  const token = authorization.slice("Bearer ".length).trim();
-  return token || undefined;
-}
-
 function bearerTokenMatches(providedToken: string, expectedToken: string) {
   const provided = Buffer.from(providedToken, "utf8");
   const expected = Buffer.from(expectedToken, "utf8");
@@ -139,7 +132,7 @@ function authenticateMcpRequest(
   playerTokens: PlayerMcpAccessTokenStore | undefined,
 ): McpRequestAuthContext | undefined {
   if (!expectedToken && !playerTokens) return { kind: "bootstrap" };
-  const providedToken = requestBearerToken(request);
+  const providedToken = bearerTokenFromRequest(request);
   if (!providedToken) return undefined;
   if (expectedToken && bearerTokenMatches(providedToken, expectedToken)) return { kind: "bootstrap" };
   const playerToken = playerTokens?.authenticate(providedToken);
@@ -276,19 +269,25 @@ export async function handleEpochMcpRoutes(context: McpRouteContext): Promise<bo
             persistPartial: stagedPartialPersistence(context),
           }),
         );
+        const executeAndPersist = async () => {
+          const result = await execute();
+          if (result) await context.persistMcpJsonRpcPayload(mcpBody, result);
+          return result;
+        };
         const startedAt = Date.now();
         const isToolCall = mcpBody.method === "tools/call";
         let succeeded = false;
         let result;
         try {
           result = await mcpHttpSessions.runOnStream(streamId, () =>
-            serializedToolCall(mcpBody) ? mcpMutationCoordinator.run(execute) : execute());
+            serializedToolCall(mcpBody)
+              ? mcpMutationCoordinator.run(executeAndPersist)
+              : executeAndPersist());
           succeeded = true;
         } finally {
           if (isToolCall) mcpHttpSessions.noteToolCall(Date.now() - startedAt, succeeded);
         }
         if (result) {
-          await context.persistMcpJsonRpcPayload(mcpBody, result);
           mcpHttpSessions.sendOnStream(resolved.record, streamId, result);
         }
         mcpHttpSessions.closeStream(resolved.record, streamId);
@@ -303,14 +302,19 @@ export async function handleEpochMcpRoutes(context: McpRouteContext): Promise<bo
           persistPartial: stagedPartialPersistence(context),
         }),
       );
+      const executeAndPersist = async () => {
+        const result = await execute();
+        if (result) await context.persistMcpJsonRpcPayload(mcpBody, result);
+        return result;
+      };
       const startedAt = Date.now();
       const isToolCall = mcpBody.method === "tools/call";
       let succeeded = false;
       let result;
       try {
         result = serializedToolCall(mcpBody)
-          ? await mcpMutationCoordinator.run(execute)
-          : await execute();
+          ? await mcpMutationCoordinator.run(executeAndPersist)
+          : await executeAndPersist();
         succeeded = true;
       } finally {
         if (isToolCall) mcpHttpSessions.noteToolCall(Date.now() - startedAt, succeeded);
@@ -319,7 +323,6 @@ export async function handleEpochMcpRoutes(context: McpRouteContext): Promise<bo
         context.sendEmpty(request, response, 202, allowedOrigins);
         return true;
       }
-      await context.persistMcpJsonRpcPayload(mcpBody, result);
       context.sendJson(request, response, 200, result, allowedOrigins);
       return true;
     }
