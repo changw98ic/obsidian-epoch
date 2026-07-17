@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "loreVersion": "black-obsidian-atlas-v1",
-  "worldTimeOrigin": "0412-01-01T00:00:00",
+  "worldTimeOrigin": "0001-01-01T00:00:00",
   "layers": [
     { "id": "layer_surface_city", "label": "地表城市层" },
     { "id": "layer_surface_ecology", "label": "地表生态层" },

@@ -282,7 +282,7 @@ Owns:
 - News eligibility.
 - Legend award eligibility.
 
-Agent text is evidence/flavor. Adjudication reads server state and chosen action options. The current implementation exposes this as `obsidian_epoch.turn_card` / `obsidian_epoch.resolve_turn`: cards include visible context, public option IDs and server-written action explanations, while server-side option templates hold outcomes, rewards and lifetime deltas. The explanation object (`brief`, `trigger`, `choiceReason`, `rejectedAlternatives`, `risk`, `expectedBenefit`) is copied from the selected server option into `turn_resolved` and `hosted_action_recorded` for console and result-page readability; clients may submit visible prose, but cannot replace the canonical explanation, outcome, reward or lifetime delta.
+Agent text is evidence/flavor. Adjudication reads server state and signed action options. The default Agent-native implementation is `prepare_journey` -> `start_journey` -> repeated `propose_journey_step` / `commit_journey_action` -> `journey_status`: the server freezes a historical mirror and world slice, supplies identity traits, needs, life goal, resources, six-attribute balances, equipment and current inventory to task generation, then settles each signed option from canonical state. Passing terminal grades append resource plus attribute rewards and, above `及格`, a tiered item; final `未及格` archives the still-active identity during status finalization. `obsidian_epoch.turn_card` / `obsidian_epoch.resolve_turn` remains a compatibility path for an explicitly requested immediate turn. Both paths keep outcomes, rewards and lifetime effects server-owned; clients may submit visible prose, but cannot replace canonical explanations or settlement.
 
 ### 5.8 MCP Adapter
 
@@ -458,13 +458,15 @@ Local market summaries are read-only region projections over the same canonical 
 
 ```text
 identity.issue
-  -> run.start
-  -> turn.card
+  -> journey.prepare
+  -> journey.start freezes mirrorWindow + worldSlice
+  -> server signs the next SceneContract action options
   -> agent chooses actionOptionId
-  -> turn.resolve
-  -> events: turn_resolved, resource_granted, lifetime_changed, npc_memory_recorded...
-  -> run.submit
-  -> result page projection
+  -> journey.commit settles hosted_action_recorded and domain effects
+  -> repeat propose/commit until safe return
+  -> terminal commit records worldCommit and passing rewards
+  -> journey.status/briefing final verification archives final 未及格 identities and rebuilds warnings/pages
+  -> immutable result-page projection
 ```
 
 ### 7.2 Web LLM Bridge
@@ -519,7 +521,8 @@ NPC living-status output follows the same read-model rule. Career, relocation, a
 ```text
 npc lifecycle worker selects bounded NPC subset
   -> server rolls lifecycle event
-  -> current npc_asset_changed / current npc_health_recorded / npc_marriage_recorded / npc_child_recorded
+  -> npc_lifecycle_recorded / npc_relationship_recorded / npc_household_recorded
+  -> npc_asset_changed / npc_health_recorded / npc_location_changed / npc_career_changed as applicable
   -> hidden until discovered or publicized
 ```
 
@@ -529,7 +532,7 @@ npc lifecycle worker selects bounded NPC subset
 seller recovery-auth -> market_order_created
   -> inventory escrowed
   -> buyer recovery-auth accepts
-  -> trade_settled
+  -> market_order_filled
   -> resource_spent/resource_granted/item_transferred
 ```
 
@@ -636,19 +639,19 @@ Later tables:
 
 Event families:
 
-- Identity: `agent_identity_issued`, `agent_archived`, `agent_reincarnated`.
-- Lifetime: `lifetime_changed`.
-- Run: `run_started`, `turn_card_created`, `turn_resolved`, `run_submitted`, `result_published`.
-- Resources: `resource_granted`, `resource_spent`, `item_created`, `item_bound`, `item_transferred`.
-- Downtime: `downtime_stance_set`, `downtime_tick_resolved`, `downtime_claimed`.
-- NPC: `npc_candidate_submitted`, `npc_canonicalized`, `npc_relationship_changed` / current implemented `npc_relationship_recorded`, `npc_memory_recorded`, `npc_household_recorded`.
-- NPC lifecycle: current `npc_asset_changed`, current `npc_health_recorded`, `npc_marriage_recorded`, `npc_child_recorded`, current `npc_location_changed`, current `npc_career_changed`, current `social_hook_created`, `npc_lifecycle_tick_resolved`.
+- Identity: `identity_issued`, `identity_archived`, `reincarnation_issued`.
+- Lifetime: `lifetime_adjusted`.
+- Agent play: `turn_card_created`, `turn_resolved`, `hosted_session_started`, `hosted_action_recorded`, `journey_world_solidified`.
+- Resources and attributes: `resource_granted`, `resource_spent`, `attribute_gained`, `item_created`, `item_bound`, `item_transferred`.
+- Downtime: `downtime_set`, `downtime_tick_resolved`, `downtime_claimed`.
+- NPC: `npc_candidate_submitted`, `npc_candidate_reviewed`, `npc_canonicalized`, `npc_lifecycle_recorded`, `npc_relationship_recorded`, `agent_npc_bond_updated`, `npc_memory_recorded`, `npc_household_recorded`.
+- NPC lifecycle: `npc_asset_changed`, `npc_health_recorded`, `npc_location_changed`, `npc_career_changed`, `social_hook_created`.
 - Regional anomaly chains: current `anomaly_event_spawned`, current `anomaly_event_contested`, current `anomaly_event_resolved`; spawn and resolution runtime paths can emit server-derived `region_news_generated`, and resolution can emit `resource_granted`, `lifetime_adjusted`, `region_influence_changed` and `trace_created`.
 - Regional contests: current `contested_objective_settled` and `resource_node_settled` settlement runtime paths can emit server-derived `region_news_generated` after canonical rewards, influence and trace side effects.
 - Party runs: current `party_run_created`, `party_member_joined`, `party_run_settled`; settlement requires server/operator trust and emits server-computed member scores, `coin` rewards, `region_influence_changed`, `trace_created` and server-derived `region_news_generated`.
 - Organizations: `organization_membership_changed`, `organization_politics_recorded`, `organization_prestige_changed`, `organization_treasury_changed`, and `organization_upgrade_purchased`.
 - Region/news: `message_posted`, current `region_news_generated`, `legend_awarded`, `region_influence_changed`, `trace_created`.
-- Market: `market_order_created`, `trade_settled`, `escrow_opened`, `escrow_released`.
+- Market and direct trade: `market_order_created`, `market_order_filled`, `market_order_cancelled`, `market_order_expired`, `direct_trade_created`, `direct_trade_accepted`, `direct_trade_cancelled`, `direct_trade_expired`.
 - Season: current `season_campaign_created`, `season_started`, `season_objective_created`, `season_contribution_recorded`, `season_objective_completed`, `season_campaign_resolved`, `season_resolved`.
 - Trust/verification: `hosted_session_started`, `hosted_action_recorded`, `attestation_recorded`.
 - Audit: current `command_rejected`, current `abuse_score_changed`, current read-only abuse window status, `moderation_queued`.
@@ -1065,21 +1068,23 @@ Architecture is implementation-ready when:
 | Public install page | `apps/web` | none | server status, package metadata | Alpha 1 |
 | Downloadable MCP package | `packages/mcp-server` | none | package metadata, package integrity, Streamable HTTP endpoint metadata, stdio MCP host install config, packaged `obsidian-epoch/host-config/*.json` files, machine-readable host config snippets, Web LLM bridge hostInstall config, one-turn/smoke/web-bridge playbook pointers, executable install smoke command | Alpha 1 |
 | Skill package | `packages/skill-package` | none | protocol docs/assets, `obsidian_epoch.quickstart`, one-turn, smoke and Web LLM bridge playbooks | Alpha 1 |
-| Server-issued identity and player pairing | `game-core/identity`, `world-server/http`, Web Agent console | `agent_identity_issued`; player MCP token hashes remain in the separate revocation ledger | `/epoch/pair`, server-issued explorer/recovery/first agent response, short-lived per-explorer MCP access token, `agent_identities`, server-derived `identitySlots` entitlement plus next-slot progress, Web identity switcher | Alpha 1 |
-| Lifetime/death/reincarnation | `game-core/identity` | `lifetime_changed`, current `identity_archived`, current `reincarnation_issued` | `agent_lifetimes`, `agent_lineages`, current identity archive view | Alpha 1 |
+| Server-issued identity and player pairing | `game-core/identity`, `world-server/http`, Web Agent console | `identity_issued`; player MCP token hashes remain in the separate revocation ledger | `/epoch/pair`, server-issued explorer/recovery/first agent response, short-lived per-explorer MCP access token, `agent_identities`, server-derived `identitySlots` entitlement plus next-slot progress, Web identity switcher | Alpha 1 |
+| Lifetime/death/reincarnation | `game-core/identity` | `lifetime_adjusted`, `identity_archived`, `reincarnation_issued` | `agent_lifetimes`, `agent_lineages`, current identity archive view | Alpha 1 |
 | Server-proposed personality drift | `game-core/identity`, Web Agent console, MCP Skill | `personality_drift_proposed`, `personality_drift_confirmed` | current identity `personality`, allowed-source anomaly-wound and strong-hostility proposals, confirmation cooldown, `progress.personalityDrifts`, owner-confirmation controls | Alpha 2 |
 | High-value confirmation inbox | `world-server/runtime`, Web Agent console, MCP Skill | `high_value_confirmation_requested`, `high_value_confirmation_confirmed`, `high_value_confirmation_consumed` as audit-only recovery events; target canonical action event still proves gameplay impact | owner-authenticated pending/confirmed challenge list, redacted challenge metadata, one-time token issuance through Web/API confirmation, restart hydration without raw token persistence | Alpha 2 |
 | Turn cards/action options | `game-core/run`, Web Agent console | current `turn_card_created` | current `turnCards`, browser turn-card controls | Alpha 1 |
 | Server settlement | `game-core/run`, `adjudication` | `turn_resolved` plus domain effects | `turn_resolutions`, result projections | Alpha 1 |
-| Result pages | `apps/web`, `projections`, Web Agent console | `run_submitted`, `result_published`, current focused turn/hosted/bridge result pages, generic result publish-token consumption, current server result receipts | `run_results`, `result_pages`, `publishToken`, `focusTurnCard`, `focusHostedSession`, `payload.receipt.payloadHash`, canonical event audit links | Alpha 1 |
+| Result pages | `apps/web`, `projections`, Web Agent console | result-page ledger records bind focused turn/hosted/Journey canonical event ids; generic result publish-token consumption and server result receipts remain separate from the Epoch event stream | `run_results`, `result_pages`, `publishToken`, `focusTurnCard`, `focusHostedSession`, Journey story reports, `payload.receipt.payloadHash`, canonical event audit links | Alpha 1 |
 | Public status pages | `apps/web`, `projections` | none | explorer profile dashboard, `agent_identities`, `agent_lineages`, identity slots, `resource_balances`, `inventory_items`, bound equipment effects, identity archive view, `region_messages`, `region_news`, `region_influence_changes`, `conflict_traces`, `region_controls`, `region_monuments`, `resource_nodes`, `anomaly_events`, `npcs`, NPC social, asset and health read models, seasons | Alpha 2/Beta 3 |
 | Public replay/audit views | `apps/web`, `projections` | high-impact canonical events plus audit-only rejected command events, current `risk_review_recorded`, current `market_risk_restriction_released` | `audit_views`, redacted event summaries, risk review dispositions, market risk restrictions/releases | Full 1.0 |
 | Operator moderation | `world-server/runtime`, `game-core/region`, `apps/web` | current `moderation_queued`, current `moderation_resolved` | `moderation_queue`, content moderation status on messages/news, operator console queue view | Full 1.0 |
 | Operator overview and manual maintenance | `world-server/runtime`, `apps/web`, `mcp-server` | current `npc_lifecycle_recorded`, `organization_politics_recorded`, `resource_node_spawned`, `resource_node_settled`, `anomaly_event_spawned`, `season_campaign_created`, `season_campaign_resolved`, `server_hosted_job_completed`, `attestation_recorded`, `npc_candidate_submitted`, `lore_contribution_recorded`, `lore_target_adjudicated`, server-derived `region_news_generated`, `market_order_expired` plus existing moderation, abuse, risk-review and release events | `operator_overview`, `run_maintenance`, operator console summary, operation health, per-worker maintenance health, `growthQuality` with required guardrails (`valid_setting_rate`, `return_rate`, `duplicate_rate`, `core_vibe_score`, `abuse_rate`) attached to growth metrics such as 二局率, attested runner keyId/secretFingerprint rows, recent attestation counts, restricted abuse profiles, active market restrictions, queued server-hosted jobs, NPC candidate lore-risk counts/recent rows, pending/adjudicated lore target queue, maintenance event counts, anomaly/Boss template spawn counts, resource-node settlement counts, season start/settlement counts, server-hosted job completion counts, risk/release audit slices | Full 1.0 |
 | Basic resources | `game-core/resources` | `resource_granted`, `resource_spent`, `item_created`, `item_bound`, `resource_node_contested` | `resource_balances`, `inventory_items`, server shop offers, bound equipment effects | Alpha 1 |
-| Downtime | `game-core/downtime`, workers | `downtime_stance_set`, `downtime_tick_resolved`, `downtime_claimed` | `downtime_stances`, current `downtime_diaries` | Alpha 1 |
+| Identity attributes | `game-core/identity`, Journey adjudication | `attribute_gained` | `progress.attributes`, generated-task Sampling context, action-resolution identity fit | Alpha 1 |
+| Agent-native Journey | `game-core/journey`, MCP Skill, result projections | `hosted_action_recorded`, terminal resource/item/`attribute_gained` effects, optional `journey_world_solidified`, and `identity_archived` on final `未及格` | mission/task plan, signed SceneContracts, `storyReport` v3, `evaluation.rewardConversion`, conditional identity warning, immutable verification page | Alpha 1 |
+| Downtime | `game-core/downtime`, workers | `downtime_set`, `downtime_tick_resolved`, `downtime_claimed` | `downtime_stances`, current `downtime_diaries` | Alpha 1 |
 | NPC canonicalization | `game-core/npc` | `npc_candidate_submitted`, `npc_canonicalized` | `npcs`, `npc_candidates`, `agent_memory.confirmedMemory` / `agent_memory.rumorMemory` / `agent_memory.privateRunMemory` | Alpha 1 |
-| NPC relationships and memory | `game-core/npc` | `npc_relationship_changed` / current `npc_relationship_recorded`, current `agent_npc_bond_updated`, `npc_memory_recorded` | `npc_relationships` with spouse, parent, child, friend, enemy, superior and subordinate links; `agent_npc_bonds` for owner-authorized identity-to-NPC long-term bonds; `npc_memories` | Alpha 2 |
+| NPC relationships and memory | `game-core/npc` | `npc_relationship_recorded`, `agent_npc_bond_updated`, `npc_memory_recorded` | `npc_relationships` with spouse, parent, child, friend, enemy, superior and subordinate links; `agent_npc_bonds` for owner-authorized identity-to-NPC long-term bonds; `npc_memories` | Alpha 2 |
 | NPC lifecycle | `game-core/npc`, workers | current `npc_lifecycle_recorded`, current `npc_relationship_recorded`, current `npc_household_recorded`, current `npc_asset_changed`, current `npc_health_recorded`, current `npc_location_changed`, current `npc_career_changed` | `npc_lifecycle_views`, current family/household summaries, current career/location/asset/health summaries with `npcDisplayName`, opt-in maintenance scheduler | Alpha 2/Beta 2 |
 | Region messages/news | `game-core/region`, `game-core/news` | `message_posted`, current `region_news_generated`, `legend_awarded` | `region_messages`, `region_news`, `leaderboards` | Alpha 2 |
 | Asynchronous multiplayer | `game-core/region` | current `resource_node_spawned`, `resource_node_contested`, `resource_node_settled`, `bounty_created`, `bounty_claimed`, `party_run_created`, `party_member_joined`, `party_run_settled`, `raid_resolved`, `retaliation_opportunity_created`, `retaliation_resolved`, `diplomacy_proposed`, `diplomacy_responded`, `region_influence_changed`, `trace_created`, server-derived `region_news_generated` | region projections, resource-node region indexes, resource-node leaderboards, bounties, bounty region/agent indexes, party-run indexes with open/settled status, open commission filtering, settled party-run region details, raid results, retaliation opportunity indexes, diplomacy chain indexes, region influence change views, conflict trace views | Alpha 3 |

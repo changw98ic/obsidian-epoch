@@ -5,7 +5,8 @@ The canonical Skill-facing status record is:
 - [tools/agent-server/package/obsidian-epoch/references/implemented-systems-status.md](../../tools/agent-server/package/obsidian-epoch/references/implemented-systems-status.md)
 
 Use that file when documenting implemented lineage inheritance, race
-commissions, multi-source identity slots, player data export, competitive
+commissions, multi-source identity slots, Journey attributes and reward
+conversion, failed-Journey identity archival, player data export, competitive
 ladder, downtime custody/eligibility and reproducible release behavior.
 
 ## Boundary
