@@ -52,7 +52,7 @@ async function walk(root: string, dir: string, files: string[]) {
       await walk(root, current, files);
       continue;
     }
-    if (entry.isFile() && entry.name.endsWith(".ts")) {
+    if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
       const relativePath = relativeUnix(root, current);
       if (!dynamicBoundaryAllowlist.has(relativePath)) files.push(current);
     }
@@ -60,7 +60,8 @@ async function walk(root: string, dir: string, files: string[]) {
 }
 
 function collectAnyKeywords(root: string, file: string, sourceText: string): ExplicitAnyViolation[] {
-  const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const scriptKind = file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, scriptKind);
   const violations: ExplicitAnyViolation[] = [];
 
   function visit(node: ts.Node) {

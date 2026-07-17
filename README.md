@@ -40,7 +40,7 @@ npm run dev
 - 默认地图地址：`http://127.0.0.1:5173/`
 - 默认 Agent 控制台地址：`http://127.0.0.1:5173/?agent=1`
 
-生成 Obsidian 静态导出时运行 `npm run build`；该命令会先调用 Python 地图数据生成器，再构建前端并复制数据。生成器读取版本化的 Markdown，并从当前工作区可用的图片中建立地图素材索引；完整静态导出因此需要本地素材字节。没有素材字节的 CI 与容器构建使用已跟踪的地图数据，并运行 `npm run build:container` 跳过媒体复制。
+生成 Obsidian 静态导出时运行 `npm run build`；该命令会先调用 Python 地图数据生成器，再构建前端并复制数据。生成器读取版本化的 Markdown 和对象存储清单，以确定性方式建立地图素材索引；完整静态导出仅在复制原始媒体时需要本地素材字节。没有素材字节的 CI 与容器构建使用已跟踪的地图数据，并运行 `npm run build:container` 跳过媒体复制；容器构建阶段会再次执行 `world-map-data:check`，防止绕过 CI 时打包陈旧 JSON。
 
 ## 验证
 
@@ -50,12 +50,13 @@ npm run dev
 npm run typecheck
 npm test
 npm run agent:world-content:check
+npm run world-map-data:check
 npm run build:container
 ```
 
 `npm run typecheck` 已依次包含仓库导入审计、对象存储清单检查、禁止 JavaScript 源码、禁止显式 `any`、严格串行验证，以及前端和 Agent 服务端 TypeScript 检查。完整 CI 还会执行依赖审计、串行测试、容器构建、SBOM/漏洞扫描、备份恢复和 Caddy 门禁，具体以 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) 为准。
 
-`npm run agent:world-content:check` 会重新编译世界规则、系统、种族、势力、地点和路线的 Registry，并与 Skill 包中已跟踪的 `world-content-registry.json` 比较；源文档变化但派生 Registry 未更新时会失败。地图数据由 `npm run build` 重新生成，提交前应一并检查 `00_总览/world-map-data.json` 的预期差异。
+`npm run agent:world-content:check` 会重新编译世界规则、系统、种族、势力、地点和路线的 Registry，并与 Skill 包中已跟踪的 `world-content-registry.json` 比较；源文档变化但派生 Registry 未更新时会失败。`npm run world-map-data:check` 会从版本化 Markdown 和对象存储清单确定性重建 `00_总览/world-map-data.json`，但不写入文件；若地图数据陈旧会失败并提示运行 `npm run world-map-data:generate`。它不需要下载原始图片，因此 CI 在容器构建前运行此门禁，容器构建阶段也会复验。默认 `generatedAt` 固定为 `1970-01-01T00:00:00Z`，避免墙上时钟产生无意义差异；如需发布标记，生成与检查命令须传入相同的显式 `--generated-at` 值。`image_ready` 表示条目的图像生成设定已完整，可交给生图流程，并不表示对象存储中已经存在图片字节。
 
 ## 类型安全边界
 

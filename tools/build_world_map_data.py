@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
 import re
 from collections import Counter, defaultdict
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -13,7 +14,10 @@ from urllib.parse import quote
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "00_总览"
 JSON_OUT = OUT_DIR / "world-map-data.json"
+OBJECT_STORAGE_ASSET_ROOT = ROOT / "09_素材与图片"
+OBJECT_STORAGE_MANIFEST = OBJECT_STORAGE_ASSET_ROOT / "ChatGPT批量生成" / "object-storage-manifest.json"
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+DEFAULT_GENERATED_AT = "1970-01-01T00:00:00Z"
 
 
 LAYERS = [
@@ -108,6 +112,11 @@ CREATURE_REQUIRED_FIELDS = [
     "visual_style",
     "image_ready",
 ]
+# `image_ready` describes authoring readiness: the note has a complete, stable
+# visual brief that can be handed to the image-generation workflow.  It does
+# not promise that an object-storage image has already been uploaded; those
+# references are validated separately by the asset manifest gate.
+IMAGE_READY_SEMANTICS = "authoring_ready_not_asset_uploaded"
 
 
 def stable_int(value: str, modulo: int = 10_000) -> int:
@@ -234,10 +243,42 @@ def wiki_links(text: str) -> list[str]:
 
 
 def image_index() -> dict[str, Path]:
+    """Build a stable image lookup from the versioned object-storage manifest.
+
+    The media corpus is intentionally absent from regular CI checkouts. Looking
+    at whatever image files happen to be present made the generated map depend
+    on the developer workstation, so the manifest is the authoritative source
+    of image paths instead.
+    """
+    try:
+        manifest = json.loads(OBJECT_STORAGE_MANIFEST.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise ValueError(f"object storage manifest is missing: {OBJECT_STORAGE_MANIFEST.relative_to(ROOT)}") from error
+    except json.JSONDecodeError as error:
+        raise ValueError(f"object storage manifest is invalid JSON: {OBJECT_STORAGE_MANIFEST.relative_to(ROOT)}") from error
+
+    if not isinstance(manifest, dict) or manifest.get("root") != OBJECT_STORAGE_ASSET_ROOT.relative_to(ROOT).as_posix():
+        raise ValueError("object storage manifest has an unexpected root")
+    objects = manifest.get("objects")
+    if not isinstance(objects, list):
+        raise ValueError("object storage manifest objects must be a list")
+    if manifest.get("objectCount") != len(objects):
+        raise ValueError("object storage manifest objectCount does not match objects")
+
     index: dict[str, Path] = {}
-    for path in ROOT.rglob("*"):
-        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
-            index.setdefault(path.name, path)
+    for entry in objects:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            raise ValueError("object storage manifest contains an invalid object path")
+        relative_path = entry["path"]
+        candidate = Path(relative_path)
+        if candidate.is_absolute() or "\\" in relative_path or ".." in candidate.parts or not relative_path:
+            raise ValueError(f"object storage manifest contains an unsafe object path: {relative_path}")
+        if candidate.suffix.lower() not in IMAGE_EXTENSIONS:
+            continue
+        source_path = OBJECT_STORAGE_ASSET_ROOT / candidate
+        if candidate.name in index:
+            raise ValueError(f"object storage manifest has duplicate image names: {candidate.name}")
+        index[candidate.name] = source_path
     return index
 
 
@@ -358,7 +399,9 @@ def detail_subset(frontmatter: dict[str, object], sections: dict[str, str], summ
         "visual_style": clean_text(frontmatter.get("visual_style")),
         "weakness": clean_text(frontmatter.get("weakness")) or sections.get("弱点", ""),
         "status": clean_text(frontmatter.get("status")),
-        "image_ready": bool(frontmatter.get("image_ready")),
+        # Keep malformed values visible to the validator instead of coercing
+        # arbitrary strings (for example, `"false"`) to truthy booleans.
+        "image_ready": frontmatter.get("image_ready"),
         "relation": sections.get("关系", ""),
         "appearance": sections.get("外观", ""),
         "ability": sections.get("能力", ""),
@@ -380,7 +423,7 @@ def read_note(path: Path) -> tuple[str, dict[str, object], dict[str, str], str, 
     return text, frontmatter, sections, note_title(path, text), first_summary(text)
 
 
-def build_world_map() -> dict[str, object]:
+def build_world_map(generated_at: str = DEFAULT_GENERATED_AT) -> dict[str, object]:
     images = image_index()
     assets: dict[str, dict[str, str]] = {}
     places: dict[str, dict[str, object]] = {}
@@ -544,7 +587,13 @@ def build_world_map() -> dict[str, object]:
         add_anchor_note(path, "faction", "faction", "势力组织", ["faction", "conflict"])
 
     for path in markdown_files("04_生物单位"):
-        add_creature(path, "creature_unit")
+        # The numbered batch is the canonical creature-unit contract.  The
+        # older hand-authored notes live beside it but do not carry the
+        # required serial/visual metadata; keep them visible as legacy
+        # creatures instead of silently treating incomplete drafts as units.
+        _, frontmatter, _, _, _ = read_note(path)
+        source_kind = "creature_unit" if re.fullmatch(r"B\d{4}", clean_text(frontmatter.get("serial"))) else "legacy_creature"
+        add_creature(path, source_kind)
 
     for path in markdown_files("04_异化生物"):
         add_creature(path, "legacy_creature")
@@ -652,7 +701,7 @@ def build_world_map() -> dict[str, object]:
 
     return {
         "schemaVersion": 1,
-        "generatedAt": datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="seconds"),
+        "generatedAt": generated_at,
         "sourceStats": source_stats,
         "layers": [{key: value for key, value in layer.items() if key != "keywords"} for layer in LAYERS],
         "regions": sorted(regions, key=lambda item: (LAYER_BY_ID[item["layer"]]["order"], item["label"])),
@@ -678,15 +727,22 @@ def validate_world_map(data: dict[str, object]) -> list[str]:
             if key not in entity or entity[key] in ("", [], None):
                 errors.append(f"{entity.get('id')} missing {key}")
                 break
-    by_id = {entity.get("id"): entity for entity in entities}
-    b0001 = by_id.get("B0001_云墓低语螺")
-    if not b0001:
-        errors.append("missing B0001_云墓低语螺")
-    else:
-        details = b0001.get("details", {})
+    creature_units = [entity for entity in entities if entity.get("sourceKind") == "creature_unit"]
+    for entity in creature_units:
+        details = entity.get("details", {})
+        if not isinstance(details, dict):
+            errors.append(f"{entity.get('id')} details must be an object")
+            continue
         for key in CREATURE_REQUIRED_FIELDS:
-            if key not in details or details[key] in ("", [], None):
-                errors.append(f"B0001_云墓低语螺 missing details.{key}")
+            value = details.get(key)
+            if key == "image_ready":
+                if not isinstance(value, bool):
+                    errors.append(f"{entity.get('id')} details.image_ready must be boolean ({IMAGE_READY_SEMANTICS})")
+                continue
+            if key not in details or value in ("", [], None):
+                errors.append(f"{entity.get('id')} missing details.{key}")
+    if not any(entity.get("id") == "B0001_云墓低语螺" for entity in creature_units):
+        errors.append("missing canonical creature unit B0001_云墓低语螺")
     region_by_id = {region.get("id"): region for region in data.get("regions", [])}
     for route in data.get("routes", []):
         points = route.get("points", [])
@@ -707,13 +763,63 @@ def validate_world_map(data: dict[str, object]) -> list[str]:
     return errors
 
 
+def normalized_generated_at(value: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("generatedAt must be an ISO-8601 timestamp with a timezone") from error
+    if parsed.tzinfo is None:
+        raise ValueError("generatedAt must include a timezone")
+    return parsed.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def serialized_world_map(data: dict[str, object]) -> str:
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def generated_output_matches(expected: str, output_path: Path = JSON_OUT) -> bool:
+    try:
+        return output_path.read_text(encoding="utf-8") == expected
+    except FileNotFoundError:
+        return False
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate the canonical Obsidian Epoch world map data.")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="fail without writing when 00_总览/world-map-data.json is not current",
+    )
+    parser.add_argument(
+        "--generated-at",
+        default=DEFAULT_GENERATED_AT,
+        help=f"deterministic ISO-8601 metadata value (default: {DEFAULT_GENERATED_AT})",
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
-    data = build_world_map()
+    args = parse_arguments()
+    try:
+        generated_at = normalized_generated_at(args.generated_at)
+    except ValueError as error:
+        raise SystemExit(f"world-map generation failed: {error}") from error
+    data = build_world_map(generated_at)
     errors = validate_world_map(data)
     if errors:
         raise SystemExit("world-map validation failed:\n" + "\n".join(f"- {error}" for error in errors[:40]))
+    output = serialized_world_map(data)
+    if args.check:
+        if not generated_output_matches(output):
+            raise SystemExit(
+                "world-map data is stale; run `python3 tools/build_world_map_data.py` and commit "
+                "00_总览/world-map-data.json"
+            )
+        print(f"world-map data is current: {JSON_OUT.relative_to(ROOT)}")
+        return
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    JSON_OUT.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    JSON_OUT.write_text(output, encoding="utf-8")
     stats = data["sourceStats"]
     print(
         "generated world map:",

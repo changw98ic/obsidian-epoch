@@ -1,14 +1,62 @@
+import type { IncomingHttpHeaders } from "node:http";
 import { type EpochHttpRouteContext } from "./httpRouteTypes.ts";
+import { authenticatePlayerBearerRequest, type PlayerBearerPrincipal } from "./playerBearerPrincipal.ts";
+import type { PlayerMcpAccessTokenStore } from "../playerMcpAccessTokenStore.ts";
 
 type LegacyRecord = Record<string, unknown>;
 
 export const LEGACY_MUTATION_DISABLED_ERROR = "legacy_mutation_disabled_in_production";
+export const COMMUNITY_AUTH_REQUIRED_ERROR = "community_auth_required";
+export const COMMUNITY_AUTH_INVALID_ERROR = "community_auth_invalid";
 
 export interface LegacyRuntimeRouteContext extends EpochHttpRouteContext {
+  readonly playerMcpAccessTokens?: PlayerMcpAccessTokenStore;
   readonly persistRunSettlement: (body: LegacyRecord, settlement: unknown) => Promise<void>;
   readonly persistContextSnapshot: (contextPackage: unknown) => Promise<void>;
   readonly persistStateSnapshot: (fileName: string, record: unknown) => Promise<void>;
   readonly persistOutboxEntries: (entries: readonly LegacyRecord[]) => Promise<number>;
+}
+
+function communityWritePrincipal(context: LegacyRuntimeRouteContext): PlayerBearerPrincipal | undefined {
+  const authentication = authenticatePlayerBearerRequest(context.request, context.playerMcpAccessTokens);
+  if (authentication.status === "authenticated") return authentication.principal;
+
+  if (authentication.status === "missing") {
+    context.response.setHeader("www-authenticate", "Bearer realm=\"obsidian-epoch-community\"");
+    context.sendJson(context.request, context.response, 401, {
+      error: COMMUNITY_AUTH_REQUIRED_ERROR,
+    }, context.allowedOrigins);
+    return undefined;
+  }
+
+  context.sendJson(context.request, context.response, 403, {
+    error: COMMUNITY_AUTH_INVALID_ERROR,
+  }, context.allowedOrigins);
+  return undefined;
+}
+
+function communityWriteInput(body: LegacyRecord, principal: PlayerBearerPrincipal): LegacyRecord {
+  const sanitized = { ...body };
+  // These fields are detector-owned and must never be accepted from a public
+  // client.  In particular, self-asserted relationships make retaliation and
+  // group-pile-on checks trivially forgeable.
+  delete sanitized.againstExplorerId;
+  delete sanitized.groupId;
+  delete sanitized.tokenId;
+  return {
+    ...sanitized,
+    explorerId: principal.explorerId,
+    tokenId: principal.tokenId,
+  };
+}
+
+function firstHeaderValue(value: IncomingHttpHeaders[string]) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return raw?.split(",")[0]?.trim();
+}
+
+function operatorKeyFromHeaders(headers: IncomingHttpHeaders) {
+  return firstHeaderValue(headers["x-epoch-operator-key"]);
 }
 
 function isRecord(value: unknown): value is LegacyRecord {
@@ -265,7 +313,12 @@ export async function handleLegacyRuntimeRoutes(context: LegacyRuntimeRouteConte
   }
 
   if (method === "POST" && url === "/api/community/reaction") {
-    const result = runtime.communityReact(await context.readJsonBody(request, maxBodyBytes));
+    const principal = communityWritePrincipal(context);
+    if (!principal) return true;
+    const result = runtime.communityReact(communityWriteInput(
+      await context.readJsonBody(request, maxBodyBytes),
+      principal,
+    ));
     await context.persistStateSnapshot("community.jsonl", {
       type: "community_state",
       action: "reaction",
@@ -277,7 +330,12 @@ export async function handleLegacyRuntimeRoutes(context: LegacyRuntimeRouteConte
   }
 
   if (method === "POST" && url === "/api/community/comment") {
-    const result = runtime.communityComment(await context.readJsonBody(request, maxBodyBytes));
+    const principal = communityWritePrincipal(context);
+    if (!principal) return true;
+    const result = runtime.communityComment(communityWriteInput(
+      await context.readJsonBody(request, maxBodyBytes),
+      principal,
+    ));
     await context.persistStateSnapshot("community.jsonl", {
       type: "community_state",
       action: "comment",
@@ -289,10 +347,33 @@ export async function handleLegacyRuntimeRoutes(context: LegacyRuntimeRouteConte
   }
 
   if (method === "POST" && url === "/api/community/flag") {
-    const result = runtime.communityFlag(await context.readJsonBody(request, maxBodyBytes));
+    const principal = communityWritePrincipal(context);
+    if (!principal) return true;
+    const result = runtime.communityFlag(communityWriteInput(
+      await context.readJsonBody(request, maxBodyBytes),
+      principal,
+    ));
     await context.persistStateSnapshot("community.jsonl", {
       type: "community_state",
       action: "flag",
+      result,
+      state: runtime.communityState(),
+    });
+    context.sendJson(request, response, 200, result, allowedOrigins);
+    return true;
+  }
+
+  const communityModerationAction = pathname.match(/^\/api\/community\/moderation\/(resolve|restore|hide)$/)?.[1];
+  if (method === "POST" && communityModerationAction) {
+    const body = await context.readJsonBody(request, maxBodyBytes);
+    const result = runtime.communityModerate({
+      ...body,
+      action: communityModerationAction,
+      operatorKey: operatorKeyFromHeaders(request.headers),
+    });
+    await context.persistStateSnapshot("community.jsonl", {
+      type: "community_moderation",
+      action: communityModerationAction,
       result,
       state: runtime.communityState(),
     });
@@ -309,6 +390,10 @@ export async function handleLegacyRuntimeRoutes(context: LegacyRuntimeRouteConte
   }
 
   if (method === "GET" && url === "/api/community/moderation") {
+    runtime.epochOperatorOverview({
+      operatorKey: operatorKeyFromHeaders(request.headers),
+      limit: 1,
+    });
     context.sendJson(request, response, 200, runtime.communityModeration(), allowedOrigins);
     return true;
   }

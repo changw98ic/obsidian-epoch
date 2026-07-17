@@ -37,6 +37,8 @@ test("public deployment config ships Docker, Compose, env example, and operator 
   assert.match(packageJson.scripts["check:release-source"], /verify-release-source\.ts/);
   assert.match(packageJson.scripts.typecheck, /check:repository-import/);
   assert.match(packageJson.scripts.typecheck, /check:asset-manifest/);
+  assert.match(packageJson.scripts["typecheck:agent-tests"], /tsconfig\.agent-tests\.json/);
+  assert.match(packageJson.scripts.typecheck, /typecheck:agent-tests/);
 
   assert.match(dockerfile, /FROM node:24-bookworm-slim@sha256:[a-f0-9]{64} AS web-build/);
   assert.match(dockerfile, /FROM gcr\.io\/distroless\/nodejs24-debian13:nonroot@sha256:[a-f0-9]{64} AS runtime/);
@@ -73,7 +75,10 @@ test("public deployment config ships Docker, Compose, env example, and operator 
   assert.doesNotMatch(dockerfile, /^COPY \[?"?00_总览\/黑曜纪元3D世界地图\.html/m);
   assert.doesNotMatch(dockerfile, /^COPY 00_总览\/assets\/index-/m);
   assert.doesNotMatch(dockerfile, /COPY\s+00_总览\/assets\/media\b/);
-  assert.equal(packageJson.scripts["build:container"], "vite build && tsx scripts/copy-data.ts --skip-media");
+  assert.equal(
+    packageJson.scripts["build:container"],
+    "npm run world-map-data:check && vite build && tsx scripts/copy-data.ts --skip-media",
+  );
   assert.equal(
     packageJson.scripts["agent:container-lifecycle-gate"],
     "node --import tsx ../agent-server/container-lifecycle-gate.ts",

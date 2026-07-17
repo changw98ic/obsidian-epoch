@@ -4,6 +4,17 @@
 
 !tools/
 !tools/graph-react-app/
+!tools/build_world_map_data.py
+!01_世界底层/
+!02_种族/
+!03_势力组织/
+!04_生物单位/
+!04_异化生物/
+!05_地点生态/
+!08_关系网络/
+!09_素材与图片/
+!09_素材与图片/ChatGPT批量生成/
+!09_素材与图片/ChatGPT批量生成/object-storage-manifest.json
 !tools/graph-react-app/**
 
 !tools/agent-server/

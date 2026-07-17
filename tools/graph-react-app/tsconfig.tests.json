@@ -1,0 +1,27 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "noUncheckedIndexedAccess": false
+  },
+  "include": [
+    "src/agent/api.test.ts",
+    "src/agent/agentActionController.test.ts",
+    "src/agent/agentInstallReadinessController.test.ts",
+    "src/agent/agentPlayerActionReadinessController.test.ts",
+    "src/agent/agentPlayerLabels.test.ts",
+    "src/agent/agentProgressController.test.ts",
+    "src/agent/agentRegionController.test.ts",
+    "src/agent/AgentExplorer.layout.test.ts",
+    "src/agent/localIdentity.test.ts",
+    "src/agent/recoveryRotationController.test.ts",
+    "src/agent/keyIsolation.test.ts",
+    "scripts/copy-data.test.ts",
+    "scripts/check-repository-import.test.ts",
+    "scripts/check-strict-serial-validation.test.ts",
+    "scripts/object-storage-manifest.test.ts",
+    "scripts/typecheck-config.test.ts"
+  ],
+  "exclude": ["dist", "node_modules"]
+}

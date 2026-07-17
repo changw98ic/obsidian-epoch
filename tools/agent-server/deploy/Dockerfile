@@ -13,11 +13,29 @@ RUN case "$SOURCE_DATE_EPOCH" in ''|*[!0-9]*) exit 1 ;; esac \
 
 WORKDIR /build
 
+# The source-side map freshness gate is Python; install it only in this
+# disposable build stage so the non-root runtime image stays distroless.
+RUN apt-get update \
+  && apt-get install --no-install-recommends --yes python3 \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY tools/graph-react-app/package*.json ./tools/graph-react-app/
 RUN cd tools/graph-react-app && npm ci
 
 COPY tools/graph-react-app ./tools/graph-react-app
 COPY 00_总览/world-map-data.json ./00_总览/world-map-data.json
+# Keep the source inputs available only in the build stage so the container
+# build itself verifies that the tracked map JSON is fresh.  The runtime stage
+# copies only the generated export and does not retain the vault corpus.
+COPY tools/build_world_map_data.py ./tools/build_world_map_data.py
+COPY 01_世界底层 ./01_世界底层
+COPY 02_种族 ./02_种族
+COPY 03_势力组织 ./03_势力组织
+COPY 04_生物单位 ./04_生物单位
+COPY 04_异化生物 ./04_异化生物
+COPY 05_地点生态 ./05_地点生态
+COPY 08_关系网络 ./08_关系网络
+COPY 09_素材与图片/ChatGPT批量生成/object-storage-manifest.json ./09_素材与图片/ChatGPT批量生成/object-storage-manifest.json
 RUN cd tools/graph-react-app && npm run build:container
 RUN mkdir -p /runtime-dirs/data /runtime-dirs/backups /runtime-dirs/restore
 

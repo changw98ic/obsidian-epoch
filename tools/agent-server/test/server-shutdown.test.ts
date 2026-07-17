@@ -104,6 +104,61 @@ function startSlowRegistration(baseUrl: string, idempotencyKey: string) {
   };
 }
 
+async function openMcpSseStream(baseUrl: string) {
+  const initialized = await fetch(`${baseUrl}/mcp`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: "shutdown-sse-initialize",
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "shutdown-sse-test", version: "1" },
+      },
+    }),
+  });
+  assert.equal(initialized.status, 200, await initialized.text());
+  const sessionId = initialized.headers.get("mcp-session-id");
+  const protocolVersion = initialized.headers.get("mcp-protocol-version");
+  assert.ok(sessionId);
+  assert.ok(protocolVersion);
+
+  const url = new URL("/mcp", baseUrl);
+  return new Promise<{ readonly close: () => void }>((resolve, reject) => {
+    let opened = false;
+    const stream = request({
+      hostname: url.hostname,
+      port: url.port,
+      path: url.pathname,
+      method: "GET",
+      headers: {
+        accept: "text/event-stream",
+        "mcp-session-id": sessionId,
+        "mcp-protocol-version": protocolVersion,
+      },
+    }, (response) => {
+      if (response.statusCode !== 200) {
+        response.resume();
+        reject(new Error(`mcp_sse_status_${response.statusCode}`));
+        return;
+      }
+      response.once("data", () => {
+        opened = true;
+        resolve({ close: () => stream.destroy() });
+      });
+      response.on("error", (error) => {
+        if (!opened) reject(error);
+      });
+    });
+    stream.once("error", (error) => {
+      if (!opened) reject(error);
+    });
+    stream.end();
+  });
+}
+
 async function startServer(shutdownTimeoutMs: number) {
   const dataDir = await mkdtemp(path.join(tmpdir(), "epoch-server-shutdown-"));
   const port = await reserveFreePort();
@@ -160,6 +215,26 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
     }
   });
 }
+
+test("agent server closes live MCP SSE sessions before graceful SIGTERM drain", async () => {
+  const running = await startServer(1_000);
+  let stream: Awaited<ReturnType<typeof openMcpSseStream>> | undefined;
+  const exit = waitForExit(running.child);
+  try {
+    stream = await openMcpSseStream(running.baseUrl);
+    assert.equal(running.child.kill("SIGTERM"), true);
+
+    const result = await exit;
+    assert.equal(result.code, 0, running.output());
+    assert.equal(result.signal, null, running.output());
+    assert.match(running.output(), /stopped after SIGTERM/);
+    assert.doesNotMatch(running.output(), /graceful shutdown timed out/);
+  } finally {
+    stream?.close();
+    await forceStop(running.child);
+    await rm(running.dataDir, { recursive: true, force: true });
+  }
+});
 
 test("agent server forces a non-zero exit after the graceful shutdown timeout", async () => {
   const running = await startServer(1_000);

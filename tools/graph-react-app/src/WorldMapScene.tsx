@@ -127,7 +127,7 @@ export default function WorldMapScene({
     camera.position.set(compactCamera ? 420 : 330, compactCamera ? 360 : 300, compactCamera ? 540 : 420);
     camera.lookAt(0, 28, 0);
 
-    let renderer;
+    let renderer: THREE.WebGLRenderer;
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
     } catch (error: unknown) {

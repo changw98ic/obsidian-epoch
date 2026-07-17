@@ -2,7 +2,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes } from "node:crypto";
 import type { ServerResponse } from "node:http";
 import { createMcpSamplingClient, type McpSamplingClient } from "./mcpSampling.ts";
-import { createMcpSamplingLimiter, type McpSamplingLimiter } from "./mcpSamplingLimiter.ts";
+import {
+  createMcpSamplingLimiter,
+  type McpSamplingLimiter,
+  type McpSamplingLimiterOptions,
+} from "./mcpSamplingLimiter.ts";
 import { createMcpServerRequestManager, type McpServerRequestManager } from "./mcpServerRequestManager.ts";
 import { createMcpSession, type McpSession } from "./mcpSession.ts";
 import { createMcpTransportMetrics, type McpTransportMetrics } from "./mcpTransportMetrics.ts";
@@ -35,6 +39,33 @@ interface InternalSession extends McpHttpSessionRecord {
   lastSeenAt: number;
 }
 
+interface BindingSamplingLimiter {
+  readonly limiter: McpSamplingLimiter;
+  lastReferencedAt: number;
+}
+
+type IntervalHandle = ReturnType<typeof setInterval> | number;
+
+export interface McpHttpSessionRegistryOptions {
+  readonly sessionTtlMs?: number;
+  /**
+   * Per-binding sampling limits use a fixed one-minute rolling window. Retain
+   * an idle limiter for at least that window so closing and recreating an HTTP
+   * session cannot reset its quota.
+   */
+  readonly samplingLimiterIdleTtlMs?: number;
+  readonly maintenanceIntervalMs?: number;
+  readonly now?: () => number;
+  readonly maxSessions?: number;
+  readonly maxSessionsPerBinding?: number;
+  readonly maxStreamsPerSession?: number;
+  readonly samplingLimiterOptions?: Omit<McpSamplingLimiterOptions, "now">;
+  readonly setIntervalFn?: (handler: () => void, intervalMs: number) => IntervalHandle;
+  readonly clearIntervalFn?: (handle: IntervalHandle) => void;
+}
+
+const MCP_SAMPLING_LIMIT_WINDOW_MS = 60_000;
+
 const requestStream = new AsyncLocalStorage<string>();
 
 function sseFrame(event: StoredSseEvent) {
@@ -48,34 +79,54 @@ function parsedEventId(value: string | undefined) {
 
 export class McpHttpSessionRegistry {
   readonly #sessions = new Map<string, InternalSession>();
-  readonly #samplingLimiters = new Map<string, McpSamplingLimiter>();
+  readonly #samplingLimiters = new Map<string, BindingSamplingLimiter>();
   readonly #metrics: McpTransportMetrics;
   readonly #sessionTtlMs: number;
+  readonly #samplingLimiterIdleTtlMs: number;
+  readonly #maintenanceIntervalMs: number;
   readonly #now: () => number;
   readonly #maxSessions;
   readonly #maxSessionsPerBinding;
   readonly #maxStreamsPerSession;
+  readonly #samplingLimiterOptions: Omit<McpSamplingLimiterOptions, "now">;
+  readonly #clearIntervalFn: (handle: IntervalHandle) => void;
+  #maintenanceHandle: IntervalHandle | undefined;
+  #disposed = false;
 
   constructor(
     metrics: McpTransportMetrics = createMcpTransportMetrics(),
-    options: {
-      readonly sessionTtlMs?: number;
-      readonly now?: () => number;
-      readonly maxSessions?: number;
-      readonly maxSessionsPerBinding?: number;
-      readonly maxStreamsPerSession?: number;
-    } = {},
+    options: McpHttpSessionRegistryOptions = {},
   ) {
     this.#metrics = metrics;
     this.#sessionTtlMs = options.sessionTtlMs ?? 12 * 60 * 60 * 1_000;
+    this.#samplingLimiterIdleTtlMs = Math.max(
+      options.samplingLimiterIdleTtlMs ?? MCP_SAMPLING_LIMIT_WINDOW_MS,
+      MCP_SAMPLING_LIMIT_WINDOW_MS,
+    );
+    const defaultMaintenanceIntervalMs = Math.min(this.#sessionTtlMs, this.#samplingLimiterIdleTtlMs);
+    const configuredMaintenanceIntervalMs = options.maintenanceIntervalMs ?? defaultMaintenanceIntervalMs;
+    this.#maintenanceIntervalMs = Number.isFinite(configuredMaintenanceIntervalMs)
+      ? Math.max(1, Math.floor(configuredMaintenanceIntervalMs))
+      : Math.max(1, Math.floor(defaultMaintenanceIntervalMs));
     this.#now = options.now ?? Date.now;
     this.#maxSessions = options.maxSessions ?? 10_000;
     this.#maxSessionsPerBinding = options.maxSessionsPerBinding ?? 64;
     this.#maxStreamsPerSession = options.maxStreamsPerSession ?? 4;
+    this.#samplingLimiterOptions = options.samplingLimiterOptions ?? {};
+    this.#clearIntervalFn = options.clearIntervalFn
+      ?? ((handle) => clearInterval(handle as ReturnType<typeof setInterval>));
+    const setIntervalFn = options.setIntervalFn
+      ?? ((handler: () => void, intervalMs: number) => setInterval(handler, intervalMs));
+    this.#maintenanceHandle = setIntervalFn(
+      () => this.#runMaintenance(),
+      this.#maintenanceIntervalMs,
+    );
+    this.#unrefMaintenanceTimer(this.#maintenanceHandle);
   }
 
   create(authBinding: string): McpHttpSessionRecord {
-    this.#reapExpiredSessions();
+    this.#assertActive();
+    this.#runMaintenance();
     if (this.#sessions.size >= this.#maxSessions) throw new Error("mcp_http_session_limit");
     const bindingSessions = [...this.#sessions.values()].filter((record) => record.authBinding === authBinding).length;
     if (bindingSessions >= this.#maxSessionsPerBinding) throw new Error("mcp_http_binding_session_limit");
@@ -98,7 +149,7 @@ export class McpHttpSessionRegistry {
       sampling: createMcpSamplingClient({
         session,
         requestManager,
-        limiter: this.#samplingLimiters.get(authBinding) || this.#createBindingLimiter(authBinding),
+        limiter: this.#bindingLimiter(authBinding),
         audit: (event, details) => { if (event === "sampling_terminal") this.#metrics.samplingTerminal(details); },
       }),
       authBinding,
@@ -113,19 +164,24 @@ export class McpHttpSessionRegistry {
   }
 
   get(sessionId: string, authBinding: string): McpHttpSessionRecord | undefined {
+    if (this.#disposed) return undefined;
     const record = this.#sessions.get(sessionId);
     if (!record || record.authBinding !== authBinding || record.session.state === "closed") return undefined;
-    if (record.lastSeenAt <= this.#now() - this.#sessionTtlMs) {
+    const now = this.#now();
+    if (record.lastSeenAt <= now - this.#sessionTtlMs) {
       this.#closeRecord(record, "http_session_expired");
       return undefined;
     }
-    record.lastSeenAt = this.#now();
+    this.#touch(record, now);
     return record;
   }
 
   openStream(record: McpHttpSessionRecord, response: ServerResponse, lastEventId?: string) {
+    this.#assertActive();
     const internal = record as InternalSession;
+    if (internal.session.state === "closed") throw new Error("mcp_http_session_unavailable");
     if (internal.streams.size >= this.#maxStreamsPerSession) throw new Error("mcp_http_stream_limit");
+    this.#touch(internal);
     const streamId = randomBytes(12).toString("base64url");
     internal.streams.set(streamId, { streamId, response });
     this.#metrics.streamOpened();
@@ -170,10 +226,25 @@ export class McpHttpSessionRegistry {
   }
 
   close(sessionId: string, authBinding: string): boolean {
+    if (this.#disposed) return false;
     const record = this.#sessions.get(sessionId);
     if (!record || record.authBinding !== authBinding) return false;
     this.#closeRecord(record, "http_session_deleted");
     return true;
+  }
+
+  dispose() {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    const maintenanceHandle = this.#maintenanceHandle;
+    this.#maintenanceHandle = undefined;
+    if (maintenanceHandle !== undefined) {
+      this.#clearIntervalFn(maintenanceHandle);
+    }
+    for (const record of [...this.#sessions.values()]) {
+      this.#closeRecord(record, "http_session_registry_disposed");
+    }
+    this.#samplingLimiters.clear();
   }
 
   noteInitialized(record: McpHttpSessionRecord) {
@@ -218,6 +289,7 @@ export class McpHttpSessionRegistry {
 
   #closeRecord(record: InternalSession, reason: string) {
     this.#sessions.delete(record.session.sessionId);
+    this.#touchBindingLimiter(record.authBinding);
     record.session.close();
     record.requestManager.close(reason);
     this.#metrics.sessionClosed();
@@ -234,22 +306,62 @@ export class McpHttpSessionRegistry {
     }
   }
 
-  #createBindingLimiter(authBinding: string) {
-    const limiter = createMcpSamplingLimiter();
-    this.#samplingLimiters.set(authBinding, limiter);
+  #reapExpiredSamplingLimiters() {
+    const expiresAt = this.#now() - this.#samplingLimiterIdleTtlMs;
+    const activeBindings = new Set<string>();
+    for (const session of this.#sessions.values()) activeBindings.add(session.authBinding);
+    for (const [authBinding, record] of this.#samplingLimiters) {
+      if (activeBindings.has(authBinding)) continue;
+      if (record.lastReferencedAt > expiresAt) continue;
+      if (record.limiter.snapshot().concurrent > 0) continue;
+      this.#samplingLimiters.delete(authBinding);
+    }
+  }
+
+  #runMaintenance() {
+    if (this.#disposed) return;
+    this.#reapExpiredSessions();
+    this.#reapExpiredSamplingLimiters();
+  }
+
+  #bindingLimiter(authBinding: string) {
+    const existing = this.#samplingLimiters.get(authBinding);
+    if (existing) {
+      existing.lastReferencedAt = this.#now();
+      return existing.limiter;
+    }
+    const limiter = createMcpSamplingLimiter({
+      ...this.#samplingLimiterOptions,
+      now: this.#now,
+    });
+    this.#samplingLimiters.set(authBinding, { limiter, lastReferencedAt: this.#now() });
     return limiter;
+  }
+
+  #touch(record: InternalSession, now = this.#now()) {
+    record.lastSeenAt = now;
+    this.#touchBindingLimiter(record.authBinding, now);
+  }
+
+  #touchBindingLimiter(authBinding: string, now = this.#now()) {
+    const limiter = this.#samplingLimiters.get(authBinding);
+    if (limiter) limiter.lastReferencedAt = now;
+  }
+
+  #assertActive() {
+    if (this.#disposed) throw new Error("mcp_http_session_registry_disposed");
+  }
+
+  #unrefMaintenanceTimer(handle: IntervalHandle) {
+    if (typeof handle !== "object" || handle === null || !("unref" in handle)) return;
+    const maybeUnref = (handle as { unref?: unknown }).unref;
+    if (typeof maybeUnref === "function") maybeUnref.call(handle);
   }
 }
 
 export function createMcpHttpSessionRegistry(
   metrics: McpTransportMetrics = createMcpTransportMetrics(),
-  options: {
-    readonly sessionTtlMs?: number;
-    readonly now?: () => number;
-    readonly maxSessions?: number;
-    readonly maxSessionsPerBinding?: number;
-    readonly maxStreamsPerSession?: number;
-  } = {},
+  options: McpHttpSessionRegistryOptions = {},
 ) {
   return new McpHttpSessionRegistry(metrics, options);
 }

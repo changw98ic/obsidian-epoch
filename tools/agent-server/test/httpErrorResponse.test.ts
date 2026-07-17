@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { classifyHttpError, isBadRequestHttpErrorCode } from "../lib/http/errorResponse.ts";
+import { CommunityRateLimitError } from "../lib/community.ts";
 import { PublicRegistrationRateLimitError } from "../lib/playerMcpAccessTokenStore.ts";
 
 function codedError(message: string, code: string) {
@@ -47,6 +48,18 @@ test("HTTP error response policy keeps auth and rate-limit status codes", () => 
     statusCode: 503,
     body: { error: "public_registration_protection_unavailable" },
   });
+  assert.deepEqual(
+    classifyHttpError(new CommunityRateLimitError(2_500, "2026-01-01T00:00:02.500Z")),
+    {
+      statusCode: 429,
+      body: {
+        error: "community_rate_limited",
+        retryAfterMs: 2_500,
+        retryAt: "2026-01-01T00:00:02.500Z",
+      },
+      headers: { "retry-after": "3" },
+    },
+  );
   const retryAt = new Date(Date.now() + 30_000).toISOString();
   const traceConflictRateLimit = classifyHttpError(
     new Error(`trace_conflict_deploy_rate_limited:${retryAt}`),
@@ -76,6 +89,10 @@ test("HTTP error response policy maps known business errors to 400", () => {
   assert.deepEqual(classifyHttpError(new Error("trace_conflict_resource_insufficient:aether")), {
     statusCode: 400,
     body: { error: "trace_conflict_resource_insufficient" },
+  });
+  assert.deepEqual(classifyHttpError(new Error("community_body_too_long")), {
+    statusCode: 400,
+    body: { error: "community_body_too_long" },
   });
 });
 

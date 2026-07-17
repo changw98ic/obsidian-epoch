@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-17T17:22:04+08:00",
+  "generatedAt": "1970-01-01T00:00:00Z",
   "sourceStats": {
-    "creatureUnits": 1014,
-    "legacyCreatures": 65,
+    "creatureUnits": 1000,
+    "legacyCreatures": 79,
     "worldSystems": 17,
     "races": 30,
     "places": 29,
@@ -154,7 +154,7 @@
       ],
       "radius": 38.89,
       "terrain": "sky_orbit",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 低轨",
       "sourcePath": "",
       "summary": "由生物栖息地自动生成的地图区域。",
@@ -364,7 +364,7 @@
       ],
       "radius": 34.29,
       "terrain": "sky_orbit",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 轨道",
       "sourcePath": "",
       "summary": "由生物栖息地自动生成的地图区域。",
@@ -382,7 +382,7 @@
       ],
       "radius": 42.22,
       "terrain": "sky_orbit",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 轨道",
       "sourcePath": "",
       "summary": "由生物栖息地自动生成的地图区域。",
@@ -544,7 +544,7 @@
       ],
       "radius": 44.730000000000004,
       "terrain": "surface_city",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 全息",
       "sourcePath": "",
       "summary": "由生物栖息地自动生成的地图区域。",
@@ -1346,7 +1346,7 @@
       ],
       "radius": 42.76,
       "terrain": "surface_city",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 城市",
       "sourcePath": "",
       "summary": "由生物栖息地自动生成的地图区域。",
@@ -1466,7 +1466,7 @@
       ],
       "radius": 37.0,
       "terrain": "surface_city",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 黑诊所",
       "sourcePath": "",
       "summary": "由生物栖息地自动生成的地图区域。",
@@ -1556,7 +1556,7 @@
       ],
       "radius": 30.19,
       "terrain": "surface_ecology",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 荒原",
       "sourcePath": "",
       "summary": "由生物栖息地自动生成的地图区域。",
@@ -1900,7 +1900,7 @@
       ],
       "radius": 32.93,
       "terrain": "underground_mine",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 地下",
       "sourcePath": "",
       "summary": "由生物栖息地自动生成的地图区域。",
@@ -2022,7 +2022,7 @@
       ],
       "radius": 32.61,
       "terrain": "underground_mine",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 地下",
       "sourcePath": "",
       "summary": "由生物栖息地自动生成的地图区域。",
@@ -2746,7 +2746,7 @@
       ],
       "radius": 45.65,
       "terrain": "alien_dimension",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 魔法",
       "sourcePath": "",
       "summary": "由生物栖息地自动生成的地图区域。",
@@ -2918,7 +2918,7 @@
       ],
       "radius": 36.55,
       "terrain": "alien_dimension",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 梦",
       "sourcePath": "",
       "summary": "由生物栖息地自动生成的地图区域。",
@@ -3410,7 +3410,7 @@
       ],
       "radius": 44.4,
       "terrain": "alien_dimension",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 梦",
       "sourcePath": "",
       "summary": "由生物栖息地自动生成的地图区域。",
@@ -3884,7 +3884,7 @@
       ],
       "radius": 40.269999999999996,
       "terrain": "alien_dimension",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 量子",
       "sourcePath": "",
       "summary": "由生物栖息地自动生成的地图区域。",
@@ -4478,10 +4478,10 @@
       "entityCount": 1,
       "dominantThreat": "B",
       "dominantRankRole": "精英",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 低轨",
       "entities": [
-        "星瘤重力肉芽"
+        "legacy:星瘤重力肉芽"
       ]
     },
     {
@@ -4555,10 +4555,10 @@
       "entityCount": 1,
       "dominantThreat": "C",
       "dominantRankRole": "精英",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 全息",
       "entities": [
-        "棱镜巡游鹿"
+        "legacy:棱镜巡游鹿"
       ]
     },
     {
@@ -4670,10 +4670,10 @@
       "entityCount": 1,
       "dominantThreat": "B",
       "dominantRankRole": "头目",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 荒原",
       "entities": [
-        "狼灾吞火幼兽"
+        "legacy:狼灾吞火幼兽"
       ]
     },
     {
@@ -4776,10 +4776,10 @@
       "entityCount": 1,
       "dominantThreat": "D",
       "dominantRankRole": "普通",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 魔法",
       "entities": [
-        "血契祖债蝠"
+        "legacy:血契祖债蝠"
       ]
     },
     {
@@ -4882,10 +4882,10 @@
       "entityCount": 1,
       "dominantThreat": "D",
       "dominantRankRole": "普通",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 地下",
       "entities": [
-        "烛骨契犬"
+        "legacy:烛骨契犬"
       ]
     },
     {
@@ -5069,7 +5069,7 @@
       "confidence": "high",
       "placementReason": "known place: 城市管道",
       "entities": [
-        "管网回声螺"
+        "legacy:管网回声螺"
       ]
     },
     {
@@ -5143,10 +5143,10 @@
       "entityCount": 1,
       "dominantThreat": "C",
       "dominantRankRole": "精英",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 梦",
       "entities": [
-        "月鳞殉光蛾"
+        "legacy:月鳞殉光蛾"
       ]
     },
     {
@@ -6737,10 +6737,10 @@
       "entityCount": 1,
       "dominantThreat": "D",
       "dominantRankRole": "普通",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 梦",
       "entities": [
-        "梦壳幼体"
+        "legacy:梦壳幼体"
       ]
     },
     {
@@ -7017,10 +7017,10 @@
       "entityCount": 1,
       "dominantThreat": "C",
       "dominantRankRole": "精英",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 地下",
       "entities": [
-        "符脉青蛟"
+        "legacy:符脉青蛟"
       ]
     },
     {
@@ -7441,10 +7441,10 @@
       "entityCount": 1,
       "dominantThreat": "A",
       "dominantRankRole": "首领",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 轨道",
       "entities": [
-        "失律光环母机"
+        "legacy:失律光环母机"
       ]
     },
     {
@@ -7460,10 +7460,10 @@
       "entityCount": 1,
       "dominantThreat": "D",
       "dominantRankRole": "普通",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 轨道",
       "entities": [
-        "净翼幼机"
+        "legacy:净翼幼机"
       ]
     },
     {
@@ -7624,10 +7624,10 @@
       "entityCount": 1,
       "dominantThreat": "D",
       "dominantRankRole": "普通",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 量子",
       "entities": [
-        "量子错位犬"
+        "legacy:量子错位犬"
       ]
     },
     {
@@ -7701,10 +7701,10 @@
       "entityCount": 1,
       "dominantThreat": "C",
       "dominantRankRole": "精英",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 城市",
       "entities": [
-        "镜面替身鱼"
+        "legacy:镜面替身鱼"
       ]
     },
     {
@@ -8032,10 +8032,10 @@
       "entityCount": 1,
       "dominantThreat": "B",
       "dominantRankRole": "头目",
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 黑诊所",
       "entities": [
-        "器官仓兽"
+        "legacy:器官仓兽"
       ]
     }
   ],
@@ -74735,24 +74735,24 @@
       "searchText": "渊眠热雾终局圣骸 海沟 渊眠热雾终局圣骸是由渊眠族母题衍生的世界级世界级存在，用于影响整条克苏鲁、星外与深海梦境生态链和文明秩序。 ['渊眠族', '克苏鲁、星外与深海梦境', '古神梦鳃'] HUB全息冷白 被切断与母题种族的仪式联系后会迅速衰弱"
     },
     {
-      "id": "净翼幼机",
+      "id": "legacy:净翼幼机",
       "label": "净翼幼机",
       "kind": "creature",
-      "sourceKind": "creature_unit",
+      "sourceKind": "legacy_creature",
       "layer": "sky_orbit",
       "region": "region:轨道审判站 / 难民净化廊",
       "habitat": "轨道审判站 / 难民净化廊",
       "position": [
-        136.1,
-        145.89,
-        -89.48
+        114.82,
+        147.49,
+        -110.1
       ],
       "overlayRoles": [
         "ecology",
         "faction",
         "conflict"
       ],
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 轨道",
       "sourcePath": "04_生物单位/净翼幼机.md",
       "details": {
@@ -74772,7 +74772,7 @@
         "visual_style": "",
         "weakness": "强电磁干扰 / 律令核心断线",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "母题种族：白械天使 所属体系：高科技文明 关联场域：轨道审判站、难民净化廊、坠落救援区 可采集资源：微型陶瓷羽、低阶净化光囊、幼机律令芯片",
         "appearance": "掌到前臂大小，身体像一枚圆润白瓷胸腔，左右各有三片短小仿生羽翼。头部没有脸，只有一圈淡金扫描光点，扫描时像眨眼。腹部悬着米粒大小的净化光囊，飞行时会拖出细短白线。",
         "ability": "低阶污染识别。 短时止血与浅层净化。 对审判站门禁有弱权限，可打开应急通道。",
@@ -74790,24 +74790,24 @@
       "searchText": "净翼幼机 轨道审判站 / 难民净化廊 ['钻石白'] 强电磁干扰 / 律令核心断线"
     },
     {
-      "id": "器官仓兽",
+      "id": "legacy:器官仓兽",
       "label": "器官仓兽",
       "kind": "creature",
-      "sourceKind": "creature_unit",
+      "sourceKind": "legacy_creature",
       "layer": "surface_city",
       "region": "region:黑诊所 / 贫民义体市场 / 肉件族器官仓",
       "habitat": "黑诊所 / 贫民义体市场 / 肉件族器官仓",
       "position": [
-        -9.45,
-        72.99,
-        188.11
+        -6.58,
+        67.18,
+        183.76
       ],
       "overlayRoles": [
         "ecology",
         "faction",
         "conflict"
       ],
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 黑诊所",
       "sourcePath": "04_生物单位/器官仓兽.md",
       "details": {
@@ -74828,7 +74828,7 @@
         "visual_style": "",
         "weakness": "低温凝固 / 供血链中断 / 记忆腺体过载",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "母题种族：肉件族 关联场域：黑诊所、贫民义体市场、地下手术仓 可采集资源：活体接口、二手记忆腺、血肉恒温囊",
         "appearance": "体型像一辆趴伏的救护车，外壳由黑铁支架和厚肉膜拼成。身体两侧挂满透明器官匣，里面有跳动心脏、备用肺叶和带编号的眼球。头部只是一个缝合收款口，咀嚼硬币和血样后才会打开仓门。",
         "ability": "活体器官低温保存。 快速缝接临时义体。 用二手记忆腺污染逃债者的自我认知。",
@@ -74845,24 +74845,24 @@
       "searchText": "器官仓兽 黑诊所 / 贫民义体市场 / 肉件族器官仓 ['锈黑', '血红'] 低温凝固 / 供血链中断 / 记忆腺体过载"
     },
     {
-      "id": "失律光环母机",
+      "id": "legacy:失律光环母机",
       "label": "失律光环母机",
       "kind": "creature",
-      "sourceKind": "creature_unit",
+      "sourceKind": "legacy_creature",
       "layer": "sky_orbit",
       "region": "region:轨道审判站 / 坠落教堂",
       "habitat": "轨道审判站 / 坠落教堂",
       "position": [
-        -69.18,
-        150.82,
-        -178.83
+        -69.03,
+        154.3,
+        -174.37
       ],
       "overlayRoles": [
         "ecology",
         "faction",
         "conflict"
       ],
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 轨道",
       "sourcePath": "04_生物单位/失律光环母机.md",
       "details": {
@@ -74883,7 +74883,7 @@
         "visual_style": "",
         "weakness": "悖律证词 / 多源无辜样本 / 光环主轴过热",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "母题种族：白械天使 所属体系：高科技文明 关联场域：轨道审判站、坠落教堂、净化封锁区 可采集资源：失律光环碎片、陶瓷圣骸、审判黑匣",
         "appearance": "主体像倒悬在教堂穹顶下的巨大陶瓷子宫，外圈悬浮七重断裂光环。每一道光环都刻满细小判词，转动时会投下羽翼形阴影。它没有脸，只有一面竖直白镜，镜中显示被审判者最“应当被修正”的样子。",
         "ability": "大范围污染扫描和人群分类。 召回或重写低阶白械造物。 用光环裁切建筑、街区和记忆记录。",
@@ -74901,24 +74901,24 @@
       "searchText": "失律光环母机 轨道审判站 / 坠落教堂 ['钻石白', '暗金'] 悖律证词 / 多源无辜样本 / 光环主轴过热"
     },
     {
-      "id": "星瘤重力肉芽",
+      "id": "legacy:星瘤重力肉芽",
       "label": "星瘤重力肉芽",
       "kind": "creature",
-      "sourceKind": "creature_unit",
+      "sourceKind": "legacy_creature",
       "layer": "sky_orbit",
       "region": "region:低轨坠落点 / 非欧洞窟 / 星外污染坑",
       "habitat": "低轨坠落点 / 非欧洞窟 / 星外污染坑",
       "position": [
-        71.48,
-        153.74,
-        -197.93
+        79.23,
+        154.07,
+        -225.46
       ],
       "overlayRoles": [
         "ecology",
         "faction",
         "conflict"
       ],
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 低轨",
       "sourcePath": "04_生物单位/星瘤重力肉芽.md",
       "details": {
@@ -74939,7 +74939,7 @@
         "visual_style": "",
         "weakness": "稳定重力锚 / 高温陨铁切割 / 同频心灵噪声",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "母题种族：星瘤裔 关联场域：低轨坠落点、非欧洞窟、星外污染坑 可采集资源：重力肉芽、黑陨铁刺、低语神经",
         "appearance": "像一团倒长在空气里的紫黑肉花，花瓣由半透明血肉和黑陨铁晶片混生。中心没有花蕊，而是一只缓慢开合的环形胃口。周围碎石、血滴和骨片会逆着常识向它斜斜漂浮。",
         "ability": "局部重力偏转。 心灵低语诱导方向误判。 用陨铁刺固定猎物影子。",
@@ -74956,24 +74956,24 @@
       "searchText": "星瘤重力肉芽 低轨坠落点 / 非欧洞窟 / 星外污染坑 ['幽紫王权', '深黑不可名状'] 稳定重力锚 / 高温陨铁切割 / 同频心灵噪声"
     },
     {
-      "id": "月鳞殉光蛾",
+      "id": "legacy:月鳞殉光蛾",
       "label": "月鳞殉光蛾",
       "kind": "creature",
-      "sourceKind": "creature_unit",
+      "sourceKind": "legacy_creature",
       "layer": "alien_dimension",
       "region": "region:夜城剧院 / 月光祭台 / 蛾民聚落",
       "habitat": "夜城剧院 / 月光祭台 / 蛾民聚落",
       "position": [
-        -19.92,
-        221.92,
-        -217.33
+        -24.58,
+        221.73,
+        -229.68
       ],
       "overlayRoles": [
         "ecology",
         "faction",
         "conflict"
       ],
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 梦",
       "sourcePath": "04_生物单位/月鳞殉光蛾.md",
       "details": {
@@ -74994,7 +74994,7 @@
         "visual_style": "",
         "weakness": "强白光 / 无声环境 / 鳞粉被雨水冲净",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "母题种族：蛾民 关联场域：夜城剧院、月光祭台、梦毒温室 可采集资源：月鳞粉、殉光翅骨、梦毒绒毛",
         "appearance": "翼展一到两米，身体毛茸茸，像一只柔软而苍白的夜行动物。翅面有血红月环纹，边缘残缺却持续落下银蓝鳞粉。头部触角像两支小烛台，兴奋时会轻轻发亮。",
         "ability": "鳞粉诱导幻觉。 感知情绪颜色。 在月光下短暂预示灾兆。",
@@ -75011,23 +75011,23 @@
       "searchText": "月鳞殉光蛾 夜城剧院 / 月光祭台 / 蛾民聚落 ['月白青墨', '血红'] 强白光 / 无声环境 / 鳞粉被雨水冲净"
     },
     {
-      "id": "梦壳幼体",
+      "id": "legacy:梦壳幼体",
       "label": "梦壳幼体",
       "kind": "creature",
-      "sourceKind": "creature_unit",
+      "sourceKind": "legacy_creature",
       "layer": "alien_dimension",
       "region": "region:眠室 / 童话病院 / 梦蛹族聚落",
       "habitat": "眠室 / 童话病院 / 梦蛹族聚落",
       "position": [
-        104.62,
-        226.83,
-        -29.34
+        115.38,
+        224.12,
+        -15.35
       ],
       "overlayRoles": [
         "ecology",
         "faction"
       ],
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 梦",
       "sourcePath": "04_生物单位/梦壳幼体.md",
       "details": {
@@ -75048,7 +75048,7 @@
         "visual_style": "",
         "weakness": "真实姓名呼唤 / 清醒钟声 / 无梦睡眠",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "母题种族：梦蛹族 关联场域：眠室、童话病院、梦蛹族聚落 可采集资源：梦壳碎片、软梦丝、童话残页",
         "appearance": "巴掌到枕头大小，外壳像半透明奶白蚕茧，壳面浮着淡紫色童话图案。它没有眼睛，只有一圈小小缝线状嘴，睡着时会发出像翻书的沙沙声。",
         "ability": "安抚睡眠。 伪装梦境场景。 偷食名字、路线、童年画面等浅层记忆。",
@@ -75065,24 +75065,24 @@
       "searchText": "梦壳幼体 眠室 / 童话病院 / 梦蛹族聚落 ['月白青墨', '幽紫王权'] 真实姓名呼唤 / 清醒钟声 / 无梦睡眠"
     },
     {
-      "id": "棱镜巡游鹿",
+      "id": "legacy:棱镜巡游鹿",
       "label": "棱镜巡游鹿",
       "kind": "creature",
-      "sourceKind": "creature_unit",
+      "sourceKind": "legacy_creature",
       "layer": "surface_city",
       "region": "region:全息剧场 / 折光塔 / 光谱荒原",
       "habitat": "全息剧场 / 折光塔 / 光谱荒原",
       "position": [
-        -238.21,
-        74.01,
-        36.72
+        -241.16,
+        66.7,
+        43.3
       ],
       "overlayRoles": [
         "ecology",
         "faction",
         "conflict"
       ],
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 全息",
       "sourcePath": "04_生物单位/棱镜巡游鹿.md",
       "details": {
@@ -75103,7 +75103,7 @@
         "visual_style": "",
         "weakness": "纯黑吸光帷幕 / 棱镜角断裂 / 无色环境",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "母题种族：棱光裔 关联场域：全息剧场、折光塔、光谱荒原 可采集资源：棱镜角、光谱鳞、巡游蹄印",
         "appearance": "肩高近人，身体像半透明玻璃鹿，内部有缓慢流动的彩色光带。鹿角分裂成多面棱镜，每次转头都会在空气中切出小片彩虹。蹄子不踩地，而是踏在薄薄的光面上。",
         "ability": "校准感官污染。 折射低阶激光、幻光和视觉咒。 在黑暗环境中打开短程光路。",
@@ -75120,23 +75120,23 @@
       "searchText": "棱镜巡游鹿 全息剧场 / 折光塔 / 光谱荒原 ['钻石白', '月白青墨'] 纯黑吸光帷幕 / 棱镜角断裂 / 无色环境"
     },
     {
-      "id": "烛骨契犬",
+      "id": "legacy:烛骨契犬",
       "label": "烛骨契犬",
       "kind": "creature",
-      "sourceKind": "creature_unit",
+      "sourceKind": "legacy_creature",
       "layer": "underground_mine",
       "region": "region:地下礼拜堂 / 契约墓室 / 蜡骨人聚落",
       "habitat": "地下礼拜堂 / 契约墓室 / 蜡骨人聚落",
       "position": [
-        -136.92,
-        -70.93,
-        -183.78
+        -160.6,
+        -72.48,
+        -154.57
       ],
       "overlayRoles": [
         "ecology",
         "faction"
       ],
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 地下",
       "sourcePath": "04_生物单位/烛骨契犬.md",
       "details": {
@@ -75157,7 +75157,7 @@
         "visual_style": "",
         "weakness": "契约火熄灭 / 雨水浸泡 / 无主骨牌",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "母题种族：蜡骨人 关联场域：地下礼拜堂、契约墓室、骨蜡市场 可采集资源：骨蜡犬齿、契约烛芯、守门灰",
         "appearance": "体型像瘦猎犬，骨架由白色骨蜡凝成，胸腔内燃着一小团暗金火苗。它的耳朵像两片软蜡烛焰，尾巴是一截不断滴蜡的细骨链。走过地面时会留下小小蜡印。",
         "ability": "识别契约签名。 用烛火封住门缝和小型裂口。 咬住违约者影子，使其无法跨过门槛。",
@@ -75174,24 +75174,24 @@
       "searchText": "烛骨契犬 地下礼拜堂 / 契约墓室 / 蜡骨人聚落 ['骨白灰', '暗金'] 契约火熄灭 / 雨水浸泡 / 无主骨牌"
     },
     {
-      "id": "狼灾吞火幼兽",
+      "id": "legacy:狼灾吞火幼兽",
       "label": "狼灾吞火幼兽",
       "kind": "creature",
-      "sourceKind": "creature_unit",
+      "sourceKind": "legacy_creature",
       "layer": "surface_ecology",
       "region": "region:北境荒原 / 月蚀战场 / 霜巨营地边缘",
       "habitat": "北境荒原 / 月蚀战场 / 霜巨营地边缘",
       "position": [
-        178.03,
-        -1.29,
-        87.36
+        163.55,
+        -2.05,
+        70.44
       ],
       "overlayRoles": [
         "ecology",
         "faction",
         "conflict"
       ],
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 荒原",
       "sourcePath": "04_生物单位/狼灾吞火幼兽.md",
       "details": {
@@ -75212,7 +75212,7 @@
         "visual_style": "",
         "weakness": "无火极寒 / 亲族血誓 / 银骨锁链",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "母题种族：狼灾血裔 关联场域：北境荒原、月蚀战场、末日祭火坑 可采集资源：吞火胃囊、狼灾血、焦骨牙",
         "appearance": "体型接近小牛，四肢过长，脊背长出焦黑骨刺。嘴部裂到耳后，喉咙里不是舌头，而是一团不断向内吸卷的暗红火涡。毛发像烧焦兽皮，奔跑时会掉下热灰。",
         "ability": "吞食火焰和低阶祝福。 嗅出灵魂气味。 用嚎叫引发短暂饥饿狂化。",
@@ -75229,23 +75229,23 @@
       "searchText": "狼灾吞火幼兽 北境荒原 / 月蚀战场 / 霜巨营地边缘 ['血红', '骨白灰'] 无火极寒 / 亲族血誓 / 银骨锁链"
     },
     {
-      "id": "符脉青蛟",
+      "id": "legacy:符脉青蛟",
       "label": "符脉青蛟",
       "kind": "creature",
-      "sourceKind": "creature_unit",
+      "sourceKind": "legacy_creature",
       "layer": "underground_mine",
       "region": "region:符阵水渠 / 万机符宗外阵 / 灵力导流井",
       "habitat": "符阵水渠 / 万机符宗外阵 / 灵力导流井",
       "position": [
-        85.86,
-        -77.77,
-        71.87
+        95.03,
+        -78.24,
+        78.88
       ],
       "overlayRoles": [
         "ecology",
         "faction"
       ],
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 地下",
       "sourcePath": "04_生物单位/符脉青蛟.md",
       "details": {
@@ -75266,7 +75266,7 @@
         "visual_style": "",
         "weakness": "反向咒文 / 符脉断流 / 铜鳞过载",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属体系：东方修行者 关联势力：万机符宗 关联场域：符阵水渠、外阵护城渠、灵力导流井 可采集资源：铜符鳞、青蛟须、导流符骨",
         "appearance": "体长三到五米，蛟形但身躯偏机械化，青黑鳞片之间嵌着铜符片。额头有一枚旋转符轮，须髯像两束细长金属导线，游动时会拖出暗金阵纹。它的腹部透明，可见灵力像水银一样沿符脉流动。",
         "ability": "疏导过载灵力。 用蛟须侦测符阵破口。 在水面和金属地板上绘制临时阵纹。",
@@ -75284,17 +75284,17 @@
       "searchText": "符脉青蛟 符阵水渠 / 万机符宗外阵 / 灵力导流井 ['暗金', '锈黑'] 反向咒文 / 符脉断流 / 铜鳞过载"
     },
     {
-      "id": "管网回声螺",
+      "id": "legacy:管网回声螺",
       "label": "管网回声螺",
       "kind": "creature",
-      "sourceKind": "creature_unit",
+      "sourceKind": "legacy_creature",
       "layer": "surface_city",
       "region": "region:城市管道 / 废弃地铁 / 暗渠",
       "habitat": "城市管道 / 废弃地铁 / 暗渠",
       "position": [
-        135.19,
-        66.9,
-        26.13
+        101.11,
+        66.35,
+        -1.69
       ],
       "overlayRoles": [
         "ecology",
@@ -75321,7 +75321,7 @@
         "visual_style": "",
         "weakness": "干燥环境 / 强噪声 / 盐粉",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "母题种族：管巢族 关联场域：城市管道、废弃地铁、地下走私路线 可采集资源：回声壳、潮湿黏液、管壁定位纹",
         "appearance": "拇指大小，壳像旧铜管卷成的小号角，壳口内有绿色湿膜。软体部分灰白半透明，探出两根像听诊器软管的触须。移动很慢，但每爬一段会留下规律点线。",
         "ability": "放大或过滤管道回声。 在湿墙上留下短时路线标记。 预警大型生物或巡逻机械的靠近。",
@@ -75339,24 +75339,24 @@
       "searchText": "管网回声螺 城市管道 / 废弃地铁 / 暗渠 ['锈黑', '雾绿腐生'] 干燥环境 / 强噪声 / 盐粉"
     },
     {
-      "id": "血契祖债蝠",
+      "id": "legacy:血契祖债蝠",
       "label": "血契祖债蝠",
       "kind": "creature",
-      "sourceKind": "creature_unit",
+      "sourceKind": "legacy_creature",
       "layer": "alien_dimension",
       "region": "region:古堡档案室 / 家族债务库 / 血契礼拜厅",
       "habitat": "古堡档案室 / 家族债务库 / 血契礼拜厅",
       "position": [
-        -158.93,
-        225.83,
-        -4.3
+        -171.79,
+        224.13,
+        -5.32
       ],
       "overlayRoles": [
         "ecology",
         "faction",
         "conflict"
       ],
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 魔法",
       "sourcePath": "04_生物单位/血契祖债蝠.md",
       "details": {
@@ -75377,7 +75377,7 @@
         "visual_style": "",
         "weakness": "无主契约 / 银墨涂改 / 祖血断供",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "母题种族：血契贵族 所属体系：西方魔法师 关联场域：古堡档案室、家族债务库、血契礼拜厅 可采集资源：祖债翼膜、血印尖牙、契约回声",
         "appearance": "体型像乌鸦大小，翼膜呈深红羊皮纸质感，上面自然浮现细小契约字。头部有金色小冠状骨刺，眼睛像两滴凝固红蜡。飞行时会发出翻动旧档案的纸响。",
         "ability": "嗅出血脉债务。 标记违约者影子。 用翼膜复读旧契约条款，制造短暂精神压迫。",
@@ -75395,23 +75395,23 @@
       "searchText": "血契祖债蝠 古堡档案室 / 家族债务库 / 血契礼拜厅 ['血红', '暗金'] 无主契约 / 银墨涂改 / 祖血断供"
     },
     {
-      "id": "量子错位犬",
+      "id": "legacy:量子错位犬",
       "label": "量子错位犬",
       "kind": "creature",
-      "sourceKind": "creature_unit",
+      "sourceKind": "legacy_creature",
       "layer": "alien_dimension",
       "region": "region:量子实验室 / 双城边界 / 概率塌缩区",
       "habitat": "量子实验室 / 双城边界 / 概率塌缩区",
       "position": [
-        109.31,
-        227.02,
-        -167.57
+        103.08,
+        222.16,
+        -169.97
       ],
       "overlayRoles": [
         "ecology",
         "faction"
       ],
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 量子",
       "sourcePath": "04_生物单位/量子错位犬.md",
       "details": {
@@ -75432,7 +75432,7 @@
         "visual_style": "",
         "weakness": "确定性锚点 / 同步口令失败 / 双身分离过久",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "母题种族：量子双生族 关联场域：量子实验室、双城边界、概率塌缩区 可采集资源：叠影毛、概率鼻镜、双身脚印",
         "appearance": "中型犬大小，身体像半透明白灰短毛犬，身侧总跟着一只偏紫的延迟残影。两只身体共享一只尾巴的动作，却常朝不同方向摇。眼睛像小型概率骰，眨眼时会闪出两种结果。",
         "ability": "短程概率嗅探。 标记安全路径或危险路径。 在受伤瞬间把伤害分摊给低概率残影。",
@@ -75449,23 +75449,23 @@
       "searchText": "量子错位犬 量子实验室 / 双城边界 / 概率塌缩区 ['钻石白', '幽紫王权'] 确定性锚点 / 同步口令失败 / 双身分离过久"
     },
     {
-      "id": "镜面替身鱼",
+      "id": "legacy:镜面替身鱼",
       "label": "镜面替身鱼",
       "kind": "creature",
-      "sourceKind": "creature_unit",
+      "sourceKind": "legacy_creature",
       "layer": "surface_city",
       "region": "region:镜廊 / 反光城市 / 贵族浴池 / 屏幕水域",
       "habitat": "镜廊 / 反光城市 / 贵族浴池 / 屏幕水域",
       "position": [
-        -118.97,
-        70.56,
-        102.08
+        -150.26,
+        73.01,
+        84.33
       ],
       "overlayRoles": [
         "ecology",
         "faction"
       ],
-      "confidence": "medium",
+      "confidence": "low",
       "placementReason": "keyword: 城市",
       "sourcePath": "04_生物单位/镜面替身鱼.md",
       "details": {
@@ -75486,7 +75486,7 @@
         "visual_style": "",
         "weakness": "无反光环境 / 本体血滴 / 镜面碎裂噪声",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "母题种族：镜裔 关联场域：镜廊、反光城市、贵族浴池、屏幕水域 可采集资源：镜核、冷玻璃鳞、延迟鱼眼",
         "appearance": "体长半米到一米，现实中几乎不可见，只在镜面、水面或屏幕反光里显出冷白鱼形。鳞片像细碎镜片，鱼眼反射的不是观察者，而是观察者接下来要说的话。",
         "ability": "通过反光面移动。 短期替换身份印象。 让目标动作和影像产生延迟。",
@@ -75538,7 +75538,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "",
         "appearance": "",
         "ability": "",
@@ -75615,7 +75615,7 @@
         "visual_style": "",
         "weakness": "怕洁净盐水、强烈寒气和空腹状态；离开药房太久会快速萎缩。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：丹鼎肉仙门 分类：势力低级生物 / 试药耗材 / 腐生杂役 基底：血红 / 雾绿腐生 可被利用：药瘤可炼作劣质补血丹，也可提取不稳定的肉身增殖剂。",
         "appearance": "体型约为普通鼠两到三倍，低伏爬行，肩背隆起，腹部拖地，整体像一团被药液泡胀的活肉。 头部保持鼠类尖吻和圆耳，但耳缘开裂，眼珠偏浑红，门齿外翻成褐红色药垢牙。 皮肤呈半透明灰粉色，能看见血管、未消化药渣和绿色丹液在腹腔内缓慢翻涌。 背部生有大小不一的半熟药瘤，表面湿亮，部分药瘤内有金绿色符字沉浮，随心跳鼓胀收缩。 四爪短而硬，指节像被丹炉烟熏黑；尾巴细长如脐带，末端带一枚会渗药粉的小肉囊。 血红、腐绿和半透明肉灰混在皮膜与药瘤中，暗金药纹沿黑褐裂痂浮动。",
         "ability": "药性吸附：能吸收失败丹药中的残余药力，短时间膨胀变异。 腐肉钻咬：牙齿会分泌麻痹唾液，适合啃开实验体缝合处。 瘤爆散药：受惊时药瘤破裂，释放致幻、催吐或促生肉芽的粉末。",
@@ -75683,7 +75683,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：秘密菌类 推荐基底：雾绿腐生、骨白灰 来源章节：10.3 森林 / 山海异化生物",
         "appearance": "",
         "ability": "",
@@ -75741,7 +75741,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：旧神梦话 推荐基底：深黑不可名状、雾绿腐生 来源章节：10.2 深海异化生物",
         "appearance": "",
         "ability": "",
@@ -75798,7 +75798,7 @@
         "visual_style": "",
         "weakness": "怕正午直射阳光和没有表情的目标；遇到面具过多的场合会混淆身份。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：百相妖庭 分类：势力低级生物 / 妖市侦察 / 拟态传信 基底：雾绿腐生 / 月白青墨 可被利用：借面毛可制作低阶易容符，尾骨可磨成幻术笔。",
         "appearance": "体型接近瘦长家猫，背线柔软，四肢轻巧，站立时总像半步藏进阴影或灯笼烟气里。 头部介于狸猫与小狐之间，吻部尖窄，额头有一块月白空面纹，远看像没有五官的小面具。 眼睛呈青绿色竖瞳，眼角拖出墨痕；嘴边胡须细长，末端带微小纸符结。 身体覆有黑灰短毛和青墨旋纹，肩颈处长出几缕像戏服残穗的软毛。 尾巴分叉为两股，尾尖挂着纸面具般的薄皮，薄皮会随情绪显出偷来的表情轮廓。 毛色以月白、青墨与雾绿交错，边缘带湿润墨晕，额前空面纹使它区别于纯黑猫。",
         "ability": "借面：触碰影子后可复制目标一刻钟内最强烈的表情。 灯影潜行：在灯笼、月影和树影之间移动时极难被发现。 妖市识路：能找到隐藏妖市入口和临时交换点。",
@@ -75866,7 +75866,7 @@
         "visual_style": "",
         "weakness": "怕火焰、盐水和温暖血液；温度升高后腹腔冻光会融成无意义噪音。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：霜巨原民 分类：势力低级生物 / 冰层清道 / 记忆寄存虫 基底：钻石白 / 骨白灰 可被利用：冰腔卵可低温保存记忆片段，虱壳可磨成抗寒粉。",
         "appearance": "体型如拇指到半掌大小，椭圆背甲高拱，整体像一枚会爬行的透明冰囊。 头部很小，埋在前胸甲下，只有两枚黑针般复眼和短短的冰须从壳缘探出。 外壳近乎透明，呈六角冰晶纹，能看见体内蓝白冻光和细碎记忆片段像雪屑一样漂浮。 六足细长，关节似冰针，足端展开成小型雪爪，行走时几乎不压塌雪面。 腹部下方有一圈白灰色储忆腔，靠近尸骸时会发出脉冲般的冷光。 透明冰甲泛出钻石白、骨白灰和淡蓝冻光，虫壳没有普通黑虫的暗色厚甲。",
         "ability": "冰腔储忆：吞食冰层中的记忆碎屑，并以冻光形式保存。 寒霜麻痹：大量附着时会让目标关节发僵。 雪下潜行：能在薄雪下快速移动，避开多数视线。",
@@ -75934,7 +75934,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：非三维空间 推荐基底：幽紫王权、深黑不可名状 来源章节：10.5 星外异化生物",
         "appearance": "",
         "ability": "",
@@ -75992,7 +75992,7 @@
         "visual_style": "",
         "weakness": "惧怕强烈情绪爆发；愤怒、狂喜或悲恸会让它们误判目标，甚至剪断无害记忆。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：斩念剑庭 分类：势力低级生物 / 剑冢守虫 / 梦念清理者 基底：月白青墨 / 钻石白 可被利用：剑螂前肢可磨成斩梦针，翅粉能短暂压制噩梦。",
         "appearance": "体型约半臂长，整体修长直立，背线像一柄折起的细剑，静止时几乎像白瓷剑架。 头部呈细窄面具状，没有明显口器，只在面具中央有一条竖向青墨裂线。 复眼被压成两片斜长月白镜面，眼下有浅淡墨痕，像未干的剑意。 身体胸腹通体瓷白，腹部沿中线生出青墨剑纹，末端收成锋利短尾。 前肢薄而锋利，外缘像两把半透明小剑，内侧有细密锯齿，用来剪断梦念丝。 后足细长而稳，关节呈白玉色，月白、青墨和冷银光集中在肢节边缘。",
         "ability": "剪梦：能切断低阶梦魇、幻术和寄生念头。 静默伏击：在完全安静的环境中几乎无法被感知。 剑纹共鸣：靠近剑庭弟子时，行动会被剑气短暂加速。",
@@ -76058,7 +76058,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "",
         "appearance": "",
         "ability": "",
@@ -76133,7 +76133,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "上级：黑曜纪元 创作规范：生物创作规范、异化生物创作规范 下属谱系：E级弱小生物 下属物种：孢雾巡猎者、线缝鼠、管露蜗、霓尘蛾、油膜跳蚤、锈舌泥鳅、废酸小蟾、腐叶盲蚁、菌灯蜉蝣、藤露蜗、灰渣指虫、骨粉螨、矿泪小蜥、盐沫浮虱、膜鳃小螺、海烛幼虫、裂隙尘蛹、影角线虫、星霜小蛇 相关生态：异化生物生态、腐林、湿谷、废弃矿区、神尸矿区",
         "appearance": "",
         "ability": "",
@@ -76210,7 +76210,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：高空低轨 推荐基底：幽紫王权、钻石白 来源章节：10.5 星外异化生物",
         "appearance": "",
         "ability": "",
@@ -76267,7 +76267,7 @@
         "visual_style": "",
         "weakness": "不擅长处理完全随机的行动；硬币抛掷、噪音干扰和无计划逃跑会削弱其预判。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：根下三女巫 分类：势力低级生物 / 命运织工 / 根系侦察 基底：雾绿腐生 / 幽紫王权 可被利用：命线蛛丝可缝合诅咒，也能做一次性预兆线。",
         "appearance": "体型约掌心大小，主体像一枚干枯树瘤，背部凹凸不平，带有年轮状裂纹。 头部与胸部没有清晰面孔，只在树皮缝里嵌着数枚幽紫小眼，排列成占卜阵点。 腹部半透明，内部缠着紫色与腐绿色命线，线束会随着附近生命气息轻微抽紧。 八足细长如骨针，足尖分叉成根须状，可扎入泥土、棺木或死者影子。 背甲边缘长有细小干根，拖行时像旧线团散出的毛边。 树根状背甲覆盖腐绿、枯木褐和幽紫光，蛛足如骨针从干根边缘伸出。",
         "ability": "残运收集：能收集被规避的死亡、疾病和背叛残片。 命线绊足：让目标短时间遭遇细碎厄运，如滑倒、失手、误听。 根网传讯：把微弱命运波动传回三女巫的根下织机。",
@@ -76336,7 +76336,7 @@
         "visual_style": "",
         "weakness": "过度依赖审判庭标记与钟声；狭窄巷道会限制角钉转向，伪造圣徽可让它陷入迟滞。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：圣银审判庭 分类：势力低级生物 / 猎巫巡兽 / 净化看守 基底：钻石白 / 血红 可被利用：圣银角钉可作为低阶反污染弹芯，蹄下净盐可短暂阻断污染蔓延。",
         "appearance": "体型如半大白鹿，胸腔窄而高，颈部修长，站姿端正，像被训练成活体审判仪仗。 头骨轮廓清秀但缺少柔和表情，眼窝内燃着血红祷火，额心钉有小型圣徽。 鹿角不是骨质枝杈，而是一排排向外生长的圣银长钉，钉根处有红色烧灼痕。 白色鹿皮被火刑烙痕切成十字纹，背脊和肩胛处有银线缝合的祷文带。 四蹄套着净盐蹄圈，落地会留下浅白圆痕；尾部短小，末端像烧焦的白绒。 鹿皮泛钻石白和冷银光，眼窝与烙痕透出血红祷火，角钉轮廓区别于普通鹿角。",
         "ability": "钉角定罪：低头冲撞时以圣银角钉刺入影子，短暂固定目标的施法姿势。 净盐蹄圈：绕行一周后在地面留下盐白圆痕，削弱低阶诅咒、孢子污染和血契痕迹。 审判钟感：能感知审判庭圣徽、钟声和火刑架残留的净化仪式方向。",
@@ -76405,7 +76405,7 @@
         "visual_style": "",
         "weakness": "怕粗暴翻书声和无意义噪音；在完全无文字环境中会失去方向。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：白塔秘法学院 分类：势力低级生物 / 图书馆共生虫 / 结界维护者 基底：暗金 / 幽紫王权 可被利用：书蛾鳞粉可显影隐形文字，也能修补低阶防护结界的裂纹。",
         "appearance": "体型比人手略大，停栖时双翅合成小塔尖轮廓，飞行姿态缓慢而安静。 头部短圆，复眼呈暗紫玻璃质，口器像一小卷会自动展开的羊皮纸。 翅面薄如旧羊皮卷，半透明，翅脉排列成书架与塔窗形状，边缘写满暗金细字。 腹部细长，内部发出稳定塔灯光，光源从金色渐变为幽紫，像微型结界灯芯。 触角末端悬着两点紫色火星，足部沾着细白书尘，可在空中落成短暂符号。 翅面呈旧纸白，暗金文字与幽紫灯火沿翅脉流动，缺少普通彩蛾的艳斑。",
         "ability": "真名嗅尘：能发现被切割、伪装或遗失的真名残粉。 鳞粉显文：让隐形墨水、契约暗文和封印脚注短暂浮现。 塔灯补界：小群书蛾可填补结界上的细小裂隙。",
@@ -76474,7 +76474,7 @@
         "visual_style": "",
         "weakness": "['火焰', '强光', '干燥环境']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：原生异化生物 / 腐生变异体 / 掠食型 生态位置：异化生物生态 基底：雾绿腐生 / 深黑不可名状 栖息地：腐林、湿谷、废弃矿区 可能冲突：赛博工业财团、管巢族、神尸矿区 可被利用：背部孢囊可被采集为生物武器材料或腐化孢子样本",
         "appearance": "头部覆盖骨质面甲，胸背部呈黑色湿亮甲壳，背脊生有半透明孢囊；四肢修长，利爪用于撕裂装甲与厚重组织，尾部延展出湿膜鳍片，适合在湿地快速变向。",
         "ability": "孢雾遮蔽：释放麻痹性腐雾，干扰猎物感官。 孢囊储存：背部孢囊储存腐化孢子，受损时会释放致幻与腐蚀性雾气。 骨质面甲：前颅骨质硬壳能抵御多数物理冲击。 湿膜尾鳍：在湿地、浅水和腐泥环境中高速滑行。",
@@ -76556,7 +76556,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：霓虹污染 推荐基底：锈黑、血红 来源章节：10.1 城市异化生物",
         "appearance": "",
         "ability": "",
@@ -76613,7 +76613,7 @@
         "visual_style": "",
         "weakness": "['石灰粉', '干燥环境']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 酸雾边缘生物 生态位置：异化生物生态 基底：雾绿腐生 / 锈黑 栖息地：工业废液 可被利用：酸囊可作为开锁和清理腐肉的低阶耗材。",
         "appearance": "半掌大小，皮肤灰绿并布满气泡状疣粒。喉囊透明，里面漂着淡黄色酸液和黑色沉渣。",
         "ability": "酸囊喷雾：能喷出短距离弱酸雾，灼伤裸露皮肤。 腐味伪装：气味接近工业废液，容易被误认为普通泄漏。",
@@ -76680,7 +76680,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "长期规则",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "",
         "appearance": "",
         "ability": "",
@@ -76737,7 +76737,7 @@
         "visual_style": "",
         "weakness": "['强光', '无影环境']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 阴影边缘寄行虫 生态位置：异化生物生态 基底：深黑不可名状 / 幽紫王权 栖息地：非三维空间、高空低轨 可被利用：线虫干壳能制作低阶隐形墨边。",
         "appearance": "细如发丝，身体呈半透明紫黑色，只在阴影折角里显出一条细线。头端有两枚小角状触须。",
         "ability": "轮廓错位：短暂扭曲小物体的边缘视觉。 阴影寄行：只要有连续阴影，就能快速滑行。",
@@ -76807,7 +76807,7 @@
         "visual_style": "",
         "weakness": "惧怕没有见证者的密闭空间；若被迫看见自己的倒影，空眼眶会短暂坍缩。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：乌鸦骨庭 分类：势力低级生物 / 战场拾荒 / 记忆采样 基底：骨白灰 / 深黑不可名状 可被利用：眼眶内凝结的死忆珠可用于亡魂占卜与战场复盘。",
         "appearance": "体型比普通乌鸦略大，肩背瘦削，站立时像一副披着黑羽的轻骨架。 头骨轮廓明显，喙部苍白并布满细密裂纹，喙尖常沾着干涸眼液和灰尘。 双眼不是器官，而是两枚圆形空洞，空洞深处偶尔闪过别人的临终画面。 羽毛像烧黑的薄骨片，边缘参差，展开时能看见骨白羽轴和灰黑裂缝。 爪足细瘦如骨钩，胸前挂着一两枚“死忆珠”，像浑浊玻璃眼球，被细骨丝缠住。 深黑骨羽与骨白羽轴干枯轻薄，空眼洞内偶尔闪过冷蓝死光。",
         "ability": "死前留影：能保存死者最后数息的视觉记忆。 败亡预叫：若成群突然无声落地，代表附近将出现大量死亡。 亡魂引路：能把迷失战魂引向乌鸦骨庭的祭坛。",
@@ -76874,7 +76874,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：仪器可见 推荐基底：深黑不可名状 来源章节：10.5 星外异化生物",
         "appearance": "",
         "ability": "",
@@ -76930,7 +76930,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：时间线捕猎 推荐基底：幽紫王权、月白青墨 来源章节：10.5 星外异化生物",
         "appearance": "",
         "ability": "",
@@ -76988,7 +76988,7 @@
         "visual_style": "",
         "weakness": "阴天、地下和强光污染会扰乱星盘瞳孔；被关在无天顶房间内会逐渐失明。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：钦天观星宗 分类：势力低级生物 / 灾兆信使 / 星辉定位 基底：月白青墨 / 幽紫王权 可被利用：眼羽可做星盘指针，喙骨可磨成短效占星针。",
         "appearance": "体型如小雀，骨架轻，尾羽较长，停在枝头时像一枚会眨眼的小型观星仪。 头顶有月白冠羽，喙短而尖，喙根处有青墨色星轨纹。 双眼像两枚旋转星盘，外圈有刻度，瞳孔会根据天象偏移到不同方位。 身体羽色黑白相间，胸口布满细小星点，星点会在夜间连成短暂星图。 翅羽末端带幽紫暗光，尾羽分成三到五片细长星针，用于指向灾兆方向。 月白、青墨、星银和幽紫集中在冠羽、胸口星点与尾羽星针上，羽型区别于喜鹊和乌鸦。",
         "ability": "灾兆短啼：叫声能让观星宗弟子看到一帧未来危险。 星辉定位：在夜空可见时永不迷路，并能标记裂灾方向。 异星畏避：遇到旧神轨迹时会主动避让并掉落眼羽。",
@@ -77056,7 +77056,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：陨石寄生 推荐基底：深黑不可名状、幽紫王权 来源章节：10.5 星外异化生物",
         "appearance": "",
         "ability": "",
@@ -77113,7 +77113,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：山海森林 推荐基底：月白青墨、幽紫王权 来源章节：10.3 森林 / 山海异化生物",
         "appearance": "",
         "ability": "",
@@ -77171,7 +77171,7 @@
         "visual_style": "",
         "weakness": "['热源', '密闭容器']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 星尘凝霜爬行者 生态位置：异化生物生态 基底：钻石白 / 月白青墨 栖息地：高空低轨、非三维空间 可被利用：霜线鳞可用于短效降温符片。",
         "appearance": "体长约一尺，身体像一束会动的白蓝霜线，鳞片极薄，头部只有一枚暗淡星点。",
         "ability": "冷斑追踪：爬过的路径会保留数分钟低温痕迹。 星尘蜷缩：受惊时蜷成一枚冰冷尘球，滚入缝隙。",
@@ -77241,7 +77241,7 @@
         "visual_style": "",
         "weakness": "离开月光和潮湿环境后会迅速干裂；铁器敲击声会让它们失去方向。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：月蚀女巫环 分类：势力低级生物 / 月井杂役 / 草药毒兽 基底：月白青墨 / 雾绿腐生 可被利用：月涎可调制低阶变形药，背疣能储存月相毒素。",
         "appearance": "体型如双手合抱的小蟾，身体圆扁，腹部宽厚，伏地时像一块被月光泡软的湿石。 头部宽而低，嘴线很长，眼睛呈井水般深青色，眼底有一圈月白反光。 皮肤像被月光泡白的湿苔，表面潮湿，带雾绿色斑块和细小苔丝。 背上有十二枚凸起疣点，对应残缺月相，疣点内会积蓄草药毒露。 前足短钝，后足有蹼，蹼缘像撕裂的青墨符纸；喉囊鼓起时能看见月井倒影。 月白湿皮、苔绿斑块和深井青眼纹共同构成药井共生蟾形。",
         "ability": "月涎封口：舌液可让伤口短暂闭合，也能让谎言暂时说不出口。 疣毒换相：不同月相下释放不同毒性，满月麻痹，新月致盲。 草药嗅寻：能找到被异化生物踩坏但仍有药性的植物。",
@@ -77309,7 +77309,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：工业废液 推荐基底：锈黑、雾绿腐生 来源章节：10.1 城市异化生物",
         "appearance": "",
         "ability": "",
@@ -77366,7 +77366,7 @@
         "visual_style": "",
         "weakness": "['火焰', '干燥环境']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 废油表层寄生虫 生态位置：异化生物生态 基底：锈黑 / 血红 栖息地：工业废液 可被利用：油膜腹囊可提取少量易燃润滑剂。",
         "appearance": "针尖到米粒大小，身体扁薄发亮，腹部像一滴会动的黑油。后足夸张弯曲，弹跳时留下细小油星。",
         "ability": "油膜附着：能钻入布料和义体关节，造成滑腻失衡。 火花引燃：聚集过多时，静电火花可能点燃薄油层。",
@@ -77436,7 +77436,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：旧神遗骸孵化 推荐基底：深黑不可名状、幽紫王权 来源章节：10.2 深海异化生物",
         "appearance": "",
         "ability": "",
@@ -77494,7 +77494,7 @@
         "visual_style": "",
         "weakness": "['强光', '热源']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 冷光尸油食者 生态位置：异化生物生态 基底：月白青墨 / 深黑不可名状 栖息地：深海尸骸 可被利用：冷光脂可做短效水下标记。",
         "appearance": "身体像半透明蜡滴，头部无眼，尾端燃着一粒冷白光点。体内有黑色尸油线缓慢流动。",
         "ability": "冷光诱饵：在黑水中制造细小光点，吸引好奇者靠近。 黑水示踪：吞食尸油后会沿污染水流发光。",
@@ -77564,7 +77564,7 @@
         "visual_style": "",
         "weakness": "['水', '强风']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 灰烬钻缝者 生态位置：异化生物生态 基底：锈黑 / 骨白灰 栖息地：神尸矿区、废弃矿区 可被利用：体内灰核可作为一次性余温探针。",
         "appearance": "指节状身体由灰壳分段组成，末端有一圈细小爪钩。爬行时会掉落温热灰粉。",
         "ability": "余温嗅探：能准确靠近刚熄灭的火源或热矿脉。 灰粉迷眼：受压时喷出一小团刺眼灰粉。",
@@ -77635,7 +77635,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：焚化炉生态 推荐基底：骨白灰、锈黑 来源章节：10.4 神尸矿区异化生物",
         "appearance": "",
         "ability": "",
@@ -77692,7 +77692,7 @@
         "visual_style": "",
         "weakness": "怕骤冷、深水和长时间寂静；火焰熄灭后会变得笨重嗜睡。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：火纹氏族 分类：势力低级生物 / 熔炉杂役 / 燃烧突进兽 基底：血红 / 锈黑 可被利用：炉牙可做火符刻刀，胃石能稳定低阶熔岩符文。",
         "appearance": "体型如矮壮野猪，肩部厚重，四肢短粗，奔跑时像一团贴地滚动的炭火。 头部宽钝，额骨隆起，鼻盘漆黑开裂，鼻孔持续喷出红色火星和热灰。 两根獠牙像刚从炉膛取出的黑铁钩，牙根处发红，表面有火纹氏族刻痕。 皮肤覆盖火山岩斑和锈黑硬痂，裂缝里透出暗红热光，背部有短硬炭鬃。 蹄子像烧红后冷却的铁块，尾巴短卷，尾端带一枚小火炭瘤。 血红炉光从锈黑岩皮和焦炭灰裂缝中透出，体态低矮厚重。",
         "ability": "炉腹蓄火：吞食炭块后可短暂喷吐低温熔焰。 獠牙开炉：能撞开铁门、薄甲和半凝固矿渣。 战鼓狂奔：听到火纹战鼓时速度与痛觉耐受上升。",
@@ -77760,7 +77760,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：神经接口事故 推荐基底：锈黑、骨白灰 来源章节：10.1 城市异化生物",
         "appearance": "",
         "ability": "",
@@ -77817,7 +77817,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：妖雾幻觉 推荐基底：雾绿腐生、月白青墨 来源章节：10.3 森林 / 山海异化生物",
         "appearance": "",
         "ability": "",
@@ -77874,7 +77874,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：深海尸骸 推荐基底：骨白灰、深黑不可名状 来源章节：10.2 深海异化生物",
         "appearance": "",
         "ability": "",
@@ -77931,7 +77931,7 @@
         "visual_style": "",
         "weakness": "['淡水', '强光']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 盐泡滤食者 生态位置：异化生物生态 基底：骨白灰 / 月白青墨 栖息地：深海尸骸 可被利用：盐壳可磨成低阶防腐粉。",
         "appearance": "身体半透明，背部结着细盐晶，腹部像一粒泡沫。六足短小，靠海流和尸油浮动。",
         "ability": "潮线标记：盐壳会在物体上留下发白边线。 轻微脱水：大量附着时会让皮肤干裂。",
@@ -78000,7 +78000,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：梦境感知 推荐基底：雾绿腐生、深黑不可名状 来源章节：10.2 深海异化生物",
         "appearance": "",
         "ability": "",
@@ -78058,7 +78058,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：记录生物 推荐基底：幽紫王权、骨白灰 来源章节：10.4 神尸矿区异化生物",
         "appearance": "",
         "ability": "",
@@ -78116,7 +78116,7 @@
         "visual_style": "",
         "weakness": "['强光', '干燥环境']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 矿脉渗液舔食者 生态位置：异化生物生态 基底：暗金 / 锈黑 栖息地：神尸矿区、废弃矿区 可被利用：矿泪可用于检测神尸矿脉的活性。",
         "appearance": "体长约一掌，鳞片暗褐带金纹。眼角矿泪凝成小珠，尾尖常沾着绿色矿盐。",
         "ability": "裂纹报警：靠近活跃矿脉时会发出细小咔哒声。 弱毒尾液：断尾处流出的矿盐会造成轻微麻木。",
@@ -78187,7 +78187,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：梦境植物 推荐基底：雾绿腐生、锈黑 来源章节：10.4 神尸矿区异化生物",
         "appearance": "",
         "ability": "",
@@ -78244,7 +78244,7 @@
         "visual_style": "",
         "weakness": "符芯怕强磁、潮湿与反向咒文；额符被撕下后会进入短暂盲跑状态，容易误咬同伴。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：万机符宗 分类：势力低级生物 / 符箓傀儡 / 巡逻型 基底：暗金 / 锈黑 可被利用：胸腔符芯可拆作低阶符箓芯片，齿轮脊骨可回收为傀儡零件。",
         "appearance": "体型近似瘦长猎犬，但比例更像木骨傀儡，身体胸腹空瘪，关节由铜轴和黑铁铆环连接。 头部没有眼睛，额骨位置嵌着一枚旋转铜符，符芯像机械罗盘一样不停校准方向。 吻部由符木和铁片拼成，口中藏有短小符钉，张口时可见暗金符线发亮。 背脊排列三到七面小型阵旗，旗面破旧，奔跑时拖出烧焦符灰和黑色机油。 四足细长，足爪像书写用的铁笔尖，落地会划出短暂阵纹。 犬形轮廓由暗金符光、锈黑机骨和焦黄符纸拼合，铜轴与铁片暴露在关节处。",
         "ability": "符嗅追踪：能追踪一天内留下的法力、血气和电子信号残留。 阵钉合围：用口中符钉临时组成小型困阵，减缓目标移动。 飞剑接口：可为低阶飞剑无人机提供定位坐标。",
@@ -78313,7 +78313,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：城市管道 推荐基底：锈黑、雾绿腐生 来源章节：10.1 城市异化生物",
         "appearance": "",
         "ability": "",
@@ -78371,7 +78371,7 @@
         "visual_style": "",
         "weakness": "['干燥环境', '盐水']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 管壁滤食者 生态位置：异化生物生态 基底：雾绿腐生 / 锈黑 栖息地：城市管道 可被利用：黏液可制成低效防锈膏，也能标记暗渠路线。",
         "appearance": "壳薄如旧玻璃，壳内有一圈锈绿色露珠缓慢滚动。软足灰白，触角末端长着细小滤膜。",
         "ability": "凝露滤食：能吸附空气中的微量污染颗粒。 黏液留痕：经过的地方会短暂发出暗绿荧光，暴露潜行者路线。",
@@ -78440,7 +78440,7 @@
         "visual_style": "",
         "weakness": "['强光', '干燥环境']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 管线杂食者 生态位置：异化生物生态 基底：锈黑 / 骨白灰 栖息地：城市管道 可被利用：牙屑可磨成廉价绝缘粉，尾部细筋能当一次性导线。",
         "appearance": "拇指大小，背毛像烧焦线束，腹部半透明，可见细小电弧在肠道里游走。尾巴细长分叉，末端常拖着铜绿和灰尘。",
         "ability": "线缝钻行：能穿过极窄墙缝，啃开老化线缆外皮。 微电惊跳：受惊时释放短促静电，让手指麻痹。",
@@ -78510,7 +78510,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：神尸矿脉 推荐基底：血红、锈黑 来源章节：10.4 神尸矿区异化生物",
         "appearance": "",
         "ability": "",
@@ -78567,7 +78567,7 @@
         "visual_style": "",
         "weakness": "['火焰', '强光']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 腐叶分解者 生态位置：异化生物生态 基底：雾绿腐生 / 骨白灰 栖息地：腐林、湿谷 可被利用：蚁巢土可作为低阶腐生培养基。",
         "appearance": "体色灰白，复眼退化，背上拖着绿黑腐叶碎片。工蚁下颚细密，像两排小骨针。",
         "ability": "尸斑搬运：能把腐化微粒带到新鲜伤口附近。 腐叶伪装：伏在落叶层里几乎看不见。",
@@ -78637,7 +78637,7 @@
         "visual_style": "",
         "weakness": "['干燥环境', '钝击']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 尸骨附着滤食者 生态位置：异化生物生态 基底：月白青墨 / 幽紫王权 栖息地：深海尸骸 相关物种：低语水母 可被利用：螺壳粉可作为低阶回声墨的材料。",
         "appearance": "螺壳薄而发蓝，边缘长着透明鳃膜。每次呼吸都会让鳃膜像小旗一样抖动。",
         "ability": "低语回声：能保存极短的声音片段，制造误导。 膜鳃附着：在湿滑表面上很难徒手剥下。",
@@ -78708,7 +78708,7 @@
         "visual_style": "",
         "weakness": "['强光', '干燥环境']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 孢光误导者 生态位置：异化生物生态 基底：雾绿腐生 / 月白青墨 栖息地：腐林、湿谷 可被利用：孢灯粉末能制作短效冷光墨水。",
         "appearance": "翅膀薄如湿纸，腹部挂着米粒大小的绿色孢灯。死亡后全身会碎成淡蓝灰粉。",
         "ability": "孢光引路：能在雾中形成虚假的光带。 梦粉散落：鳞粉进入鼻腔后会造成轻微困倦。",
@@ -78779,7 +78779,7 @@
         "visual_style": "",
         "weakness": "玻璃躯干脆弱；压力表被敲坏后会持续升压，最终自爆成灵魂碎雾。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：灰烬炼金会 分类：势力低级生物 / 人造生命 / 实验室清道夫 基底：锈黑 / 骨白灰 可被利用：瓶内残魂冷凝液可作灵魂显影剂，黄铜肢架可回收为炼金义体零件。",
         "appearance": "体型约半人高，躯干是一只厚玻璃药瓶，瓶壁被黄铜箍和锈黑铆钉固定。 瓶内翻涌灰白蒸汽，偶尔浮出模糊人脸和指印，像未炼尽的残魂贴在玻璃内侧。 头部不是脸，而是一枚圆形压力表，表盘发黄，指针会随恐惧、命令和高温抽搐。 四肢细如黄铜蜘蛛腿，关节处有小阀门，行动时喷出短促蒸汽。 背后接着一根软管尾巴，尾端有收魂吸嘴，可在地面拖出灰烬线。 骨白蒸汽、锈黑金属和暗黄玻璃拼成瓶形躯干，陶俑式肢架拖着黄铜软管。",
         "ability": "残魂抽吸：能吸走刚死亡目标周围的微量魂雾。 蒸汽遮眼：受击时喷出灰白蒸汽，短暂遮挡视线。 自我封瓶：遇到污染泄漏会把自己塞进裂口，充当一次性堵漏器。",
@@ -78847,7 +78847,7 @@
         "visual_style": "",
         "weakness": "['盐水', '火焰']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 藤蔓共生滤食者 生态位置：异化生物生态 基底：雾绿腐生 / 月白青墨 栖息地：腐林、湿谷 可被利用：壳内露液可暂时缓解低阶孢毒。",
         "appearance": "壳面像一枚青灰小葫芦，长着两三根细藤。软足透明，爬行时会挤出银绿色露珠。",
         "ability": "露液净化：能吸走少量腐毒，但会把毒性储存在壳中。 缓慢封路：黏液会让木梯、石阶和树根变得极滑。",
@@ -78916,7 +78916,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：时间吞食 推荐基底：雾绿腐生 来源章节：10.3 森林 / 山海异化生物",
         "appearance": "",
         "ability": "",
@@ -78973,7 +78973,7 @@
         "visual_style": "",
         "weakness": "['稳定重力', '强风']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 裂缝落尘生命 生态位置：异化生物生态 基底：深黑不可名状 / 钻石白 栖息地：非三维空间、高空低轨 可被利用：蛹壳粉可用于检测轻微空间错位。",
         "appearance": "外形像蚕蛹和尘团的混合物，表面有细密几何裂纹。转动时会短暂露出不该存在的背面。",
         "ability": "相位漂移：能短距离错开半个身位，避开轻触。 裂缝示警：靠近活跃裂隙时会集体竖起。",
@@ -79043,7 +79043,7 @@
         "visual_style": "",
         "weakness": "怕润滑油和完全无痛的合成躯体；铁环被磁化后会互相锁死。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：铆钉修女 分类：势力低级生物 / 工业苦修虫 / 痛觉警报 基底：锈黑 / 钻石白 可被利用：虫壳铁环可做低阶痛觉传感器，腹膜可缝合机械圣痕。",
         "appearance": "体型为一臂长的灰白色大蜈蚣，背部扁平，身体分节清楚，节片边缘镶着锈黑铆钉。 头部被一圈小型金属光环勒住，没有眼睛，只有三枚像修女钉扣的白色感光点。 腹侧嵌着一排排铁环，铁环与肉节穿在一起，移动时互相刮擦发出低声祷告般的噪音。 每节两侧长出细短机械足，足尖像缝针，可爬过管壁和教堂铁栏。 尾端拖着一根断裂念珠链，链上挂着微小痛觉铃。 钻石白甲片与锈黑铁环穿入虫节，断裂念珠链和痛觉铃长在尾端。",
         "ability": "痛觉感应：能定位附近受伤、过载或被刑具固定的目标。 管道缝合：分泌铁灰色黏液，临时封住漏油管道与裂开的义体接口。 祈声干扰：群体摩擦声可扰乱低级机械指令。",
@@ -79112,7 +79112,7 @@
         "visual_style": "",
         "weakness": "['清水', '强磁场']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 锈液滤食者 生态位置：异化生物生态 基底：锈黑 / 骨白灰 栖息地：工业废液 可被利用：锈舌可刮除低阶符锈，也能作为劣质腐蚀试剂。",
         "appearance": "体表覆盖暗褐金属斑，眼睛退化成两点灰膜。张口时能看见一条粗糙红锈舌，舌面不断渗出酸液。",
         "ability": "锈舌刮蚀：能削弱薄金属和老旧护甲的表层。 污水潜行：在浑浊废液里很难被肉眼发现。",
@@ -79181,7 +79181,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：城市怪谈 推荐基底：钻石白、幽紫王权 来源章节：10.1 城市异化生物",
         "appearance": "",
         "ability": "",
@@ -79239,7 +79239,7 @@
         "visual_style": "",
         "weakness": "怕干燥、淡水和高频声呐；离开海雾后鳞片会迅速失去隐形效果。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：蛇环海族 分类：势力低级生物 / 海雾巡游 / 祭品押送 基底：雾绿腐生 / 深黑不可名状 可被利用：雾鳞可炼制短效水下呼吸符，毒腺可调配边界麻痹毒。",
         "appearance": "体型细长柔软，长度约一臂到一人高，盘起时会自然形成几个同心圆环。 头部狭长，眼睛被雾膜覆盖，只有近距离能看见深黑针状瞳孔。 青黑鳞片在雾中几乎透明，鳞缘带腐绿色潮光，离开水雾后会显出油亮黑色。 头骨两侧长有环形骨刺，像两枚残缺耳环，用来感知雾中的祭品方位。 尾端扁平如小桨，游动或爬行时会留下闭合涟漪，涟漪短暂悬在空气或水面。 雾绿、青黑和深色反光压在低饱和鳞片里，鳞面不具鲜艳毒蛇斑纹。",
         "ability": "环咬标记：咬痕会形成符环，使目标在海雾中持续暴露位置。 雾中换位：在浓雾与水面交界处能短距离闪游。 群蛇闭锁：多条环蛇绕行可制造小范围迷航。",
@@ -79308,7 +79308,7 @@
         "visual_style": "",
         "weakness": "['强光', '雨水']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 光污染寄生虫 生态位置：异化生物生态 基底：血红 / 锈黑 栖息地：城市管道 相关物种：广告蛾群 可被利用：鳞粉可用于制作一次性幻光标记。",
         "appearance": "体长不足两指，翅面布满破损像素块，腹部有暗红色发光粉囊。触角呈弯曲天线状，会接收广告屏残波。",
         "ability": "霓粉遮目：鳞粉反射杂色光，短暂干扰视线。 广告寄光：能把废弃屏幕的残光带到黑暗管道深处。",
@@ -79379,7 +79379,7 @@
         "visual_style": "",
         "weakness": "['火焰', '油脂']",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "分类：E级弱小生物 / 骨粉滤食者 生态位置：异化生物生态 基底：骨白灰 / 深黑不可名状 栖息地：神尸矿区、废弃矿区 可被利用：螨粉可混入低阶追踪灰，寻找新鲜骨骼。",
         "appearance": "肉眼看像会移动的白灰点，放大后可见背甲呈细碎骨纹。口器像两枚透明小钩。",
         "ability": "骨粉潜伏：能在白灰矿尘中长时间静止。 痒痕标记：爬过的人会被更高阶食腐生物嗅到。",
@@ -79449,7 +79449,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：战死者眼睛 推荐基底：骨白灰、深黑不可名状 来源章节：10.3 森林 / 山海异化生物",
         "appearance": "",
         "ability": "",
@@ -79507,7 +79507,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：神骨蛀食 推荐基底：骨白灰、锈黑 来源章节：10.4 神尸矿区异化生物",
         "appearance": "",
         "ability": "",
@@ -79563,7 +79563,7 @@
         "visual_style": "",
         "weakness": "怕雨水、明火和活人主动赠名；若被写上假官印，会被错误调度。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：幽都鬼箓司 分类：势力低级生物 / 阴司杂役 / 引魂单位 基底：骨白灰 可被利用：魂灯灰可暂时显影死者脚印，纸骨可写一次性阴箓。",
         "appearance": "体型如幼童到半人高，身体由泛黄纸扎成，四肢轻薄，站立时会被阴风吹得微微晃动。 头部是扁平纸面，脸上只有墨画官印、一条竖线嘴和两点淡灰眼痕，没有真实五官。 关节处用细铜铃和纸钉固定，每走一步都会发出很轻的铃声，像远处丧仪。 胸腔被剪成小窗，里面悬着一盏豆大魂火，火色由骨白转为青灰。 袖口与下摆像纸钱边缘，破损处露出竹篾骨架和细小阴箓。 骨白黄纸、淡墨黑和微弱魂火青集中在纸扎身体上，破损处露出竹篾骨架。",
         "ability": "亡名登记：能记录刚死之人的姓名、死因和最后一段执念。 魂火引路：在阴气重的地方为亡魂开出短小路径。 纸躯折避：受到物理攻击时能折成纸片躲过一次伤害。",
@@ -79631,7 +79631,7 @@
         "visual_style": "",
         "weakness": "怕空白纸、强制遗忘术和无意义涂改；若书页被完全烧成灰，它们会失去寄主。",
         "status": "图像设定草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "所属势力：黑书会 分类：势力低级生物 / 禁书寄生虫 / 知识污染媒介 基底：深黑不可名状 / 幽紫王权 可被利用：黑页齿片可刻写一次性禁句，虫粉能诱导梦中阅读。",
         "appearance": "体型只有米粒大小，常成群栖在黑皮魔典书脊和页缝里，肉眼看像会移动的墨点。 躯体像一枚黑色逗号，头部、胸腹几乎连成一体，边缘有幽紫色微光。 背甲上覆盖不断改写的细字，文字会从左向右爬动，读者越凝视越清晰。 放大后可见口器像微型书页夹，夹缘有细小齿片，可把禁句啃进皮肤。 六足短小透明，足端沾着黑色纸粉；受惊时会把身体压扁成一枚标点符号。 深黑与幽紫虫群微小密集，爬行时在旧纸灰上形成知识污染般的字斑。",
         "ability": "禁句入血：咬伤后把一小段咒文植入血液，使目标梦中反复朗读。 书页伪装：在纸张、皮革和影子边缘几乎不可见。 读者标记：能标记“会继续读下去”的人，引来黑书会成员。",
@@ -79698,7 +79698,7 @@
         "visual_style": "",
         "weakness": "",
         "status": "草案",
-        "image_ready": false,
+        "image_ready": null,
         "relation": "生态位：捕食拟态 推荐基底：深黑不可名状 来源章节：10.2 深海异化生物",
         "appearance": "",
         "ability": "",
@@ -80150,7 +80150,7 @@
               "id": "habitat:轨道审判站 / 难民净化廊",
               "label": "轨道审判站 / 难民净化廊",
               "children": [
-                "净翼幼机"
+                "legacy:净翼幼机"
               ]
             }
           ]
@@ -80163,7 +80163,7 @@
               "id": "habitat:轨道审判站 / 坠落教堂",
               "label": "轨道审判站 / 坠落教堂",
               "children": [
-                "失律光环母机"
+                "legacy:失律光环母机"
               ]
             }
           ]
@@ -80176,7 +80176,7 @@
               "id": "habitat:低轨坠落点 / 非欧洞窟 / 星外污染坑",
               "label": "低轨坠落点 / 非欧洞窟 / 星外污染坑",
               "children": [
-                "星瘤重力肉芽"
+                "legacy:星瘤重力肉芽"
               ]
             }
           ]
@@ -80985,7 +80985,7 @@
               "id": "habitat:黑诊所 / 贫民义体市场 / 肉件族器官仓",
               "label": "黑诊所 / 贫民义体市场 / 肉件族器官仓",
               "children": [
-                "器官仓兽"
+                "legacy:器官仓兽"
               ]
             }
           ]
@@ -80998,7 +80998,7 @@
               "id": "habitat:全息剧场 / 折光塔 / 光谱荒原",
               "label": "全息剧场 / 折光塔 / 光谱荒原",
               "children": [
-                "棱镜巡游鹿"
+                "legacy:棱镜巡游鹿"
               ]
             }
           ]
@@ -81011,7 +81011,7 @@
               "id": "habitat:城市管道 / 废弃地铁 / 暗渠",
               "label": "城市管道 / 废弃地铁 / 暗渠",
               "children": [
-                "管网回声螺"
+                "legacy:管网回声螺"
               ]
             }
           ]
@@ -81024,7 +81024,7 @@
               "id": "habitat:镜廊 / 反光城市 / 贵族浴池 / 屏幕水域",
               "label": "镜廊 / 反光城市 / 贵族浴池 / 屏幕水域",
               "children": [
-                "镜面替身鱼"
+                "legacy:镜面替身鱼"
               ]
             }
           ]
@@ -81325,7 +81325,7 @@
               "id": "habitat:北境荒原 / 月蚀战场 / 霜巨营地边缘",
               "label": "北境荒原 / 月蚀战场 / 霜巨营地边缘",
               "children": [
-                "狼灾吞火幼兽"
+                "legacy:狼灾吞火幼兽"
               ]
             }
           ]
@@ -81465,7 +81465,7 @@
               "id": "habitat:地下礼拜堂 / 契约墓室 / 蜡骨人聚落",
               "label": "地下礼拜堂 / 契约墓室 / 蜡骨人聚落",
               "children": [
-                "烛骨契犬"
+                "legacy:烛骨契犬"
               ]
             }
           ]
@@ -81478,7 +81478,7 @@
               "id": "habitat:符阵水渠 / 万机符宗外阵 / 灵力导流井",
               "label": "符阵水渠 / 万机符宗外阵 / 灵力导流井",
               "children": [
-                "符脉青蛟"
+                "legacy:符脉青蛟"
               ]
             }
           ]
@@ -82966,7 +82966,7 @@
               "id": "habitat:夜城剧院 / 月光祭台 / 蛾民聚落",
               "label": "夜城剧院 / 月光祭台 / 蛾民聚落",
               "children": [
-                "月鳞殉光蛾"
+                "legacy:月鳞殉光蛾"
               ]
             }
           ]
@@ -82979,7 +82979,7 @@
               "id": "habitat:眠室 / 童话病院 / 梦蛹族聚落",
               "label": "眠室 / 童话病院 / 梦蛹族聚落",
               "children": [
-                "梦壳幼体"
+                "legacy:梦壳幼体"
               ]
             }
           ]
@@ -82992,7 +82992,7 @@
               "id": "habitat:古堡档案室 / 家族债务库 / 血契礼拜厅",
               "label": "古堡档案室 / 家族债务库 / 血契礼拜厅",
               "children": [
-                "血契祖债蝠"
+                "legacy:血契祖债蝠"
               ]
             }
           ]
@@ -83005,7 +83005,7 @@
               "id": "habitat:量子实验室 / 双城边界 / 概率塌缩区",
               "label": "量子实验室 / 双城边界 / 概率塌缩区",
               "children": [
-                "量子错位犬"
+                "legacy:量子错位犬"
               ]
             }
           ]
