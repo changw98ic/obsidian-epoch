@@ -77,6 +77,7 @@ import {
   JOURNEY_TIER_REWARDS,
   deriveJourneyHiddenTask,
   journeyRewardBundleForPlan,
+  normalizeJourneyCompletionTier,
   type JourneyCompletionTier,
   type JourneyGeneratedTaskPlan,
   type JourneyHiddenTaskSeal,
@@ -1318,10 +1319,16 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         input.committedAtWorldTime,
         "journey_committed_at_world_time",
       ),
-      completionTier: assertNonEmptyString(
-        input.completionTier,
-        "journey_completion_tier",
-      ) as "良好" | "完美" | "惊世",
+      completionTier: (() => {
+        const tier = normalizeJourneyCompletionTier(assertNonEmptyString(
+          input.completionTier,
+          "journey_completion_tier",
+        ));
+        if (tier !== "及格" && tier !== "良好" && tier !== "优秀" && tier !== "惊世") {
+          throw new Error("journey_completion_tier_invalid");
+        }
+        return tier;
+      })(),
       completionScoreBps: Number(input.completionScoreBps),
       ...(typeof input.worldSliceHash === "string"
         ? { worldSliceHash: input.worldSliceHash as `sha256:${string}` }
@@ -1330,8 +1337,8 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     grantJourneyReward: (input: AnyRecord = {}) => {
       const journeyId = assertNonEmptyString(input.journeyId, "journey_id");
       const agentId = assertNonEmptyString(input.agentId, "agent_id");
-      const tier = assertNonEmptyString(input.tier, "journey_completion_tier") as JourneyCompletionTier;
-      if (tier === "未及格" || !(tier in JOURNEY_TIER_REWARDS)) {
+      const tier = normalizeJourneyCompletionTier(assertNonEmptyString(input.tier, "journey_completion_tier"));
+      if (!tier || tier === "未及格" || !(tier in JOURNEY_TIER_REWARDS)) {
         throw new Error("journey_reward_tier_invalid");
       }
       const reward = JOURNEY_TIER_REWARDS[tier as keyof typeof JOURNEY_TIER_REWARDS];
@@ -1344,7 +1351,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
       if (taskPlan) deriveJourneyHiddenTask(taskPlan, hiddenTaskSeal);
       const rewardBundle: JourneyRewardBundle = taskPlan
         ? journeyRewardBundleForPlan(taskPlan, tier as Exclude<JourneyCompletionTier, "未及格">)
-        : { resources: [reward], items: [] };
+        : { resources: [reward], items: [], attributes: [] };
       const reason = `journey_grade:${journeyId}:${tier}`;
       const existing = core.project().events.find((event) => event.eventType === "resource_granted"
         && event.agentId === agentId
@@ -1374,12 +1381,20 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         rarity: item.rarity,
         sourceEventIds,
       }, maintenanceContext(input, `${reason}:item:${item.itemKey}`))));
+      const attributeGrants = existing ? [] : rewardBundle.attributes.map((attribute) => commandResult(core.grantAttribute({
+        agentId,
+        attributeId: attribute.attributeId,
+        amount: attribute.amount,
+        reason,
+        sourceEventIds,
+      }, maintenanceContext(input, `${reason}:attribute:${attribute.attributeId}`))));
       const persistenceEvents = [
         ...epochEventsForPersistence(resourceGrant),
         ...itemGrants.flatMap((grant) => epochEventsForPersistence(grant)),
+        ...attributeGrants.flatMap((grant) => epochEventsForPersistence(grant)),
       ];
-      const publicEvents = [resourceGrant, ...itemGrants].flatMap((grant) => grant.events);
-      const projection = itemGrants.at(-1)?.projection ?? resourceGrant.projection;
+      const publicEvents = [resourceGrant, ...itemGrants, ...attributeGrants].flatMap((grant) => grant.events);
+      const projection = attributeGrants.at(-1)?.projection ?? itemGrants.at(-1)?.projection ?? resourceGrant.projection;
       return attachEpochEventsForPersistence({
         ...resourceGrant,
         events: publicEvents,
@@ -1387,8 +1402,11 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         reward,
         rewardBundle,
         grantedItems: itemGrants.map((grant) => grant.value),
+        grantedAttributes: attributeGrants.map((grant) => grant.value),
         reason,
-        duplicate: Boolean(existing) && itemGrants.every((grant) => grant.events.length === 0),
+        duplicate: Boolean(existing)
+          && itemGrants.every((grant) => grant.events.length === 0)
+          && attributeGrants.every((grant) => grant.events.length === 0),
       }, persistenceEvents);
     },
     agentBriefing,

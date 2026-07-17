@@ -205,6 +205,7 @@ test("identity state, resources, equipment and scene support can clear a high-ri
       traits: ["沉着", "实验训练", "协作"],
     },
     resources: { focus: 20, stamina: 20, aether: 20 },
+    attributes: { intellect: 3, willpower: 2, physique: 1 },
     inventoryItems: [
       { itemId: "item_legendary_tool", rarity: "legendary", bound: true },
       { itemId: "item_rare_manual", rarity: "rare", bound: false },
@@ -217,6 +218,7 @@ test("identity state, resources, equipment and scene support can clear a high-ri
   assert.ok(resolution.score >= resolution.difficulty);
   assert.match(resolution.summary, /装置校准/u);
   assert.ok(resolution.factors.resources > 0);
+  assert.equal(resolution.factors.attributes, 6);
   assert.ok(resolution.factors.equipment > 0);
   assert.ok(resolution.factors.sceneSupport > 0);
   assert.deepEqual(resolution.resourceCost, { resourceId: "stamina", amount: 1, paid: true });

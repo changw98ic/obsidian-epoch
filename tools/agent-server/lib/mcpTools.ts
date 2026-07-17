@@ -42,6 +42,7 @@ import {
 import { projectJourneyRuntimeEvents, type JourneyRuntimeEvent } from "./epoch/journeyReadModel.ts";
 import {
   journeyTaskGraphState,
+  normalizeJourneyCompletionTier,
   nextJourneyTaskObjective,
   type JourneyTaskEvidenceEpisode,
   type JourneyGeneratedTaskPlan,
@@ -276,6 +277,7 @@ const EPOCH_NON_RECOVERY_TARGET_ACTIVE_IDENTITY_TOOLS = [
 
 const EPOCH_CORE_ACTIVE_IDENTITY_EXCLUDED_METHODS = [
   "adjustLifetime",
+  "grantAttribute",
   "grantResource",
   "spendResource",
 ] as const;
@@ -2109,14 +2111,14 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     if (!settledAtWorldTime || !startedAtWorldTime) throw new Error("journey_mirror_time_window_missing");
     const statusRecord = recordValue(status);
     const taskAdjudication = recordValue(statusRecord.taskAdjudication);
-    const completionTier = optionalString(taskAdjudication.tier) || "及格";
+    const completionTier = normalizeJourneyCompletionTier(optionalString(taskAdjudication.tier)) || "及格";
     const performance = recordValue(taskAdjudication.performance);
     const reportedScoreBps = Number(performance.scoreBps);
     const completionScoreBps = Number.isSafeInteger(reportedScoreBps)
       ? Math.max(0, Math.min(10_000, reportedScoreBps))
       : completionTier === "惊世"
         ? 10_000
-        : completionTier === "完美"
+        : completionTier === "优秀"
           ? 9_500
           : completionTier === "良好"
             ? 7_500
@@ -2146,7 +2148,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         requiredMainObjectiveIds = ["legacy_main"];
       }
     }
-    const canonEligible = mainLineSucceeded && ["良好", "完美", "惊世"].includes(completionTier);
+    const canonEligible = mainLineSucceeded;
     const worldSynchronization = authoritativeWorldClockEnabled
       ? advanceCanonicalWorld({
           reason: "journey_canon_commit_materialization",
@@ -2284,7 +2286,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     const taskAdjudication = recordValue(finalStatusRecord.taskAdjudication);
     const worldSolidification = mirrorFinalization.worldSolidification;
     const worldCommitRecord = mirrorFinalization.worldCommitRecord;
-    const completionTier = optionalString(taskAdjudication.tier);
+    const completionTier = normalizeJourneyCompletionTier(optionalString(taskAdjudication.tier));
     const rewardSourceEventIds = [...new Set((Array.isArray(finalStatusRecord.episodes)
       ? finalStatusRecord.episodes
       : []).flatMap((episodeValue) => {
@@ -2319,6 +2321,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         reward: rewardGrant.reward,
         rewardBundle: rewardGrant.rewardBundle,
         grantedItems: rewardGrant.grantedItems,
+        grantedAttributes: rewardGrant.grantedAttributes,
         duplicate: rewardGrant.duplicate,
       } } : {}),
       ...(finalStatus.journey.worldCommit ? { worldCommit: finalStatus.journey.worldCommit } : {}),
@@ -5708,7 +5711,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
           "Generate one coherent playable quest route from the supplied task type and exact server map.",
           "The supplied mirrorWindow and worldSlice are signed historical constraints. Keep the route inside that region and interval, and do not contradict its controller, conflict phase, shortages, prices, security, unrest, or macro direction.",
           "Treat identityName as the protagonist's server-issued identity. Make the route plausible for that identity without renaming or replacing it.",
-          "Use identityTraits, identityNeeds, lifeGoal, and resources to create genuine tradeoffs rather than two equivalent success buttons. A cautious, exhausted, hungry, poor, ambitious, vengeful, or curious identity should face different sensible choices.",
+          "Use identityTraits, identityNeeds, lifeGoal, resources, attributes, and carriedInventoryItems to create genuine tradeoffs rather than two equivalent success buttons. A cautious, exhausted, hungry, poor, ambitious, vengeful, strong, clever, spiritual, equipped, or curious identity should face different sensible choices.",
           "Return strict JSON only. Use only supplied object ids. Create a task graph with 4-9 main objectives, 2-4 side objectives, and one route-choice objective.",
           "Include two mutually exclusive choice routes. Each choice route must contain at least two main objectives and be selected by exactly one distinct action on the route-choice objective. If map organizations or factions are available, ground each route with factionObjectId and target that object in its selecting action.",
           "Include at least one unlock route whose unlockedByObjectiveIds names a side objective; completing that side objective must open one additional main objective. Locked and unselected route objectives are not executed or counted as required by the server.",
@@ -5735,6 +5738,8 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
             identityNeeds: taskContext.identityNeeds,
             lifeGoal: taskContext.lifeGoal,
             resources: taskContext.resources,
+            attributes: taskContext.attributes,
+            carriedInventoryItems: taskContext.carriedInventoryItems,
             scenarioMapId: taskContext.scenarioMapId,
             mirrorWindow: taskContext.mirrorWindow,
             worldSlice: taskContext.worldSlice,
@@ -5834,6 +5839,20 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       const needs = recordValue(identity.needs);
       const lifeGoal = recordValue(identity.lifeGoal);
       const resourceBalances = recordValue(progress.resources);
+      const attributeScores = recordValue(progress.attributes);
+      const carriedInventoryItems = Array.isArray(progress.inventoryItems)
+        ? progress.inventoryItems
+            .filter((item): item is AnyRecord => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+            .map((item) => ({
+              itemId: typeof item.itemId === "string" ? item.itemId : "",
+              itemKey: typeof item.itemKey === "string" ? item.itemKey : "",
+              displayName: typeof item.displayName === "string" ? item.displayName : "",
+              rarity: typeof item.rarity === "string" ? item.rarity : "common",
+              bound: item.bound === true,
+            }))
+            .filter((item) => item.itemId && item.displayName)
+            .slice(0, 20)
+        : [];
       const needLevels = recordValue(needs.levels);
       const strongestNeeds = Object.entries(needLevels)
         .filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]))
@@ -5847,7 +5866,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       const sampling = await requestContext.sampling.createMessage({
         systemPrompt: [
           "Choose exactly one server-issued actionOptionId as the server-issued identity, not as a quest-grade optimizer.",
-          "Use the identity's traits, strongest needs, life goal, remaining resources, signed riskTerms, mandate, prior route, and current objective.",
+          "Use the identity's traits, strongest needs, life goal, remaining resources, carried inventory, signed riskTerms, mandate, prior route, and current objective.",
           "Optional side objectives may be skipped when survival pressure, fatigue, resources, personality, or long-term priorities make that choice credible.",
           "Do not assume that the highest-risk option is best and do not optimize for a hidden grade.",
           "Return strict JSON with actionOptionId, rationale, confidence, and optional userFacingMessage. Do not invent completion, outcomes, rewards, hidden tasks, people, or world facts.",
@@ -5879,6 +5898,8 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
                 },
               },
               resources: resourceBalances,
+              attributes: attributeScores,
+              carriedInventoryItems,
               mandate: started.journey.mandate,
               mirrorWindow: started.journey.mirrorWindow,
               worldSlice: compactJourneyDecisionWorldSlice(started.journey.worldSlice),
@@ -5972,10 +5993,37 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     if (status.journey.status !== "settled") return { status };
     const mirrorFinalization = runtime.epochFinalizeSettledMirrorWorld(status, args);
     status = mirrorFinalization.status;
+    const failedJourney = recordValue(status.taskAdjudication).tier === "未及格"
+      || recordValue(recordValue(status.storyReport).evaluation).taskCompletionGrade === "未及格";
+    const progressBeforeFailureArchive = failedJourney
+      ? recordValue(runtime.epochProgress({ agentId: status.journey.agentId }))
+      : {};
+    const identityBeforeFailureArchive = recordValue(progressBeforeFailureArchive.identity);
+    const failureArchive = failedJourney && identityBeforeFailureArchive.status === "active"
+      ? runtime.epochArchiveIdentity({
+          ...args,
+          agentId: status.journey.agentId,
+          archiveReason: "journey_failed_identity_lost",
+          idempotencyKey: `${status.journey.journeyId}:failed-identity-archive:v1`,
+        })
+      : undefined;
+    if (failureArchive) {
+      status = runtime.epochJourneyStatus({
+        ...args,
+        journeyId: status.journey.journeyId,
+      });
+    }
     const existingPage = status.journey.verification
       ? runtime.epochGetResultPage({ pageId: status.journey.verification.pageId })
       : undefined;
-    if (existingPage?.payload?.journey?.status === "settled") {
+    const existingStoryReport = recordValue(recordValue(recordValue(existingPage).payload).journey).storyReport;
+    const existingStoryEvaluation = recordValue(recordValue(existingStoryReport).evaluation);
+    const existingReportUsesLegacyIdentityWarning = existingStoryEvaluation.warning === "该身份将无法保留";
+    const existingFailedReportMissingIdentityLoss = failedJourney && typeof existingStoryEvaluation.warning !== "string";
+    if (existingPage?.payload?.journey?.status === "settled"
+      && !existingReportUsesLegacyIdentityWarning
+      && !existingFailedReportMissingIdentityLoss
+      && !failureArchive) {
       const existingResult = { status, finalVerification: { page: existingPage, duplicate: true } };
       attachEpochEventsForPersistence(
         existingResult,
@@ -5986,6 +6034,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
           ...(mirrorFinalization.worldSolidification
             ? epochEventsForPersistence(mirrorFinalization.worldSolidification)
             : []),
+          ...(failureArchive ? epochEventsForPersistence(failureArchive) : []),
         ],
       );
       return mergeJourneyEventsForPersistence(existingResult, mirrorFinalization.worldCommitRecord, status);
@@ -6043,7 +6092,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     const finalVerification = runtime.epochCreateResultPage({
       ...pageInput,
       publishToken: draft.publishToken,
-      idempotencyKey: `${status.journey.journeyId}:final-verification`,
+      idempotencyKey: `${status.journey.journeyId}:final-verification:identity-eval-v2`,
     });
     const linked = runtime.epochLinkJourneyVerification({
       ...args,
@@ -6052,7 +6101,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       pageId: finalVerification.page.pageId,
       urlPath: finalVerification.page.urlPath,
       createdAt: finalVerification.page.createdAt,
-      idempotencyKey: `${status.journey.journeyId}:link-final-verification`,
+      idempotencyKey: `${status.journey.journeyId}:link-final-verification:identity-eval-v2`,
     });
     const linkedStatus = { ...status, ...linked, episodes: status.episodes };
     attachEpochEventsForPersistence(
@@ -6064,6 +6113,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
         ...(mirrorFinalization.worldSolidification
           ? epochEventsForPersistence(mirrorFinalization.worldSolidification)
           : []),
+        ...(failureArchive ? epochEventsForPersistence(failureArchive) : []),
       ],
     );
     return {

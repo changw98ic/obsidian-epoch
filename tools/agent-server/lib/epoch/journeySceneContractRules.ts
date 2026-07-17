@@ -409,6 +409,9 @@ export function journeySceneHostedActionOptions(
       && riskTerms.exceptionalSuccessReward.amount !== riskTerms.successReward?.amount
       ? `，卓越成功可得金币 ${riskTerms.exceptionalSuccessReward.amount}`
       : "";
+    const hiddenAdjudicationHint = action.risk === "high"
+      ? "高风险会由服务端隐藏结算；携带或绑定的道具、装备、可用资源、身份状态和前序准备都可能改善判定，但客户端不会看到具体计算过程。"
+      : "服务端会隐藏计算身份状态、资源、道具装备与前序准备；客户端只看到风险等级、成本和可验证收益。";
     return {
       actionOptionId: action.actionOptionId,
       optionKey: action.optionKey,
@@ -422,7 +425,7 @@ export function journeySceneHostedActionOptions(
           "不采用客户端自行声明的结果、奖励或世界事实。",
           "不执行合同允许效果之外的状态变更。",
         ],
-        risk: `${action.risk === "low" ? "低" : action.risk === "medium" ? "中" : "高"}风险；服务器只按签名合同结算。`,
+        risk: `${action.risk === "low" ? "低" : action.risk === "medium" ? "中" : "高"}风险；服务器只按签名合同结算。${hiddenAdjudicationHint}`,
         expectedBenefit: `${hostedActionOutcome(contract, action.optionKey)} 风险条款：${costText}；${successText}${exceptionalText}；失败不发放风险报酬。`,
       },
       outcomeSummary: hostedActionOutcome(contract, action.optionKey),

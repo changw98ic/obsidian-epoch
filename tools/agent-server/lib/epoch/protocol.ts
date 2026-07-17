@@ -104,6 +104,7 @@ export const EPOCH_EVENT_TYPES = [
   "reincarnation_issued",
   "personality_drift_proposed",
   "personality_drift_confirmed",
+  "attribute_gained",
   "resource_granted",
   "resource_spent",
   "downtime_set",
@@ -327,6 +328,17 @@ export const EPOCH_RESOURCE_IDS = [
 ] as const;
 
 export type EpochResourceId = typeof EPOCH_RESOURCE_IDS[number];
+
+export const EPOCH_ATTRIBUTE_IDS = [
+  "strength",
+  "agility",
+  "physique",
+  "intellect",
+  "willpower",
+  "spirituality",
+] as const;
+
+export type EpochAttributeId = typeof EPOCH_ATTRIBUTE_IDS[number];
 
 export const EPOCH_OBJECTIVE_MODES = ["contribution", "race"] as const;
 
@@ -590,6 +602,13 @@ export function assertResourceId(value: unknown): EpochResourceId {
     throw new Error("resource_id_invalid");
   }
   return value as EpochResourceId;
+}
+
+export function assertAttributeId(value: unknown): EpochAttributeId {
+  if (typeof value !== "string" || !EPOCH_ATTRIBUTE_IDS.includes(value as EpochAttributeId)) {
+    throw new Error("attribute_id_invalid");
+  }
+  return value as EpochAttributeId;
 }
 
 export function assertRelationshipKind(value: unknown): EpochRelationshipKind {

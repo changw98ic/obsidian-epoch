@@ -9369,7 +9369,7 @@ test("HTTP MCP persists Agent-native three-phase Journey events and final verifi
     assert.doesNotMatch(publicPage.text, /世界时间2026年|现实时间|北京时间/u);
     assert.match(publicPage.text, /获得奖励：/);
     assert.match(publicPage.text, /其他玩家影响：/);
-    assert.match(publicPage.text, /该身份将无法保留/);
+    assert.doesNotMatch(publicPage.text, /该身份将无法保留/);
     assert.match(publicPage.text, /核对中出现一处差额/);
   }, {
     persistJsonl: async (fileName, record) => {

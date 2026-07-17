@@ -41,6 +41,19 @@ const episodes = [
   episode("return", "返回档案馆", "带着核对记录返程", "灯蛾安全返回并提交记录"),
 ] as const;
 
+const activeIdentity = {
+  status: "active",
+  lifetime: {
+    max: 100,
+    remaining: 80,
+    startedAt: "2026-01-01T08:00:00.000Z",
+  },
+  personality: {
+    traits: ["谨慎", "耐心"],
+    driftIds: [],
+  },
+} as const;
+
 test("composes a complete server-grounded story report from three settled episodes", () => {
   const report = buildGroundedJourneyStoryReport({
     journeyId: "journey_story",
@@ -50,6 +63,7 @@ test("composes a complete server-grounded story report from three settled episod
     startedAtWorldTime: "2026-01-01T08:00:00.000Z",
     dueAtWorldTime: "2026-01-01T09:30:00.000Z",
     episodes,
+    identity: activeIdentity,
   });
 
   assert.ok(report);
@@ -60,8 +74,9 @@ test("composes a complete server-grounded story report from three settled episod
   assert.equal(report.profile.identity, "灯蛾");
   assert.equal(report.profile.objective, "找一份稳定工作");
   assert.equal(report.evaluation.taskCompletionGrade, "C");
-  assert.equal(report.evaluation.identityFidelityPercent, 40);
-  assert.equal(report.evaluation.warning, "该身份将无法保留");
+  assert.equal(report.evaluation.identityFidelityPercent, 76);
+  assert.equal(report.evaluation.warning, undefined);
+  assert.equal(report.evaluation.rewardConversion.summary, "本局没有获得可转化奖励；身份能力没有新增直接数值来源。");
   assert.equal(report.storyElements.time, "黑曜历1年初火月1日08:00，返程时限初火月1日09:30");
   assert.equal(report.storyElements.place, "灰港、灰港民务账房");
   assert.deepEqual(report.storyElements.characters, ["灯蛾", "夜班书记珂岚"]);
@@ -83,7 +98,8 @@ test("composes a complete server-grounded story report from three settled episod
   assert.equal(report.storyContent.split("\n\n").length, report.chapters.length);
   assert.match(report.narrative, /^代号：X-NTMOTH\n轮回第一世。\n身份：灯蛾\n该局目标：找一份稳定工作/u);
   assert.match(report.narrative, /故事内容：\n\n你现在已经转生成为灯蛾。/u);
-  assert.match(report.narrative, /评价：\n任务完成度：C\n身份还原度：40%\n获得奖励：未获得独立奖励\n其他玩家影响：未记录其他玩家直接参与；本局没有对其他玩家增减资源或改写身份。\n警告：该身份将无法保留$/u);
+  assert.match(report.narrative, /评价：\n任务完成度：C\n身份还原度：76%\n获得奖励：未获得独立奖励\n能力转化：本局没有获得可转化奖励；身份能力没有新增直接数值来源。\n其他玩家影响：未记录其他玩家直接参与；本局没有对其他玩家增减资源或改写身份。$/u);
+  assert.doesNotMatch(report.narrative, /警告：|该身份将无法保留/u);
   assert.match(report.narrative, /找一份稳定工作/);
   assert.match(report.storyContent, /灰港民务账房/);
   assert.match(report.storyContent, /灰港民务所/);
@@ -127,6 +143,32 @@ test("composes a complete server-grounded story report from three settled episod
     chapters: report.chapters.map((chapter) => ({ title: chapter.title, text: chapter.text })),
     resolution: report.resolution,
   }), /agent_moth|region_gray_harbor|event_main/);
+});
+
+test("only warns that an identity cannot continue when server identity state is terminal", () => {
+  const report = buildGroundedJourneyStoryReport({
+    journeyId: "journey_story",
+    status: "settled",
+    objective: "找一份稳定工作",
+    regionId: "region_gray_harbor",
+    startedAtWorldTime: "2026-01-01T08:00:00.000Z",
+    dueAtWorldTime: "2026-01-01T09:30:00.000Z",
+    episodes,
+    identity: {
+      ...activeIdentity,
+      status: "archived",
+      lifetime: {
+        ...activeIdentity.lifetime,
+        remaining: 0,
+        archivedAt: "2026-01-01T09:30:00.000Z",
+      },
+    },
+  });
+
+  assert.ok(report);
+  assert.equal(report.evaluation.identityFidelityPercent, 0);
+  assert.equal(report.evaluation.warning, "该身份已经归档，后续只能作为历史身份保留。");
+  assert.match(report.narrative, /警告：该身份已经归档，后续只能作为历史身份保留。$/u);
 });
 
 test("settles an off-mission choice as a clear failed mission instead of an unresolved success", () => {

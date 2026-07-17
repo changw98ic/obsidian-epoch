@@ -7,6 +7,7 @@ import {
   journeyTaskGraphState,
   JOURNEY_TIER_REWARDS,
   nextJourneyTaskObjective,
+  normalizeJourneyCompletionTier,
   normalizeJourneyTaskActionRisk,
   validateJourneyTaskProposal,
   type JourneyGeneratedTaskPlan,
@@ -17,6 +18,11 @@ import {
   JOURNEY_ACTION_RESOLUTION_RULE_VERSION,
   type JourneyActionResolution,
 } from "../lib/epoch/journeyActionResolutionRules.ts";
+
+test("legacy perfect tier label normalizes to excellent", () => {
+  assert.equal(normalizeJourneyCompletionTier("完美"), "优秀");
+  assert.equal(normalizeJourneyCompletionTier("优秀"), "优秀");
+});
 
 const regionId = "region_quantum_laboratory";
 
@@ -63,6 +69,7 @@ function evidence(
       factors: {
         baseCompetence: difficulty + margin,
         identity: 0,
+        attributes: 0,
         resources: 0,
         equipment: 0,
         sceneSupport: 0,
@@ -121,6 +128,7 @@ function failedEvidence(plan: JourneyGeneratedTaskPlan, objectiveId: string) {
     factors: {
       baseCompetence: difficulty - 1,
       identity: 0,
+      attributes: 0,
       resources: 0,
       equipment: 0,
       sceneSupport: 0,
@@ -376,11 +384,16 @@ test("server derives all four completion tiers from signed action evidence", () 
   const passing = adjudicateJourneyTask({ plan, hiddenTaskSeal, episodes: evidence(plan, mainSelections) });
   assert.equal(passing.tier, "及格");
   assert.deepEqual(passing.reward, JOURNEY_TIER_REWARDS.及格);
+  assert.deepEqual(passing.rewardBundle?.attributes, [{ attributeId: "intellect", amount: 1 }]);
   const unlockIds = new Set(plan.routes?.filter((route) => route.kind === "unlock")
     .flatMap((route) => route.unlockedByObjectiveIds));
   const ordinarySide = sides.find((side) => !unlockIds.has(side.objectiveId)) ?? sides[0];
   const goodSelections = { ...mainSelections, [ordinarySide.objectiveId]: ordinarySide.actions[0].optionKey };
-  assert.equal(adjudicateJourneyTask({ plan, hiddenTaskSeal, episodes: evidence(plan, goodSelections) }).tier, "良好");
+  const good = adjudicateJourneyTask({ plan, hiddenTaskSeal, episodes: evidence(plan, goodSelections) });
+  assert.equal(good.tier, "良好");
+  assert.equal(good.rewardBundle?.items.length, 1);
+  assert.equal(good.rewardBundle?.items[0]?.rarity, "common");
+  assert.deepEqual(good.rewardBundle?.attributes, [{ attributeId: "intellect", amount: 2 }]);
 
   const hidden = deriveJourneyHiddenTask(plan, hiddenTaskSeal);
   const activeObjectives = plan.objectives.filter((objective) => {
@@ -407,7 +420,7 @@ test("server derives all four completion tiers from signed action evidence", () 
     hiddenTaskSeal,
     episodes: evidence(plan, perfectSelections, "excellent"),
   });
-  assert.equal(perfect.tier, "完美");
+  assert.equal(perfect.tier, "优秀");
   assert.equal(perfect.performance?.perfectEligible, true);
 
   const legendarySelections = Object.fromEntries(activeObjectives.map((objective) => {
@@ -424,8 +437,9 @@ test("server derives all four completion tiers from signed action evidence", () 
   assert.equal(legendary.tier, "惊世");
   assert.deepEqual(legendary.reward, JOURNEY_TIER_REWARDS.惊世);
   assert.deepEqual(legendary.rewardBundle?.resources, [JOURNEY_TIER_REWARDS.惊世]);
+  assert.deepEqual(legendary.rewardBundle?.attributes, [{ attributeId: "intellect", amount: 4 }]);
   assert.equal(legendary.rewardBundle?.items.length, 1);
-  assert.match(legendary.rewardBundle?.items[0]?.displayName || "", /凭章|信物|纪念/u);
+  assert.match(legendary.rewardBundle?.items[0]?.displayName || "", /信物|纪念|记录器|工具包|装备/u);
   assert.equal(legendary.hiddenTask.completed, true);
   assert.equal(legendary.hiddenTask.revealed, true);
 });
@@ -508,7 +522,7 @@ test("hidden completion cannot upgrade public adjudication before terminal revea
     hiddenTaskSeal,
     episodes: evidence(plan, hiddenSuccessSelections, "excellent"),
   });
-  assert.equal(before.tier, "完美");
+  assert.equal(before.tier, "优秀");
   assert.deepEqual(before.hiddenTask, {
     commitment: plan.hiddenTaskCommitment,
     revealed: false,

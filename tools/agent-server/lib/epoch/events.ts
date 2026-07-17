@@ -2,6 +2,7 @@ import {
   type EpochAnomalyOutcome,
   type EpochAnomalyMedia,
   type EpochAnomalySeverity,
+  type EpochAttributeId,
   type EpochAggregateType,
   type EpochChannelClass,
   type EpochCommandContext,
@@ -224,6 +225,14 @@ export interface ResourceGrantedPayload {
   readonly amount: number;
   readonly reason: string;
   readonly balanceAfter: number;
+}
+
+export interface AttributeGainedPayload {
+  readonly attributeId: EpochAttributeId;
+  readonly amount: number;
+  readonly reason: string;
+  readonly balanceAfter: number;
+  readonly sourceEventIds: readonly string[];
 }
 
 export interface ResourceSpentPayload {
@@ -1096,7 +1105,7 @@ export interface JourneyWorldSolidifiedPayload {
   readonly mirrorEndedAtWorldTime: string;
   /** Canonical shared-world time when this historical mirror was accepted. */
   readonly committedAtWorldTime?: string;
-  readonly completionTier?: "良好" | "完美" | "惊世";
+  readonly completionTier?: "及格" | "良好" | "优秀" | "惊世";
   readonly completionScoreBps?: number;
   readonly worldSliceHash?: `sha256:${string}`;
   readonly influenceDelta: number;
@@ -1839,6 +1848,7 @@ export interface EpochEventPayloadMap {
   readonly reincarnation_issued: ReincarnationIssuedPayload;
   readonly personality_drift_proposed: PersonalityDriftProposedPayload;
   readonly personality_drift_confirmed: PersonalityDriftConfirmedPayload;
+  readonly attribute_gained: AttributeGainedPayload;
   readonly resource_granted: ResourceGrantedPayload;
   readonly resource_spent: ResourceSpentPayload;
   readonly downtime_set: DowntimeSetPayload;

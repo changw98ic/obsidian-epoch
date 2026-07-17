@@ -44,6 +44,7 @@ import {
   type EpochAnomalyMedia,
   type EpochAnomalyOutcome,
   type EpochAnomalySeverity,
+  type EpochAttributeId,
   type EpochChannelClass,
   type EpochClock,
   type EpochCommandContext,
@@ -186,6 +187,12 @@ import {
   projectResourceSpendBalance,
   resourceSpendPayloads,
 } from "./resourceRules.ts";
+import {
+  copyAttributeScores,
+  planAttributeGainEvents,
+  projectAttributeGainBalance,
+  type AttributeScoreBalance,
+} from "./attributeRules.ts";
 import {
   identitySlotsForExplorer,
   requireActiveIdentity,
@@ -1687,6 +1694,7 @@ export interface EpochProjection {
   readonly lineage: Readonly<Record<string, readonly string[]>>;
   readonly personalityDrifts: Readonly<Record<string, EpochPersonalityDrift>>;
   readonly personalityDriftIdsByAgent: Readonly<Record<string, readonly string[]>>;
+  readonly attributeScores: Readonly<Record<string, AttributeScoreBalance>>;
   readonly resourceBalances: Readonly<Record<string, Partial<Record<EpochResourceId, number>>>>;
   readonly downtime: Readonly<Record<string, EpochDowntimeState>>;
   readonly agentCustody: Readonly<Record<string, EpochAgentCustodyState>>;
@@ -1870,6 +1878,14 @@ export interface ResourceInput {
   readonly resourceId: EpochResourceId;
   readonly amount: number;
   readonly reason: string;
+}
+
+export interface AttributeInput {
+  readonly agentId: string;
+  readonly attributeId: EpochAttributeId;
+  readonly amount: number;
+  readonly reason: string;
+  readonly sourceEventIds?: readonly string[];
 }
 
 export interface RecordLoreContributionInput {
@@ -2511,7 +2527,7 @@ export interface SolidifyJourneyWorldInput {
   readonly mirrorStartedAtWorldTime: string;
   readonly mirrorEndedAtWorldTime: string;
   readonly committedAtWorldTime: string;
-  readonly completionTier: "良好" | "完美" | "惊世";
+  readonly completionTier: "及格" | "良好" | "优秀" | "惊世";
   readonly completionScoreBps: number;
   readonly worldSliceHash?: `sha256:${string}`;
 }
@@ -2549,6 +2565,7 @@ function emptyProjection(): EpochProjection {
     lineage: {},
     personalityDrifts: {},
     personalityDriftIdsByAgent: {},
+    attributeScores: {},
     resourceBalances: {},
     downtime: {},
     agentCustody: {},
@@ -2718,6 +2735,9 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
   const personalityDrifts = { ...projection.personalityDrifts };
   const personalityDriftIdsByAgent: Record<string, string[]> = Object.fromEntries(
     Object.entries(projection.personalityDriftIdsByAgent).map(([agentId, driftIds]) => [agentId, [...driftIds]]),
+  );
+  const attributeScores: Record<string, AttributeScoreBalance> = Object.fromEntries(
+    Object.entries(projection.attributeScores).map(([agentId, scores]) => [agentId, copyAttributeScores(scores)]),
   );
   const resourceBalances = { ...projection.resourceBalances };
   const downtime = { ...projection.downtime };
@@ -3093,6 +3113,12 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
           latestSourceEventId: drift.sourceEventId,
         },
       };
+      break;
+    }
+    case "attribute_gained": {
+      const balance = copyAttributeScores(attributeScores[event.aggregateId]);
+      balance[event.payload.attributeId] = event.payload.balanceAfter;
+      attributeScores[event.aggregateId] = balance;
       break;
     }
     case "lifetime_adjusted": {
@@ -5774,6 +5800,7 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
     lineage,
     personalityDrifts,
     personalityDriftIdsByAgent,
+    attributeScores,
     resourceBalances,
     downtime,
     agentCustody,
@@ -6354,6 +6381,20 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     });
     const nextProjection = applyEvents(current, nextEvents);
     return commit(nextEvents, projectResourceGrantBalance({ events: nextEvents, projection: nextProjection }));
+  }
+
+  function grantAttribute(input: AttributeInput, context: EpochCommandContext): EpochCommandResult<AttributeScoreBalance> {
+    const current = projection();
+    const agentId = assertNonEmptyString(input.agentId, "agent_id");
+    requireActiveIdentity(current, agentId);
+    const nextEvents = planAttributeGainEvents({
+      projection: current,
+      agentId,
+      attribute: input,
+      makeEvent: eventFactory(clock, idFactory, context),
+    });
+    const nextProjection = applyEvents(current, nextEvents);
+    return commit(nextEvents, projectAttributeGainBalance({ events: nextEvents, projection: nextProjection }));
   }
 
   function spendResource(input: ResourceInput, context: EpochCommandContext): EpochCommandResult<Partial<Record<EpochResourceId, number>>> {
@@ -9577,6 +9618,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
             ...(identity.lifeGoal ? { lifeGoal: identity.lifeGoal } : {}),
           },
           resources: current.resourceBalances[session.agentId] ?? {},
+          attributes: current.attributeScores[session.agentId] ?? {},
           inventoryItems: (current.inventoryItemIdsByAgent[session.agentId] ?? [])
             .map((itemId) => current.inventoryItems[itemId])
             .filter((item): item is EpochInventoryItem => Boolean(item)),
@@ -9771,9 +9813,6 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       || Date.parse(mirrorEndedAtWorldTime) <= Date.parse(mirrorStartedAtWorldTime)
       || Date.parse(committedAtWorldTime) < Date.parse(mirrorEndedAtWorldTime)) {
       throw new Error("journey_mirror_time_window_invalid");
-    }
-    if (!["良好", "完美", "惊世"].includes(input.completionTier)) {
-      throw new Error("journey_canon_quality_below_threshold");
     }
     if (!Number.isSafeInteger(input.completionScoreBps)
       || input.completionScoreBps < 0
@@ -10115,6 +10154,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     archiveIdentity,
     reincarnate,
     grantResource,
+    grantAttribute,
     spendResource,
     recordLoreContribution,
     adjudicateLoreTarget,

@@ -190,7 +190,11 @@ test("MCP exposes an Agent-native start, propose, and commit journey flow", asyn
   assert.match(status.storyReport.profile.codeName, /^X-/);
   assert.equal(status.storyReport.profile.reincarnation, "轮回第一世");
   assert.equal(status.storyReport.evaluation.taskCompletionGrade, "F");
-  assert.equal(status.storyReport.evaluation.identityFidelityPercent, 40);
+  assert.equal(typeof status.storyReport.evaluation.identityFidelityPercent, "number");
+  assert.ok(status.storyReport.evaluation.identityFidelityPercent >= 0);
+  assert.ok(status.storyReport.evaluation.identityFidelityPercent <= 100);
+  assert.notEqual(status.storyReport.evaluation.identityFidelityPercent, 40);
+  assert.equal(status.storyReport.evaluation.warning, undefined);
   assert.equal(status.interactionLog.kind, "journey_interaction_log");
   assert.equal(status.interactionLog.version, 1);
   assert.equal(status.interactionLog.journeyId, status.journey.journeyId);
@@ -199,6 +203,7 @@ test("MCP exposes an Agent-native start, propose, and commit journey flow", asyn
   assert.equal(status.interactionLog.entries[1].selectedAction.label, selected.label);
   assert.match(status.storyReport.narrative, /该局目标：找稳定工作/);
   assert.match(status.storyReport.narrative, /任务完成度：F/);
+  assert.doesNotMatch(status.storyReport.narrative, /该身份将无法保留/u);
   assert.match(status.storyReport.storyContent, /向夜班书记珂岚询问当日仍缺人手的班次/);
   assert.deepEqual(status.storyReport.chapters.map((chapter: { key: string }) => chapter.key), [
     "departure", "arrival", "encounter", "decision", "consequence", "return", "aftermath",
@@ -385,14 +390,21 @@ test("a safe full clear is graded good instead of becoming an automatic perfect 
   assert.equal(current.taskAdjudication.performance.completedByRisk.high, 0);
   assert.equal(current.taskAdjudication.hiddenTask.revealed, true);
   assert.ok(current.rewardGrant);
-  assert.equal(current.rewardGrant.grantedItems.length, 0);
-  assert.equal(current.taskAdjudication.rewardBundle.items.length, 0);
+  assert.equal(current.rewardGrant.grantedItems.length, 1);
+  assert.equal(current.rewardGrant.grantedAttributes.length, 1);
+  assert.equal(current.taskAdjudication.rewardBundle.items.length, 1);
+  assert.equal(current.taskAdjudication.rewardBundle.items[0].rarity, "common");
+  assert.equal(current.taskAdjudication.rewardBundle.attributes.length, 1);
   assert.ok(current.storyReport.evaluation.rewards.resources.some((reward: { resourceId: string; amount: number }) =>
     reward.resourceId === current.taskAdjudication.reward.resourceId
       && reward.amount >= current.taskAdjudication.reward.amount));
   assert.ok(current.storyReport.evaluation.rewards.resources.some((reward: { resourceId: string; amount: number }) =>
     reward.resourceId === "coin" && reward.amount >= 2));
   assert.match(current.storyReport.evaluation.rewards.summary, /金币|以太|传说/u);
+  assert.match(current.storyReport.evaluation.rewards.summary, /道具/u);
+  assert.match(current.storyReport.evaluation.rewards.summary, /智识|力量|敏捷|体魄|意志|灵性/u);
+  assert.match(current.storyReport.evaluation.rewardConversion.summary, /隐藏装备分/u);
+  assert.match(current.storyReport.evaluation.rewardConversion.summary, /隐藏能力分/u);
   assert.match(current.storyReport.evaluation.playerImpact.summary, /其他玩家/u);
   assert.match(current.storyReport.evaluation.playerImpact.summary, /量子实验室地区影响/u);
   assert.doesNotMatch(
@@ -451,6 +463,15 @@ test("a safe full clear is graded good instead of becoming an automatic perfect 
   const affiliatedObject = nextContext.availableWorldObjects.find((object: { id: string }) =>
     object.id === selectedRoute.factionObjectId);
   assert.ok(affiliatedObject?.tags?.includes("agent_affiliated"));
+  assert.ok(Array.isArray(nextContext.carriedInventoryItems));
+  assert.equal(nextContext.carriedInventoryItems.length, current.rewardGrant.grantedItems.length);
+  assert.ok(nextContext.carriedInventoryItems.some((item: {
+    readonly itemId: string;
+    readonly displayName: string;
+    readonly rarity: string;
+  }) => item.itemId === current.rewardGrant.grantedItems[0].itemId
+    && item.displayName === current.rewardGrant.grantedItems[0].displayName
+    && item.rarity === "common"));
   const replayEvents = mcp.runtime.epochEvents({ limit: 100 }).events.slice().reverse();
   const replayedRuntime = createAgentWorldRuntime({ epochEvents: replayEvents });
   assert.deepEqual(
@@ -574,15 +595,15 @@ test("an optional side objective can be declined without abandoning the required
   assert.equal(current.taskAdjudication.mainCompleted, current.taskAdjudication.mainTotal);
   assert.equal(current.taskAdjudication.sideCompleted, 0);
   assert.equal(current.taskAdjudication.tier, "及格");
-  assert.equal(current.worldCommit.status, "discarded");
-  assert.equal(current.worldCommit.reason, "quality_below_canon_threshold");
-  assert.equal(current.worldCommit.sourceEventIds.length, 0);
-  assert.match(current.storyReport.narrative, /评分低于正史固化门槛/u);
+  assert.equal(current.worldCommit.status, "solidified");
+  assert.equal(current.worldCommit.reason, "main_completed_and_returned");
+  assert.ok(current.worldCommit.sourceEventIds.length > 0);
+  assert.match(current.storyReport.narrative, /本局已固化/u);
   assert.equal(mcp.runtime.epochEvents({
     eventType: "journey_world_solidified",
     limit: 100,
   }).events.some((event) => event.eventType === "journey_world_solidified"
-    && event.payload.journeyId === current.journey.journeyId), false);
+    && event.payload.journeyId === current.journey.journeyId), true);
   assert.ok(current.taskAdjudication.performance.skippedActions >= 1);
   assert.ok(current.interactionLog.entries.some((entry: {
     objective?: { objectiveId: string };
@@ -651,6 +672,18 @@ test("a server-signed skipped main objective fails the generated run without inv
   assert.equal(current.worldCommit.status, "discarded");
   assert.deepEqual(current.worldCommit.sourceEventIds, []);
   assert.match(current.storyReport.narrative, /本局镜像未固化/u);
+  const finalizedFailedRun = payload(await mcp.callTool("obsidian_epoch.journey_status", {
+    journeyId: current.journey.journeyId,
+    recoveryCode: ownerRecovery,
+  }));
+  assert.match(finalizedFailedRun.storyReport.evaluation.warning ?? "", /本局未及格.*无法继续保留/u);
+  assert.ok(finalizedFailedRun.storyReport.evaluation.identityFidelityPercent <= 20);
+  assert.equal(
+    finalizedFailedRun.finalVerification.page.payload.journey.storyReport.evaluation.warning,
+    finalizedFailedRun.storyReport.evaluation.warning,
+  );
+  const skippedFailureProgress = payload(await mcp.callTool("obsidian_epoch.progress", { agentId }));
+  assert.equal(skippedFailureProgress.identity.status, "archived");
   const failedMirrorEvents = mcp.runtime.epochEvents({ limit: 1_000 }).events.filter((event: {
     correlationId?: string;
   }) => event.correlationId === current.journey.correlationId);
@@ -1079,6 +1112,7 @@ test("a settled Journey that misses the core task is reported as a failed run", 
   assert.equal(status.storyReport.resolution.missionStatus, "failed");
   assert.equal(status.storyReport.evaluation.taskCompletionGrade, "F");
   assert.match(status.storyReport.narrative, /任务完成度：F/);
+  assert.equal(status.storyReport.evaluation.warning, undefined);
   assert.doesNotMatch(status.storyReport.storyContent, /任务|目标|委托|成功|失败|结算|可追溯/);
   assert.equal(status.finalVerification.page.payload.runSummary.runKind, "one_shot_journey");
   assert.equal(status.finalVerification.page.payload.runSummary.endingReason, "early_exit");

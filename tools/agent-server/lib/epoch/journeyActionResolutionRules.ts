@@ -4,6 +4,7 @@ import {
   runtimeActionKeyId,
   signRuntimeActionPayload,
 } from "../runtimeActionSigning.ts";
+import type { EpochAttributeId } from "./protocol.ts";
 import { stableSignedEnvelopeJson } from "./turnActionEnvelopeRules.ts";
 
 export const JOURNEY_ACTION_RESOLUTION_RULE_VERSION = "journey-action-resolution.v5";
@@ -70,6 +71,7 @@ export type JourneyActionResolutionOutcome =
 export interface JourneyActionResolutionFactors {
   readonly baseCompetence: number;
   readonly identity: number;
+  readonly attributes: number;
   readonly resources: number;
   readonly equipment: number;
   readonly sceneSupport: number;
@@ -137,6 +139,7 @@ export interface ResolveJourneyActionInput {
     readonly stamina?: number;
     readonly aether?: number;
   };
+  readonly attributes?: Partial<Record<EpochAttributeId, number>>;
   readonly inventoryItems: readonly {
     readonly itemId: string;
     readonly rarity: string;
@@ -209,6 +212,12 @@ function resolutionInput(input: ResolveJourneyActionInput) {
       focus: nonNegative(input.resources.focus ?? 0),
       stamina: nonNegative(input.resources.stamina ?? 0),
     },
+    attributes: Object.fromEntries(Object.entries(input.attributes ?? {})
+      .filter((entry): entry is [EpochAttributeId, number] =>
+        typeof entry[1] === "number" && Number.isFinite(entry[1]))
+      .sort((left, right) => left[0].localeCompare(right[0]))
+      .map(([key, value]) => [key, Math.max(0, Math.min(10_000, Math.round(value)))])
+    ) as Partial<Record<EpochAttributeId, number>>,
     risk: input.risk,
     signedCompletionKind: input.signedCompletionKind,
     traits: [...new Set(input.identity.traits.map((trait) => trait.trim()).filter(Boolean))].sort(),
@@ -283,6 +292,7 @@ export function resolveJourneyAction(input: ResolveJourneyActionInput): JourneyA
   const zeroFactors: JourneyActionResolutionFactors = {
     baseCompetence: 0,
     identity: 0,
+    attributes: 0,
     resources: 0,
     equipment: 0,
     sceneSupport: 0,
@@ -327,6 +337,11 @@ export function resolveJourneyAction(input: ResolveJourneyActionInput): JourneyA
     ? Math.min(1, canonicalInput.lifetime.remaining / lifetimeMax)
     : 0;
   const identity = Math.round(lifetimeRatio * 6) + Math.min(6, canonicalInput.traits.length * 2);
+  const attributes = Math.min(12, Object.values(canonicalInput.attributes)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+    .sort((left, right) => right - left)
+    .slice(0, 3)
+    .reduce((total, value) => total + Math.floor(value), 0));
   const resources = cappedWhole(canonicalInput.resources.focus, 4)
     + cappedWhole(canonicalInput.resources.stamina, 4)
     + cappedWhole(canonicalInput.resources.aether, 4);
@@ -343,6 +358,7 @@ export function resolveJourneyAction(input: ResolveJourneyActionInput): JourneyA
   const factors: JourneyActionResolutionFactors = {
     baseCompetence: BASE_COMPETENCE,
     identity,
+    attributes,
     resources,
     equipment,
     sceneSupport,
