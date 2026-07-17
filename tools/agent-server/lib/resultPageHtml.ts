@@ -542,10 +542,15 @@ function journeyStorySection(payload: ResultPagePayload) {
         ${report.evaluation.rewards
           ? `<p><b>获得奖励：</b>${escapeHtml(report.evaluation.rewards.summary)}</p>`
           : ""}
+        ${report.evaluation.rewardConversion
+          ? `<p><b>能力转化：</b>${escapeHtml(report.evaluation.rewardConversion.summary)}</p>`
+          : ""}
         ${report.evaluation.playerImpact
           ? `<p><b>其他玩家影响：</b>${escapeHtml(report.evaluation.playerImpact.summary)}</p>`
           : ""}
-        <p class="journey-story-warning"><b>警告：</b>${escapeHtml(report.evaluation.warning)}</p>
+        ${report.evaluation.warning
+          ? `<p class="journey-story-warning"><b>警告：</b>${escapeHtml(report.evaluation.warning)}</p>`
+          : ""}
       </div>
     </section>`;
 }

@@ -373,7 +373,7 @@ function buildGeneratedJourneyMission(
     playerObjective: clean(input.playerObjective) || taskPlan.taskType,
     briefing: taskPlan.premise,
     primaryObjective: taskPlan.primaryObjective,
-    stakes: `主线决定是否及格；支线决定良好或完美；只有同时达成服务端隐藏条件才能获得惊世评价。`,
+    stakes: `主线决定是否及格；支线决定良好或优秀；只有同时达成服务端隐藏条件才能获得惊世评价。`,
     successCriteria: [
       ...taskPlan.objectives.filter((objective) => requiredMainIds.has(objective.objectiveId))
         .map((objective) => objective.completionCriteria),

@@ -250,6 +250,22 @@ test("maps only signed scene recipes into hosted actions and uses the explicit s
   assert.equal(hosted.find((action) => action.actionOptionId === contract.safeFallbackActionOptionId)?.optionKey,
     "leave_without_commitment");
   assert.ok(hosted.every((action) => action.reward === undefined && action.lifetimeDelta === undefined));
+  assert.ok(hosted.every((action) => /服务端会隐藏计算/u.test(action.explanation.risk)));
+  assert.ok(hosted.every((action) => /道具装备|可验证收益/u.test(action.explanation.risk)));
+  assert.doesNotMatch(JSON.stringify(hosted.map((action) => action.explanation)), /score|difficulty|成功率/u);
+
+  const highRiskContract = {
+    ...contract,
+    actionOptions: [
+      { ...contract.actionOptions[0], risk: "high" as const, riskTerms: undefined },
+      ...contract.actionOptions.slice(1),
+    ],
+  };
+  const highRiskHosted = journeySceneHostedActionOptions(highRiskContract)[0];
+  assert.match(highRiskHosted.explanation.risk, /高风险/u);
+  assert.match(highRiskHosted.explanation.risk, /携带或绑定的道具、装备/u);
+  assert.match(highRiskHosted.explanation.risk, /客户端不会看到具体计算过程/u);
+  assert.doesNotMatch(JSON.stringify(highRiskHosted.explanation), /score|difficulty|成功率/u);
 });
 
 test("arrival and return phases issue distinct signed Gray Harbor travel actions", () => {

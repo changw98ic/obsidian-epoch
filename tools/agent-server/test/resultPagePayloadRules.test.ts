@@ -191,7 +191,8 @@ test("result page payload rules expose only allowlisted Journey reward fields", 
           },
           rewardBundle: {
             resources: [{ resourceId: "coin", amount: 2 }],
-            items: [{ itemKey: "journey_reward_alpha", displayName: "实验核验凭章", rarity: "rare" }],
+            attributes: [{ attributeId: "intellect", amount: 1 }],
+            items: [{ itemKey: "journey_reward_alpha", displayName: "实验核验凭章", rarity: "common" }],
           },
         },
       },
@@ -205,7 +206,8 @@ test("result page payload rules expose only allowlisted Journey reward fields", 
   });
   assert.deepEqual(built.journey?.stateDelta?.rewardBundle, {
     resources: [{ resourceId: "coin", amount: 2 }],
-    items: [{ itemKey: "journey_reward_alpha", displayName: "实验核验凭章", rarity: "rare" }],
+    attributes: [{ attributeId: "intellect", amount: 1 }],
+    items: [{ itemKey: "journey_reward_alpha", displayName: "实验核验凭章", rarity: "common" }],
   });
   assert.doesNotMatch(JSON.stringify(built), /must-not-leak|internalGrantToken/);
 });

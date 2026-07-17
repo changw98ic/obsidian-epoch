@@ -508,6 +508,7 @@ export class AgentCompanionRuntime {
       const hiddenTaskSeal = record.journey.taskPlan
         ? this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, record.journey.taskPlan)
         : undefined;
+      const identity = this.#identityForJourney(record.journey);
       const mission = buildJourneyMission({
         journeyId: record.journey.journeyId,
         journeyStatus: record.journey.status,
@@ -528,6 +529,7 @@ export class AgentCompanionRuntime {
         episodes,
         taskPlan: record.journey.taskPlan,
         hiddenTaskSeal,
+        identity,
       });
       const interactionLog = buildJourneyInteractionLog({
         journeyId: record.journey.journeyId,
@@ -611,7 +613,29 @@ export class AgentCompanionRuntime {
     const { explorerId, identity, progress } = this.#authorizeOwnedAgent(input, agentId);
     const projection = this.#journey.projection();
     const album = buildJourneyAlbum(projection, agentId, {
-      storyReportForJourney: (journey) => this.#filedStoryReport(journey),
+      storyReportForJourney: (journey) => {
+        const filed = this.#filedStoryReport(journey);
+        if (filed) return filed;
+        const episodes = journey.episodeIds
+          .map((episodeId) => projection.episodes[episodeId])
+          .filter(Boolean);
+        const hiddenTaskSeal = journey.taskPlan
+          ? this.#journey.hiddenTaskSealForJourney(journey.journeyId, journey.taskPlan)
+          : undefined;
+        return buildGroundedJourneyStoryReport({
+          journeyId: journey.journeyId,
+          status: journey.status,
+          objective: journey.mandate.objective,
+          regionId: journey.destinationRegionId,
+          startedAtWorldTime: journey.startedAtWorldTime,
+          dueAtWorldTime: journey.dueAtWorldTime,
+          worldCommit: journey.worldCommit,
+          episodes,
+          taskPlan: journey.taskPlan,
+          hiddenTaskSeal,
+          identity: this.#identityForJourney(journey),
+        });
+      },
     });
     const nowWorld = this.#journey.nowWorld();
     const nowYear = epochWorldCalendarMoment(nowWorld)?.year;
@@ -737,6 +761,7 @@ export class AgentCompanionRuntime {
           hiddenTaskSeal: record.journey.taskPlan
             ? this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, record.journey.taskPlan)
             : undefined,
+          identity: this.#identityForJourney(record.journey),
         });
         return storyReport ? [{
           journeyId: record.journey.journeyId,
@@ -785,10 +810,17 @@ export class AgentCompanionRuntime {
 
   #filedStoryReport(journey: EpochJourney) {
     if (!journey.verification || !this.#epoch.getResultPage) return undefined;
-    return filedStoryReportFromPage(
+    const report = filedStoryReportFromPage(
       this.#epoch.getResultPage({ pageId: journey.verification.pageId }),
       journey,
     );
+    return report?.evaluation.warning === "该身份将无法保留" ? undefined : report;
+  }
+
+  #identityForJourney(journey: EpochJourney) {
+    const value = this.#epoch.progress({ agentId: journey.agentId });
+    const progress = isRecord(value) ? value : {};
+    return isEpochAgentIdentity(progress.identity) ? progress.identity : undefined;
   }
 
   #authorizeAgent(input: UnknownRecord, agentId: string) {
@@ -865,6 +897,23 @@ export class AgentCompanionRuntime {
       ? Object.fromEntries(Object.entries(progress.resources)
           .filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1])))
       : {};
+    const attributes = isRecord(progress.attributes)
+      ? Object.fromEntries(Object.entries(progress.attributes)
+          .filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1])))
+      : {};
+    const carriedInventoryItems = Array.isArray(progress.inventoryItems)
+      ? progress.inventoryItems
+          .filter(isRecord)
+          .map((item) => ({
+            itemId: typeof item.itemId === "string" ? item.itemId : "",
+            itemKey: typeof item.itemKey === "string" ? item.itemKey : "",
+            displayName: typeof item.displayName === "string" ? item.displayName : "",
+            rarity: typeof item.rarity === "string" ? item.rarity : "common",
+            bound: item.bound === true,
+          }))
+          .filter((item) => item.itemId && item.displayName)
+          .slice(0, 20)
+      : [];
     const region: JourneyAvailableWorldObject = {
       id: canonicalRegionId,
       type: "region",
@@ -908,6 +957,8 @@ export class AgentCompanionRuntime {
       ...(identityNeeds ? { identityNeeds } : {}),
       ...(lifeGoal ? { lifeGoal } : {}),
       resources,
+      attributes,
+      carriedInventoryItems,
       scenarioMapId: canonicalRegionId,
       generationRequested: journey.taskRequest?.generationRequested === true,
       region,

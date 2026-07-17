@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { EpochResourceId } from "./protocol.ts";
+import type { EpochAttributeId, EpochResourceId } from "./protocol.ts";
 import type { JourneyActionResolution } from "./journeyActionResolutionRules.ts";
 import type { JourneySceneType } from "./journeySceneCatalog.ts";
 import type {
@@ -30,7 +30,8 @@ export const JOURNEY_TASK_OBJECTIVE_LIMITS = Object.freeze({
 export type JourneyTaskPlanSource = "model_sampling" | "server_fallback";
 export type JourneyTaskObjectiveKind = "main" | "side" | "choice";
 export type JourneyTaskGraphRouteKind = "choice" | "unlock";
-export type JourneyCompletionTier = "未及格" | "及格" | "良好" | "完美" | "惊世";
+export type JourneyCompletionTier = "未及格" | "及格" | "良好" | "优秀" | "惊世";
+export type LegacyJourneyCompletionTier = JourneyCompletionTier | "完美";
 export type JourneyCompletionResultKind = "item" | "knowledge" | "world_state" | "service" | "relationship";
 export type JourneyCompletionReturnMode = "carry" | "report" | "none";
 
@@ -150,30 +151,78 @@ export interface JourneyTierReward {
 export interface JourneyRewardItem {
   readonly itemKey: string;
   readonly displayName: string;
-  readonly rarity: "rare" | "legendary";
+  readonly rarity: "common" | "rare" | "legendary";
+}
+
+export interface JourneyAttributeReward {
+  readonly attributeId: EpochAttributeId;
+  readonly amount: number;
 }
 
 export interface JourneyRewardBundle {
   readonly resources: readonly JourneyTierReward[];
   readonly items: readonly JourneyRewardItem[];
+  readonly attributes: readonly JourneyAttributeReward[];
+}
+
+export function normalizeJourneyCompletionTier(value: unknown): JourneyCompletionTier | undefined {
+  if (value === "完美") return "优秀";
+  return value === "未及格"
+    || value === "及格"
+    || value === "良好"
+    || value === "优秀"
+    || value === "惊世"
+    ? value
+    : undefined;
 }
 
 export const JOURNEY_TIER_REWARDS: Readonly<Record<Exclude<JourneyCompletionTier, "未及格">, JourneyTierReward>> = {
   及格: { resourceId: "coin", amount: 2 },
   良好: { resourceId: "coin", amount: 5 },
-  完美: { resourceId: "aether", amount: 3 },
+  优秀: { resourceId: "aether", amount: 3 },
   惊世: { resourceId: "legend", amount: 1 },
 };
 
 function rewardItemName(plan: JourneyGeneratedTaskPlan): string {
   const completion = plan.completionResult ?? inferJourneyCompletionResult(plan.successResult);
   switch (completion.kind) {
-    case "knowledge": return `${plan.title}核验凭章`;
+    case "knowledge": return `${plan.title}便携记录器`;
     case "relationship": return `${plan.title}引荐信物`;
-    case "service": return `${plan.title}功绩凭章`;
-    case "item": return `${plan.title}留存纪念`;
+    case "service": return `${plan.title}应急工具包`;
+    case "item": return `${plan.title}回收装备`;
     default: return `${plan.title}纪念铭牌`;
   }
+}
+
+const ATTRIBUTE_REWARD_BY_COMPLETION: Readonly<Record<JourneyCompletionResultKind, EpochAttributeId>> = {
+  item: "agility",
+  knowledge: "intellect",
+  relationship: "willpower",
+  service: "physique",
+  world_state: "spirituality",
+};
+
+const ATTRIBUTE_REWARD_AMOUNT_BY_TIER: Readonly<Record<Exclude<JourneyCompletionTier, "未及格">, number>> = {
+  及格: 1,
+  良好: 2,
+  优秀: 3,
+  惊世: 4,
+};
+
+const ITEM_REWARD_RARITY_BY_TIER: Readonly<Record<Exclude<JourneyCompletionTier, "未及格">, JourneyRewardItem["rarity"] | undefined>> = {
+  及格: undefined,
+  良好: "common",
+  优秀: "rare",
+  惊世: "legendary",
+};
+
+function rewardAttributesForPlan(
+  plan: JourneyGeneratedTaskPlan,
+  tier: Exclude<JourneyCompletionTier, "未及格">,
+): readonly JourneyAttributeReward[] {
+  const completion = plan.completionResult ?? inferJourneyCompletionResult(plan.successResult);
+  const attributeId = ATTRIBUTE_REWARD_BY_COMPLETION[completion.kind];
+  return [{ attributeId, amount: ATTRIBUTE_REWARD_AMOUNT_BY_TIER[tier] }];
 }
 
 export function journeyRewardBundleForPlan(
@@ -181,17 +230,18 @@ export function journeyRewardBundleForPlan(
   tier: Exclude<JourneyCompletionTier, "未及格">,
 ): JourneyRewardBundle {
   const reward = JOURNEY_TIER_REWARDS[tier];
-  const itemTier = tier === "完美" || tier === "惊世";
+  const itemRarity = ITEM_REWARD_RARITY_BY_TIER[tier];
   const itemHash = createHash("sha256")
     .update(`${plan.hiddenTaskCommitment}:${tier}`)
     .digest("hex")
     .slice(0, 20);
   return {
     resources: [reward],
-    items: itemTier ? [{
+    attributes: rewardAttributesForPlan(plan, tier),
+    items: itemRarity ? [{
       itemKey: `journey_reward_${itemHash}`,
       displayName: rewardItemName(plan),
-      rarity: tier === "惊世" ? "legendary" : "rare",
+      rarity: itemRarity,
     }] : [],
   };
 }
@@ -1361,7 +1411,7 @@ function journeyTaskPerformance(input: {
     ...(failedActions ? [`失败行动 ${failedActions} 次`] : []),
     ...(skippedActions ? [`主动跳过 ${skippedActions} 次`] : []),
     ...(missingResolutionEvidence ? [`缺少服务端行动质量证据 ${missingResolutionEvidence} 项`] : []),
-    perfectEligible ? "满足完美评价条件" : "未满足完美评价条件",
+    perfectEligible ? "满足优秀评价条件" : "未满足优秀评价条件",
   ];
   return {
     version: JOURNEY_TASK_ADJUDICATION_VERSION,
@@ -1524,11 +1574,11 @@ export function adjudicateJourneyTask(input: {
         ? "良好"
         : hiddenCompleted
           ? "惊世"
-          : "完美";
+          : "优秀";
   const revealHidden = input.revealHidden === true;
   const tier: JourneyCompletionTier = revealHidden
     ? terminalTier
-    : terminalTier === "惊世" ? "完美" : terminalTier;
+    : terminalTier === "惊世" ? "优秀" : terminalTier;
   const reward = tier === "未及格" ? undefined : JOURNEY_TIER_REWARDS[tier];
   const rewardBundle = tier === "未及格" ? undefined : journeyRewardBundleForPlan(input.plan, tier);
   return {

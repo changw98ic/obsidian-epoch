@@ -83,10 +83,10 @@ export interface GroundedJourneyStoryReport {
   };
   readonly storyContent: string;
   readonly evaluation: {
-    readonly taskCompletionGrade: "C" | "F" | "未及格" | "及格" | "良好" | "完美" | "惊世";
+    readonly taskCompletionGrade: "C" | "F" | "未及格" | "及格" | "良好" | "优秀" | "惊世";
     readonly performanceScorePercent?: number;
     readonly gradeReason?: string;
-    readonly identityFidelityPercent: 40;
+    readonly identityFidelityPercent: number;
     readonly rewards: JourneyRewardBundle & { readonly summary: string };
     readonly playerImpact: {
       readonly scope: "none" | "direct" | "shared_world" | "direct_and_shared";
@@ -98,7 +98,14 @@ export interface GroundedJourneyStoryReport {
       readonly summary: string;
     };
     readonly npcRelationships?: readonly JourneyWorldCommit["npcRelationships"][number][];
-    readonly warning: "该身份将无法保留";
+    readonly rewardConversion: {
+      readonly summary: string;
+      readonly entries: readonly {
+        readonly source: string;
+        readonly effect: string;
+      }[];
+    };
+    readonly warning?: string;
   };
   readonly narrative: string;
   readonly chapters: readonly GroundedJourneyStoryChapter[];
@@ -120,6 +127,21 @@ export interface GroundedJourneyStoryReport {
   readonly sourceEventIds: readonly string[];
 }
 
+export interface JourneyStoryIdentityInput {
+  readonly status?: string;
+  readonly lifetime?: {
+    readonly max?: number;
+    readonly remaining?: number;
+    readonly startedAt?: string;
+    readonly archivedAt?: string;
+    readonly finalTitle?: string;
+  };
+  readonly personality?: {
+    readonly traits?: readonly string[];
+    readonly driftIds?: readonly string[];
+  };
+}
+
 export interface BuildGroundedJourneyStoryReportInput {
   readonly journeyId: string;
   readonly status: string;
@@ -131,6 +153,7 @@ export interface BuildGroundedJourneyStoryReportInput {
   readonly taskPlan?: JourneyGeneratedTaskPlan;
   readonly hiddenTaskSeal?: JourneyHiddenTaskSeal;
   readonly worldCommit?: JourneyWorldCommit;
+  readonly identity?: JourneyStoryIdentityInput;
 }
 
 function clean(value: string): string {
@@ -301,6 +324,21 @@ const RESOURCE_NAMES: Readonly<Record<string, string>> = {
   stamina: "体力",
 };
 
+const ATTRIBUTE_NAMES: Readonly<Record<string, string>> = {
+  strength: "力量",
+  agility: "敏捷",
+  physique: "体魄",
+  intellect: "智识",
+  willpower: "意志",
+  spirituality: "灵性",
+};
+
+const ITEM_RARITY_NAMES: Readonly<Record<string, string>> = {
+  common: "普通",
+  rare: "稀有",
+  legendary: "传奇",
+};
+
 function rewardEvaluation(
   bundle: JourneyRewardBundle | undefined,
   episodes: readonly JourneyStoryEpisodeInput[] = [],
@@ -320,11 +358,13 @@ function rewardEvaluation(
   }
   const resources = [...resourceTotals].map(([resourceId, amount]) => ({ resourceId, amount }));
   const items = bundle?.items ?? [];
+  const attributes = bundle?.attributes ?? [];
   const parts = [
     ...resources.map((reward) => `${RESOURCE_NAMES[reward.resourceId] ?? reward.resourceId} +${reward.amount}`),
-    ...items.map((item) => `道具“${item.displayName}”（${item.rarity === "legendary" ? "传奇" : "稀有"}）`),
+    ...attributes.map((reward) => `${ATTRIBUTE_NAMES[reward.attributeId] ?? reward.attributeId} +${reward.amount}`),
+    ...items.map((item) => `道具“${item.displayName}”（${ITEM_RARITY_NAMES[item.rarity] ?? item.rarity}）`),
   ];
-  return { resources, items, summary: parts.length ? parts.join("；") : "未获得独立奖励" };
+  return { resources, items, attributes, summary: parts.length ? parts.join("；") : "未获得独立奖励" };
 }
 
 function playerImpactEvaluation(
@@ -418,6 +458,170 @@ function worldCommitEvaluation(worldCommit: JourneyWorldCommit | undefined) {
     },
     npcRelationships: worldCommit.npcRelationships,
   } as const;
+}
+
+function rewardConversionEvaluation(
+  rewards: GroundedJourneyStoryReport["evaluation"]["rewards"],
+  worldCommit: JourneyWorldCommit | undefined,
+): GroundedJourneyStoryReport["evaluation"]["rewardConversion"] {
+  const entries: { source: string; effect: string }[] = [];
+  for (const reward of rewards.resources) {
+    const label = `${RESOURCE_NAMES[reward.resourceId] ?? reward.resourceId} +${reward.amount}`;
+    switch (reward.resourceId) {
+      case "focus":
+        entries.push({
+          source: label,
+          effect: "直接进入突袭防守公式：每 1 点专注约等于 +3 防守力；也可用于社交托管和部分道具条件。",
+        });
+        break;
+      case "stamina":
+        entries.push({
+          source: label,
+          effect: "可投入主动突袭或反击：每 1 点体力约等于 +2 进攻强度；也支撑训练、旅行和体能类制作。",
+        });
+        break;
+      case "legend":
+        entries.push({
+          source: label,
+          effect: "直接进入防守/反击公式：每 1 点身份传说度约等于 +1 威慑或反击强度。",
+        });
+        break;
+      case "aether":
+        entries.push({
+          source: label,
+          effect: "用于修炼、灵质制作与异常处理，偏长期能力成长，不直接按点数进入普通突袭公式。",
+        });
+        break;
+      case "coin":
+        entries.push({
+          source: label,
+          effect: "用于交易、补给、商店购买和制作材料；金币本身不直接增加突袭战斗力，但可间接换成装备或准备资源。",
+        });
+        break;
+      default:
+        entries.push({
+          source: label,
+          effect: "已进入身份资源账，可在后续服务端规则允许的行动中消耗或转化。",
+        });
+        break;
+    }
+  }
+  for (const reward of rewards.attributes) {
+    const label = `${ATTRIBUTE_NAMES[reward.attributeId] ?? reward.attributeId} +${reward.amount}`;
+    const effectByAttribute: Readonly<Record<string, string>> = {
+      strength: "提升力量属性；服务端高风险判定会读取属性账本，属性总值会作为隐藏能力分的一部分。",
+      agility: "提升敏捷属性；服务端高风险判定会读取属性账本，属性总值会作为隐藏能力分的一部分。",
+      physique: "提升体魄属性；服务端高风险判定会读取属性账本，属性总值会作为隐藏能力分的一部分。",
+      intellect: "提升智识属性；服务端高风险判定会读取属性账本，属性总值会作为隐藏能力分的一部分。",
+      willpower: "提升意志属性；服务端高风险判定会读取属性账本，属性总值会作为隐藏能力分的一部分。",
+      spirituality: "提升灵性属性；服务端高风险判定会读取属性账本，属性总值会作为隐藏能力分的一部分。",
+    };
+    entries.push({
+      source: label,
+      effect: effectByAttribute[reward.attributeId] ?? "已进入人物属性账本，会影响后续服务端能力判定。",
+    });
+  }
+  for (const item of rewards.items) {
+    const rarityName = ITEM_RARITY_NAMES[item.rarity] ?? item.rarity;
+    entries.push({
+      source: `道具/装备“${item.displayName}”（${rarityName}）`,
+      effect: item.rarity === "legendary"
+        ? "传奇物品会进入物品栏；后续高风险行动会按库存中最高稀有度的两件道具/装备计入服务端隐藏装备分，也可作为身份传说与高阶路线证据。"
+        : item.rarity === "rare"
+          ? "稀有物品会进入物品栏；后续高风险行动会按库存中最高稀有度的两件道具/装备计入服务端隐藏装备分，也可用于制作、交易、证明或路线解锁。"
+          : "普通物品会进入物品栏；后续高风险行动会按库存中最高稀有度的两件道具/装备计入服务端隐藏装备分，也可用于基础制作、交易或证明。",
+    });
+  }
+  if (worldCommit?.status === "solidified") {
+    for (const standing of worldCommit.factionStandings) {
+      const powerBonus = Math.min(3, Math.floor(standing.standingAfter / 2));
+      entries.push({
+        source: `阵营声望 +${standing.standingDelta}`,
+        effect: `已固化为真实世界阵营记录；跨阵营战斗会按赛季声望提供战力加成，当前可计算加成约 +${powerBonus}（封顶 +3）。`,
+      });
+    }
+    for (const relationship of worldCommit.npcRelationships) {
+      entries.push({
+        source: `${relationship.displayName}关系 +${relationship.scoreDelta}`,
+        effect: "已固化为 NPC 关系与记忆，偏情报、协助、引荐和后续路线解锁；当前不直接加入突袭伤害公式。",
+      });
+    }
+  }
+  if (!entries.length) {
+    return {
+      summary: "本局没有获得可转化奖励；身份能力没有新增直接数值来源。",
+      entries,
+    };
+  }
+  const conversionParts = entries.map((entry) =>
+    `${entry.source}：${entry.effect.replace(/[。；;\s]+$/u, "")}`);
+  return {
+    summary: `${conversionParts.join("；")}。`,
+    entries,
+  };
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function identityFidelityEvaluation(input: {
+  readonly identity?: JourneyStoryIdentityInput;
+  readonly journeyStatus: string;
+  readonly missionStatus: JourneyMission["status"];
+  readonly worldCommit?: JourneyWorldCommit;
+}): Pick<GroundedJourneyStoryReport["evaluation"], "identityFidelityPercent" | "warning"> {
+  if (!input.identity) {
+    const identityEnded = input.journeyStatus === "identity_ended";
+    const fallbackPercent = identityEnded
+      ? 0
+      : input.worldCommit?.status === "solidified"
+        ? 72
+        : input.missionStatus === "completed"
+          ? 60
+          : 35;
+    return {
+      identityFidelityPercent: fallbackPercent,
+      ...(identityEnded ? { warning: "该身份已经终结，无法继续保留。" } : {}),
+    };
+  }
+
+  const lifetimeMax = finiteNumber(input.identity.lifetime?.max);
+  const lifetimeRemaining = finiteNumber(input.identity.lifetime?.remaining);
+  const hasLifetime = lifetimeMax !== undefined && lifetimeMax > 0 && lifetimeRemaining !== undefined;
+  const lifetimePercent = hasLifetime
+    ? clampPercent((Math.max(0, lifetimeRemaining) / lifetimeMax) * 100)
+    : 60;
+  const traitCount = input.identity.personality?.traits?.filter((trait) => clean(trait)).length ?? 0;
+  const traitBonus = Math.min(8, traitCount * 2);
+  const missionAdjustment = input.missionStatus === "completed" ? 6 : -8;
+  const commitAdjustment = input.worldCommit?.status === "solidified"
+    ? 6
+    : input.worldCommit?.status === "discarded"
+      ? -6
+      : 0;
+  const archived = input.identity.status === "archived" || Boolean(input.identity.lifetime?.archivedAt);
+  const identityEnded = input.journeyStatus === "identity_ended";
+  let percent = clampPercent((lifetimePercent * 0.82) + traitBonus + missionAdjustment + commitAdjustment);
+  if (hasLifetime && lifetimeRemaining <= 0) percent = 0;
+  if (archived || identityEnded) percent = Math.min(percent, hasLifetime && lifetimeRemaining <= 0 ? 0 : 20);
+
+  const remainingRatio = hasLifetime ? Math.max(0, lifetimeRemaining) / lifetimeMax : undefined;
+  let warning: string | undefined;
+  if (identityEnded) warning = "该身份已经终结，无法继续保留。";
+  else if (archived && input.missionStatus === "failed") warning = "本局未及格，身份已经剧情终结并归档，无法继续保留。";
+  else if (archived) warning = "该身份已经归档，后续只能作为历史身份保留。";
+  else if (hasLifetime && lifetimeRemaining <= 0) warning = "该身份寿命已耗尽，无法继续保留。";
+  else if (remainingRatio !== undefined && remainingRatio <= 0.15) warning = "该身份寿命濒危，建议尽快归档或转生。";
+
+  return {
+    identityFidelityPercent: percent,
+    ...(warning ? { warning } : {}),
+  };
 }
 
 function sourceEventIds(episodes: readonly JourneyStoryEpisodeInput[]): readonly string[] {
@@ -756,13 +960,19 @@ export function buildGroundedJourneyStoryReport(
     ? `这次任务已经完成；“${objective}”仍可以在后续旅程中继续展开。`
     : `这次任务已经失败；“${objective}”仍等待下一次行动。`;
   const mainSucceeded = mission.status === "completed";
+  const rewards = rewardEvaluation(undefined, input.episodes);
   const evaluation: GroundedJourneyStoryReport["evaluation"] = {
     taskCompletionGrade: mainSucceeded ? "C" : "F",
-    identityFidelityPercent: 40,
-    rewards: rewardEvaluation(undefined, input.episodes),
+    ...identityFidelityEvaluation({
+      identity: input.identity,
+      journeyStatus: input.status,
+      missionStatus: mission.status,
+      worldCommit: input.worldCommit,
+    }),
+    rewards,
+    rewardConversion: rewardConversionEvaluation(rewards, input.worldCommit),
     playerImpact: playerImpactEvaluation(input.episodes, protagonist?.entityId || "", input.worldCommit),
     ...worldCommitEvaluation(input.worldCommit),
-    warning: "该身份将无法保留",
   };
   const chapterTitles = mainChapterTitles(mainBeat.selectedAction.optionKey, mainTitle);
   const time = storyTime(input.startedAtWorldTime, input.dueAtWorldTime);
@@ -850,13 +1060,14 @@ export function buildGroundedJourneyStoryReport(
     `任务完成度：${evaluation.taskCompletionGrade}`,
     `身份还原度：${evaluation.identityFidelityPercent}%`,
     `获得奖励：${evaluation.rewards.summary}`,
+    `能力转化：${evaluation.rewardConversion.summary}`,
     ...(evaluation.worldCommit ? [`世界固化：${evaluation.worldCommit.summary}`] : []),
     ...(evaluation.npcRelationships?.length ? [
       `NPC关系：${evaluation.npcRelationships.map((relationship) =>
         `${relationship.displayName} +${relationship.scoreDelta}（当前 ${relationship.scoreAfter}）`).join("；")}`,
     ] : []),
     `其他玩家影响：${evaluation.playerImpact.summary}`,
-    `警告：${evaluation.warning}`,
+    ...(evaluation.warning ? [`警告：${evaluation.warning}`] : []),
   ].join("\n");
 
   return {
@@ -1014,17 +1225,23 @@ function buildGeneratedJourneyStoryReport(
       episodes: [returning],
     }),
   ];
+  const rewards = rewardEvaluation(adjudication.rewardBundle, input.episodes);
   const evaluation: GroundedJourneyStoryReport["evaluation"] = {
     taskCompletionGrade: adjudication.tier,
     ...(adjudication.performance ? {
       performanceScorePercent: Math.round(adjudication.performance.scoreBps / 100),
       gradeReason: adjudication.performance.reasons.join("；"),
     } : {}),
-    identityFidelityPercent: 40,
-    rewards: rewardEvaluation(adjudication.rewardBundle, input.episodes),
+    ...identityFidelityEvaluation({
+      identity: input.identity,
+      journeyStatus: input.status,
+      missionStatus: mission.status,
+      worldCommit: input.worldCommit,
+    }),
+    rewards,
+    rewardConversion: rewardConversionEvaluation(rewards, input.worldCommit),
     playerImpact: playerImpactEvaluation(input.episodes, protagonist?.entityId || "", input.worldCommit),
     ...worldCommitEvaluation(input.worldCommit),
-    warning: "该身份将无法保留",
   };
   const storyContent = chapters.map((entry) => entry.text).join("\n\n");
   const header = [
@@ -1042,13 +1259,14 @@ function buildGeneratedJourneyStoryReport(
     ]),
     `身份还原度：${evaluation.identityFidelityPercent}%`,
     `获得奖励：${evaluation.rewards.summary}`,
+    `能力转化：${evaluation.rewardConversion.summary}`,
     ...(evaluation.worldCommit ? [`世界固化：${evaluation.worldCommit.summary}`] : []),
     ...(evaluation.npcRelationships?.length ? [
       `NPC关系：${evaluation.npcRelationships.map((relationship) =>
         `${relationship.displayName} +${relationship.scoreDelta}（当前 ${relationship.scoreAfter}）`).join("；")}`,
     ] : []),
     `其他玩家影响：${evaluation.playerImpact.summary}`,
-    `警告：${evaluation.warning}`,
+    ...(evaluation.warning ? [`警告：${evaluation.warning}`] : []),
   ].join("\n");
   const confirmedOutcomes = storyFacts.map((entry) => entry.outcome);
   const actionStory = objectiveChapters.map((entry) => entry.text).join("");

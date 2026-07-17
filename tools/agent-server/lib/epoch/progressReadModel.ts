@@ -22,7 +22,7 @@ import {
   type EpochPersonalityDrift,
   type EpochProjection,
 } from "./gameCore.ts";
-import { type EpochEventType, type EpochResourceId } from "./protocol.ts";
+import { type EpochAttributeId, type EpochEventType, type EpochResourceId } from "./protocol.ts";
 import { withRegionNewsMedia, type EpochRegionNewsView } from "./regionNewsReadModel.ts";
 
 export interface EpochInventoryItemInfo extends EpochInventoryItem {
@@ -54,6 +54,7 @@ export interface EpochProgressView {
   readonly lineage: readonly string[];
   readonly identities: readonly EpochAgentIdentity[];
   readonly resources: Partial<Record<EpochResourceId, number>>;
+  readonly attributes: Partial<Record<EpochAttributeId, number>>;
   readonly resourceMedia: Partial<Record<EpochResourceId, EpochResourceMedia>>;
   readonly inventoryItems: readonly EpochInventoryItemInfo[];
   readonly equipmentEffects: readonly EpochEquipmentEffectInfo[];
@@ -189,6 +190,7 @@ export function progressView(
     lineage,
     identities,
     resources: input.agentId ? projection.resourceBalances[input.agentId] || {} : {},
+    attributes: input.agentId ? projection.attributeScores[input.agentId] || {} : {},
     resourceMedia: epochResourceMediaMap(),
     inventoryItems: inventoryItemsView(projection, {
       agentId: input.agentId,
