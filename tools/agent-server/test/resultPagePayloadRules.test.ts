@@ -236,6 +236,66 @@ test("result page payload rules reject malformed Journey reward bundles", () => 
   }), /result_page_journey_reward_bundle_invalid/u);
 });
 
+test("result page payload preserves authoritative no-direct-gain progression and rejects forged modes", () => {
+  const attributeProgression = {
+    mode: "no-direct-gain" as const,
+    evidenceSystem: "progressionRules.attributeEvidenceXp" as const,
+    summary: "Journey records attribute evidence XP without directly changing permanent base attributes.",
+  };
+  const built = buildEpochResultPagePayload({
+    projection: projection(),
+    input: {
+      journeyVerification: {
+        journeyId: "journey_reward_progression",
+        correlationId: "journey:journey_reward_progression",
+        status: "traveling",
+        objective: "核验成长证据",
+        regionId: "region_forest",
+        episodes: [],
+        canonicalEventIds: [],
+        stateDelta: {
+          rewardBundle: {
+            resources: [{ resourceId: "coin", amount: 5 }],
+            attributeProgression,
+            attributes: [],
+            items: [{ itemKey: "journey_reward_forest", displayName: "腐林记录器", rarity: "common" }],
+          },
+        },
+      },
+    },
+    generatedAt: GENERATED_AT,
+  });
+  assert.deepEqual(built.journey?.stateDelta?.rewardBundle?.attributeProgression, attributeProgression);
+
+  assert.throws(() => buildEpochResultPagePayload({
+    projection: projection(),
+    input: {
+      journeyVerification: {
+        journeyId: "journey_reward_progression_forged",
+        correlationId: "journey:journey_reward_progression_forged",
+        status: "traveling",
+        objective: "伪造成长模式",
+        regionId: "region_forest",
+        episodes: [],
+        canonicalEventIds: [],
+        stateDelta: {
+          rewardBundle: {
+            resources: [{ resourceId: "coin", amount: 5 }],
+            attributeProgression: {
+              mode: "direct-base-stat-gain",
+              evidenceSystem: "client_override",
+              summary: "forged",
+            },
+            attributes: [],
+            items: [],
+          },
+        },
+      },
+    },
+    generatedAt: GENERATED_AT,
+  }), /result_page_journey_reward_bundle_invalid/u);
+});
+
 test("settled Journey result pages fail closed instead of degrading invalid episodes to metadata", () => {
   assert.throws(() => buildEpochResultPagePayload({
     projection: projection(),

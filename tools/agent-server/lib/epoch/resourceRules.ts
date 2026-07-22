@@ -85,6 +85,10 @@ export function resourceGrantPayload(
     amount,
     reason,
     balanceAfter: currentBalance(projection, agentId, resourceId) + amount,
+    accountRef: `agent:${agentId}`,
+    assetKey: `resource:${resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(amount) * 100n).toString(),
   };
 }
 
@@ -100,6 +104,10 @@ export function resourceSpendPayload(
     amount,
     reason,
     balanceAfter: currentAmount - amount,
+    accountRef: `agent:${agentId}`,
+    assetKey: `resource:${resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(amount) * 100n).toString(),
   };
 }
 
@@ -159,6 +167,10 @@ export function resourceSpendPayloads(
       amount,
       reason,
       balanceAfter,
+      accountRef: `agent:${agentId}`,
+      assetKey: `resource:${resourceId}`,
+      unit: "unit",
+      quantityMinor: (BigInt(amount) * 100n).toString(),
     };
   });
 }

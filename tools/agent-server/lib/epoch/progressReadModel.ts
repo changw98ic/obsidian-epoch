@@ -22,7 +22,7 @@ import {
   type EpochPersonalityDrift,
   type EpochProjection,
 } from "./gameCore.ts";
-import { type EpochAttributeId, type EpochEventType, type EpochResourceId } from "./protocol.ts";
+import { EPOCH_ATTRIBUTE_IDS, type EpochAttributeId, type EpochEventType, type EpochResourceId } from "./protocol.ts";
 import { withRegionNewsMedia, type EpochRegionNewsView } from "./regionNewsReadModel.ts";
 
 export interface EpochInventoryItemInfo extends EpochInventoryItem {
@@ -38,6 +38,37 @@ export interface EpochEquipmentEffectInfo {
 }
 
 export type EpochProgressRegionNewsView = EpochRegionNewsView;
+
+export interface EpochProgressUnavailableInfo {
+  readonly status: "unavailable";
+  readonly reason: string;
+}
+
+export interface EpochProgressWorldCursorInfo {
+  readonly status: "available" | "unavailable";
+  readonly worldId?: string;
+  readonly regionId?: string;
+  readonly worldTime?: string;
+  readonly canonicalCursor?: unknown;
+  readonly latestEventId?: string;
+  readonly latestCreatedAt?: string;
+  readonly error?: EpochProgressUnavailableInfo;
+}
+
+export interface EpochProgressStatusInfo {
+  readonly status: EpochAgentIdentity["status"] | "unavailable";
+  readonly identityStatus?: EpochAgentIdentity["status"];
+  readonly custodyStatus?: EpochProjection["agentCustody"][string]["custodyStatus"];
+  readonly lifetime?: EpochAgentIdentity["lifetime"];
+  readonly error?: EpochProgressUnavailableInfo;
+}
+
+export interface EpochProgressReadinessInfo {
+  readonly actionEligibility: EpochActionEligibilityInfo;
+  readonly identitySlots?: EpochIdentitySlotState;
+  readonly custody: EpochProjection["agentCustody"][string] | null;
+  readonly downtime: EpochProjection["downtime"][string] | null;
+}
 
 export interface EpochClaimableLegendNewsInfo extends EpochProgressRegionNewsView {
   readonly amount: number;
@@ -69,10 +100,21 @@ export interface EpochProgressView {
   readonly factionStandings: readonly EpochAgentFactionStanding[];
   readonly identitySlots?: EpochIdentitySlotState;
   readonly latestEvents: readonly EpochProjection["events"][number][];
+  readonly worldCursor: EpochProgressWorldCursorInfo;
+  readonly status: EpochProgressStatusInfo;
+  readonly injuries: EpochProgressUnavailableInfo;
+  readonly readiness: EpochProgressReadinessInfo;
+  readonly attributesComplete: Readonly<Record<EpochAttributeId, number>>;
 }
 
 function eventIsForAgent(event: EpochProjection["events"][number], agentId: string) {
   return event.agentId === agentId || event.aggregateId === agentId;
+}
+
+function completeEpochAttributes(
+  attributes: Partial<Record<EpochAttributeId, number>>,
+): Readonly<Record<EpochAttributeId, number>> {
+  return Object.fromEntries(EPOCH_ATTRIBUTE_IDS.map((id) => [id, attributes[id] || 0])) as Readonly<Record<EpochAttributeId, number>>;
 }
 
 export function latestEvents(
@@ -168,7 +210,17 @@ export function personalityDriftsView(
 
 export function progressView(
   projection: EpochProjection,
-  input: { agentId?: string; explorerId?: string; limit?: number; now: string; maxDowntimeSeconds?: number },
+  input: {
+    agentId?: string;
+    explorerId?: string;
+    limit?: number;
+    now: string;
+    maxDowntimeSeconds?: number;
+    worldId?: string;
+    regionId?: string;
+    worldTime?: string;
+    canonicalCursor?: unknown;
+  },
 ): EpochProgressView {
   const identity = input.agentId ? projection.identities[input.agentId] : undefined;
   const explorerId = input.explorerId || identity?.explorerId;
@@ -183,6 +235,20 @@ export function progressView(
     now: input.now,
     maxDowntimeSeconds: input.maxDowntimeSeconds,
   });
+  const agentAttributes = input.agentId ? projection.attributeScores[input.agentId] || {} : {};
+  const attributesComplete = completeEpochAttributes(agentAttributes);
+  const actionEligibility = actionEligibilityView(identity);
+  const identitySlots = explorerId ? identitySlotsForExplorer(projection, explorerId) : undefined;
+  const latest = latestEvents(projection, {
+    agentId: input.agentId,
+    limit: input.limit,
+  });
+  const latestEvent = latest[0];
+  const latestPayload = latestEvent?.payload as Readonly<Record<string, unknown>> | undefined;
+  const worldTime = input.worldTime
+    || (typeof latestPayload?.worldTime === "string" ? latestPayload.worldTime : undefined);
+  const regionId = input.regionId || downtime?.regionId;
+  const hasWorldCursor = Boolean(input.worldId || regionId || worldTime || input.canonicalCursor || latestEvent);
   return {
     agentId: input.agentId,
     explorerId,
@@ -190,7 +256,7 @@ export function progressView(
     lineage,
     identities,
     resources: input.agentId ? projection.resourceBalances[input.agentId] || {} : {},
-    attributes: input.agentId ? projection.attributeScores[input.agentId] || {} : {},
+    attributes: attributesComplete,
     resourceMedia: epochResourceMediaMap(),
     inventoryItems: inventoryItemsView(projection, {
       agentId: input.agentId,
@@ -206,7 +272,7 @@ export function progressView(
         media: epochDowntimeMediaForMode(pendingDowntime.mode),
       }
       : null,
-    actionEligibility: actionEligibilityView(identity),
+    actionEligibility,
     claimableLegendNews: claimableLegendNewsView(projection, input.agentId),
     downtimeDiaryEntries: input.agentId
       ? (projection.downtimeDiaryIdsByAgent[input.agentId] || [])
@@ -224,10 +290,48 @@ export function progressView(
           || right.updatedAt.localeCompare(left.updatedAt)
           || left.factionId.localeCompare(right.factionId))
       : [],
-    identitySlots: explorerId ? identitySlotsForExplorer(projection, explorerId) : undefined,
-    latestEvents: latestEvents(projection, {
-      agentId: input.agentId,
-      limit: input.limit,
-    }),
+    identitySlots,
+    latestEvents: latest,
+    worldCursor: hasWorldCursor
+      ? {
+        status: "available",
+        ...(input.worldId ? { worldId: input.worldId } : {}),
+        ...(regionId ? { regionId } : {}),
+        ...(worldTime ? { worldTime } : {}),
+        ...(input.canonicalCursor ? { canonicalCursor: input.canonicalCursor } : {}),
+        ...(latestEvent ? { latestEventId: latestEvent.eventId, latestCreatedAt: latestEvent.createdAt } : {}),
+      }
+      : {
+        status: "unavailable",
+        error: {
+          status: "unavailable",
+          reason: "world cursor source was not supplied to progress read model",
+        },
+      },
+    status: identity
+      ? {
+        status: identity.status,
+        identityStatus: identity.status,
+        ...(custody?.custodyStatus ? { custodyStatus: custody.custodyStatus } : {}),
+        lifetime: identity.lifetime,
+      }
+      : {
+        status: "unavailable",
+        error: {
+          status: "unavailable",
+          reason: "identity state is unavailable for the requested agent",
+        },
+      },
+    injuries: {
+      status: "unavailable",
+      reason: "injury state is not present in EpochProjection progress state",
+    },
+    readiness: {
+      actionEligibility,
+      ...(identitySlots ? { identitySlots } : {}),
+      custody,
+      downtime,
+    },
+    attributesComplete,
   };
 }

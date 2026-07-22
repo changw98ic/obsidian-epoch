@@ -11,6 +11,7 @@ import {
 } from "../lib/runtimeActionSigning.ts";
 
 import {
+  GENERIC_JOURNEY_MAIN_ACTION_RECIPES,
   GRAY_HARBOR_LIVELIHOOD_ACTION_RECIPES,
   buildJourneySceneContract,
   isJourneySceneActionLabelSpecific,
@@ -105,6 +106,38 @@ test("gray harbor livelihood catalog exposes six concrete server-owned recipes",
     "report_discrepancy",
     "leave_without_commitment",
   ]);
+});
+
+test("an unmapped infinite-world region receives a deterministic signed generic main route", () => {
+  const reflectiveCity: readonly JourneySceneContractWorldObject[] = [{
+    id: "region_reflective_city",
+    type: "region",
+    label: "镜城",
+    sourceFactIds: ["world:region:region_reflective_city"],
+  }];
+  const contract = buildJourneySceneContract(input({
+    seed: "reflective-city-generic-main",
+    journeyId: "journey_reflective_city_generic",
+    episodeId: "episode_reflective_city_main",
+    title: "镜城的通用调查",
+    worldObjects: reflectiveCity,
+    sourceFactIds: reflectiveCity.flatMap((object) => object.sourceFactIds),
+  }));
+
+  assert.deepEqual(
+    contract.actionOptions.map((action) => action.optionKey),
+    GENERIC_JOURNEY_MAIN_ACTION_RECIPES.map((recipe) => recipe.optionKey),
+  );
+  assert.equal(
+    contract.actionOptions.find((action) => action.actionOptionId === contract.safeFallbackActionOptionId)?.optionKey,
+    "leave_without_commitment",
+  );
+  assert.match(contract.premise, /镜城/u);
+  assert.ok(contract.actionOptions.every((action) => verifyJourneySceneActionSignature({
+    agentId: input().agentId,
+    contract,
+    action,
+  })));
 });
 
 test("builds a deterministic signed scene contract from seed, mandate, world state, and rule version", () => {

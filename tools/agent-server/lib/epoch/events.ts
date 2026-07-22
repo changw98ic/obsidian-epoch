@@ -56,6 +56,10 @@ import type {
   EpochWorldSimulationSignals,
   EpochWorldSimulationSnapshot,
 } from "./worldSimulationRules.ts";
+import {
+  assertCausalWorldEventRecordedPayload,
+  type CausalWorldEventRecordedPayload,
+} from "./causalEpochAdapter.ts";
 
 export interface EpochEventEnvelope<TType extends EpochEventType, TPayload> {
   readonly eventId: string;
@@ -225,6 +229,10 @@ export interface ResourceGrantedPayload {
   readonly amount: number;
   readonly reason: string;
   readonly balanceAfter: number;
+  readonly accountRef: string;
+  readonly assetKey: `resource:${EpochResourceId}`;
+  readonly unit: "unit";
+  readonly quantityMinor: string;
 }
 
 export interface AttributeGainedPayload {
@@ -240,6 +248,10 @@ export interface ResourceSpentPayload {
   readonly amount: number;
   readonly reason: string;
   readonly balanceAfter: number;
+  readonly accountRef: string;
+  readonly assetKey: `resource:${EpochResourceId}`;
+  readonly unit: "unit";
+  readonly quantityMinor: string;
 }
 
 export interface DowntimeSetPayload {
@@ -1840,6 +1852,7 @@ export interface EpochEventPayloadMap {
   readonly world_simulation_initialized: WorldSimulationInitializedPayload;
   readonly world_simulation_advanced: WorldSimulationAdvancedPayload;
   readonly world_simulation_content_migrated: WorldSimulationContentMigratedPayload;
+  readonly causal_world_event_recorded: CausalWorldEventRecordedPayload;
   readonly identity_issued: IdentityIssuedPayload;
   readonly explorer_recovery_rotated: ExplorerRecoveryRotatedPayload;
   readonly lifetime_adjusted: LifetimeAdjustedPayload;
@@ -2013,6 +2026,9 @@ export function assertEpochEvent(value: unknown): EpochEvent {
   }
   if (!candidate.payload || typeof candidate.payload !== "object") {
     throw new Error("epoch_event_payload_required");
+  }
+  if (candidate.eventType === "causal_world_event_recorded") {
+    assertCausalWorldEventRecordedPayload(candidate.payload);
   }
   return value as EpochEvent;
 }

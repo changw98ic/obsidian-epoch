@@ -58,7 +58,11 @@ async function fixture() {
   };
 }
 
-async function preparedAgentNativeJourney(suffix: string, epochNow?: string) {
+async function preparedAgentNativeJourney(
+  suffix: string,
+  epochNow?: string,
+  proposalTool = "obsidian_epoch.propose_journey_step",
+) {
   const context = await fixture();
   if (epochNow) context.advanceEpoch(epochNow);
   const prepared = payload(await context.mcp.callTool("obsidian_epoch.prepare_journey", {
@@ -74,7 +78,7 @@ async function preparedAgentNativeJourney(suffix: string, epochNow?: string) {
     recoveryCode: context.ownerRecovery,
     idempotencyKey: `start-${suffix}`,
   }));
-  const proposed = payload(await context.mcp.callTool("obsidian_epoch.propose_journey_step", {
+  const proposed = payload(await context.mcp.callTool(proposalTool, {
     journeyId: started.journey.journeyId,
     expectedVersion: started.journey.version,
     recoveryCode: context.ownerRecovery,
@@ -82,6 +86,40 @@ async function preparedAgentNativeJourney(suffix: string, epochNow?: string) {
   }));
   return { ...context, prepared, started, proposed };
 }
+
+test("public journey proposal stays compact and remains directly committable", async () => {
+  const context = await preparedAgentNativeJourney(
+    "compact-public-proposal",
+    undefined,
+    "obsidian_epoch.propose_journey_step_compact",
+  );
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(context.proposed), "utf8") < 24_000,
+    "public proposal must stay below external-agent persisted-output threshold",
+  );
+  assert.equal(context.proposed.transportVersion, "journey_proposal.compact.v1");
+  const compactStatus = payload(await context.mcp.callTool("obsidian_epoch.journey_status_compact", {
+    journeyId: context.started.journey.journeyId,
+    recoveryCode: context.ownerRecovery,
+  }));
+  assert.ok(Buffer.byteLength(JSON.stringify(compactStatus), "utf8") < 24_000);
+  assert.equal(compactStatus.transportVersion, "journey_status.compact.v1");
+  const selected = context.proposed.proposal.sceneContract.actionOptions[0];
+  assert.ok(selected?.signature);
+  const committed = payload(await context.mcp.callTool("obsidian_epoch.commit_journey_action_compact", {
+    journeyId: context.started.journey.journeyId,
+    sceneId: context.proposed.proposal.sceneContract.sceneId,
+    episodeId: context.proposed.proposal.episode.episodeId,
+    expectedVersion: context.proposed.proposal.expectedVersion,
+    actionOptionId: selected.actionOptionId,
+    signature: selected.signature,
+    recoveryCode: context.ownerRecovery,
+    idempotencyKey: "commit-compact-public-proposal",
+  }));
+  assert.ok(Buffer.byteLength(JSON.stringify(committed), "utf8") < 24_000);
+  assert.equal(committed.transportVersion, "journey_commit.compact.v1");
+  assert.equal(committed.settledAction.actionOptionId, selected.actionOptionId);
+});
 
 test("MCP exposes an Agent-native start, propose, and commit journey flow", async () => {
   const { mcp, agentId, ownerRecovery, advance } = await fixture();

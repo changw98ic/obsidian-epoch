@@ -2,6 +2,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runEpochInstallSmoke } from "./install-smoke.ts";
+import { isDirectEntrypoint } from "./lib/cliEntrypoint.ts";
 import {
   RECOVERY_BACKUP_SIGNING_PRIVATE_KEY_ENV_VAR,
   RECOVERY_BACKUP_SIGNING_PRIVATE_KEY_FILE_ENV_VAR,
@@ -348,7 +349,7 @@ function optionsFromArgs(args: readonly string[]): ReleaseRehearsalOptions {
   };
 }
 
-if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {
+if (isDirectEntrypoint(import.meta.url)) {
   const args = process.argv.slice(2);
   runEpochReleaseRehearsal(optionsFromArgs(args))
     .then((result) => {

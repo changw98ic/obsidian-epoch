@@ -7,9 +7,44 @@ import {
   epochEventsFromPersistenceRecord,
 } from "./epochPersistence.ts";
 import {
+  assertCausalIdempotencyReplay,
+  assertCausalReservationFinalization,
+  causalIdempotencyLeaseExpired,
+  causalIdempotencyScope,
+  pendingCausalManifest,
+  type CausalAtomicCommitContext,
+  type CausalIdempotencyClaimResult,
+  type CausalIdempotencyInput,
+  type CausalIdempotencyManifest,
+  type CausalIdempotencyManifestStore,
+  type CausalIdempotencyReservation,
+} from "./epoch/causalIdempotencyRules.ts";
+import {
   hydrateAgentRuntimeOptions,
   validateCanonicalRecoveryConflicts,
 } from "./store.ts";
+import {
+  createJourneyRunReceiptSqliteStore,
+  initializeJourneyRunReceiptSchema,
+} from "./epoch/journeyRunReceiptStore.ts";
+import {
+  createPhase6JourneyContextSqliteStore,
+  type Phase6JourneyContextSqliteStore,
+} from "./epoch/phase6JourneyContextStore.ts";
+import {
+  createPhase6ExperimentSqliteStore,
+  type Phase6ExperimentSqliteStore,
+} from "./epoch/phase6ExperimentStore.ts";
+import {
+  appendPhase6CommittedResultInTransaction,
+  initializePhase6CommittedResultSchema,
+  phase6CommittedResultsForPersistence,
+} from "./epoch/phase6CommittedResultStore.ts";
+import {
+  createPhase6RagTraceStore,
+  type Phase6RagTraceSqliteStore,
+} from "./epoch/phase6RagTraceStore.ts";
+import type { JourneyRunReceiptRepositoryAdapter } from "./epoch/journeySettlementRuntime.ts";
 import {
   backfillWorldMemoryFromResultPages,
   indexCanonicalResultPageForWorldMemory,
@@ -44,6 +79,14 @@ export interface SqliteMigrationSummary {
   readonly dbPath: string;
   readonly records: number;
   readonly files: Readonly<Record<string, number>>;
+}
+
+export interface AgentSqlitePersistenceStores {
+  readonly database: DatabaseSync;
+  readonly receiptRepository: JourneyRunReceiptRepositoryAdapter;
+  readonly phase6JourneyContextStore: Phase6JourneyContextSqliteStore;
+  readonly phase6ExperimentStore: Phase6ExperimentSqliteStore;
+  readonly phase6RagTraceStore: Phase6RagTraceSqliteStore;
 }
 
 function nowIso() {
@@ -136,7 +179,19 @@ function initializeSqliteSchema(db: DatabaseSync) {
       record_id INTEGER NOT NULL REFERENCES jsonl_records(id) ON DELETE CASCADE,
       run_json TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS causal_idempotency_manifests (
+      scope TEXT PRIMARY KEY,
+      input_hash TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending', 'committed', 'rejected')),
+      owner_id TEXT,
+      fencing_token INTEGER NOT NULL DEFAULT 0,
+      lease_expires_at TEXT,
+      manifest_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
+  initializeJourneyRunReceiptSchema(db);
+  initializePhase6CommittedResultSchema(db);
   initializeWorldMemorySchema(db);
   db.exec(`
     CREATE TRIGGER IF NOT EXISTS result_pages_world_memory_dirty_ai
@@ -191,6 +246,23 @@ function initializeSqliteSchema(db: DatabaseSync) {
   }
 }
 
+export function createAgentSqlitePersistenceStores(dbPath: string): AgentSqlitePersistenceStores {
+  const database = openSqlite(dbPath);
+  try {
+    initializeSqliteSchema(database);
+    return {
+      database,
+      receiptRepository: createJourneyRunReceiptSqliteStore(database),
+      phase6JourneyContextStore: createPhase6JourneyContextSqliteStore(database),
+      phase6ExperimentStore: createPhase6ExperimentSqliteStore(database),
+      phase6RagTraceStore: createPhase6RagTraceStore(database),
+    };
+  } catch (error) {
+    database.close();
+    throw error;
+  }
+}
+
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -209,6 +281,22 @@ function stringOrNull(value: unknown) {
 
 function recordType(record: JsonRecord) {
   return typeof record.type === "string" ? record.type : null;
+}
+
+function numberValue(value: unknown) {
+  return Number.isSafeInteger(value) ? Number(value) : undefined;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (isRecord(value)) {
+    return `{${Object.keys(value)
+      .filter((key) => value[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function emptyKnownJsonlRecordFiles(): MutableKnownJsonlRecordFiles {
@@ -288,14 +376,19 @@ function indexEpochEvent(db: DatabaseSync, recordId: number, event: EpochEvent, 
     if (strict) throw new Error("epoch_event_index_fields_required");
     return;
   }
-  const insertSql = strict
-    ? `INSERT INTO epoch_events(
-        event_id, event_type, aggregate_type, aggregate_id, agent_id, trust_class, created_at, record_id, event_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    : `INSERT OR REPLACE INTO epoch_events(
-        event_id, event_type, aggregate_type, aggregate_id, agent_id, trust_class, created_at, record_id, event_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-  db.prepare(insertSql).run(
+  const eventJson = JSON.stringify(event);
+  const existing = db.prepare("SELECT event_json FROM epoch_events WHERE event_id = ?")
+    .get(eventId) as { event_json: string } | undefined;
+  if (existing) {
+    const existingEvent = JSON.parse(existing.event_json) as unknown;
+    if (canonicalJson(existingEvent) === canonicalJson(event)) return;
+    throw new Error("epoch_event_recovery_conflict");
+  }
+  db.prepare(`
+    INSERT INTO epoch_events(
+      event_id, event_type, aggregate_type, aggregate_id, agent_id, trust_class, created_at, record_id, event_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
     eventId,
     eventType,
     aggregateType,
@@ -304,7 +397,7 @@ function indexEpochEvent(db: DatabaseSync, recordId: number, event: EpochEvent, 
     trustClass,
     createdAt,
     recordId,
-    JSON.stringify(event),
+    eventJson,
   );
 }
 
@@ -424,6 +517,14 @@ function indexKnownRecord(
     }
     const resultPages = Array.isArray(record.resultPages) ? record.resultPages : [];
     for (const page of resultPages) if (isRecord(page)) indexResultPage(db, recordId, page);
+    for (const committed of phase6CommittedResultsForPersistence(record)) {
+      appendPhase6CommittedResultInTransaction(
+        db,
+        committed.journeyId,
+        committed.result,
+        committed.createdAt,
+      );
+    }
   }
   const recordRunTicket = stringValue(record.runTicket);
   if (record.type === "ticket_issued" && recordRunTicket) {
@@ -477,6 +578,113 @@ function indexKnownRecord(
       JSON.stringify(record),
     );
   }
+}
+
+function parseCausalIdempotencyManifest(value: unknown): CausalIdempotencyManifest | undefined {
+  if (!isRecord(value)) return undefined;
+  const status = stringValue(value.status);
+  if (status !== "pending" && status !== "committed" && status !== "rejected") return undefined;
+  const scope = stringValue(value.scope);
+  const worldId = stringValue(value.worldId);
+  const commandType = stringValue(value.commandType);
+  const actorRef = stringValue(value.actorRef);
+  const idempotencyKey = stringValue(value.idempotencyKey);
+  const inputHash = stringValue(value.inputHash);
+  if (!scope || !worldId || !commandType || !actorRef || !idempotencyKey || !inputHash?.startsWith("sha256:")) {
+    return undefined;
+  }
+  return {
+    scope,
+    worldId,
+    commandType,
+    actorRef,
+    idempotencyKey,
+    inputHash: inputHash as `sha256:${string}`,
+    status,
+    eventIds: Array.isArray(value.eventIds) ? value.eventIds.filter((entry): entry is string => typeof entry === "string") : [],
+    ...(stringValue(value.rejectionCode) ? { rejectionCode: stringValue(value.rejectionCode) } : {}),
+    ...(stringValue(value.scheduledKey) ? { scheduledKey: stringValue(value.scheduledKey) } : {}),
+    ...(stringValue(value.createdAt) ? { createdAt: stringValue(value.createdAt) } : {}),
+    ...(stringValue(value.ownerId) ? { ownerId: stringValue(value.ownerId) } : {}),
+    ...(numberValue(value.fencingToken) !== undefined ? { fencingToken: numberValue(value.fencingToken) } : {}),
+    ...(stringValue(value.leaseExpiresAt) ? { leaseExpiresAt: stringValue(value.leaseExpiresAt) } : {}),
+    ...(stringValue(value.updatedAt) ? { updatedAt: stringValue(value.updatedAt) } : {}),
+  };
+}
+
+function readSqliteCausalManifestInTransaction(db: DatabaseSync, scope: string) {
+  const row = db.prepare(`
+    SELECT manifest_json
+    FROM causal_idempotency_manifests
+    WHERE scope = ?
+  `).get(scope) as { manifest_json: string } | undefined;
+  if (!row) return undefined;
+  return parseCausalIdempotencyManifest(JSON.parse(row.manifest_json) as unknown);
+}
+
+function upsertSqliteCausalManifestInTransaction(db: DatabaseSync, manifest: CausalIdempotencyManifest) {
+  db.prepare(`
+    INSERT INTO causal_idempotency_manifests(
+      scope, input_hash, status, owner_id, fencing_token, lease_expires_at, manifest_json, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(scope) DO UPDATE SET
+      input_hash = excluded.input_hash,
+      status = excluded.status,
+      owner_id = excluded.owner_id,
+      fencing_token = excluded.fencing_token,
+      lease_expires_at = excluded.lease_expires_at,
+      manifest_json = excluded.manifest_json,
+      updated_at = excluded.updated_at
+  `).run(
+    manifest.scope,
+    manifest.inputHash,
+    manifest.status,
+    stringOrNull(manifest.ownerId),
+    manifest.fencingToken || 0,
+    stringOrNull(manifest.leaseExpiresAt),
+    JSON.stringify(manifest),
+    stringValue(manifest.updatedAt) || nowIso(),
+  );
+}
+
+function sqliteClaimFromExisting(
+  existing: CausalIdempotencyManifest,
+  input: CausalIdempotencyInput,
+  options: { readonly ownerId: string; readonly now: string; readonly leaseExpiresAt: string },
+): CausalIdempotencyClaimResult {
+  assertCausalIdempotencyReplay(existing, input);
+  if (existing.status === "pending" && causalIdempotencyLeaseExpired(existing, options.now)) {
+    return {
+      kind: "reserved",
+      reservation: {
+        manifest: pendingCausalManifest({
+          ...input,
+          ownerId: options.ownerId,
+          fencingToken: (existing.fencingToken || 0) + 1,
+          leaseExpiresAt: options.leaseExpiresAt,
+          createdAt: existing.createdAt || options.now,
+          updatedAt: options.now,
+        }),
+      },
+    };
+  }
+  if (existing.status === "pending") return { kind: "pending", manifest: existing };
+  return { kind: existing.status, manifest: existing };
+}
+
+function appendSqliteJsonlInTransaction(
+  db: DatabaseSync,
+  fileName: string,
+  record: unknown,
+) {
+  const row = db.prepare(`
+    SELECT COALESCE(MAX(line_number), 0) + 1 AS nextLine
+    FROM jsonl_records
+    WHERE file_name = ?
+  `).get(fileName) as { nextLine: number };
+  const jsonRecord = recordValue(record);
+  const recordId = insertJsonlRecord(db, fileName, Number(row.nextLine), jsonRecord);
+  indexKnownRecord(db, recordId, jsonRecord, true);
 }
 
 function backfillSqliteIndexes(db: DatabaseSync) {
@@ -582,6 +790,105 @@ export async function appendSqliteJsonl(dbPath: string, fileName: string, record
   } finally {
     db.close();
   }
+}
+
+export function createSqliteCausalIdempotencyManifestStore(
+  dbPath: string,
+): CausalIdempotencyManifestStore {
+  function withTransaction<T>(mode: "BEGIN" | "BEGIN IMMEDIATE", task: (db: DatabaseSync) => T): T {
+    const db = openSqlite(dbPath);
+    let transactionStarted = false;
+    try {
+      initializeSqliteSchema(db);
+      db.exec(mode);
+      transactionStarted = true;
+      const result = task(db);
+      db.exec("COMMIT");
+      transactionStarted = false;
+      return result;
+    } catch (error) {
+      if (transactionStarted) db.exec("ROLLBACK");
+      throw error;
+    } finally {
+      db.close();
+    }
+  }
+
+  return {
+    read(scope) {
+      const db = openSqlite(dbPath);
+      try {
+        initializeSqliteSchema(db);
+        return readSqliteCausalManifestInTransaction(db, scope);
+      } finally {
+        db.close();
+      }
+    },
+    write(manifest) {
+      withTransaction("BEGIN IMMEDIATE", (db) => {
+        const existing = readSqliteCausalManifestInTransaction(db, manifest.scope);
+        if (existing && existing.scope !== manifest.scope) throw new Error("causal_idempotency_scope_conflict");
+        if (existing && existing.inputHash !== manifest.inputHash) {
+          throw new Error("causal_idempotency_input_hash_conflict");
+        }
+        upsertSqliteCausalManifestInTransaction(db, manifest);
+      });
+    },
+    putIfAbsent(manifest) {
+      return withTransaction("BEGIN IMMEDIATE", (db) => {
+        const existing = readSqliteCausalManifestInTransaction(db, manifest.scope);
+        if (existing) return existing;
+        upsertSqliteCausalManifestInTransaction(db, manifest);
+        return undefined;
+      });
+    },
+    claimReservation(input, options) {
+      return withTransaction("BEGIN IMMEDIATE", (db) => {
+        const scope = causalIdempotencyScope(input);
+        const existing = readSqliteCausalManifestInTransaction(db, scope);
+        if (existing) {
+          const claim = sqliteClaimFromExisting(existing, input, options);
+          if (claim.kind === "reserved") upsertSqliteCausalManifestInTransaction(db, claim.reservation.manifest);
+          return claim;
+        }
+        const manifest = pendingCausalManifest({
+          ...input,
+          ownerId: options.ownerId,
+          fencingToken: 1,
+          leaseExpiresAt: options.leaseExpiresAt,
+          createdAt: options.now,
+          updatedAt: options.now,
+        });
+        upsertSqliteCausalManifestInTransaction(db, manifest);
+        return { kind: "reserved", reservation: { manifest } };
+      });
+    },
+    finalizeReservation(reservation, manifest) {
+      return withTransaction("BEGIN IMMEDIATE", (db) => {
+        const existing = readSqliteCausalManifestInTransaction(db, reservation.manifest.scope);
+        const finalized = assertCausalReservationFinalization(reservation, existing, manifest);
+        upsertSqliteCausalManifestInTransaction(db, finalized);
+        return finalized;
+      });
+    },
+    commitAtomically(reservation, manifest, commit) {
+      return withTransaction("BEGIN IMMEDIATE", (db) => {
+        const existing = readSqliteCausalManifestInTransaction(db, reservation.manifest.scope);
+        const finalized = assertCausalReservationFinalization(reservation, existing, manifest);
+        const atomic: CausalAtomicCommitContext = {
+          appendJsonl(fileName, record) {
+            appendSqliteJsonlInTransaction(db, fileName, record);
+          },
+        };
+        const result = commit(atomic);
+        if (result && typeof result === "object" && "then" in result) {
+          throw new Error("causal_idempotency_sqlite_atomic_commit_must_be_sync");
+        }
+        upsertSqliteCausalManifestInTransaction(db, finalized);
+        return finalized;
+      });
+    },
+  };
 }
 
 export async function appendSqliteEpochEventBatch(dbPath: string, events: readonly EpochEvent[]) {

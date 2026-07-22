@@ -8,6 +8,9 @@ import { createEpochMutationCoordinator, createEpochPersistenceGuard } from "./l
 import { maxJsonBodyBytesFromEnv } from "./lib/http/request.ts";
 import { createWorldMemoryRuntime, worldMemoryRuntimeConfigFromEnv } from "./lib/worldMemoryRuntime.ts";
 import { loadDefaultWorldContentRegistry } from "./lib/epoch/worldContentRegistry.ts";
+import type { CausalAtomicCommitContext } from "./lib/epoch/causalIdempotencyRules.ts";
+import type { CausalWorldEventV1 } from "./lib/epoch/causalContracts.ts";
+import type { EpochEvent } from "./lib/epoch/events.ts";
 
 const port = Number(process.env.AGENT_SERVER_PORT || 8787);
 const host = process.env.AGENT_SERVER_HOST || "127.0.0.1";
@@ -23,41 +26,78 @@ function shutdownTimeoutMsFromEnv(value: string | undefined) {
 }
 
 async function main() {
+  const startupStartedAt = Date.now();
+  const reportStartupStage = (stage: string) => {
+    console.log(`agent-server startup stage=${stage} elapsedMs=${Date.now() - startupStartedAt}`);
+  };
   const startupConfig = productionAgentServerConfigFromEnv(process.env);
+  reportStartupStage("config_ready");
   const resolvedRuntimeEnv = {
     ...process.env,
     ...(startupConfig.operatorKey ? { AGENT_SERVER_OPERATOR_KEY: startupConfig.operatorKey } : {}),
   };
-  const persistence = await createAgentPersistenceFromEnv(process.env);
+  let persistence: Awaited<ReturnType<typeof createAgentPersistenceFromEnv>> | undefined;
+  try {
+  persistence = await createAgentPersistenceFromEnv(process.env);
+  reportStartupStage("persistence_ready");
   const playerMcpAccessTokens = startupConfig.mcpPlayerTokenJsonlPath
     ? await PlayerMcpAccessTokenStore.open({ jsonlPath: startupConfig.mcpPlayerTokenJsonlPath })
     : undefined;
+  reportStartupStage("player_mcp_ready");
   const runtime = createAgentWorldRuntime({
     ...persistence.loadedOptions,
+    infiniteWorld: {
+      ...((persistence.loadedOptions as { infiniteWorld?: Record<string, unknown> }).infiniteWorld || {}),
+      worldId: process.env.OBSIDIAN_EPOCH_WORLD_ID || process.env.AGENT_WORLD_ID || "obsidian_epoch_world_default",
+      idempotencyStore: persistence.causalIdempotencyStore,
+      atomicCommit: ({ atomic, epochEvents }: {
+        readonly atomic?: CausalAtomicCommitContext;
+        readonly event: CausalWorldEventV1;
+        readonly epochEvents: readonly EpochEvent[];
+      }) => {
+        if (atomic?.appendJsonl) {
+          atomic.appendJsonl("epoch-events.jsonl", { type: "epoch_event_batch", events: epochEvents });
+          return;
+        }
+        return persistence.persistEpochEventBatch(epochEvents);
+      },
+    },
     epoch: {
       ...((persistence.loadedOptions as { epoch?: Record<string, unknown> }).epoch || {}),
       attestedRunners: startupConfig.attestedRunners,
       operatorKey: startupConfig.operatorKey,
       registrationSecret: startupConfig.registrationSecret,
+      phase6RunAssemblyRepository: persistence.receiptRepository,
+      phase6JourneyContextStore: persistence.phase6JourneyContextStore,
+      phase6ExperimentStore: persistence.phase6ExperimentStore,
+      phase6CommittedResultStore: persistence.phase6CommittedResultStore,
+      phase6RagTraceStore: persistence.phase6RagTraceStore,
     },
   });
+  reportStartupStage("runtime_ready");
   const worldContentRegistry = loadDefaultWorldContentRegistry();
+  reportStartupStage("content_ready");
   const worldMemory = persistence.sqlitePath
     ? createWorldMemoryRuntime(
         worldMemoryRuntimeConfigFromEnv(persistence.sqlitePath, process.env),
         { worldContentRegistry },
       )
     : undefined;
+  reportStartupStage("world_memory_ready");
   const shutdownTimeoutMs = shutdownTimeoutMsFromEnv(process.env.AGENT_SERVER_SHUTDOWN_TIMEOUT_MS);
   let maintenance: ReturnType<typeof startEpochMaintenanceScheduler> | undefined;
   let server: ReturnType<typeof createAgentHttpServer> | undefined;
   let shutdownStarted = false;
+  const closePersistence = () => persistence?.dispose();
 
   const shutdown = (reason: NodeJS.Signals | "PERSISTENCE_FAILURE", exitCode = 0) => {
     if (exitCode !== 0) process.exitCode = exitCode;
     maintenance?.stop();
     worldMemory?.stop();
-    if (!server || shutdownStarted) return;
+    if (!server || shutdownStarted) {
+      closePersistence();
+      return;
+    }
     shutdownStarted = true;
     const activeServer = server;
     console.log(`agent-server received ${reason}; draining connections for up to ${shutdownTimeoutMs}ms`);
@@ -84,6 +124,7 @@ async function main() {
         console.error(`agent-server shutdown failed after ${reason}: ${message}`);
         process.exitCode = 1;
       }).finally(() => {
+        closePersistence();
         clearTimeout(forceExitTimer);
         clearInterval(closeIdleConnectionsTimer);
       });
@@ -109,6 +150,7 @@ async function main() {
       console.error(`epoch maintenance failed: ${message}`);
     },
   });
+  reportStartupStage("maintenance_ready");
   server = createAgentHttpServer({
     runtime,
     allowedOrigins: startupConfig.allowedOrigins,
@@ -135,9 +177,11 @@ async function main() {
     worldMemorySearch: worldMemory?.search,
     worldKnowledgeSearch: worldMemory?.searchKnowledge,
   });
+  reportStartupStage("http_ready");
   if (persistenceGuard.failed) {
     worldMemory?.stop();
     maintenance.stop();
+    closePersistence();
     return;
   }
   worldMemory?.start();
@@ -149,6 +193,7 @@ async function main() {
   server.on("close", () => {
     maintenance.stop();
     worldMemory?.stop();
+    if (!shutdownStarted) closePersistence();
     process.off("SIGTERM", onSigterm);
     process.off("SIGINT", onSigint);
   });
@@ -157,10 +202,17 @@ async function main() {
     console.log(`agent-server listening on http://${host}:${port}`);
     if (maintenance.enabled) console.log("epoch maintenance scheduler enabled");
   });
+  } catch (error) {
+    persistence?.dispose();
+    throw error;
+  }
 }
 
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`agent-server failed: ${message}`);
+  if (process.env.AGENT_SERVER_STARTUP_DEBUG === "1" && error instanceof Error && error.stack) {
+    console.error(error.stack);
+  }
   process.exitCode = 1;
 });

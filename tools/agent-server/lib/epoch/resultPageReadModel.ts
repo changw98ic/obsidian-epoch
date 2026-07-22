@@ -4,6 +4,7 @@ import type {
   EpochWorldOverviewRecentResult,
 } from "./runtime.ts";
 import { buildEpochGameRunReadModelForResultPage } from "./gameRunReadModel.ts";
+import type { EpochResultPagePhase6Sidecar, EpochResultPageReceiptWithPhase6 } from "./resultPageReceiptRules.ts";
 import { storedResultPageShareVersion } from "./resultPageRuntimeRules.ts";
 
 export interface EpochResultPageReadModel {
@@ -11,6 +12,7 @@ export interface EpochResultPageReadModel {
   get(pageId: string): EpochSharedResultPage | undefined;
   set(pageId: string, page: EpochSharedResultPage): void;
   values(): IterableIterator<EpochSharedResultPage>;
+  phase6Sidecar(pageId: string): EpochResultPagePhase6Sidecar | undefined;
   recentResults(input: {
     readonly limit: number;
     readonly isExpired: (page: EpochSharedResultPage) => boolean;
@@ -21,6 +23,11 @@ function hasResultPagePayload(
   page: EpochSharedResultPage,
 ): page is EpochSharedResultPage & { readonly payload: EpochResultPagePayload } {
   return Boolean(page.payload);
+}
+
+function resultPagePhase6Sidecar(page: EpochSharedResultPage | undefined): EpochResultPagePhase6Sidecar | undefined {
+  if (!page || !hasResultPagePayload(page)) return undefined;
+  return (page.payload.receipt as EpochResultPageReceiptWithPhase6 | undefined)?.phase6;
 }
 
 export function createEpochResultPageReadModel(
@@ -51,6 +58,9 @@ export function createEpochResultPageReadModel(
     },
     values() {
       return pagesById.values();
+    },
+    phase6Sidecar(pageId) {
+      return resultPagePhase6Sidecar(pagesById.get(pageId));
     },
     recentResults({ limit, isExpired }) {
       return [...pagesById.values()]

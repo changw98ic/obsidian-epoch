@@ -27,6 +27,7 @@ import {
   buildGroundedJourneyStoryReport,
   type JourneyStoryIdentityInput,
 } from "./journeyStoryReport.ts";
+import { buildPhase6AuthoritativeCompletion } from "./phase6AuthoritativeCompletionRules.ts";
 import { buildJourneyMission } from "./journeyMissionReadModel.ts";
 import {
   deriveJourneyHiddenTask,
@@ -40,8 +41,14 @@ import {
 import { sha256Hex } from "./runtimeAuth.ts";
 import { assertAttributeId, assertResourceId, type EpochResourceId } from "./protocol.ts";
 import type { JourneyWorldCommit } from "./journeyRules.ts";
+import type { JourneyRunReceipt } from "./journeyRunReceiptRules.ts";
 
 type AnyRecord = Readonly<Record<string, unknown>>;
+
+function resultPageJourneyRunReceipt(value: unknown): JourneyRunReceipt | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as JourneyRunReceipt;
+}
 
 function resultPageRewardBundle(value: unknown): JourneyRewardBundle | undefined {
   if (value === undefined) return undefined;
@@ -49,7 +56,8 @@ function resultPageRewardBundle(value: unknown): JourneyRewardBundle | undefined
     throw new Error("result_page_journey_reward_bundle_invalid");
   }
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).some((key) => key !== "resources" && key !== "items" && key !== "attributes")
+  if (Object.keys(record).some((key) =>
+    key !== "resources" && key !== "items" && key !== "attributes" && key !== "attributeProgression")
     || !Array.isArray(record.resources) || record.resources.length > 4
     || !Array.isArray(record.items) || record.items.length > 4
     || (record.attributes !== undefined && (!Array.isArray(record.attributes) || record.attributes.length > 6))) {
@@ -104,7 +112,34 @@ function resultPageRewardBundle(value: unknown): JourneyRewardBundle | undefined
       amount: attribute.amount,
     };
   });
-  return { resources, items, attributes };
+  const attributeProgression = record.attributeProgression === undefined
+    ? undefined
+    : (() => {
+        if (!record.attributeProgression || typeof record.attributeProgression !== "object"
+          || Array.isArray(record.attributeProgression)) {
+          throw new Error("result_page_journey_reward_bundle_invalid");
+        }
+        const progression = record.attributeProgression as Record<string, unknown>;
+        if (Object.keys(progression).some((key) => !["mode", "evidenceSystem", "summary"].includes(key))
+          || progression.mode !== "no-direct-gain"
+          || progression.evidenceSystem !== "progressionRules.attributeEvidenceXp"
+          || typeof progression.summary !== "string"
+          || !progression.summary.trim()
+          || progression.summary.length > 500) {
+          throw new Error("result_page_journey_reward_bundle_invalid");
+        }
+        return {
+          mode: "no-direct-gain" as const,
+          evidenceSystem: "progressionRules.attributeEvidenceXp" as const,
+          summary: progression.summary.trim(),
+        };
+      })();
+  return {
+    resources,
+    items,
+    attributes,
+    ...(attributeProgression ? { attributeProgression } : {}),
+  } as JourneyRewardBundle;
 }
 
 function resultPageWorldCommit(value: unknown): JourneyWorldCommit | undefined {
@@ -215,6 +250,7 @@ function resultPageJourney(
   value: unknown,
   resolveHiddenTaskSeal?: JourneyHiddenTaskSealResolver,
   identity?: JourneyStoryIdentityInput,
+  explicitPhase6CompletionInput?: unknown,
 ): EpochResultPageJourney | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const source = value as Record<string, unknown>;
@@ -355,6 +391,10 @@ function resultPageJourney(
     taskPlan,
     hiddenTaskSeal,
   });
+  const phase6AuthoritativeCompletion = explicitPhase6CompletionInput !== undefined
+    && ["settled", "completed"].includes(status)
+    ? buildPhase6AuthoritativeCompletion(explicitPhase6CompletionInput)
+    : undefined;
   return {
     journeyId,
     correlationId,
@@ -370,12 +410,13 @@ function resultPageJourney(
     ...(taskPlan ? { taskPlan } : {}),
     mission,
     ...(storyReport ? { storyReport } : {}),
+    ...(phase6AuthoritativeCompletion ? { phase6AuthoritativeCompletion } : {}),
     ...(delta ? { stateDelta: {
       ...(required(delta.outcomeSummary, 400) ? { outcomeSummary: required(delta.outcomeSummary, 400) } : {}),
       ...(publicReward && Object.keys(publicReward).length > 0 ? { reward: publicReward } : {}),
       ...(publicRewardBundle ? { rewardBundle: publicRewardBundle } : {}),
     } } : {}),
-  };
+  } as EpochResultPageJourney;
 }
 
 function sameIds(left: readonly string[], right: readonly string[]) {
@@ -592,7 +633,12 @@ export function buildEpochResultPagePayload(options: BuildEpochResultPagePayload
     focusHostedSession,
   });
   const regionalContext = resultPageRegionalContext(options.projection, regionId);
-  const journey = resultPageJourney(input.journeyVerification, options.resolveJourneyHiddenTaskSeal, progress.identity);
+  const journey = resultPageJourney(
+    input.journeyVerification,
+    options.resolveJourneyHiddenTaskSeal,
+    progress.identity,
+    input.phase6CompletionInput,
+  );
   if (input.journeyVerification !== undefined && !journey) {
     throw new Error("result_page_journey_grounding_invalid");
   }

@@ -3,6 +3,7 @@ import type { EpochAgentIdentity } from "./gameCore.ts";
 export type EpochActionEligibilityStatus = "active" | "archived" | "missing";
 
 export const EPOCH_ACTIVE_IDENTITY_TOOL_NAMES = [
+  "obsidian_epoch.command",
   "obsidian_epoch.confirm_personality_drift",
   "obsidian_epoch.archive_identity",
   "obsidian_epoch.turn_card",

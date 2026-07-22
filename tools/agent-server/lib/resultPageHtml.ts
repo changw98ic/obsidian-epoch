@@ -736,6 +736,246 @@ function trustedExecutionRows(receipt: ResultPagePayload["receipt"]) {
   `;
 }
 
+type Phase6Record = Readonly<Record<string, unknown>>;
+type Phase6SidecarLike = {
+  readonly ok?: unknown;
+  readonly page?: unknown;
+  readonly findings?: unknown;
+};
+
+const phase6ScoreLabels: Record<string, string> = {
+  world_impact: "世界影响",
+  identity_continuity: "身份连续性",
+  progression_delta: "进度变化",
+  economy_integrity: "经济完整性",
+  settlement_quality: "结算质量",
+  rag_grounding: "RAG 依据",
+  auditability: "可审计性",
+  integrity: "完整性",
+};
+
+function phase6Record(value: unknown): Phase6Record {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Phase6Record : {};
+}
+
+function phase6Array(value: unknown): readonly unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function phase6Text(value: unknown) {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function phase6TextList(value: unknown, limit = 8) {
+  return phase6Array(value)
+    .map(phase6Text)
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function phase6SecretLikeKey(key: string) {
+  return /(secret|token|password|private|credential|signature|runnerKey|apiKey|challenge)/i.test(key);
+}
+
+function phase6PublicDetails(details: unknown) {
+  const record = phase6Record(details);
+  const rows = Object.entries(record)
+    .filter(([key, value]) => !phase6SecretLikeKey(key) && ["string", "number", "boolean"].includes(typeof value))
+    .slice(0, 6);
+  if (!rows.length) return "";
+  return rows.map(([key, value]) => `${key}: ${phase6Text(value)}`).join(" · ");
+}
+
+function phase6EventRefs(eventIds: readonly string[]) {
+  if (!eventIds.length) return "<em>event refs: none</em>";
+  return `<em>event refs: ${escapeHtml(eventIds.join(" / "))}</em>`;
+}
+
+function phase6ChangeRows(changeSet: Phase6Record) {
+  const changes = phase6Array(changeSet.changes);
+  if (changes.length === 0) {
+    return `<li class="empty"><b>无变化</b><span>${escapeHtml(phase6Text(changeSet.noChangeReason) || "server-settled receipt reported no change")}</span>${phase6EventRefs(phase6TextList(changeSet.eventIds))}</li>`;
+  }
+  return changes.slice(0, 6).map((change) => {
+    const record = phase6Record(change);
+    const eventIds = phase6TextList(record.eventIds);
+    return `
+      <li>
+        <b>${escapeHtml(phase6Text(record.label) || phase6Text(record.id) || "变更")}</b>
+        <span>${escapeHtml(phase6Text(record.id))}</span>
+        ${phase6EventRefs(eventIds)}
+      </li>
+    `;
+  }).join("");
+}
+
+function phase6ChangeBlock(title: string, changeSet: unknown) {
+  return `
+    <div>
+      <h3>${escapeHtml(title)}</h3>
+      <ul class="phase6-list">${phase6ChangeRows(phase6Record(changeSet))}</ul>
+    </div>
+  `;
+}
+
+function phase6SettlementBlock(settlement: unknown) {
+  const record = phase6Record(settlement);
+  const economy = phase6Record(record.economyConservation);
+  const eventIds = phase6TextList(record.eventIds);
+  const assets = phase6Array(economy.assets).length;
+  const auditFindings = phase6Array(economy.auditFindingIds).length;
+  return `
+    <div>
+      <h3>Run / Economy</h3>
+      <dl>
+        <div><dt>状态</dt><dd>${escapeHtml(phase6Text(record.status) || "unknown")}</dd></div>
+        <div><dt>结算</dt><dd>${escapeHtml(phase6Text(record.settlementId) || "unavailable")}</dd></div>
+        <div><dt>守恒</dt><dd>${escapeHtml(economy.conserved === true ? "通过" : "未通过或未声明")}</dd></div>
+        <div><dt>经济项</dt><dd>${escapeHtml(`${assets} assets · ${auditFindings} audit findings`)}</dd></div>
+      </dl>
+      <ul class="phase6-list"><li><b>event refs</b><span>${escapeHtml(eventIds.join(" / ") || "none")}</span></li></ul>
+    </div>
+  `;
+}
+
+function phase6ScoresBlock(scores: unknown) {
+  const rows = phase6Array(scores).slice(0, 8).map((score) => {
+    const record = phase6Record(score);
+    const dimension = phase6Text(record.dimension);
+    const value = typeof record.score === "number" ? record.score : phase6Text(record.score);
+    const eventIds = phase6TextList(record.eventIds, 4);
+    return `
+      <li>
+        <b>${escapeHtml(phase6ScoreLabels[dimension] || dimension || "score")}</b>
+        <span>${escapeHtml(value === "" ? "未声明" : value)}</span>
+        <em>${escapeHtml(phase6Text(record.basis) || phase6Text(record.source) || "server-settled metric")}</em>
+        ${phase6EventRefs(eventIds)}
+      </li>
+    `;
+  }).join("");
+  return `
+    <div>
+      <h3>八维 Score</h3>
+      <ul class="phase6-scores">${rows || "<li class=\"empty\"><b>无 score</b><span>Phase 6 sidecar 未提供评分</span></li>"}</ul>
+    </div>
+  `;
+}
+
+function phase6RagBlock(rag: unknown) {
+  const record = phase6Record(rag);
+  const evidenceIds = phase6TextList(record.evidenceIds, 8);
+  return `
+    <div>
+      <h3>RAG</h3>
+      <dl>
+        <div><dt>检索快照</dt><dd>${escapeHtml(phase6Text(record.retrievalSnapshotId) || "unavailable")}</dd></div>
+        <div><dt>证据</dt><dd>${escapeHtml(evidenceIds.join(" / ") || "none")}</dd></div>
+      </dl>
+      <ul class="phase6-list">${phase6ChangeRows(record)}</ul>
+    </div>
+  `;
+}
+
+function phase6AuditBlock(audit: unknown) {
+  const record = phase6Record(audit);
+  const integrity = phase6Record(record.integrity);
+  const eventIds = phase6TextList(integrity.canonicalEventIds || record.eventIds);
+  return `
+    <div>
+      <h3>Audit / Integrity</h3>
+      <dl>
+        <div><dt>审计</dt><dd>${escapeHtml(phase6Text(record.auditId) || "unavailable")}</dd></div>
+        <div><dt>完整性</dt><dd>${escapeHtml(integrity.ok === true ? "通过" : "未通过或未声明")}</dd></div>
+        <div><dt>Receipt Hash</dt><dd>${escapeHtml(phase6Text(integrity.receiptPayloadHash) || "unavailable")}</dd></div>
+        <div><dt>Page Hash</dt><dd>${escapeHtml(phase6Text(integrity.resultPagePayloadHash) || "unavailable")}</dd></div>
+        <div><dt>检查时间</dt><dd>${escapeHtml(phase6Text(integrity.checkedAt) || "unavailable")}</dd></div>
+      </dl>
+      <ul class="phase6-list"><li><b>event refs</b><span>${escapeHtml(eventIds.join(" / ") || "none")}</span></li></ul>
+    </div>
+  `;
+}
+
+function phase6EventRefBlock(receipt: Phase6Record) {
+  const canonicalEvents = phase6Array(receipt.canonicalEvents);
+  const rows = canonicalEvents.slice(0, 8).map((event) => {
+    const record = phase6Record(event);
+    return `
+      <li>
+        <b>${escapeHtml(phase6Text(record.eventType) || "event")}</b>
+        <span>${escapeHtml(phase6Text(record.eventId) || "unknown_event")}</span>
+        <em>${escapeHtml(phase6Text(record.runId) || phase6Text(receipt.runId) || "unknown_run")}</em>
+      </li>
+    `;
+  }).join("");
+  return `
+    <div>
+      <h3>Event Refs</h3>
+      <ul class="phase6-list">${rows || "<li class=\"empty\"><b>无事件引用</b><span>Phase 6 sidecar 未提供 canonical events</span></li>"}</ul>
+    </div>
+  `;
+}
+
+function phase6FindingsRows(findings: unknown) {
+  const rows = phase6Array(findings).map((finding) => {
+    const record = phase6Record(finding);
+    const publicDetails = phase6PublicDetails(record.details);
+    return `
+      <li>
+        <b>${escapeHtml(phase6Text(record.code) || "PHASE6_FINDING")}</b>
+        <span>${escapeHtml(phase6Text(record.message) || "Phase 6 sidecar rejected this result page")}</span>
+        <em>${escapeHtml([phase6Text(record.path), publicDetails].filter(Boolean).join(" · ") || phase6Text(record.severity) || "error")}</em>
+      </li>
+    `;
+  }).join("");
+  return rows || "<li class=\"empty\"><b>Phase 6 未通过</b><span>未提供 findings；不会按成功结果展示。</span></li>";
+}
+
+function phase6ResultSection(page: RenderableResultPage) {
+  const phase6 = (page.payload.receipt as { readonly phase6?: Phase6SidecarLike }).phase6;
+  if (!phase6) return "";
+  if (phase6.ok !== true) {
+    return `
+      <details class="server-receipt phase6-receipt" open>
+        <summary>
+          <b>Phase 6 结果页校验未通过</b>
+          <span>仅展示 findings；不显示默认分数或成功状态</span>
+        </summary>
+        <ul class="phase6-list phase6-findings">${phase6FindingsRows(phase6.findings)}</ul>
+      </details>
+    `;
+  }
+  const phase6Page = phase6Record(phase6.page);
+  const sections = phase6Record(phase6Page.sections);
+  const identityProgression = phase6Record(sections.identityProgression);
+  const receipt = phase6Record(phase6Page.receipt);
+  return `
+    <details class="server-receipt phase6-receipt" open>
+      <summary>
+        <b>Phase 6 机器可读结果</b>
+        <span>六域、八维 score、RAG 和完整性依据来自 server-settled sidecar</span>
+      </summary>
+      <dl>
+        <div><dt>规则</dt><dd>${escapeHtml(phase6Text(phase6Page.rulesetVersion) || "unknown")}</dd></div>
+        <div><dt>确定性</dt><dd>${escapeHtml(phase6Page.deterministic === true ? "true" : "false")}</dd></div>
+        <div><dt>Receipt</dt><dd>${escapeHtml(phase6Text(receipt.receiptId) || "unavailable")}</dd></div>
+        <div><dt>Run</dt><dd>${escapeHtml(phase6Text(receipt.runId) || "unavailable")}</dd></div>
+      </dl>
+      <div class="phase6-grid">
+        ${phase6ChangeBlock("World", sections.world)}
+        ${phase6ChangeBlock("Identity", identityProgression.identity)}
+        ${phase6ChangeBlock("Progression", identityProgression.progression)}
+        ${phase6SettlementBlock(sections.settlement)}
+        ${phase6ScoresBlock(sections.scores)}
+        ${phase6RagBlock(sections.rag)}
+        ${phase6AuditBlock(sections.audit)}
+        ${phase6EventRefBlock(receipt)}
+      </div>
+    </details>
+  `;
+}
+
 function receiptSection(page: RenderableResultPage) {
   const receipt = page.payload.receipt;
   if (!receipt) return "";
@@ -1074,6 +1314,33 @@ export function renderEpochResultPageHtml(page: RenderableResultPage) {
       font-size: 14px;
       letter-spacing: 0;
     }
+    .phase6-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .phase6-grid > div {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      background: rgba(255, 255, 255, .025);
+    }
+    .phase6-list, .phase6-scores {
+      margin-top: 8px;
+    }
+    .phase6-list li, .phase6-scores li {
+      display: grid;
+      grid-template-columns: minmax(120px, .55fr) minmax(0, 1fr);
+      align-items: start;
+    }
+    .phase6-list li em, .phase6-scores li em {
+      grid-column: 1 / -1;
+    }
+    .phase6-findings li b {
+      color: #eea08f;
+    }
     a {
       color: var(--cyan);
       text-decoration: none;
@@ -1190,8 +1457,9 @@ export function renderEpochResultPageHtml(page: RenderableResultPage) {
       main { width: min(100vw - 20px, 1040px); padding: 10px 0; }
       header { min-height: 240px; }
       .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .grid, .context-grid, .nav-grid { grid-template-columns: 1fr; }
+      .grid, .context-grid, .nav-grid, .phase6-grid { grid-template-columns: 1fr; }
       .journey-timeline li, .receipt-events li { grid-template-columns: 1fr; }
+      .phase6-list li, .phase6-scores li { grid-template-columns: 1fr; }
       .journey-timeline li em { grid-column: auto; }
       dl div { grid-template-columns: 1fr; }
       h1 { font-size: clamp(32px, 10vw, 48px); }
@@ -1248,6 +1516,7 @@ export function renderEpochResultPageHtml(page: RenderableResultPage) {
       </section>
     </div>
     ${receiptSection(page)}
+    ${phase6ResultSection(page)}
   </main>
 </body>
 </html>`;

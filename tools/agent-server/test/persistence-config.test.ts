@@ -39,6 +39,7 @@ test("createAgentPersistenceFromEnv migrates JSONL data and appends future write
     assert.equal(persistence.storeKind, "sqlite");
     assert.equal(persistence.loadedOptions.epochEvents[0].eventId, identity.events[0].eventId);
     assert.equal(typeof persistence.persistEpochEventBatch, "function");
+    assert.equal(typeof persistence.causalIdempotencyStore.claimReservation, "function");
 
     await persistence.persistJsonl("result-pages.jsonl", {
       type: "epoch_result_page",

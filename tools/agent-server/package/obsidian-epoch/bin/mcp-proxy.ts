@@ -1,7 +1,9 @@
+import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
+import path from "node:path";
 import readline from "node:readline";
-import { pathToFileURL } from "node:url";
+import { isDirectEntrypoint } from "./cliEntrypoint.ts";
 
 type AnyRecord = Record<string, unknown>;
 
@@ -22,6 +24,11 @@ const protocolVersion = "2025-06-18";
 const serverBase = (process.env.AGENT_WORLD_SERVER || "http://127.0.0.1:8787").replace(/\/+$/, "");
 const endpoint = new URL("/mcp", `${serverBase}/`);
 const mcpToken = (process.env.AGENT_WORLD_MCP_TOKEN || "").trim();
+const recoveryCodeFile = (process.env.PHASE6_MCP_RECOVERY_CODE_FILE || "").trim();
+const recoveryCodeTools = new Set([
+  "obsidian_epoch.player_panel",
+  "obsidian_epoch.reincarnate",
+]);
 const remoteRequestTimeoutMs = 30_000;
 const remoteShutdownTimeoutMs = 1_000;
 const remoteRequestMaxAttempts = 3;
@@ -46,6 +53,57 @@ let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 let remoteClosing = false;
 let writeTail: Promise<void> = Promise.resolve();
 let clientMessageTail: Promise<void> = Promise.resolve();
+let cachedRecoveryCode = "";
+
+function privateRecoveryCode() {
+  if (!recoveryCodeFile) return "";
+  if (cachedRecoveryCode) return cachedRecoveryCode;
+  if (!path.isAbsolute(recoveryCodeFile)) {
+    throw new Error("phase6_mcp_recovery_file_path_invalid");
+  }
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(recoveryCodeFile);
+  } catch {
+    throw new Error("phase6_mcp_recovery_file_unavailable");
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error("phase6_mcp_recovery_file_type_invalid");
+  }
+  if ((stat.mode & 0o077) !== 0) {
+    throw new Error("phase6_mcp_recovery_file_permissions_invalid");
+  }
+  if (stat.size < 1 || stat.size > 8_192) {
+    throw new Error("phase6_mcp_recovery_file_size_invalid");
+  }
+  const value = fs.readFileSync(recoveryCodeFile, "utf8").trim();
+  if (!value || value.length > 4_096) {
+    throw new Error("phase6_mcp_recovery_code_invalid");
+  }
+  cachedRecoveryCode = value;
+  return cachedRecoveryCode;
+}
+
+function withPrivateRecoveryCode(message: JsonRpcMessage): JsonRpcMessage {
+  if (!recoveryCodeFile || message.method !== "tools/call") return message;
+  const params = message.params;
+  const toolName = typeof params?.name === "string" ? params.name : "";
+  if (!recoveryCodeTools.has(toolName)) return message;
+  const rawArguments = params?.arguments;
+  const args = rawArguments && typeof rawArguments === "object" && !Array.isArray(rawArguments)
+    ? rawArguments as AnyRecord
+    : {};
+  return {
+    ...message,
+    params: {
+      ...params,
+      arguments: {
+        ...args,
+        recoveryCode: privateRecoveryCode(),
+      },
+    },
+  };
+}
 
 function transportFor(url: URL) {
   return url.protocol === "https:" ? https : http;
@@ -326,7 +384,7 @@ export async function handleJsonRpcMessage(message: JsonRpcMessage) {
     return remote.body;
   }
   if (!remoteSessionId) return errorResponse(message.id, -32002, "mcp_session_not_initialized");
-  const remote = await postRemote(message);
+  const remote = await postRemote(withPrivateRecoveryCode(message));
   if (message.method === "notifications/initialized") {
     await openEventStream();
     return null;
@@ -336,7 +394,7 @@ export async function handleJsonRpcMessage(message: JsonRpcMessage) {
     : null);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
+if (isDirectEntrypoint(import.meta.url)) {
   const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
   lines.on("line", (line) => {
     if (!line.trim()) return;

@@ -13,6 +13,9 @@ import { resolveEpochCanonicalRegionId } from "../regionAliases.ts";
 import { type EpochHostedSession, type EpochTurnCard } from "./gameCore.ts";
 import { type EpochProgressView } from "./progressReadModel.ts";
 import { hashValuesMatch, sha256Hex } from "./runtimeAuth.ts";
+import { stableResultPageJson } from "./stableResultPageJson.ts";
+
+export { stableResultPageJson };
 
 export const DEFAULT_RESULT_PAGE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -24,25 +27,6 @@ export const DELETED_RESULT_PAGE_REMOVED_BODY_CLASSES = [
   "event_bodies",
   "long_summaries",
 ] as const;
-
-export function stableResultPageJson(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((entry) => entry === undefined
-      || typeof entry === "function"
-      || typeof entry === "symbol"
-      ? "null"
-      : stableResultPageJson(entry)).join(",")}]`;
-  }
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .filter(([, entry]) => entry !== undefined && typeof entry !== "function" && typeof entry !== "symbol")
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => `${JSON.stringify(key)}:${stableResultPageJson(entry)}`)
-      .join(",")}}`;
-  }
-  const serialized = JSON.stringify(value);
-  return serialized === undefined ? "null" : serialized;
-}
 
 export function storedResultPageShareVersion(page: EpochSharedResultPage) {
   if (typeof page.shareVersion === "undefined") return 1;

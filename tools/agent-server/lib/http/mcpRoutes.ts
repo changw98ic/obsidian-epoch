@@ -13,6 +13,10 @@ import type { PlayerMcpAccessTokenStore } from "../playerMcpAccessTokenStore.ts"
 import type { McpHttpSessionRegistry, McpHttpSessionRecord } from "../mcpHttpTransport.ts";
 import { MCP_SESSION_PROTOCOL_VERSION } from "../mcpSession.ts";
 import type { EpochMutationCoordinator } from "../epochPersistence.ts";
+import {
+  markMcpResultAlreadyPersisted,
+  runWithMcpRequestContext,
+} from "../mcpRequestContext.ts";
 import { type EpochHttpRouteContext } from "./httpRouteTypes.ts";
 import { bearerTokenFromRequest } from "./playerBearerPrincipal.ts";
 
@@ -76,8 +80,12 @@ function stagedPartialPersistence(context: McpRouteContext) {
   return Object.assign(
     async (toolName: string, partialResult: unknown) => {
       await context.persistMcpToolPayload(toolName, partialResult, "raw_internal_partial");
+      markMcpResultAlreadyPersisted(partialResult);
     },
-    { runMutation: context.mcpMutationCoordinator.run },
+    {
+      runMutation: context.mcpMutationCoordinator.run,
+      supportsPhase6CommittedResultAtomicWrite: true as const,
+    },
   );
 }
 
@@ -360,9 +368,14 @@ export async function handleEpochMcpRoutes(context: McpRouteContext): Promise<bo
     const toolName = typeof body.name === "string" ? body.name : "";
     if (!toolName) throw new Error("mcp_tool_name_required");
     const toolArguments = recordValue(body.arguments);
+    const partialPersistence = stagedPartialPersistence(context);
     const result = await runWithMcpRequestAuthContext(
       requestAuth || { kind: "bootstrap" },
-      () => mcpRuntime.callTool(toolName, toolArguments),
+      () => runWithMcpRequestContext({
+        activeClientRequest: true,
+        clientRequestId: toolArguments.idempotencyKey || `${toolName}:http`,
+        persistPartial: partialPersistence,
+      }, () => mcpRuntime.callTool(toolName, toolArguments)),
     );
     await context.persistMcpToolPayload(toolName, result);
     context.sendJson(request, response, 200, result, allowedOrigins);

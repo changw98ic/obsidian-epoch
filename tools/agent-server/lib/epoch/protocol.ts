@@ -96,6 +96,7 @@ export const EPOCH_EVENT_TYPES = [
   "world_simulation_initialized",
   "world_simulation_advanced",
   "world_simulation_content_migrated",
+  "causal_world_event_recorded",
   "identity_issued",
   "explorer_recovery_rotated",
   "lifetime_adjusted",

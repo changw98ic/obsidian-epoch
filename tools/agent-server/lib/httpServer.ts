@@ -49,6 +49,11 @@ import {
 } from "./publicRegistrationProtection.ts";
 import { epochEventsForPersistence } from "./epoch/runtimePublicProjectionRules.ts";
 import { journeyEventsForPersistence } from "./epoch/journeyPersistence.ts";
+import {
+  attachPhase6CommittedResultForPersistence,
+  phase6CommittedResultsForPersistence,
+} from "./epoch/phase6CommittedResultStore.ts";
+import { isMcpResultAlreadyPersisted } from "./mcpRequestContext.ts";
 import { createMcpHttpSessionRegistry, type McpHttpSessionRegistry } from "./mcpHttpTransport.ts";
 import {
   createEpochMutationCoordinator,
@@ -60,6 +65,8 @@ import {
   type EpochMutationCoordinator,
   type PersistEpochEventBatch,
 } from "./epochPersistence.ts";
+import { assertCausalWorldEventV1 } from "./epoch/causalContracts.ts";
+import { causalWorldEventToEpochEvent } from "./epoch/causalEpochAdapter.ts";
 
 type AgentWorldRuntime = ReturnType<typeof createAgentWorldRuntime>;
 type PersistEpochResult = (result: unknown) => Promise<number>;
@@ -167,6 +174,25 @@ function persistenceHealth(guard: EpochPersistenceGuard) {
     status: "error",
     code: guard.error?.code || "epoch_persistence_unavailable",
   };
+}
+
+function infiniteWorldHealth(runtime: AgentWorldRuntime) {
+  try {
+    const value = runtime.infiniteWorldHealth({});
+    const health = recordValue(value.health);
+    const nested = recordValue(health.health);
+    return {
+      ok: value.ok === true,
+      status: optionalString(nested.status) || optionalString(health.status) || "ok",
+      worldId: optionalString(value.worldId),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "error",
+      code: error instanceof Error && error.message ? error.message : "infinite_world_health_unavailable",
+    };
+  }
 }
 
 async function loadRecoveryHealth(
@@ -289,6 +315,7 @@ function publicRegistrationHealth(
 }
 
 async function serverHealth(
+  runtime: AgentWorldRuntime,
   health: AgentHealthOptions | undefined,
   persistJsonl: typeof appendJsonl | null,
   persistenceGuard: EpochPersistenceGuard,
@@ -303,6 +330,7 @@ async function serverHealth(
   const recovery = await recoveryCache.get();
   const publicRegistration = publicRegistrationHealth(publicRegistrationProtection, playerMcpAccessTokens);
   const persistence = persistenceHealth(persistenceGuard);
+  const infiniteWorld = infiniteWorldHealth(runtime);
   return {
     ok: store.status === "ok"
       && maintenance.status !== "error"
@@ -314,6 +342,7 @@ async function serverHealth(
       store,
       maintenance,
       worldMemory,
+      infiniteWorld,
       recovery,
       publicRegistration,
       persistence,
@@ -431,7 +460,25 @@ async function persistEpochEvents(
   result: unknown,
 ) {
   const events = epochEventsForPersistence(result);
+  if (events.length) return persistEpochEventBatchWithGuard(persistEpochEventBatch, persistenceGuard, events);
+  const causalEvent = causalEventEnvelopeForPersistence(result);
+  if (causalEvent) {
+    return persistEpochEventBatchWithGuard(persistEpochEventBatch, persistenceGuard, [
+      causalWorldEventToEpochEvent(causalEvent),
+    ]);
+  }
   return persistEpochEventBatchWithGuard(persistEpochEventBatch, persistenceGuard, events);
+}
+
+function causalEventEnvelopeForPersistence(result: unknown) {
+  const record = recordValue(result);
+  const candidate = record.causalEvent || record.event;
+  if (!candidate) return undefined;
+  try {
+    return assertCausalWorldEventV1(candidate);
+  } catch {
+    return undefined;
+  }
 }
 
 async function persistOutboxEntries(
@@ -543,18 +590,29 @@ export function parseMcpToolResultPayload(toolResult: unknown) {
   }
 }
 
-function embeddedResultPages(payload: unknown) {
+function isPersistableResultPage(value: unknown): value is AnyRecord {
+  const page = recordValue(value);
+  return Boolean(
+    optionalString(page.pageId)
+      && optionalString(page.createdAt)
+      && optionalString(page.urlPath)
+      && optionalString(page.createdBy)
+      && optionalString(page.idempotencyKey),
+  );
+}
+
+export function embeddedResultPagesForPersistence(payload: unknown) {
   const record = recordValue(payload);
   const pages: AnyRecord[] = [];
   const appendPageResult = (value: unknown) => {
     const pageResult = recordValue(value);
     if (pageResult.duplicate === true) return;
     const nestedPage = recordValue(pageResult.page);
-    if (typeof nestedPage.pageId === "string") {
+    if (isPersistableResultPage(nestedPage)) {
       pages.push(nestedPage);
       return;
     }
-    if (typeof pageResult.pageId === "string") pages.push(pageResult);
+    if (isPersistableResultPage(pageResult)) pages.push(pageResult);
   };
   appendPageResult(record);
   for (const key of ["verification", "departureVerification", "finalVerification"] as const) {
@@ -576,16 +634,20 @@ async function persistMcpToolPayload(
   toolResult: unknown,
   payloadShape: "mcp_tool_result" | "raw_internal_partial" = "mcp_tool_result",
 ) {
+  if (isMcpResultAlreadyPersisted(toolResult)) return;
   const toolResultRecord = recordValue(toolResult);
   const payload = payloadShape === "raw_internal_partial"
     ? toolResult
     : parseMcpToolResultPayload(toolResult);
-  const resultPages = embeddedResultPages(payload);
+  const resultPages = embeddedResultPagesForPersistence(payload);
   const journeyEvents = [...new Map(journeyEventsForPersistence(toolResult)
     .map((event) => [event.eventId, event] as const)).values()];
   const epochEvents = [...new Map(epochEventsForPersistence(toolResult)
     .map((event) => [event.eventId, event] as const)).values()];
-  const requiresCommandEnvelope = journeyEvents.length > 0 || resultPages.length > 0;
+  const committedResults = phase6CommittedResultsForPersistence(toolResult);
+  const requiresCommandEnvelope = journeyEvents.length > 0
+    || resultPages.length > 0
+    || committedResults.length > 0;
   if (persistJsonl && requiresCommandEnvelope) {
     const resultPageRevisionSetIdentity = resultPages
       .map(resultPageRevisionIdentity)
@@ -593,7 +655,7 @@ async function persistMcpToolPayload(
       .join(",");
     persistenceGuard.assertHealthy();
     try {
-      await persistJsonl("command-events.jsonl", {
+      const commandEnvelope = {
         type: "agent_command_commit",
         version: 1,
         command: toolName,
@@ -601,7 +663,11 @@ async function persistMcpToolPayload(
         journeyEvents,
         epochEvents,
         resultPages,
-      });
+      };
+      for (const committed of committedResults) {
+        attachPhase6CommittedResultForPersistence(commandEnvelope, committed);
+      }
+      await persistJsonl("command-events.jsonl", commandEnvelope);
     } catch (error) {
       throw persistenceGuard.trip(error);
     }
@@ -696,8 +762,10 @@ export function createAgentHttpServer({
   const epochEventBatchWriter = persistEpochEventBatch || createLegacyEpochEventBatchWriter(persistJsonl);
   const persistEpochResult: PersistEpochResult = (result) =>
     persistEpochEvents(epochEventBatchWriter, persistenceGuard, result);
+  const mcpSqlitePath = health?.store?.kind === "sqlite" ? health.store.sqlitePath : undefined;
   const mcpRuntime = createAgentWorldMcpRuntime({
     runtime,
+    sqlitePath: mcpSqlitePath,
     recordRejectedCommands: false,
     authoritativeIdentityIssuance: true,
     worldMemorySearch,
@@ -721,6 +789,7 @@ export function createAgentHttpServer({
     }
     if (method === "GET" && (pathname === "/api/health" || pathname === "/api/epoch/health")) {
       const readiness = await serverHealth(
+        runtime,
         health,
         persistJsonl,
         persistenceGuard,

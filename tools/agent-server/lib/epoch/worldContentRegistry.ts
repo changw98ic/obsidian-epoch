@@ -611,7 +611,22 @@ export function validateWorldContentRegistry(value: unknown): WorldContentRegist
 }
 
 export function loadWorldContentRegistry(registryPath = DEFAULT_WORLD_CONTENT_REGISTRY_PATH): WorldContentRegistry {
-  return validateWorldContentRegistry(JSON.parse(readFileSync(path.resolve(registryPath), "utf8")));
+  const resolvedPath = path.resolve(registryPath);
+  let source = "";
+  for (let attempt = 0; attempt < 3 && source.trim().length === 0; attempt += 1) {
+    source = readFileSync(resolvedPath, "utf8");
+  }
+  if (source.trim().length === 0) {
+    throw new Error(`world_content_registry_empty:${path.basename(resolvedPath)}`);
+  }
+  try {
+    return validateWorldContentRegistry(JSON.parse(source));
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error(`world_content_registry_json_invalid:${path.basename(resolvedPath)}`);
+    }
+    throw error;
+  }
 }
 
 export function loadDefaultWorldContentRegistry(

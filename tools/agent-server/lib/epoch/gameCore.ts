@@ -34,6 +34,9 @@ import {
 } from "./events.ts";
 import { eventFactory } from "./eventFactory.ts";
 import {
+  causalEpochEventCanonicalJson,
+} from "./causalEpochAdapter.ts";
+import {
   advanceActorNeeds,
   initialActorLifeGoal,
   initialActorNeeds,
@@ -191,6 +194,7 @@ import {
   copyAttributeScores,
   planAttributeGainEvents,
   projectAttributeGainBalance,
+  type AttributeGainInput,
   type AttributeScoreBalance,
 } from "./attributeRules.ts";
 import {
@@ -326,6 +330,7 @@ import {
   requireHostedTrust,
   requireServerHostedAgentTrust,
   requireTurnTrust,
+  settledOutcomeSummary,
   settlementPolicy,
   turnActionOptions,
   turnOptionTemplate,
@@ -1880,12 +1885,8 @@ export interface ResourceInput {
   readonly reason: string;
 }
 
-export interface AttributeInput {
+export interface AttributeInput extends AttributeGainInput {
   readonly agentId: string;
-  readonly attributeId: EpochAttributeId;
-  readonly amount: number;
-  readonly reason: string;
-  readonly sourceEventIds?: readonly string[];
 }
 
 export interface RecordLoreContributionInput {
@@ -3116,9 +3117,10 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
       break;
     }
     case "attribute_gained": {
-      const balance = copyAttributeScores(attributeScores[event.aggregateId]);
+      const agentId = event.agentId || event.aggregateId;
+      const balance = copyAttributeScores(attributeScores[agentId]);
       balance[event.payload.attributeId] = event.payload.balanceAfter;
-      attributeScores[event.aggregateId] = balance;
+      attributeScores[agentId] = balance;
       break;
     }
     case "lifetime_adjusted": {
@@ -5930,6 +5932,17 @@ function applyEvents(projection: EpochProjection, events: readonly EpochEvent[])
   return events.reduce((current, event) => applyEvent(current, event), projection);
 }
 
+function epochEventsHaveEquivalentContent(left: EpochEvent, right: EpochEvent): boolean {
+  try {
+    return causalEpochEventCanonicalJson(left) === causalEpochEventCanonicalJson(right);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("causal_canonical_json_")) {
+      return JSON.stringify(left) === JSON.stringify(right);
+    }
+    throw error;
+  }
+}
+
 function freezeProjection<T>(value: T, frozenObjects: WeakSet<object>): T {
   if (value === null || typeof value !== "object") return value;
   const objectValue = value as object;
@@ -6107,9 +6120,12 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     const eventsById = new Map(current.events.map((event) => [event.eventId, event]));
     const freshEvents: EpochEvent[] = [];
     for (const event of nextEvents) {
+      if (event.eventType === "causal_world_event_recorded") {
+        throw new Error("causal_world_event_canonical_ingest_forbidden");
+      }
       const existing = eventsById.get(event.eventId);
       if (existing) {
-        if (JSON.stringify(existing) !== JSON.stringify(event)) {
+        if (!epochEventsHaveEquivalentContent(existing, event)) {
           throw new Error(`epoch_event_id_conflict:${event.eventId}`);
         }
         continue;
@@ -6122,6 +6138,10 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     events = [...nextProjection.events];
     currentProjection = nextProjection;
     return nextProjection;
+  }
+
+  function ingestCausalWorldEvents(_nextEvents: readonly unknown[] = []): EpochProjection {
+    throw new Error("causal_world_event_direct_ingest_forbidden");
   }
 
   function issueIdentity(input: IssueIdentityInput, context: EpochCommandContext): EpochCommandResult<EpochAgentIdentity> {
@@ -9479,7 +9499,12 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       risk: template.risk,
       explanation: option.explanation,
       visibleText: input.visibleText,
-      outcomeSummary: template.outcomeSummary,
+      outcomeSummary: settledOutcomeSummary(
+        template.outcomeSummary,
+        template.reward,
+        settlement.reward,
+        settlement.lifetimeDelta,
+      ),
       reward: settlement.reward,
       lifetimeDelta: settlement.lifetimeDelta,
       nonEvidence: settlement.nonEvidence,
@@ -9674,7 +9699,12 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       } : undefined,
       explanation: option.explanation,
       visibleText: input.visibleText,
-      outcomeSummary: journeyResolution?.summary ?? option.outcomeSummary,
+      outcomeSummary: journeyResolution?.summary ?? settledOutcomeSummary(
+        option.outcomeSummary,
+        option.reward,
+        actionReward,
+        settlement.lifetimeDelta,
+      ),
       ...(journeyResolution ? { journeyResolution } : {}),
       reward: actionReward,
       lifetimeDelta: settlement.lifetimeDelta,
@@ -9691,6 +9721,10 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
             amount: resourceCost.amount,
             reason: `journey_action_cost:${session.sceneContract?.journeyId}:${session.sceneContract?.taskObjective?.objectiveId}`,
             balanceAfter: balance - resourceCost.amount,
+            accountRef: `agent:${session.agentId}`,
+            assetKey: `resource:${resourceCost.resourceId}`,
+            unit: "unit",
+            quantityMinor: (BigInt(resourceCost.amount) * 100n).toString(),
           }));
         }
         if (journeyResolution && signedJourneyAction?.taskObjectiveId
@@ -10146,6 +10180,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     project: projection,
     events: () => [...events],
     ingestCanonicalEvents,
+    ingestCausalWorldEvents,
     identitySlots,
     issueIdentity,
     rotateExplorerRecovery,

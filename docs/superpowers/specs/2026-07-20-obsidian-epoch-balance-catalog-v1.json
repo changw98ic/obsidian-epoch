@@ -1,0 +1,2405 @@
+{
+  "metadata": {
+    "schemaVersion": "1.0.0",
+    "balanceVersion": "2026.07.20-v1",
+    "rulesetVersion": "progression-roguelite-v1",
+    "status": "draft_for_simulation",
+    "locale": "zh-CN",
+    "sourceOfTruthForBalance": true,
+    "linkedCatalogs": [
+      {
+        "id": "materials-crafting-v1",
+        "path": "./2026-07-20-obsidian-epoch-materials-crafting-catalog-v1.json",
+        "role": "material_content_recipes_and_profession_progression"
+      }
+    ],
+    "needsSimulationCalibration": true,
+    "description": "黑曜纪元角色成长、修行体系、技能树、局内构筑、局外谱系、任务评分与RAG面板的首版机器可读数值目录。",
+    "rounding": {
+      "scores": "round_half_up",
+      "resourceTransfers": "floor",
+      "probabilities": "keep_4_decimals",
+      "displayPercentages": "round_1_decimal"
+    },
+    "invariants": [
+      "canonical_event_ledger_is_the_only_authoritative_state",
+      "no_global_combat_power",
+      "no_attribute_gain_by_mission_intensity",
+      "no_reward_without_source_account_or_inventory",
+      "rag_never_mutates_authoritative_state",
+      "locked_content_never_enters_candidate_or_recall_pools",
+      "all_run_receipts_are_seeded_and_replayable"
+    ]
+  },
+  "authorityModel": {
+    "canonicalState": "event_ledger",
+    "nonAuthoritativeProjections": [
+      "sqlite_read_models",
+      "rag_indexes",
+      "ui_panels",
+      "simulation_snapshots"
+    ],
+    "temporalLayers": [
+      {
+        "layerId": "permanent",
+        "physicalLedgers": [
+          "world",
+          "lineage"
+        ],
+        "resetPolicy": "never"
+      },
+      {
+        "layerId": "identity",
+        "physicalLedgers": [
+          "identity"
+        ],
+        "resetPolicy": "server_confirmed_true_death"
+      },
+      {
+        "layerId": "run",
+        "physicalLedgers": [
+          "run"
+        ],
+        "resetPolicy": "run_settlement"
+      }
+    ],
+    "ledgerNamespaces": [
+      {
+        "id": "world",
+        "tracks": [
+          "world_time",
+          "region_state",
+          "faction_state",
+          "household_and_organization_accounts",
+          "goods_inventory",
+          "routes",
+          "contracts",
+          "witnessed_history"
+        ]
+      },
+      {
+        "id": "lineage",
+        "tracks": [
+          "reincarnation_alias",
+          "solidified_echoes",
+          "echo_slots",
+          "lineage_marks",
+          "insurance_entitlements",
+          "account_wide_content_attunement"
+        ]
+      },
+      {
+        "id": "identity",
+        "tracks": [
+          "base_attributes",
+          "body_and_injury_state",
+          "primary_power_system",
+          "tradition_and_branch",
+          "functional_stage",
+          "method_proficiency",
+          "talents",
+          "skill_nodes",
+          "domain_insight",
+          "relationships",
+          "debts",
+          "legal_status"
+        ]
+      },
+      {
+        "id": "run",
+        "tracks": [
+          "seed",
+          "route",
+          "node_state",
+          "temporary_boones",
+          "build_capacity",
+          "strain",
+          "exposure",
+          "confirmed_and_unconfirmed_claims",
+          "mission_objectives",
+          "score_components"
+        ]
+      }
+    ]
+  },
+  "resourcePolicies": {
+    "identityResources": [
+      {
+        "id": "coin",
+        "label": "货币",
+        "unit": "coin",
+        "transferable": true,
+        "conserved": true,
+        "cap": null,
+        "allowedSources": [
+          "household_or_organization_transfer",
+          "contract_escrow_release",
+          "sale",
+          "inheritance",
+          "audited_world_mint"
+        ],
+        "playerOutflows": [
+          "purchase_transfer",
+          "tax",
+          "service_fee",
+          "insurance_premium",
+          "debt_repayment",
+          "escrow_lock",
+          "loss_or_confiscation"
+        ],
+        "worldMoneyRetirementSources": [
+          "audited_currency_retirement",
+          "irrecoverable_loss_outside_simulated_economy",
+          "migration_correction_with_conservation_receipt"
+        ]
+      },
+      {
+        "id": "aether",
+        "label": "以太",
+        "unit": "aether",
+        "transferable": true,
+        "conserved": true,
+        "cap": null,
+        "allowedSources": [
+          "reservoir_transfer",
+          "goods_conversion",
+          "contract_escrow_release",
+          "salvage"
+        ],
+        "requiredSinks": [
+          "method_cost",
+          "crafting",
+          "stabilization",
+          "transfer_loss",
+          "world_transformation"
+        ]
+      },
+      {
+        "id": "stamina",
+        "label": "体能",
+        "unit": "points",
+        "transferable": false,
+        "conserved": false,
+        "min": 0,
+        "max": 100,
+        "restRecoveryPerSafeHour": 14,
+        "lightActivityRecoveryPerHour": 4
+      },
+      {
+        "id": "focus",
+        "label": "专注",
+        "unit": "points",
+        "transferable": false,
+        "conserved": false,
+        "min": 0,
+        "max": 100,
+        "restRecoveryPerSafeHour": 18,
+        "lightActivityRecoveryPerHour": 6
+      },
+      {
+        "id": "legend",
+        "label": "传说度",
+        "unit": "evidence_score",
+        "transferable": false,
+        "conserved": false,
+        "min": 0,
+        "max": 1000,
+        "allowedSources": [
+          "witnessed_event",
+          "verified_record",
+          "institutional_recognition"
+        ],
+        "forbiddenSources": [
+          "raw_mission_difficulty",
+          "unwitnessed_llm_claim",
+          "repeated_farm_without_new_world_impact"
+        ]
+      }
+    ],
+    "worldGoods": [
+      {
+        "id": "food",
+        "conserved": true,
+        "spoilage": true,
+        "tradable": true
+      },
+      {
+        "id": "water",
+        "conserved": true,
+        "spoilage": false,
+        "tradable": true
+      },
+      {
+        "id": "medicine",
+        "conserved": true,
+        "spoilage": true,
+        "tradable": true
+      },
+      {
+        "id": "materials",
+        "conserved": true,
+        "spoilage": false,
+        "tradable": true
+      },
+      {
+        "id": "fuel",
+        "conserved": true,
+        "spoilage": false,
+        "tradable": true
+      },
+      {
+        "id": "aether",
+        "conserved": true,
+        "spoilage": false,
+        "tradable": true
+      }
+    ],
+    "runMetricsNotCurrencies": [
+      {
+        "id": "threatPoints",
+        "unit": "tp",
+        "purpose": "encounter_composition_budget"
+      },
+      {
+        "id": "buildCapacity",
+        "unit": "bp",
+        "purpose": "active_build_complexity_cap"
+      },
+      {
+        "id": "strain",
+        "unit": "score_0_100",
+        "purpose": "short_term_body_and_method_stress"
+      },
+      {
+        "id": "exposure",
+        "unit": "score_0_100",
+        "purpose": "pollution_attention_and_trace_risk"
+      },
+      {
+        "id": "exploitationHeat",
+        "unit": "score_0_100",
+        "purpose": "source_depletion_and_repetition_decay"
+      }
+    ]
+  },
+  "attributes": {
+    "scale": {
+      "min": 0,
+      "max": 100,
+      "creationBudget": 180,
+      "creationMinPerAttribute": 20,
+      "creationMaxPerAttribute": 40,
+      "speciesOffsetAbsoluteMax": 8,
+      "originOffsetAbsoluteMax": 4,
+      "speciesOffsetsMustSumTo": 0,
+      "originOffsetsMustSumTo": 0
+    },
+    "dimensions": [
+      {
+        "id": "strength",
+        "label": "力量",
+        "primaryEvidenceTags": [
+          "force",
+          "grapple",
+          "load",
+          "impact"
+        ]
+      },
+      {
+        "id": "agility",
+        "label": "敏捷",
+        "primaryEvidenceTags": [
+          "evasion",
+          "balance",
+          "precision_motion",
+          "reaction"
+        ]
+      },
+      {
+        "id": "physique",
+        "label": "体魄",
+        "primaryEvidenceTags": [
+          "endurance",
+          "recovery",
+          "toxin_resistance",
+          "pain_tolerance"
+        ]
+      },
+      {
+        "id": "intellect",
+        "label": "智力",
+        "primaryEvidenceTags": [
+          "analysis",
+          "engineering",
+          "planning",
+          "learning"
+        ]
+      },
+      {
+        "id": "willpower",
+        "label": "意志",
+        "primaryEvidenceTags": [
+          "discipline",
+          "fear_resistance",
+          "concentration",
+          "identity_coherence"
+        ]
+      },
+      {
+        "id": "spirituality",
+        "label": "灵性",
+        "primaryEvidenceTags": [
+          "resonance",
+          "ritual",
+          "soul_perception",
+          "domain_contact"
+        ]
+      }
+    ],
+    "softCapsByFunctionalStage": [
+      {
+        "stage": 1,
+        "softCap": 40
+      },
+      {
+        "stage": 2,
+        "softCap": 50
+      },
+      {
+        "stage": 3,
+        "softCap": 60
+      },
+      {
+        "stage": 4,
+        "softCap": 70
+      },
+      {
+        "stage": 5,
+        "softCap": 80
+      },
+      {
+        "stage": 6,
+        "softCap": 90
+      }
+    ],
+    "effectiveScoreCurve": {
+      "formula": "if x<=55 then x; if 55<x<=75 then 55+0.60*(x-55); if x>75 then 67+0.30*(x-75)",
+      "hardDisplayCap": 95
+    },
+    "growth": {
+      "automaticMissionIntensityGainEnabled": false,
+      "qualifyingActionBaseXp": 4,
+      "perAttributeRunXpCap": 10,
+      "allAttributesRunXpCap": 24,
+      "deliberateTrainingDailyXpRange": [
+        18,
+        30
+      ],
+      "xpToNextPointFormula": "round(20 + 1.5*attributeValue + 6*max(0, attributeValue-55))",
+      "gainFormula": "baseXp * relevance * challengeFit * executionQuality * recoveryState * novelty",
+      "relevanceRange": [
+        0,
+        1
+      ],
+      "executionQualityRange": [
+        0.5,
+        1.2
+      ],
+      "recoveryStateRange": [
+        0.5,
+        1
+      ],
+      "challengeFit": {
+        "trivial": 0.2,
+        "below_band": 0.6,
+        "matched": 1,
+        "hard": 1.2,
+        "extreme": 1.1
+      },
+      "repeatNovelty": [
+        1,
+        0.75,
+        0.5,
+        0.25
+      ],
+      "requires": [
+        "source_event_ids",
+        "action_tags",
+        "challenge_band",
+        "execution_evidence",
+        "recovery_state"
+      ]
+    }
+  },
+  "combatReadiness": {
+    "globalCombatPowerEnabled": false,
+    "vectorScale": {
+      "min": 0,
+      "max": 100
+    },
+    "dimensions": [
+      {
+        "id": "offense",
+        "label": "攻势"
+      },
+      {
+        "id": "protection",
+        "label": "防护"
+      },
+      {
+        "id": "mobility",
+        "label": "机动"
+      },
+      {
+        "id": "control",
+        "label": "控制"
+      },
+      {
+        "id": "perception",
+        "label": "感知"
+      },
+      {
+        "id": "sustain",
+        "label": "续航"
+      },
+      {
+        "id": "reserve",
+        "label": "储备"
+      },
+      {
+        "id": "corruptionResistance",
+        "label": "污染抗性"
+      },
+      {
+        "id": "synergy",
+        "label": "协同"
+      },
+      {
+        "id": "adaptation",
+        "label": "适应"
+      }
+    ],
+    "defaultAttributeProjectionWeights": {
+      "offense": {
+        "strength": 0.35,
+        "agility": 0.15,
+        "physique": 0.1,
+        "intellect": 0.1,
+        "willpower": 0.1,
+        "spirituality": 0.2
+      },
+      "protection": {
+        "strength": 0.1,
+        "agility": 0.1,
+        "physique": 0.45,
+        "intellect": 0.05,
+        "willpower": 0.2,
+        "spirituality": 0.1
+      },
+      "mobility": {
+        "strength": 0.1,
+        "agility": 0.55,
+        "physique": 0.15,
+        "intellect": 0.1,
+        "willpower": 0.05,
+        "spirituality": 0.05
+      },
+      "control": {
+        "strength": 0.05,
+        "agility": 0.1,
+        "physique": 0.05,
+        "intellect": 0.3,
+        "willpower": 0.2,
+        "spirituality": 0.3
+      },
+      "perception": {
+        "strength": 0,
+        "agility": 0.15,
+        "physique": 0.05,
+        "intellect": 0.35,
+        "willpower": 0.15,
+        "spirituality": 0.3
+      },
+      "sustain": {
+        "strength": 0.1,
+        "agility": 0.05,
+        "physique": 0.35,
+        "intellect": 0.1,
+        "willpower": 0.25,
+        "spirituality": 0.15
+      },
+      "reserve": {
+        "strength": 0.05,
+        "agility": 0.05,
+        "physique": 0.2,
+        "intellect": 0.2,
+        "willpower": 0.2,
+        "spirituality": 0.3
+      },
+      "corruptionResistance": {
+        "strength": 0,
+        "agility": 0,
+        "physique": 0.2,
+        "intellect": 0.1,
+        "willpower": 0.35,
+        "spirituality": 0.35
+      },
+      "synergy": {
+        "strength": 0.05,
+        "agility": 0.1,
+        "physique": 0.1,
+        "intellect": 0.3,
+        "willpower": 0.2,
+        "spirituality": 0.25
+      },
+      "adaptation": {
+        "strength": 0.05,
+        "agility": 0.15,
+        "physique": 0.15,
+        "intellect": 0.25,
+        "willpower": 0.25,
+        "spirituality": 0.15
+      }
+    },
+    "sourceMix": {
+      "attributeProjection": 0.35,
+      "equippedMethods": 0.3,
+      "equipmentAndConsumables": 0.2,
+      "preparationAndIntel": 0.15
+    },
+    "contextLimits": {
+      "stateMultiplierRange": [
+        0.6,
+        1.15
+      ],
+      "environmentMultiplierRange": [
+        0.7,
+        1.3
+      ],
+      "matchupMultiplierRange": [
+        0.75,
+        1.25
+      ],
+      "combinedMultiplierRange": [
+        0.55,
+        1.45
+      ]
+    },
+    "encounterSuitability": {
+      "formula": "sum(encounterWeight[i] * effectiveVector[i] * matchupFactor[i])",
+      "encounterWeightsMustSumTo": 1,
+      "victoryProbabilityFormula": "1 / (1 + exp(-(suitability-encounterPressure)/12))",
+      "threatPointsToPressureFormula": "100 * threatPoints / (threatPoints + 120)",
+      "uiBands": [
+        {
+          "id": "critical",
+          "probabilityMaxExclusive": 0.25
+        },
+        {
+          "id": "disadvantaged",
+          "probabilityMin": 0.25,
+          "probabilityMaxExclusive": 0.45
+        },
+        {
+          "id": "contested",
+          "probabilityMin": 0.45,
+          "probabilityMaxExclusive": 0.55
+        },
+        {
+          "id": "favored",
+          "probabilityMin": 0.55,
+          "probabilityMaxExclusive": 0.75
+        },
+        {
+          "id": "dominant",
+          "probabilityMin": 0.75
+        }
+      ],
+      "forbiddenUses": [
+        "persistent_player_power_number",
+        "mission_score_input",
+        "automatic_reward_multiplier",
+        "content_unlock_without_qualification"
+      ]
+    }
+  },
+  "powerSystems": {
+    "unifiedManaEnabled": false,
+    "primarySystemLimit": 1,
+    "auxiliarySystemLimit": 2,
+    "compatibility": {
+      "resonant": {
+        "efficiencyCap": 1,
+        "nodeTax": 0,
+        "persistentAllowed": true
+      },
+      "translatable": {
+        "efficiencyCap": 0.6,
+        "nodeTax": 1,
+        "persistentAllowed": true
+      },
+      "conflicting": {
+        "efficiencyCap": 0.3,
+        "nodeTax": 2,
+        "persistentAllowed": false
+      },
+      "forbidden": {
+        "efficiencyCap": 0,
+        "nodeTax": null,
+        "persistentAllowed": false
+      }
+    },
+    "systems": [
+      {
+        "id": "innate_anomaly",
+        "label": "裂灾血脉与本相",
+        "localResource": "host_stability",
+        "entryCostMultiplier": 0.95,
+        "growthCostMultiplier": 1.05,
+        "volatilityMultiplier": 1.1,
+        "primaryRisks": [
+          "carrier_imbalance",
+          "environment_dependency",
+          "identity_continuity_erosion"
+        ]
+      },
+      {
+        "id": "eastern_cultivation",
+        "label": "东方修行",
+        "localResource": "qi_and_meridian_capacity",
+        "entryCostMultiplier": 1,
+        "growthCostMultiplier": 1,
+        "volatilityMultiplier": 1,
+        "primaryRisks": [
+          "meridian_damage",
+          "heart_demon",
+          "karmic_debt"
+        ]
+      },
+      {
+        "id": "western_arcana",
+        "label": "西方奥术",
+        "localResource": "prepared_formulae_and_arcane_charge",
+        "entryCostMultiplier": 1.05,
+        "growthCostMultiplier": 1,
+        "volatilityMultiplier": 1.05,
+        "primaryRisks": [
+          "backlash",
+          "contract_debt",
+          "memory_forfeit"
+        ]
+      },
+      {
+        "id": "primordial_divine_contract",
+        "label": "原初神契",
+        "localResource": "covenant_credit_and_name_integrity",
+        "entryCostMultiplier": 1.1,
+        "growthCostMultiplier": 1.02,
+        "volatilityMultiplier": 1,
+        "primaryRisks": [
+          "oath_backlash",
+          "loss_of_name",
+          "divine_sanction"
+        ]
+      },
+      {
+        "id": "outer_resonance",
+        "label": "旧日与星外共鸣",
+        "localResource": "resonance_and_subject_integrity",
+        "entryCostMultiplier": 1.2,
+        "growthCostMultiplier": 1.08,
+        "volatilityMultiplier": 1.25,
+        "primaryRisks": [
+          "pollution",
+          "mutation",
+          "loss_of_agency"
+        ]
+      },
+      {
+        "id": "rational_engineering",
+        "label": "理性工程",
+        "localResource": "power_data_materials_and_permissions",
+        "entryCostMultiplier": 0.95,
+        "growthCostMultiplier": 0.98,
+        "volatilityMultiplier": 0.85,
+        "primaryRisks": [
+          "system_failure",
+          "permission_lock",
+          "data_contamination"
+        ]
+      },
+      {
+        "id": "cyber_industry",
+        "label": "赛博工业",
+        "localResource": "energy_bandwidth_maintenance_and_ownership",
+        "entryCostMultiplier": 0.92,
+        "growthCostMultiplier": 1.02,
+        "volatilityMultiplier": 0.95,
+        "primaryRisks": [
+          "dependency",
+          "debt",
+          "ownership_loss",
+          "personality_fragmentation"
+        ]
+      }
+    ],
+    "sharedDomains": [
+      {
+        "id": "soul_death",
+        "label": "灵魂与死亡",
+        "recommendedFunctionalTier": 2,
+        "pressureMultiplier": 1.1
+      },
+      {
+        "id": "dream_mind",
+        "label": "梦境与心灵",
+        "recommendedFunctionalTier": 1,
+        "pressureMultiplier": 1
+      },
+      {
+        "id": "fate_time",
+        "label": "命运与时间",
+        "recommendedFunctionalTier": 4,
+        "pressureMultiplier": 1.2
+      },
+      {
+        "id": "star_space_quantum",
+        "label": "星空、空间与量子",
+        "recommendedFunctionalTier": 4,
+        "pressureMultiplier": 1.15
+      },
+      {
+        "id": "flesh_blood_mutation",
+        "label": "血肉、血脉与异化",
+        "recommendedFunctionalTier": 1,
+        "pressureMultiplier": 0.95
+      },
+      {
+        "id": "ecology_element_environment",
+        "label": "生态、元素与环境",
+        "recommendedFunctionalTier": 1,
+        "pressureMultiplier": 1
+      }
+    ]
+  },
+  "functionalStages": {
+    "stageCount": 6,
+    "masteryEndpointExperience": 4500,
+    "stages": [
+      {
+        "tier": 1,
+        "functionalId": "contact",
+        "easternLabel": "感应",
+        "minFunctionalExperience": 0,
+        "minPrimaryMethodProficiency": 0,
+        "minPrimaryDomainInsight": 0,
+        "maxTechniqueTier": 1,
+        "skillPointBudget": 3,
+        "slots": {
+          "active": 2,
+          "reaction": 0,
+          "passive": 2,
+          "domain": 1,
+          "talent": 2
+        },
+        "breakthroughLossRange": [
+          0.1,
+          0.2
+        ]
+      },
+      {
+        "tier": 2,
+        "functionalId": "circulation",
+        "easternLabel": "周天",
+        "minFunctionalExperience": 120,
+        "minPrimaryMethodProficiency": 100,
+        "minPrimaryDomainInsight": 20,
+        "maxTechniqueTier": 2,
+        "skillPointBudget": 5,
+        "slots": {
+          "active": 2,
+          "reaction": 1,
+          "passive": 3,
+          "domain": 1,
+          "talent": 2
+        },
+        "breakthroughLossRange": [
+          0.15,
+          0.25
+        ]
+      },
+      {
+        "tier": 3,
+        "functionalId": "foundation",
+        "easternLabel": "立基",
+        "minFunctionalExperience": 360,
+        "minPrimaryMethodProficiency": 250,
+        "minPrimaryDomainInsight": 20,
+        "maxTechniqueTier": 3,
+        "skillPointBudget": 7,
+        "slots": {
+          "active": 3,
+          "reaction": 1,
+          "passive": 4,
+          "domain": 1,
+          "talent": 3
+        },
+        "breakthroughLossRange": [
+          0.25,
+          0.35
+        ]
+      },
+      {
+        "tier": 4,
+        "functionalId": "manifestation",
+        "easternLabel": "凝相",
+        "minFunctionalExperience": 780,
+        "minPrimaryMethodProficiency": 500,
+        "minPrimaryDomainInsight": 40,
+        "maxTechniqueTier": 4,
+        "skillPointBudget": 9,
+        "slots": {
+          "active": 4,
+          "reaction": 2,
+          "passive": 5,
+          "domain": 2,
+          "talent": 3
+        },
+        "breakthroughLossRange": [
+          0.3,
+          0.4
+        ]
+      },
+      {
+        "tier": 5,
+        "functionalId": "domain",
+        "easternLabel": "开域",
+        "minFunctionalExperience": 1500,
+        "minPrimaryMethodProficiency": 700,
+        "minPrimaryDomainInsight": 60,
+        "maxTechniqueTier": 5,
+        "skillPointBudget": 11,
+        "slots": {
+          "active": 4,
+          "reaction": 3,
+          "passive": 6,
+          "domain": 2,
+          "talent": 4
+        },
+        "breakthroughLossRange": [
+          0.4,
+          0.5
+        ]
+      },
+      {
+        "tier": 6,
+        "functionalId": "transcendence",
+        "easternLabel": "渡劫/合道",
+        "minFunctionalExperience": 2700,
+        "minPrimaryMethodProficiency": 900,
+        "minPrimaryDomainInsight": 80,
+        "maxTechniqueTier": 6,
+        "skillPointBudget": 13,
+        "slots": {
+          "active": 5,
+          "reaction": 3,
+          "passive": 6,
+          "domain": 3,
+          "talent": 5
+        },
+        "breakthroughLossRange": [
+          0.45,
+          0.5
+        ]
+      }
+    ]
+  },
+  "methodProgression": {
+    "proficiencyScale": {
+      "min": 0,
+      "max": 1000,
+      "bands": [
+        {
+          "id": "novice",
+          "min": 0,
+          "max": 99
+        },
+        {
+          "id": "practiced",
+          "min": 100,
+          "max": 299
+        },
+        {
+          "id": "refined",
+          "min": 300,
+          "max": 599
+        },
+        {
+          "id": "fluent",
+          "min": 600,
+          "max": 849
+        },
+        {
+          "id": "mastered",
+          "min": 850,
+          "max": 1000
+        }
+      ]
+    },
+    "qualityAxes": [
+      {
+        "id": "mastery",
+        "label": "掌握",
+        "min": 0,
+        "max": 100
+      },
+      {
+        "id": "control",
+        "label": "控制",
+        "min": 0,
+        "max": 100
+      },
+      {
+        "id": "stability",
+        "label": "稳定",
+        "min": 0,
+        "max": 100
+      },
+      {
+        "id": "adaptation",
+        "label": "应变",
+        "min": 0,
+        "max": 100
+      }
+    ],
+    "qualityAxisFromXpFormula": "100 * (1 - exp(-axisXp/1200))",
+    "defaultExecutionQualityWeights": {
+      "mastery": 0.35,
+      "control": 0.3,
+      "stability": 0.2,
+      "adaptation": 0.15
+    },
+    "practiceGainFormula": "base * difficultyFit * novelty * correctness * mentorship * riskFit",
+    "repeatNovelty": [
+      1,
+      0.75,
+      0.55,
+      0.4,
+      0.3,
+      0.25
+    ],
+    "perRunCaps": {
+      "primaryMethodProficiency": 120,
+      "secondaryMethodProficiency": 40,
+      "allMethodsProficiency": 180
+    },
+    "functionalExperienceSoftCap": {
+      "capFormula": "60 + 6*completedRunCount + 2*max(0, completedRunCount-10) + 2*max(0, completedRunCount-20)",
+      "conversionFormula": "if raw<=cap then raw; if cap<raw<=1.8*cap then cap+0.5*(raw-cap); if raw>1.8*cap then cap+0.4*cap+0.2*(raw-1.8*cap)"
+    },
+    "antiMacroRequirements": [
+      "difficulty_fit",
+      "novelty_fingerprint",
+      "correctness_evidence",
+      "world_time_cost",
+      "resource_cost",
+      "source_event_ids"
+    ]
+  },
+  "talents": {
+    "startingCapacity": 5,
+    "maximumCapacity": 9,
+    "startingElectiveSlots": 2,
+    "maximumActiveSlots": 5,
+    "costByImpact": {
+      "minor": 1,
+      "major": 2,
+      "defining": 3
+    },
+    "sources": [
+      "species_or_true_form",
+      "origin",
+      "power_system",
+      "tradition",
+      "awakened",
+      "scar",
+      "lineage_echo"
+    ],
+    "rules": {
+      "innateAnchorsOccupyCapacity": true,
+      "preferMechanicChangesOverRawStats": true,
+      "pureScalarPerChannelCap": 0.1,
+      "allTalentScalarStackCap": 1.2,
+      "definingTalentsMutuallyExclusive": true,
+      "talentCannotGrantCompleteMethodWithoutQualification": true
+    }
+  },
+  "skillTrees": {
+    "nodesPerTradition": 24,
+    "expectedOwnedNodeShareRange": [
+      0.35,
+      0.45
+    ],
+    "nodeComposition": {
+      "methodUnlocks": 10,
+      "methodTransforms": 7,
+      "utilityAndEconomy": 5,
+      "pureNumeric": 2
+    },
+    "tierCosts": {
+      "tier1": 1,
+      "tier2": 1,
+      "tier3": 2,
+      "capstone": 3
+    },
+    "capstoneRules": {
+      "countPerTradition": 2,
+      "mutuallyExclusive": true
+    },
+    "unlockRequirements": [
+      "skill_points",
+      "method_proficiency_gate",
+      "functional_stage_gate",
+      "domain_insight_gate_if_applicable",
+      "teacher_or_source_evidence_if_applicable"
+    ],
+    "respec": {
+      "sameNode": {
+        "insightPoints": 1,
+        "spentExperienceLoss": 0.2
+      },
+      "sameBranch": {
+        "insightPoints": 2,
+        "spentExperienceLoss": 0.4
+      },
+      "crossTradition": {
+        "insightPoints": 3,
+        "lineageMarks": 1,
+        "spentExperienceLoss": 0.5
+      },
+      "primarySystem": {
+        "allowedWithinIdentity": false,
+        "allowedThroughReincarnation": true
+      }
+    }
+  },
+  "lineageAndLoadout": {
+    "physicalBringIn": {
+      "baseSlots": 3,
+      "hardSlotCap": 5,
+      "baseDeploymentCapacity": 6,
+      "hardDeploymentCapacityCap": 10,
+      "baseQuickUseSlots": 2,
+      "hardQuickUseSlotCap": 3,
+      "itemDeploymentCost": {
+        "common": 1,
+        "uncommon": 2,
+        "rare": 3,
+        "epic": 4,
+        "mythic": 5
+      },
+      "categoryLimits": {
+        "mainCore": 1,
+        "sameCategory": 2,
+        "questItemBringInAllowed": false
+      }
+    },
+    "echoCarry": {
+      "baseSlots": 1,
+      "hardSlotCap": 6,
+      "allowedContents": [
+        "minor_talent_echo",
+        "method_familiarity_echo",
+        "branch_anchor",
+        "insurance_certificate",
+        "low_tier_item_or_contract_echo"
+      ],
+      "forbiddenContents": [
+        "complete_previous_identity",
+        "full_functional_stage",
+        "all_previous_skills",
+        "world_ownership_without_successor_event"
+      ]
+    },
+    "insurance": {
+      "baseLayers": 0,
+      "hardLayerCap": 2,
+      "types": [
+        "item_return",
+        "method_echo",
+        "breakthrough_loss_floor"
+      ],
+      "premiumRequiresRealTransfer": true,
+      "neverPreventsServerConfirmedDeath": true,
+      "neverErasesWorldConsequences": true
+    },
+    "lineageMarksPerLife": [
+      {
+        "highestStageMin": 1,
+        "highestStageMax": 2,
+        "marks": 0
+      },
+      {
+        "highestStageMin": 3,
+        "highestStageMax": 3,
+        "marks": 1
+      },
+      {
+        "highestStageMin": 4,
+        "highestStageMax": 4,
+        "marks": 2
+      },
+      {
+        "highestStageMin": 5,
+        "highestStageMax": 6,
+        "marks": 3
+      }
+    ]
+  },
+  "runBalance": {
+    "structure": {
+      "minimumNodes": 8,
+      "standardNodes": 10,
+      "maximumNodes": 12,
+      "sideBranchThreatMultiplier": 0.65,
+      "sideBranchRewardMultiplier": 0.7,
+      "finalNodeType": "boss"
+    },
+    "threatCurve": {
+      "normalFormula": "round(45 * 1.18^(depth-1))",
+      "eliteMultiplier": 1.55,
+      "bossMultiplier": 2.8,
+      "byDepth": [
+        {
+          "depth": 1,
+          "normalTP": 45,
+          "eliteTP": 70,
+          "bossTP": null,
+          "targetBuildCapacity": 16
+        },
+        {
+          "depth": 2,
+          "normalTP": 53,
+          "eliteTP": 82,
+          "bossTP": null,
+          "targetBuildCapacity": 18
+        },
+        {
+          "depth": 3,
+          "normalTP": 63,
+          "eliteTP": 98,
+          "bossTP": null,
+          "targetBuildCapacity": 20
+        },
+        {
+          "depth": 4,
+          "normalTP": 74,
+          "eliteTP": 115,
+          "bossTP": null,
+          "targetBuildCapacity": 22
+        },
+        {
+          "depth": 5,
+          "normalTP": 87,
+          "eliteTP": 135,
+          "bossTP": null,
+          "targetBuildCapacity": 24
+        },
+        {
+          "depth": 6,
+          "normalTP": 103,
+          "eliteTP": 160,
+          "bossTP": null,
+          "targetBuildCapacity": 24
+        },
+        {
+          "depth": 7,
+          "normalTP": 121,
+          "eliteTP": 188,
+          "bossTP": null,
+          "targetBuildCapacity": 26
+        },
+        {
+          "depth": 8,
+          "normalTP": 143,
+          "eliteTP": 222,
+          "bossTP": null,
+          "targetBuildCapacity": 26
+        },
+        {
+          "depth": 9,
+          "normalTP": 168,
+          "eliteTP": 260,
+          "bossTP": null,
+          "targetBuildCapacity": 28
+        },
+        {
+          "depth": 10,
+          "normalTP": 198,
+          "eliteTP": 307,
+          "bossTP": 554,
+          "targetBuildCapacity": 30
+        }
+      ]
+    },
+    "enemyThreatCosts": [
+      {
+        "archetype": "minor",
+        "minTP": 12,
+        "maxTP": 18
+      },
+      {
+        "archetype": "dangerous_minor",
+        "minTP": 20,
+        "maxTP": 28
+      },
+      {
+        "archetype": "support_or_controller",
+        "minTP": 22,
+        "maxTP": 30
+      },
+      {
+        "archetype": "elite",
+        "minTP": 48,
+        "maxTP": 60
+      },
+      {
+        "archetype": "mini_boss",
+        "minTP": 110,
+        "maxTP": 140
+      },
+      {
+        "archetype": "boss_phase",
+        "minTP": 180,
+        "maxTP": 220
+      }
+    ],
+    "encounterBudgetDimensions": [
+      "offense",
+      "control",
+      "armor",
+      "summoning",
+      "environment"
+    ],
+    "nodeTypeProbabilityByDepthBand": [
+      {
+        "depthMin": 1,
+        "depthMax": 3,
+        "normalCombat": 0.7,
+        "elite": 0.08,
+        "shop": 0.06,
+        "rest": 0.08,
+        "eventOrCache": 0.08
+      },
+      {
+        "depthMin": 4,
+        "depthMax": 6,
+        "normalCombat": 0.6,
+        "elite": 0.12,
+        "shop": 0.08,
+        "rest": 0.08,
+        "eventOrCache": 0.12
+      },
+      {
+        "depthMin": 7,
+        "depthMax": 8,
+        "normalCombat": 0.52,
+        "elite": 0.16,
+        "shop": 0.1,
+        "rest": 0.08,
+        "eventOrCache": 0.14
+      },
+      {
+        "depthMin": 9,
+        "depthMax": 9,
+        "normalCombat": 0.44,
+        "elite": 0.2,
+        "shop": 0.1,
+        "rest": 0.1,
+        "eventOrCache": 0.16
+      }
+    ],
+    "controlledOffer": {
+      "options": 3,
+      "slots": [
+        {
+          "id": "build_relevant",
+          "targetWeight": 0.55
+        },
+        {
+          "id": "adjacent_synergy",
+          "targetWeight": 0.3
+        },
+        {
+          "id": "survival_economy_correction",
+          "targetWeight": 0.15
+        }
+      ],
+      "guarantees": [
+        "at_least_one_build_relevant_or_recovery_option",
+        "no_duplicate_key_prefix_in_same_offer",
+        "locked_content_excluded_before_weighting",
+        "candidate_pool_attunement_applied_before_rarity",
+        "dead_offer_rate_below_0.01"
+      ]
+    },
+    "offerRarityByDepthBand": [
+      {
+        "depthMin": 1,
+        "depthMax": 3,
+        "common": 0.6,
+        "rare": 0.28,
+        "epic": 0.1,
+        "legendary": 0.02
+      },
+      {
+        "depthMin": 4,
+        "depthMax": 6,
+        "common": 0.52,
+        "rare": 0.3,
+        "epic": 0.14,
+        "legendary": 0.04
+      },
+      {
+        "depthMin": 7,
+        "depthMax": 8,
+        "common": 0.42,
+        "rare": 0.3,
+        "epic": 0.2,
+        "legendary": 0.08
+      },
+      {
+        "depthMin": 9,
+        "depthMax": 10,
+        "common": 0.34,
+        "rare": 0.28,
+        "epic": 0.26,
+        "legendary": 0.12
+      }
+    ],
+    "buildCapacity": {
+      "base": 16,
+      "hardCap": 32,
+      "gainFormula": "min(32, 16 + 2*normalNodesCleared + 3*elitesCleared + 5*bossPhasesCleared)",
+      "costs": {
+        "commonMod": [
+          2,
+          3
+        ],
+        "synergyMod": [
+          4,
+          5
+        ],
+        "rareMod": [
+          6,
+          8
+        ],
+        "bossMod": [
+          9,
+          12
+        ]
+      },
+      "activeShapeLimits": {
+        "mainCore": 1,
+        "supportCores": 2,
+        "tools": 3
+      }
+    },
+    "difficultyProfiles": [
+      {
+        "id": "story",
+        "threatMultiplier": 0.8,
+        "rewardMultiplier": 0.75
+      },
+      {
+        "id": "standard",
+        "threatMultiplier": 1,
+        "rewardMultiplier": 1
+      },
+      {
+        "id": "veteran",
+        "threatMultiplier": 1.15,
+        "rewardMultiplier": 1.12
+      },
+      {
+        "id": "nightmare",
+        "threatMultiplier": 1.32,
+        "rewardMultiplier": 1.25
+      },
+      {
+        "id": "abyss",
+        "threatMultiplier": 1.52,
+        "rewardMultiplier": 1.4
+      }
+    ],
+    "riskGrades": [
+      {
+        "id": "low",
+        "threatMultiplier": 0.85,
+        "claimMultiplier": 0.8
+      },
+      {
+        "id": "medium",
+        "threatMultiplier": 1,
+        "claimMultiplier": 1
+      },
+      {
+        "id": "high",
+        "threatMultiplier": 1.15,
+        "claimMultiplier": 1.15
+      },
+      {
+        "id": "extreme",
+        "threatMultiplier": 1.35,
+        "claimMultiplier": 1.4
+      }
+    ],
+    "rewardClaimCaps": {
+      "disclaimer": "coin和aether是合同托管、敌方库存、场景储备或合法回收的可申领上限，不是击杀凭空铸造。",
+      "normalByDepthBand": [
+        {
+          "depthMin": 1,
+          "depthMax": 3,
+          "coinRange": [
+            8,
+            12
+          ],
+          "aetherRange": [
+            0,
+            1
+          ]
+        },
+        {
+          "depthMin": 4,
+          "depthMax": 6,
+          "coinRange": [
+            12,
+            18
+          ],
+          "aetherRange": [
+            1,
+            2
+          ]
+        },
+        {
+          "depthMin": 7,
+          "depthMax": 8,
+          "coinRange": [
+            18,
+            26
+          ],
+          "aetherRange": [
+            1,
+            3
+          ]
+        },
+        {
+          "depthMin": 9,
+          "depthMax": 10,
+          "coinRange": [
+            26,
+            36
+          ],
+          "aetherRange": [
+            2,
+            4
+          ]
+        }
+      ],
+      "eliteByDepthBand": [
+        {
+          "depthMin": 1,
+          "depthMax": 3,
+          "coinRange": [
+            20,
+            30
+          ],
+          "aetherRange": [
+            1,
+            2
+          ]
+        },
+        {
+          "depthMin": 4,
+          "depthMax": 6,
+          "coinRange": [
+            30,
+            44
+          ],
+          "aetherRange": [
+            2,
+            3
+          ]
+        },
+        {
+          "depthMin": 7,
+          "depthMax": 8,
+          "coinRange": [
+            44,
+            60
+          ],
+          "aetherRange": [
+            3,
+            5
+          ]
+        },
+        {
+          "depthMin": 9,
+          "depthMax": 10,
+          "coinRange": [
+            60,
+            82
+          ],
+          "aetherRange": [
+            5,
+            8
+          ]
+        }
+      ],
+      "boss": {
+        "coinRange": [
+          120,
+          180
+        ],
+        "aetherRange": [
+          8,
+          12
+        ],
+        "specializedChoiceCount": 3,
+        "selectedCoreCount": 1
+      }
+    },
+    "shop": {
+      "smallHeal": {
+        "priceFormula": "12 + 2*depth",
+        "healthRestoreRatio": 0.25
+      },
+      "mediumHeal": {
+        "priceFormula": "20 + 3*depth",
+        "healthRestoreRatio": 0.45
+      },
+      "cleanse": {
+        "priceFormula": "16 + 2*depth",
+        "statusRemoved": 1
+      },
+      "reroll": {
+        "priceFormula": "6 + depth"
+      },
+      "buildItem": {
+        "priceFormula": "18 + 3*depth"
+      },
+      "rareBuildItem": {
+        "priceFormula": "35 + 5*depth"
+      },
+      "rest": {
+        "healthRestoreRatio": 0.35,
+        "staminaRestoreRatio": 0.4,
+        "focusRestoreRatio": 0.25,
+        "lightStatusRemoved": 1
+      }
+    },
+    "settlementConversion": [
+      {
+        "outcome": "full_completion",
+        "confirmedClaimsRetained": 1,
+        "unconfirmedClaimsRetained": 0.7,
+        "practiceEvidenceRetained": 1,
+        "temporaryBuildRetained": 0
+      },
+      {
+        "outcome": "voluntary_extraction",
+        "confirmedClaimsRetained": 1,
+        "unconfirmedClaimsRetained": 0.5,
+        "practiceEvidenceRetained": 0.8,
+        "temporaryBuildRetained": 0
+      },
+      {
+        "outcome": "forced_extraction",
+        "confirmedClaimsRetained": 0.75,
+        "unconfirmedClaimsRetained": 0.25,
+        "practiceEvidenceRetained": 0.6,
+        "temporaryBuildRetained": 0
+      },
+      {
+        "outcome": "mission_failure_alive",
+        "confirmedClaimsRetained": 0.8,
+        "unconfirmedClaimsRetained": 0.3,
+        "practiceEvidenceRetained": 0.5,
+        "temporaryBuildRetained": 0
+      },
+      {
+        "outcome": "server_confirmed_death",
+        "confirmedClaimsRetained": 0.2,
+        "unconfirmedClaimsRetained": 0.1,
+        "practiceEvidenceRetained": 0.35,
+        "temporaryBuildRetained": 0
+      }
+    ]
+  },
+  "commerce": {
+    "currencyRoles": {
+      "coin": {
+        "role": "settlement_currency",
+        "spendable": true,
+        "defaultPriceUnit": true,
+        "acceptedByDefault": true,
+        "canBeDirectlyDestroyedByOrdinaryPurchase": false
+      },
+      "aether": {
+        "role": "tradable_commodity_and_power_resource",
+        "spendable": "only_when_listing_explicitly_accepts_aether",
+        "defaultPriceUnit": false,
+        "acceptedByDefault": false,
+        "consumedBy": [
+          "method_activation",
+          "crafting",
+          "stabilization",
+          "recharge",
+          "purification",
+          "special_transport"
+        ]
+      },
+      "legend": {
+        "role": "access_and_reputation_evidence",
+        "spendable": false,
+        "canBeStaked": true,
+        "stakeFailureCanReduceValue": true
+      },
+      "stamina": {
+        "role": "identity_state",
+        "spendable": false
+      },
+      "focus": {
+        "role": "identity_state",
+        "spendable": false
+      },
+      "lineageMarks": {
+        "role": "lineage_progression_entitlement",
+        "spendableInWorldShops": false
+      },
+      "insightPoints": {
+        "role": "skill_reconfiguration_budget",
+        "spendableInWorldShops": false
+      },
+      "skillPoints": {
+        "role": "skill_tree_allocation_budget",
+        "spendableInWorldShops": false
+      }
+    },
+    "storeTypes": [
+      {
+        "id": "field_quartermaster",
+        "inRun": true,
+        "stockCountRange": [
+          6,
+          12
+        ],
+        "stockSources": [
+          "contract_reserved_inventory",
+          "merchant_carried_inventory",
+          "reachable_logistics_cache"
+        ],
+        "restockPolicy": "shipment_or_contract_resupply_only",
+        "defaultMarkupRange": [
+          1.1,
+          1.25
+        ]
+      },
+      {
+        "id": "settlement_general_store",
+        "inRun": false,
+        "stockCountRange": [
+          12,
+          30
+        ],
+        "stockSources": [
+          "local_production",
+          "shipment",
+          "npc_sale"
+        ],
+        "restockPolicy": "world_tick_production_and_shipment",
+        "defaultMarkupRange": [
+          1,
+          1.15
+        ]
+      },
+      {
+        "id": "apothecary_or_clinic",
+        "inRun": false,
+        "stockCountRange": [
+          6,
+          18
+        ],
+        "stockSources": [
+          "medicine_inventory",
+          "local_production",
+          "shipment"
+        ],
+        "restockPolicy": "world_tick_and_supplier_contract",
+        "defaultMarkupRange": [
+          1.05,
+          1.25
+        ]
+      },
+      {
+        "id": "artisan_or_repairer",
+        "inRun": false,
+        "stockCountRange": [
+          8,
+          20
+        ],
+        "stockSources": [
+          "materials_inventory",
+          "commissioned_production",
+          "npc_sale"
+        ],
+        "restockPolicy": "production_queue",
+        "defaultMarkupRange": [
+          1.05,
+          1.3
+        ]
+      },
+      {
+        "id": "instructor_or_institution",
+        "inRun": false,
+        "stockCountRange": [
+          0,
+          0
+        ],
+        "stockSources": [
+          "teacher_time",
+          "facility_capacity",
+          "qualification"
+        ],
+        "restockPolicy": "world_time_schedule",
+        "defaultMarkupRange": [
+          1,
+          1.2
+        ]
+      },
+      {
+        "id": "insurer_or_logistics_office",
+        "inRun": false,
+        "stockCountRange": [
+          0,
+          0
+        ],
+        "stockSources": [
+          "reserve_fund",
+          "transport_capacity",
+          "legal_permission"
+        ],
+        "restockPolicy": "reserve_and_capacity_recalculation",
+        "defaultMarkupRange": [
+          1,
+          1.25
+        ]
+      },
+      {
+        "id": "black_market",
+        "inRun": false,
+        "stockCountRange": [
+          4,
+          14
+        ],
+        "stockSources": [
+          "smuggling",
+          "theft",
+          "unlicensed_production"
+        ],
+        "restockPolicy": "world_event_and_smuggling_route",
+        "defaultMarkupRange": [
+          1.25,
+          2
+        ]
+      }
+    ],
+    "priceFormation": {
+      "formula": "max(1, floor(basePrice * scarcity * demand * urgency * condition * legality * relationship) + serviceFee)",
+      "multipliers": {
+        "scarcity": [
+          0.75,
+          1.8
+        ],
+        "demand": [
+          0.85,
+          1.35
+        ],
+        "urgency": [
+          1,
+          1.25
+        ],
+        "condition": [
+          0.6,
+          1.2
+        ],
+        "legality": [
+          1,
+          2
+        ],
+        "relationship": [
+          0.85,
+          1.15
+        ],
+        "combinedClamp": [
+          0.65,
+          2.5
+        ]
+      },
+      "quoteValidWorldMinutes": 15,
+      "priceBreakdownVisibleToPlayer": true,
+      "serverFreezesQuote": true
+    },
+    "townReferencePrices": [
+      {
+        "goodId": "food",
+        "baseCoin": 4,
+        "unit": 1
+      },
+      {
+        "goodId": "water",
+        "baseCoin": 2,
+        "unit": 1
+      },
+      {
+        "goodId": "medicine",
+        "baseCoin": 18,
+        "unit": 1
+      },
+      {
+        "goodId": "materials",
+        "baseCoin": 8,
+        "unit": 1
+      },
+      {
+        "goodId": "fuel",
+        "baseCoin": 10,
+        "unit": 1
+      },
+      {
+        "goodId": "aether",
+        "baseCoin": 12,
+        "unit": 1
+      }
+    ],
+    "servicePrices": {
+      "lodgingPerNightCoin": 8,
+      "storagePerSlotWorldDayCoin": 2,
+      "appraisalCoinFormula": "5 + 2*rarityTier",
+      "minorRepairCoinFormula": "8 + 2*functionalTier + floor(0.15*itemReferenceValue)",
+      "majorRepairCoinFormula": "16 + 3*functionalTier + floor(0.30*itemReferenceValue)",
+      "transportCoinFormula": "floor(6 + 0.4*distanceKm + 0.8*cargoWeight)",
+      "respecServiceCoinFormula": "25*functionalTier",
+      "medicalTreatment": [
+        {
+          "severity": "light",
+          "coin": 25,
+          "medicineUnits": 1
+        },
+        {
+          "severity": "moderate",
+          "coin": 60,
+          "medicineUnits": 2
+        },
+        {
+          "severity": "severe",
+          "coin": 140,
+          "medicineUnits": 4
+        }
+      ],
+      "trainingSessionCoinByFunctionalTier": [
+        {
+          "tier": 1,
+          "coin": 20
+        },
+        {
+          "tier": 2,
+          "coin": 80
+        },
+        {
+          "tier": 3,
+          "coin": 180
+        },
+        {
+          "tier": 4,
+          "coin": 320
+        },
+        {
+          "tier": 5,
+          "coin": 500
+        },
+        {
+          "tier": 6,
+          "coin": 720
+        }
+      ],
+      "trainingRules": [
+        "payment_buys_teacher_and_facility_time_not_instant_xp",
+        "method_and_stage_qualification_still_required",
+        "world_time_and_local_resources_are_consumed"
+      ],
+      "insurance": {
+        "premiumFormula": "max(10, floor(insuredReferenceValue * 0.12 * missionRiskMultiplier))",
+        "deductibleRatio": 0.2,
+        "reserveFundRequired": true
+      }
+    },
+    "buyback": {
+      "baseReferenceValueRatioByRarity": {
+        "common": 0.55,
+        "uncommon": 0.5,
+        "rare": 0.45,
+        "epic": 0.35,
+        "mythic": 0.25
+      },
+      "merchantLiquidityMultiplierRange": [
+        0.5,
+        1
+      ],
+      "conditionMultiplierRange": [
+        0.25,
+        1
+      ],
+      "sameMerchantRoundTripLossMin": 0.2,
+      "merchantCashBalanceRequired": true,
+      "infiniteBuybackForbidden": true
+    },
+    "spendingTargetsByRunBand": [
+      {
+        "runMin": 0,
+        "runMax": 6,
+        "survivalAndLodging": 0.45,
+        "equipmentAndRepair": 0.25,
+        "training": 0.15,
+        "insuranceAndLogistics": 0,
+        "reserve": 0.15
+      },
+      {
+        "runMin": 7,
+        "runMax": 17,
+        "survivalAndLodging": 0.25,
+        "equipmentAndRepair": 0.25,
+        "training": 0.2,
+        "insuranceAndLogistics": 0.2,
+        "reserve": 0.1
+      },
+      {
+        "runMin": 18,
+        "runMax": 30,
+        "survivalAndLodging": 0.15,
+        "equipmentAndRepair": 0.2,
+        "training": 0.2,
+        "insuranceAndLogistics": 0.3,
+        "taxDebtAndPermits": 0.05,
+        "reserve": 0.1
+      }
+    ],
+    "transactionProtocol": {
+      "steps": [
+        "create_server_quote",
+        "reserve_inventory_or_service_capacity",
+        "reserve_buyer_funds",
+        "settle_currency_transfer",
+        "settle_item_or_service_transfer",
+        "emit_atomic_receipt"
+      ],
+      "atomic": true,
+      "idempotencyKeyRequired": true,
+      "partialSettlementForbidden": true,
+      "inventoryRestockOnUiReopenForbidden": true,
+      "negativeBalanceForbidden": true,
+      "phantomInventoryForbidden": true
+    },
+    "requiredEvents": [
+      "economy.shop_quote_created",
+      "economy.shop_inventory_reserved",
+      "economy.purchase_settled",
+      "economy.sale_settled",
+      "economy.service_completed",
+      "economy.insurance_premium_paid",
+      "economy.insurance_claim_paid",
+      "economy.tax_paid",
+      "economy.currency_retired"
+    ],
+    "telemetryGates": {
+      "grossRunClaimsSpentInShopsRange": [
+        0.35,
+        0.55
+      ],
+      "standardNoShopCompletionRateRange": [
+        0.15,
+        0.3
+      ],
+      "sameMerchantRoundTripLossMin": 0.2,
+      "singleMandatoryListingPurchaseRateMax": 0.4,
+      "priceQuoteMismatchCount": 0,
+      "negativeBalanceCount": 0,
+      "phantomInventoryCount": 0,
+      "merchantOverspendCount": 0
+    }
+  },
+  "economyAndAntiExploitation": {
+    "rewardEscrowRequired": true,
+    "rewardSourceTypes": [
+      "contract_escrow",
+      "organization_budget",
+      "enemy_or_scene_inventory",
+      "world_reservoir",
+      "audited_salvage",
+      "legal_world_mint"
+    ],
+    "targetWorldMintToRetirementRatioRange": [
+      0.95,
+      1.05
+    ],
+    "targetPlayerIncomeToOutflowRatioRange": [
+      0.9,
+      1.1
+    ],
+    "shopSpendShareOfGrossClaimsRange": [
+      0.35,
+      0.55
+    ],
+    "exploitationHeat": {
+      "sameRouteOrBossFamilyIncrement": 20,
+      "sameEventTemplateConsecutiveIncrement": 12,
+      "dailyDecay": 15,
+      "yieldBands": [
+        {
+          "min": 0,
+          "max": 24,
+          "yieldMultiplier": 1
+        },
+        {
+          "min": 25,
+          "max": 49,
+          "yieldMultiplier": 0.85
+        },
+        {
+          "min": 50,
+          "max": 74,
+          "yieldMultiplier": 0.65
+        },
+        {
+          "min": 75,
+          "max": 100,
+          "yieldMultiplier": 0.4
+        }
+      ],
+      "scoreUnaffected": true,
+      "mustHaveWorldExplanation": true
+    }
+  },
+  "missionScoring": {
+    "scale": {
+      "min": 0,
+      "max": 100
+    },
+    "components": [
+      {
+        "id": "objectiveCompletion",
+        "weight": 0.3
+      },
+      {
+        "id": "evidenceQuality",
+        "weight": 0.15
+      },
+      {
+        "id": "timeEfficiency",
+        "weight": 0.1
+      },
+      {
+        "id": "resourceEfficiency",
+        "weight": 0.1
+      },
+      {
+        "id": "legality",
+        "weight": 0.1
+      },
+      {
+        "id": "safety",
+        "weight": 0.1
+      },
+      {
+        "id": "stakeholderOutcome",
+        "weight": 0.1
+      },
+      {
+        "id": "worldConsistency",
+        "weight": 0.05
+      }
+    ],
+    "grades": [
+      {
+        "id": "failed",
+        "min": 0,
+        "max": 59
+      },
+      {
+        "id": "passed",
+        "min": 60,
+        "max": 74
+      },
+      {
+        "id": "good",
+        "min": 75,
+        "max": 87
+      },
+      {
+        "id": "excellent",
+        "min": 88,
+        "max": 95
+      },
+      {
+        "id": "extraordinary",
+        "min": 96,
+        "max": 100,
+        "additionalRequirements": [
+          "all_required_hidden_goals_completed",
+          "no_hard_violation",
+          "evidence_complete"
+        ]
+      }
+    ],
+    "forbiddenInputs": [
+      "combat_readiness",
+      "raw_enemy_threat",
+      "player_account_age",
+      "rarity_owned",
+      "narrative_claim_without_event_evidence"
+    ]
+  },
+  "ragMemory": {
+    "authoritative": false,
+    "persistentMemoryMaxPerRun": 3,
+    "capsuleTokenCaps": {
+      "node": 128,
+      "route": 96,
+      "run": 160
+    },
+    "salienceFormula": "0.30*consequence + 0.20*novelty + 0.20*identityRelevance + 0.20*worldImpact + 0.10*witnessAndEvidence",
+    "solidificationThreshold": 70,
+    "recurrenceForConsolidation": 3,
+    "requiredFields": [
+      "source_event_ids",
+      "node_id",
+      "route",
+      "player_choice",
+      "resource_delta_pointer",
+      "injury_or_status_pointer",
+      "unlock_pointer",
+      "witnesses",
+      "canon_status"
+    ],
+    "panel": {
+      "salientMemoryCountRange": [
+        0,
+        3
+      ],
+      "canonCoverageRange": [
+        0,
+        1
+      ],
+      "retrievalConfidenceRange": [
+        0,
+        1
+      ],
+      "noveltyRange": [
+        0,
+        100
+      ],
+      "memoryLoadRange": [
+        0,
+        100
+      ],
+      "traceabilityRange": [
+        0,
+        1
+      ]
+    },
+    "forbidden": [
+      "balance_mutation",
+      "ledger_mutation",
+      "reward_creation",
+      "control_transfer",
+      "locked_content_recall",
+      "unselected_route_as_fact"
+    ]
+  },
+  "progressionPacing30Runs": [
+    {
+      "runMin": 0,
+      "runMax": 2,
+      "targetFunctionalStage": [
+        1,
+        1
+      ],
+      "echoSlots": 1,
+      "physicalBringInSlots": 3,
+      "deploymentCapacity": 6,
+      "insuranceLayers": 0,
+      "targetOwnedSkillNodeShare": 0.12,
+      "designGoal": "确定主体系、主传承与第一项核心技法"
+    },
+    {
+      "runMin": 3,
+      "runMax": 6,
+      "targetFunctionalStage": [
+        1,
+        2
+      ],
+      "echoSlots": 2,
+      "physicalBringInSlots": 3,
+      "deploymentCapacity": 6,
+      "insuranceLayers": 0,
+      "targetOwnedSkillNodeShare": 0.2,
+      "designGoal": "形成第一套可重复循环并解锁反应槽"
+    },
+    {
+      "runMin": 7,
+      "runMax": 11,
+      "targetFunctionalStage": [
+        2,
+        3
+      ],
+      "echoSlots": 3,
+      "physicalBringInSlots": 4,
+      "deploymentCapacity": 7,
+      "insuranceLayers": 1,
+      "targetOwnedSkillNodeShare": 0.28,
+      "designGoal": "确立主分支并获得第一项局外容错"
+    },
+    {
+      "runMin": 12,
+      "runMax": 17,
+      "targetFunctionalStage": [
+        3,
+        3
+      ],
+      "echoSlots": 4,
+      "physicalBringInSlots": 4,
+      "deploymentCapacity": 8,
+      "insuranceLayers": 1,
+      "targetOwnedSkillNodeShare": 0.35,
+      "designGoal": "构筑身份风格，允许一个可转译辅体系入口"
+    },
+    {
+      "runMin": 18,
+      "runMax": 24,
+      "targetFunctionalStage": [
+        3,
+        4
+      ],
+      "echoSlots": 5,
+      "physicalBringInSlots": 5,
+      "deploymentCapacity": 9,
+      "insuranceLayers": 2,
+      "targetOwnedSkillNodeShare": 0.4,
+      "designGoal": "强化横向策略与领域能力，不扩大纯数值碾压"
+    },
+    {
+      "runMin": 25,
+      "runMax": 30,
+      "targetFunctionalStage": [
+        4,
+        5
+      ],
+      "echoSlots": 6,
+      "physicalBringInSlots": 5,
+      "deploymentCapacity": 10,
+      "insuranceLayers": 2,
+      "targetOwnedSkillNodeShare": 0.45,
+      "designGoal": "形成成熟流派，阶段六作为高表现冲刺而非保底"
+    }
+  ],
+  "eventContracts": {
+    "requiredEventTypes": [
+      "progression.attribute_evidence_recorded",
+      "progression.attribute_point_increased",
+      "progression.method_practice_recorded",
+      "progression.functional_stage_advanced",
+      "progression.skill_node_unlocked",
+      "progression.skill_node_respecced",
+      "progression.talent_manifested",
+      "lineage.echo_slot_unlocked",
+      "lineage.insurance_bound",
+      "run.started",
+      "run.node_resolved",
+      "run.offer_generated",
+      "run.extracted",
+      "run.failed",
+      "identity.death_confirmed",
+      "economy.reward_escrow_reserved",
+      "economy.reward_escrow_released",
+      "economy.shop_quote_created",
+      "economy.shop_inventory_reserved",
+      "economy.purchase_settled",
+      "economy.sale_settled",
+      "economy.service_completed",
+      "economy.insurance_premium_paid",
+      "economy.insurance_claim_paid",
+      "economy.currency_retired",
+      "memory.run_capsule_solidified"
+    ],
+    "receiptFields": [
+      "eventId",
+      "actorId",
+      "identityId",
+      "worldVersion",
+      "contentVersion",
+      "rulesetVersion",
+      "balanceVersion",
+      "seed",
+      "seedHash",
+      "catalogHash",
+      "sourceEventIds",
+      "beforeHash",
+      "afterHash",
+      "occurredAtWorldMinute"
+    ]
+  },
+  "simulationGates": {
+    "smokeRunsPerChange": 10000,
+    "releaseRunsPerChange": 100000,
+    "matchupsPerTierBuildPair": 10000,
+    "thirtyRunCohorts": 20000,
+    "targets": {
+      "equalMatchupWinRateRange": [
+        0.45,
+        0.55
+      ],
+      "oneFunctionalTierAdvantageWinRateRange": [
+        0.65,
+        0.75
+      ],
+      "twoFunctionalTierAdvantageWinRateRange": [
+        0.85,
+        0.93
+      ],
+      "standardFinalExtractionRateRange": [
+        0.45,
+        0.55
+      ],
+      "standardBossDefeatRateRange": [
+        0.35,
+        0.45
+      ],
+      "earlyDepthFailureRateMax": 0.1,
+      "scoreDifficultyAbsoluteCorrelationMax": 0.15,
+      "singleFarmRouteOutputShareMax": 0.15,
+      "deadOfferRateMax": 0.01,
+      "midRunCoherentBuildRateMin": 0.75,
+      "topThreeBuildShareMax": 0.45,
+      "singleBoonMandatoryPickRateMax": 0.35,
+      "shopSpendShareRange": [
+        0.35,
+        0.55
+      ],
+      "ragKeyFactRecallMin": 0.95,
+      "ragRoutePrecisionMin": 0.9,
+      "ragAuthoritativeOverwriteCount": 0,
+      "replayDiffCount": 0,
+      "conservationError": 0
+    }
+  }
+}

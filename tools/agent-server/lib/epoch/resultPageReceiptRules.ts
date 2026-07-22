@@ -2,6 +2,25 @@ import type { EpochEvent } from "./events.ts";
 import type { EpochProjection } from "./gameCore.ts";
 import { normalizeTrustClass, type EpochEventType, type EpochTrustClass } from "./protocol.ts";
 import {
+  JOURNEY_RUN_RECEIPT_AUTHORITY,
+  JOURNEY_RUN_RECEIPT_VERSION,
+  isLegacyJourneyRunReceiptV1,
+  validateJourneyRunReceipt,
+  type JourneyRunReceipt,
+} from "./journeyRunReceiptRules.ts";
+import {
+  PHASE6_RESULT_PAGE_SCORE_DIMENSIONS,
+  buildPhase6MachineReadableResultPage,
+  type Phase6MachineReadableResultPage,
+  type Phase6ResultPageInput,
+  type Phase6ResultPageChange,
+  type Phase6ResultPageChangeSet,
+  type Phase6ResultPageFinding,
+  type Phase6ResultPageFindingCode,
+  type Phase6ResultPageReceiptEventRef,
+  type Phase6ResultPageScoreDetail,
+} from "./phase6ResultPageRules.ts";
+import {
   stableResultPageJson,
 } from "./resultPageRuntimeRules.ts";
 import type {
@@ -14,8 +33,250 @@ import { sha256Hex } from "./runtimeAuth.ts";
 
 type AnyRecord = Readonly<Record<string, unknown>>;
 
+export interface EpochResultPagePhase6Sidecar {
+  readonly ok: boolean;
+  readonly verified: boolean;
+  readonly page?: Phase6MachineReadableResultPage;
+  readonly findings: readonly Phase6ResultPageFinding[];
+}
+
+export type EpochResultPageReceiptWithPhase6 = EpochResultPageReceipt & {
+  readonly phase6?: EpochResultPagePhase6Sidecar;
+};
+
 function recordValue(value: unknown): AnyRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as AnyRecord : {};
+}
+
+function resultPagePhase6Finding(
+  code: Phase6ResultPageFindingCode,
+  message: string,
+  path?: string,
+  details?: Readonly<Record<string, unknown>>,
+): Phase6ResultPageFinding {
+  return { code, severity: "error", message, path, details };
+}
+
+function uniqueNonEmpty(values: readonly unknown[]): readonly string[] {
+  return [...new Set(values.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim()))];
+}
+
+function journeyRunReceiptCanonicalEventIds(receipt: JourneyRunReceipt): readonly string[] {
+  return uniqueNonEmpty([
+    ...receipt.eventIds.source,
+    ...receipt.eventIds.settlement,
+    ...receipt.eventIds.derived,
+  ]);
+}
+
+function journeyRunReceiptDeltasEventIds(receipt: JourneyRunReceipt): readonly string[] {
+  return uniqueNonEmpty(receipt.deltas.flatMap((delta) => delta.eventIds));
+}
+
+function validateJourneyRunReceiptForResultPage(
+  receipt: JourneyRunReceipt | undefined,
+  knownEventIds: ReadonlySet<string>,
+): readonly Phase6ResultPageFinding[] {
+  const findings: Phase6ResultPageFinding[] = [];
+  if (!receipt) {
+    findings.push(resultPagePhase6Finding(
+      "PHASE6_RESULT_PAGE_INPUT_MISSING",
+      "JourneyRunReceipt is required for Phase 6 result page sidecar",
+      "journeyRunReceipt",
+    ));
+    return findings;
+  }
+  if (isLegacyJourneyRunReceiptV1(receipt)) {
+    findings.push(resultPagePhase6Finding(
+      "PHASE6_RESULT_PAGE_SECTION_INVALID",
+      "JourneyRunReceipt v1 is legacy read-only and is not strict enough for a verified Phase 6 result page",
+      "journeyRunReceipt.version",
+      { receiptType: receipt.receiptType, version: receipt.version },
+    ));
+    return findings;
+  }
+  if (receipt.receiptType !== "journey_run_receipt" || receipt.version !== JOURNEY_RUN_RECEIPT_VERSION) {
+    findings.push(resultPagePhase6Finding(
+      "PHASE6_RESULT_PAGE_SECTION_INVALID",
+      "JourneyRunReceipt type or version is invalid",
+      "journeyRunReceipt.version",
+      { receiptType: receipt.receiptType, version: receipt.version },
+    ));
+  }
+  if (receipt.authority !== JOURNEY_RUN_RECEIPT_AUTHORITY) {
+    findings.push(resultPagePhase6Finding(
+      "PHASE6_RESULT_PAGE_AUDIT_INTEGRITY_FAILED",
+      "JourneyRunReceipt authority must be server_settled",
+      "journeyRunReceipt.authority",
+      { authority: receipt.authority },
+    ));
+  }
+  const strictValidation = validateJourneyRunReceipt(receipt);
+  if (!strictValidation.ok) {
+    for (const issue of strictValidation.issues) {
+      findings.push(resultPagePhase6Finding(
+        "PHASE6_RESULT_PAGE_AUDIT_INTEGRITY_FAILED",
+        issue.code,
+        `journeyRunReceipt${issue.path === "$" ? "" : issue.path.slice(1)}`,
+      ));
+    }
+  }
+  const canonicalEventIds = journeyRunReceiptCanonicalEventIds(receipt);
+  if (canonicalEventIds.length === 0) {
+    findings.push(resultPagePhase6Finding(
+      "PHASE6_RESULT_PAGE_SECTION_INVALID",
+      "JourneyRunReceipt must provide canonical eventIds",
+      "journeyRunReceipt.eventIds",
+    ));
+  }
+  for (const eventId of journeyRunReceiptDeltasEventIds(receipt)) {
+    if (!canonicalEventIds.includes(eventId)) {
+      findings.push(resultPagePhase6Finding(
+        "PHASE6_RESULT_PAGE_RECEIPT_EVENT_MISMATCH",
+        "JourneyRunReceipt delta eventId is not listed in canonical eventIds",
+        "journeyRunReceipt.deltas",
+        { eventId },
+      ));
+    }
+  }
+  for (const eventId of canonicalEventIds) {
+    if (!knownEventIds.has(eventId)) {
+      findings.push(resultPagePhase6Finding(
+        "PHASE6_RESULT_PAGE_RECEIPT_EVENT_MISMATCH",
+        "JourneyRunReceipt eventId is not present in the result page event stream",
+        "journeyRunReceipt.eventIds",
+        { eventId },
+      ));
+    }
+  }
+  return findings;
+}
+
+function phase6ChangeSet(
+  label: string,
+  changes: readonly Phase6ResultPageChange[],
+  eventIds: readonly string[],
+): Phase6ResultPageChangeSet {
+  return changes.length > 0
+    ? { mode: "changed", changes, eventIds }
+    : { mode: "no_change", changes: [], noChangeReason: `${label} did not change in the server-settled receipt`, eventIds };
+}
+
+function phase6ChangesFromDeltas(
+  receipt: JourneyRunReceipt,
+  include: (delta: JourneyRunReceipt["deltas"][number]) => boolean,
+): readonly Phase6ResultPageChange[] {
+  return receipt.deltas.filter(include).map((delta, index) => ({
+    id: `${delta.target.kind}:${delta.target.id}:${index}`,
+    label: `${delta.op} ${delta.target.kind}/${delta.target.id} ${delta.path.join(".")}`,
+    ...(delta.before !== undefined ? { before: delta.before } : {}),
+    ...(delta.after !== undefined ? { after: delta.after } : {}),
+    eventIds: delta.eventIds,
+  }));
+}
+
+function phase6ScoreDetails(receipt: JourneyRunReceipt): readonly Phase6ResultPageScoreDetail[] {
+  const scoreByDimension = {
+    world_impact: receipt.score.world_impact,
+    identity_continuity: receipt.score.integrity,
+    progression_delta: receipt.score.objective,
+    economy_integrity: receipt.score.integrity,
+    settlement_quality: receipt.score.efficiency,
+    rag_grounding: receipt.score.discovery,
+    auditability: receipt.score.integrity,
+    integrity: receipt.score.integrity,
+  } satisfies Record<typeof PHASE6_RESULT_PAGE_SCORE_DIMENSIONS[number], JourneyRunReceipt["score"][keyof JourneyRunReceipt["score"]]>;
+  return PHASE6_RESULT_PAGE_SCORE_DIMENSIONS.map((dimension) => ({
+    dimension,
+    score: scoreByDimension[dimension].value,
+    basis: scoreByDimension[dimension].evidence.join("; ") || "server-settled JourneyRunReceipt metric",
+    source: dimension === "rag_grounding" ? "rag" : dimension.includes("integrity") || dimension === "auditability" ? "integrity" : "settlement",
+    eventIds: journeyRunReceiptCanonicalEventIds(receipt),
+  }));
+}
+
+function buildPhase6ResultPageSidecar(
+  receipt: JourneyRunReceipt | undefined,
+  legacyReceipt: EpochResultPageReceipt,
+  knownEventIds: ReadonlySet<string>,
+): EpochResultPagePhase6Sidecar {
+  const findings = validateJourneyRunReceiptForResultPage(receipt, knownEventIds);
+  if (!receipt || findings.length > 0) {
+    return { ok: false, verified: false, findings };
+  }
+  const canonicalEventIds = journeyRunReceiptCanonicalEventIds(receipt);
+  const canonicalEvents: readonly Phase6ResultPageReceiptEventRef[] = canonicalEventIds.map((eventId) => ({
+    eventId,
+    eventType: "journey_run_settlement",
+    receiptId: receipt.receiptId,
+    runId: receipt.runId,
+    payloadHash: receipt.integrity.bodyHash,
+  }));
+  const worldChanges = phase6ChangesFromDeltas(receipt, (delta) =>
+    delta.target.kind === "world" || delta.target.kind === "region" || delta.target.kind === "world_state");
+  const identityChanges = phase6ChangesFromDeltas(receipt, (delta) =>
+    delta.target.kind === "identity" || delta.path[0] === "identity");
+  const progressionChanges = phase6ChangesFromDeltas(receipt, (delta) =>
+    delta.target.kind === "progression" || delta.path[0] === "progression");
+  const ragChanges = receipt.rag.claims.map((claim) => ({
+    id: claim.claimId,
+    label: `RAG claim ${claim.claimId}`,
+    after: claim,
+    eventIds: canonicalEventIds,
+  }));
+  const input: Phase6ResultPageInput = {
+    receipt: {
+      receiptId: receipt.receiptId,
+      runId: receipt.runId,
+      createdAt: receipt.generatedAt,
+      payloadHash: receipt.integrity.bodyHash,
+      canonicalEventIds,
+      canonicalEvents,
+    },
+    events: canonicalEvents,
+    world: phase6ChangeSet("World", worldChanges, receipt.eventIds.derived),
+    identityProgression: {
+      identity: phase6ChangeSet("Identity", identityChanges, receipt.eventIds.derived),
+      progression: phase6ChangeSet("Progression", progressionChanges, receipt.eventIds.derived),
+    },
+    settlement: {
+      status: "settled",
+      settlementId: receipt.receiptId,
+      eventIds: receipt.eventIds.settlement,
+      economyConservation: {
+        conserved: true,
+        assets: [],
+        auditFindingIds: [],
+      },
+    },
+    scores: phase6ScoreDetails(receipt),
+    rag: {
+      ...phase6ChangeSet("RAG", ragChanges, canonicalEventIds),
+      evidenceIds: receipt.rag.claims.map((claim) => claim.sourceId),
+      retrievalSnapshotId: receipt.rag.queryHash,
+    },
+    audit: {
+      auditId: receipt.receiptId,
+      eventIds: canonicalEventIds,
+      integrity: {
+        ok: true,
+        receiptPayloadHash: receipt.integrity.bodyHash,
+        resultPagePayloadHash: legacyReceipt.payloadHash,
+        canonicalEventIds,
+        checkedAt: legacyReceipt.generatedAt,
+      },
+    },
+  };
+  const resultPage = buildPhase6MachineReadableResultPage(input);
+  if (!resultPage.verified) {
+    return { ok: false, verified: false, findings: resultPage.findings };
+  }
+  return {
+    ok: true,
+    verified: true,
+    findings: [],
+    page: resultPage.page,
+  };
 }
 
 export function resultPageReceiptFocus(payload: Omit<EpochResultPagePayload, "receipt">): EpochResultPageReceipt["focus"] {
@@ -211,13 +472,14 @@ function resultReceiptTrustLabels(
 export function resultPageReceipt(
   projection: EpochProjection,
   payload: Omit<EpochResultPagePayload, "receipt">,
+  journeyRunReceipt?: JourneyRunReceipt,
 ): EpochResultPageReceipt {
   const focus = resultPageReceiptFocus(payload);
   const canonicalEvents = resultPageReceiptEvents(projection, payload, focus);
   const mode = resultReceiptMode(payload, canonicalEvents);
   const trustLabels = resultReceiptTrustLabels(payload, canonicalEvents);
   const payloadHash = `sha256:${sha256Hex(stableResultPageJson(payload))}`;
-  return {
+  const receipt: EpochResultPageReceipt = {
     receiptType: "server_result_receipt",
     payloadHash,
     generatedAt: payload.generatedAt,
@@ -232,4 +494,13 @@ export function resultPageReceipt(
     trustedExecution: resultPageTrustedExecutionReceipts(projection, payload, payloadHash),
     canonicalEvents,
   };
+  const knownEventIds = new Set([
+    ...projection.events.map((event) => event.eventId),
+    ...payload.progress.latestEvents.map((event) => event.eventId),
+    ...canonicalEvents.map((event) => event.eventId),
+  ]);
+  return {
+    ...receipt,
+    phase6: buildPhase6ResultPageSidecar(journeyRunReceipt, receipt, knownEventIds),
+  } as EpochResultPageReceiptWithPhase6;
 }

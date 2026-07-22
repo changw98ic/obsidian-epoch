@@ -3623,6 +3623,12 @@
     ]
   },
   "tools": [
+    "obsidian_epoch.command",
+    "obsidian_epoch.world_snapshot",
+    "obsidian_epoch.player_panel",
+    "obsidian_epoch.ten_run_audit",
+    "obsidian_epoch.world_health",
+    "obsidian_epoch.world_migrate",
     "obsidian_epoch.quickstart",
     "obsidian_epoch.identity",
     "obsidian_epoch.rotate_recovery",

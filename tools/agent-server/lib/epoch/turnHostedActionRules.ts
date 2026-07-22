@@ -83,7 +83,11 @@ export const FIRST_RUN_SETTLED_EVENT_TYPES: ReadonlySet<EpochEventType> = new Se
   "hosted_action_recorded",
 ]);
 export const MAX_HIGH_RISK_SETTLED_ACTIONS_PER_IDENTITY = 2;
-export const MAX_REPEATABLE_BASIC_REWARDS_PER_IDENTITY = 2;
+export const SETTLED_ACTION_WINDOW_SIZE = 8;
+export const MAX_REPEATABLE_BASIC_REWARDS_PER_WINDOW = 2;
+// Retained as a compatibility export. The limit now applies to the rolling
+// action window instead of permanently capping an identity's progression.
+export const MAX_REPEATABLE_BASIC_REWARDS_PER_IDENTITY = MAX_REPEATABLE_BASIC_REWARDS_PER_WINDOW;
 
 export const REPEATABLE_BASIC_REWARD_KEYS: Readonly<Record<string, string>> = {
   hosted_assist: "assist",
@@ -93,6 +97,7 @@ export const REPEATABLE_BASIC_REWARD_KEYS: Readonly<Record<string, string>> = {
 };
 
 export interface TurnHostedActionRewardGrantPayloadInput {
+  readonly agentId: string;
   readonly reward: EpochServerReward;
   readonly balanceBefore: number;
 }
@@ -200,8 +205,14 @@ export function isHighRiskSettledEvent(event: EpochEvent): boolean {
     || (typeof event.payload.lifetimeDelta === "number" && event.payload.lifetimeDelta < 0);
 }
 
+function recentSettledPlayableActions(current: EpochProjection, agentId: string): readonly EpochEvent[] {
+  return current.events
+    .filter((event) => event.agentId === agentId && FIRST_RUN_SETTLED_EVENT_TYPES.has(event.eventType))
+    .slice(-SETTLED_ACTION_WINDOW_SIZE);
+}
+
 export function highRiskSettledActionCount(current: EpochProjection, agentId: string): number {
-  return current.events.filter((event) => event.agentId === agentId && isHighRiskSettledEvent(event)).length;
+  return recentSettledPlayableActions(current, agentId).filter(isHighRiskSettledEvent).length;
 }
 
 export function includeHighRiskOptions(current: EpochProjection, agentId: string): boolean {
@@ -213,8 +224,7 @@ export function repeatableBasicRewardKey(reward: EpochServerReward | undefined):
 }
 
 export function repeatableBasicRewardCount(current: EpochProjection, agentId: string, rewardKey: string): number {
-  return current.events.filter((event) => {
-    if (event.agentId !== agentId) return false;
+  return recentSettledPlayableActions(current, agentId).filter((event) => {
     if (event.eventType !== "turn_resolved" && event.eventType !== "hosted_action_recorded") return false;
     return repeatableBasicRewardKey(event.payload.reward) === rewardKey;
   }).length;
@@ -227,7 +237,7 @@ export function includeRepeatableBasicReward(
 ): boolean {
   const rewardKey = repeatableBasicRewardKey(reward);
   if (!rewardKey) return true;
-  return repeatableBasicRewardCount(current, agentId, rewardKey) < MAX_REPEATABLE_BASIC_REWARDS_PER_IDENTITY;
+  return repeatableBasicRewardCount(current, agentId, rewardKey) < MAX_REPEATABLE_BASIC_REWARDS_PER_WINDOW;
 }
 
 export function visibleHostedReward(
@@ -237,6 +247,31 @@ export function visibleHostedReward(
 ): EpochServerReward | undefined {
   if (!current || !agentId) return reward;
   return includeRepeatableBasicReward(current, agentId, reward) ? reward : undefined;
+}
+
+export function settledOutcomeSummary(
+  originalSummary: string,
+  intendedReward: EpochServerReward | undefined,
+  grantedReward: EpochServerReward | undefined,
+  lifetimeDelta?: number,
+): string {
+  if (!intendedReward || grantedReward) return originalSummary;
+  if (typeof lifetimeDelta === "number" && lifetimeDelta < 0) {
+    return "服务器已结算高风险行动并记录寿命代价；基础奖励受保护或处于冷却，本次未发放资源。";
+  }
+  return "服务器已记录并结算该行动；重复基础奖励处于冷却，本次未发放资源。";
+}
+
+function rewardAwareExplanation(
+  explanation: HostedActionOptionPayload["explanation"],
+  intendedReward: EpochServerReward,
+  grantedReward: EpochServerReward | undefined,
+): HostedActionOptionPayload["explanation"] {
+  if (grantedReward) return explanation;
+  return {
+    ...explanation,
+    expectedBenefit: `留下可审计行动记录；${intendedReward.resourceId} 基础奖励处于冷却，本次不发放资源。`,
+  };
 }
 
 export function firstRunSettlementPolicy(
@@ -302,6 +337,10 @@ export function turnHostedActionRewardGrantPayload(
     amount: input.reward.amount,
     reason: input.reward.reason,
     balanceAfter: input.balanceBefore + input.reward.amount,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: `resource:${input.reward.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(input.reward.amount) * 100n).toString(),
   };
 }
 
@@ -321,24 +360,36 @@ export function hostedActionOptions(input: {
     current,
     agentId,
   } = input;
+  const observeReward: EpochServerReward = { resourceId: "focus", amount: 1, reason: "hosted_observe" };
+  const assistReward: EpochServerReward = { resourceId: "coin", amount: 1, reason: "hosted_assist" };
+  const visibleObserveReward = visibleHostedReward(current, agentId, observeReward);
+  const visibleAssistReward = visibleHostedReward(current, agentId, assistReward);
   const baseOptions: readonly HostedActionOptionPayload[] = [
     {
       actionOptionId: idFactory("action", `observe:${sessionId}`),
       optionKey: "observe",
       label: "观察区域势态",
       risk: "low",
-      explanation: TURN_OPTION_TEMPLATES[0].explanation,
-      outcomeSummary: "服务器记录为一次稳健观察，区域信息被整理。",
-      reward: visibleHostedReward(current, agentId, { resourceId: "focus", amount: 1, reason: "hosted_observe" }),
+      explanation: rewardAwareExplanation(TURN_OPTION_TEMPLATES[0].explanation, observeReward, visibleObserveReward),
+      outcomeSummary: settledOutcomeSummary(
+        "服务器记录为一次稳健观察，区域信息被整理并获得少量专注。",
+        observeReward,
+        visibleObserveReward,
+      ),
+      reward: visibleObserveReward,
     },
     {
       actionOptionId: idFactory("action", `assist:${sessionId}`),
       optionKey: "assist",
       label: "协助区域事务",
       risk: "medium",
-      explanation: TURN_OPTION_TEMPLATES[1].explanation,
-      outcomeSummary: "服务器结算为一次有效协助，获得少量钱币。",
-      reward: visibleHostedReward(current, agentId, { resourceId: "coin", amount: 1, reason: "hosted_assist" }),
+      explanation: rewardAwareExplanation(TURN_OPTION_TEMPLATES[1].explanation, assistReward, visibleAssistReward),
+      outcomeSummary: settledOutcomeSummary(
+        "服务器结算为一次有效协助，获得少量钱币。",
+        assistReward,
+        visibleAssistReward,
+      ),
+      reward: visibleAssistReward,
     },
     {
       actionOptionId: idFactory("action", `anomaly:${sessionId}`),
@@ -515,6 +566,7 @@ export function planTurnCardResolutionEvents(input: PlanTurnCardResolutionEvents
   if (input.reward) {
     if (!input.balanceBefore) throw new Error("turn_resolution_reward_balance_required");
     nextEvents.push(resourceGrantedEvent(input.makeEvent, input.agentId, turnHostedActionRewardGrantPayload({
+      agentId: input.agentId,
       reward: input.reward,
       balanceBefore: input.balanceBefore(input.agentId, input.reward.resourceId),
     })));
@@ -725,6 +777,7 @@ export function planHostedActionSubmissionEvents(input: PlanHostedActionSubmissi
   if (input.reward) {
     if (!input.balanceBefore) throw new Error("hosted_action_reward_balance_required");
     nextEvents.push(resourceGrantedEvent(input.makeEvent, input.agentId, turnHostedActionRewardGrantPayload({
+      agentId: input.agentId,
       reward: input.reward,
       balanceBefore: input.balanceBefore(input.agentId, input.reward.resourceId),
     })));

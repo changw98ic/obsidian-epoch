@@ -53,6 +53,10 @@ test("resource rules plan grant and spend payloads", () => {
     amount: 2,
     reason: "test_grant",
     balanceAfter: 7,
+    accountRef: "agent:agent_alpha",
+    assetKey: "resource:coin",
+    unit: "unit",
+    quantityMinor: "200",
   });
 
   assert.deepEqual(resourceSpendPayload(projection, "agent_alpha", {
@@ -64,6 +68,10 @@ test("resource rules plan grant and spend payloads", () => {
     amount: 2,
     reason: "test_spend",
     balanceAfter: 1,
+    accountRef: "agent:agent_alpha",
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: "200",
   });
 });
 
@@ -83,18 +91,30 @@ test("resource rules plan multi-cost spend payloads against running balances", (
       amount: 2,
       reason: "test_spend:coin:0",
       balanceAfter: 3,
+      accountRef: "agent:agent_alpha",
+      assetKey: "resource:coin",
+      unit: "unit",
+      quantityMinor: "200",
     },
     {
       resourceId: "coin",
       amount: 3,
       reason: "test_spend:coin:1",
       balanceAfter: 0,
+      accountRef: "agent:agent_alpha",
+      assetKey: "resource:coin",
+      unit: "unit",
+      quantityMinor: "300",
     },
     {
       resourceId: "focus",
       amount: 1,
       reason: "test_spend:focus:2",
       balanceAfter: 2,
+      accountRef: "agent:agent_alpha",
+      assetKey: "resource:focus",
+      unit: "unit",
+      quantityMinor: "100",
     },
   ]);
 
@@ -143,6 +163,10 @@ test("resource rules plan grant and spend event sequences", () => {
     amount: 2,
     reason: "test_grant",
     balanceAfter: 7,
+    accountRef: "agent:agent_alpha",
+    assetKey: "resource:coin",
+    unit: "unit",
+    quantityMinor: "200",
   });
   assert.deepEqual(projectResourceGrantBalance({
     events: grantEvents,
@@ -187,6 +211,10 @@ test("resource rules plan grant and spend event sequences", () => {
     amount: 2,
     reason: "test_spend",
     balanceAfter: 1,
+    accountRef: "agent:agent_alpha",
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: "200",
   });
   assert.deepEqual(projectResourceSpendBalance({
     events: spendEvents,

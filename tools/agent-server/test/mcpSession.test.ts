@@ -92,6 +92,39 @@ test("initialize negotiates the frozen MCP 2025-06-18 version set", () => {
   assert.equal(negotiated.protocolVersion, "2025-06-18");
 });
 
+test("initialize accepts current MCP implementation metadata from Claude Code", () => {
+  const parsed = parseMcpInitializeParams({
+    ...validInitializeParams(),
+    clientInfo: {
+      name: "claude-code",
+      title: "Claude Code",
+      version: "2.1.168",
+      description: "Agentic coding client",
+      websiteUrl: "https://claude.ai/code",
+      icons: [{
+        src: "https://claude.ai/icon.png",
+        mimeType: "image/png",
+        sizes: ["32x32", "64x64"],
+        theme: "dark",
+      }],
+    },
+  });
+
+  assert.deepEqual(parsed.clientInfo, {
+    name: "claude-code",
+    title: "Claude Code",
+    version: "2.1.168",
+    description: "Agentic coding client",
+    websiteUrl: "https://claude.ai/code",
+    icons: [{
+      src: "https://claude.ai/icon.png",
+      mimeType: "image/png",
+      sizes: ["32x32", "64x64"],
+      theme: "dark",
+    }],
+  });
+});
+
 test("initialize strictly validates required protocol, capabilities, and clientInfo fields", () => {
   const invalidParams: unknown[] = [
     null,
@@ -107,7 +140,10 @@ test("initialize strictly validates required protocol, capabilities, and clientI
     { ...validInitializeParams(), clientInfo: { name: "", version: "1" } },
     { ...validInitializeParams(), clientInfo: { name: "host", version: 1 } },
     { ...validInitializeParams(), clientInfo: { name: "host", version: "1", title: 1 } },
-    { ...validInitializeParams(), clientInfo: { name: "host", version: "1", websiteUrl: "https://example.com" } },
+    { ...validInitializeParams(), clientInfo: { name: "host", version: "1", websiteUrl: 7 } },
+    { ...validInitializeParams(), clientInfo: { name: "host", version: "1", icons: {} } },
+    { ...validInitializeParams(), clientInfo: { name: "host", version: "1", icons: [{ src: "icon", theme: "auto" }] } },
+    { ...validInitializeParams(), clientInfo: { name: "host", version: "1", unknown: true } },
   ];
   for (const params of invalidParams) {
     assertSessionError(() => parseMcpInitializeParams(params), "mcp_initialize_params_invalid");

@@ -351,6 +351,7 @@ test("Obsidian Epoch downloadable package contains skill and plugin manifests", 
   assert.ok(names.includes("obsidian-epoch/references/one-turn-playbook.md"));
   assert.ok(names.includes("obsidian-epoch/references/smoke-playbook.md"));
   assert.ok(names.includes("obsidian-epoch/references/web-llm-bridge-playbook.md"));
+  assert.ok(names.includes("obsidian-epoch/bin/cliEntrypoint.ts"));
   assert.ok(names.includes("obsidian-epoch/bin/mcp-proxy.ts"));
   assert.ok(names.includes("obsidian-epoch/assets/package-integrity.json"));
   assert.ok(names.includes("package.json"));
@@ -1466,6 +1467,7 @@ test("Obsidian Epoch package carries a full-file integrity manifest", async () =
     assert.equal(file.bytes, content.byteLength);
     assert.match(file.sha256, /^[a-f0-9]{64}$/);
   }
+  assert.ok(manifest.files.some((file: { path: string }) => file.path === "obsidian-epoch/bin/cliEntrypoint.ts"));
   assert.ok(manifest.files.some((file: { path: string }) => file.path === "obsidian-epoch/bin/mcp-proxy.ts"));
   assert.ok(manifest.files.some((file: { path: string }) => file.path === "install-manifest.json"));
   assert.ok(manifest.files.some((file: { path: string }) => file.path === ".codex-plugin/plugin.json"));

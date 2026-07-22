@@ -4,6 +4,7 @@ import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { isDirectEntrypoint } from "./lib/cliEntrypoint.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -435,7 +436,7 @@ export async function runContainerLifecycleGate(image: string) {
   }
 }
 
-if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {
+if (isDirectEntrypoint(import.meta.url)) {
   const image = valueAfterFlag(process.argv.slice(2), "--image");
   if (!image) {
     console.error("container lifecycle gate failed: --image is required");

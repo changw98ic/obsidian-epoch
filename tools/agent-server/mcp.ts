@@ -1,16 +1,48 @@
 import readline from "node:readline";
 import { randomUUID } from "node:crypto";
-import { pathToFileURL } from "node:url";
+import { DatabaseSync } from "node:sqlite";
+import { fileURLToPath } from "node:url";
+import { isDirectEntrypoint } from "./lib/cliEntrypoint.ts";
+import { createJourneyRunReceiptSqliteStore } from "./lib/epoch/journeyRunReceiptStore.ts";
+import { createPhase6CommittedResultSqliteStore } from "./lib/epoch/phase6CommittedResultStore.ts";
+import { createPhase6ExperimentSqliteStore } from "./lib/epoch/phase6ExperimentStore.ts";
+import { createPhase6JourneyContextSqliteStore } from "./lib/epoch/phase6JourneyContextStore.ts";
+import { createPhase6RagTraceStore } from "./lib/epoch/phase6RagTraceStore.ts";
 import { createAgentWorldMcpRuntime, createAgentWorldRemoteMcpRuntime } from "./lib/mcpTools.ts";
 import { handleMcpJsonRpcMessage } from "./lib/mcpJsonRpc.ts";
 import { createMcpServerRequestManager, type McpServerRequestManager } from "./lib/mcpServerRequestManager.ts";
 import { createMcpSamplingClient, type McpSamplingClient } from "./lib/mcpSampling.ts";
 import { createMcpSession } from "./lib/mcpSession.ts";
 import { createMcpStdioTransport } from "./lib/mcpStdioTransport.ts";
+import { applyMcpToolAllowlist } from "./lib/mcpToolAllowlist.ts";
 
-const mcp = process.env.AGENT_WORLD_SERVER
+function createLocalMcpRuntime() {
+  const sqlitePath = process.env.AGENT_SERVER_SQLITE_PATH
+    || fileURLToPath(new URL("./data/agent-world.sqlite", import.meta.url));
+  const db = new DatabaseSync(sqlitePath);
+  const journeyInstanceId = randomUUID().replaceAll("-", "").slice(0, 16);
+  let journeySequence = 0;
+
+  return createAgentWorldMcpRuntime({
+    sqlitePath,
+    journey: {
+      idFactory: (kind: "journey" | "event") =>
+        `${kind}_${journeyInstanceId}_${String(++journeySequence).padStart(8, "0")}`,
+    },
+    epoch: {
+      phase6RunAssemblyRepository: createJourneyRunReceiptSqliteStore(db),
+      phase6JourneyContextStore: createPhase6JourneyContextSqliteStore(db),
+      phase6ExperimentStore: createPhase6ExperimentSqliteStore(db),
+      phase6CommittedResultStore: createPhase6CommittedResultSqliteStore(db),
+      phase6RagTraceStore: createPhase6RagTraceStore(db),
+    },
+  });
+}
+
+const baseMcp = process.env.AGENT_WORLD_SERVER
   ? createAgentWorldRemoteMcpRuntime({ serverBase: process.env.AGENT_WORLD_SERVER })
-  : createAgentWorldMcpRuntime();
+  : createLocalMcpRuntime();
+const mcp = applyMcpToolAllowlist(baseMcp, process.env.PHASE6_MCP_TOOL_ALLOWLIST);
 
 export async function handleJsonRpcMessage(message: Record<string, unknown>) {
   return handleMcpJsonRpcMessage(mcp, message);
@@ -39,7 +71,7 @@ export function createStdioMcpConnection() {
   return { requestManager, sampling, session, transport };
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (isDirectEntrypoint(import.meta.url)) {
   const connection = createStdioMcpConnection();
   const lines = readline.createInterface({
     input: process.stdin,

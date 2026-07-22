@@ -3,9 +3,18 @@ import { spawnSync } from "node:child_process";
 import https from "node:https";
 import http, { type IncomingHttpHeaders } from "node:http";
 import { randomBytes } from "node:crypto";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { isDirectEntrypoint } from "./lib/cliEntrypoint.ts";
 
 function valueAfterFlag(flag: string) {
   const index = process.argv.indexOf(flag);
@@ -106,8 +115,13 @@ async function main() {
   const staticServer = `obsidian-caddy-static-${suffix}`;
   const dataVolume = `obsidian-caddy-data-${suffix}`;
   const configVolume = `obsidian-caddy-config-${suffix}`;
-  const staticRoot = mkdtempSync(join(tmpdir(), "obsidian-caddy-static-"));
+  const gateRoot = realpathSync.native(mkdtempSync(join(tmpdir(), "obsidian-caddy-gate-")));
+  const stagedCaddyfile = join(gateRoot, "Caddyfile");
+  const staticRoot = join(gateRoot, "static");
   try {
+    copyFileSync(caddyfile, stagedCaddyfile);
+    chmodSync(stagedCaddyfile, 0o644);
+    mkdirSync(staticRoot, { mode: 0o755 });
     chmodSync(staticRoot, 0o755);
     const staticHealthFile = join(staticRoot, "health.txt");
     writeFileSync(staticHealthFile, "healthy\n", "utf8");
@@ -116,7 +130,7 @@ async function main() {
       "run", "--rm", "--network=none", "--read-only", "--cap-drop=ALL", "--cap-add=NET_BIND_SERVICE",
       "--security-opt=no-new-privileges:true", "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777",
       "--tmpfs", "/data:rw,noexec,nosuid,nodev,size=32m,mode=1777", "--tmpfs", "/config:rw,noexec,nosuid,nodev,size=8m,mode=1777",
-      "--env", "AGENT_PUBLIC_HOST=localhost", "--volume", `${caddyfile}:/etc/caddy/Caddyfile:ro`,
+      "--env", "AGENT_PUBLIC_HOST=localhost", "--volume", `${stagedCaddyfile}:/etc/caddy/Caddyfile:ro`,
       caddyImage, "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile",
     ]);
     assert.equal(validation.status, 0);
@@ -143,7 +157,7 @@ async function main() {
       "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=32m,mode=1777",
       "--env", "AGENT_PUBLIC_HOST=localhost", "--publish", "127.0.0.1::443/tcp",
       "--health-interval", "1s", "--health-timeout", "2s", "--health-retries", "10",
-      "--volume", `${caddyfile}:/etc/caddy/Caddyfile:ro`,
+      "--volume", `${stagedCaddyfile}:/etc/caddy/Caddyfile:ro`,
       "--volume", `${dataVolume}:/data`, "--volume", `${configVolume}:/config`, caddyImage,
     ]);
     const portOutput = docker(["port", proxy, "443/tcp"]).stdout;
@@ -210,11 +224,13 @@ async function main() {
     docker(["network", "rm", network], true);
     docker(["volume", "rm", dataVolume], true);
     docker(["volume", "rm", configVolume], true);
-    rmSync(staticRoot, { recursive: true, force: true });
+    rmSync(gateRoot, { recursive: true, force: true });
   }
 }
 
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+if (isDirectEntrypoint(import.meta.url)) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

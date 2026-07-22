@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { verifyAttestedExecutionReceipt } from "./lib/attestationSigner.ts";
+import { isDirectEntrypoint } from "./lib/cliEntrypoint.ts";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -232,7 +233,7 @@ async function main() {
   }
 }
 
-if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {
+if (isDirectEntrypoint(import.meta.url)) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

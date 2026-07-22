@@ -1,0 +1,605 @@
+{
+  "catalogId": "obsidian_epoch_infinite_world_causal_core_v1",
+  "version": "0.1.0",
+  "status": "draft",
+  "effectiveDate": "2026-07-20",
+  "scales": {
+    "normalized": {
+      "min": 0,
+      "max": 100
+    },
+    "worldMinute": {
+      "minutesPerHour": 60,
+      "minutesPerDay": 1440
+    }
+  },
+  "hardInvariants": {
+    "canonicalLedgerOnly": true,
+    "llmMayCommitCanonicalEffects": false,
+    "taskRequiresRootPressure": true,
+    "effectRequiresCausalParent": true,
+    "resourceDeltaRequiresSourceOrSink": true,
+    "actorUsesLimitedKnowledge": true,
+    "worldIntensityScalesToPlayer": false,
+    "supernaturalPowerMayDeleteHistory": false,
+    "failedJourneyRequiresWorldConsequenceOrPrivateMirror": true
+  },
+  "simulationLod": {
+    "levels": [
+      {
+        "id": 0,
+        "label": "aggregate",
+        "tickIntervalWorldMinutes": 1440,
+        "models": [
+          "population_stock_flow",
+          "ecology_stock_flow",
+          "regional_supply_demand",
+          "background_faction_pressure"
+        ]
+      },
+      {
+        "id": 1,
+        "label": "named_background",
+        "tickIntervalWorldMinutes": 360,
+        "models": [
+          "needs",
+          "commitments",
+          "goal_selection",
+          "coarse_action_resolution"
+        ]
+      },
+      {
+        "id": 2,
+        "label": "important_active",
+        "tickIntervalWorldMinutes": 60,
+        "models": [
+          "belief_updates",
+          "plans",
+          "resource_reservations",
+          "institutional_actions"
+        ]
+      },
+      {
+        "id": 3,
+        "label": "present_or_journey",
+        "tickIntervalWorldMinutes": 5,
+        "models": [
+          "fine_actions",
+          "dialogue",
+          "combat",
+          "immediate_observations"
+        ]
+      }
+    ],
+    "promotion": {
+      "playerProximity": true,
+      "criticalPressureSeverity": 75,
+      "irreversibleEvent": true,
+      "activeCommitmentDueWithinWorldMinutes": 1440
+    },
+    "demotion": {
+      "minimumQuietWorldMinutes": 10080,
+      "maximumActivePressureSeverity": 29,
+      "preserve": [
+        "commitments",
+        "debts",
+        "injuries",
+        "ownership",
+        "relationships",
+        "key_beliefs",
+        "open_cases"
+      ]
+    }
+  },
+  "pressure": {
+    "types": [
+      "survival",
+      "economic",
+      "social",
+      "political",
+      "legal",
+      "ecological",
+      "military",
+      "informational",
+      "supernatural"
+    ],
+    "states": [
+      "latent",
+      "detected",
+      "contested",
+      "mobilized",
+      "resolving",
+      "resolved",
+      "transformed",
+      "dormant",
+      "catastrophic"
+    ],
+    "severityBands": [
+      {
+        "id": "background",
+        "min": 0,
+        "max": 19
+      },
+      {
+        "id": "local",
+        "min": 20,
+        "max": 39
+      },
+      {
+        "id": "serious",
+        "min": 40,
+        "max": 59
+      },
+      {
+        "id": "critical",
+        "min": 60,
+        "max": 79
+      },
+      {
+        "id": "catastrophic",
+        "min": 80,
+        "max": 100
+      }
+    ],
+    "reviewIntervalsWorldMinutes": {
+      "background": 10080,
+      "local": 1440,
+      "serious": 360,
+      "critical": 60,
+      "catastrophic": 5
+    },
+    "opportunityThreshold": 25,
+    "automaticInstitutionResponseThreshold": 45,
+    "criticalEscalationThreshold": 75,
+    "maximumUnaddressedCriticalWorldMinutes": 4320
+  },
+  "actorMind": {
+    "activeGoalSlots": 3,
+    "queuedGoalSlots": 5,
+    "maximumFallbackPlansPerGoal": 2,
+    "goalAdoptionThreshold": 52,
+    "goalReplacementMargin": 12,
+    "minimumCommitmentWeightToBlockGoal": 65,
+    "goalScoreWeights": {
+      "needRelief": 0.2,
+      "valueFit": 0.12,
+      "roleDuty": 0.1,
+      "relationshipDuty": 0.1,
+      "expectedGain": 0.08,
+      "identityFit": 0.08,
+      "urgency": 0.12,
+      "feasibility": 0.2,
+      "expectedRiskPenalty": 0.16,
+      "resourceCostPenalty": 0.1,
+      "legalCostPenalty": 0.08,
+      "commitmentConflictPenalty": 0.12
+    },
+    "riskToleranceDefaults": {
+      "cautious": 25,
+      "normal": 50,
+      "bold": 70,
+      "reckless": 90
+    },
+    "needCriticalThreshold": 80,
+    "needRecoveryThreshold": 35
+  },
+  "information": {
+    "beliefAdoptionThreshold": 58,
+    "beliefRejectionThreshold": 25,
+    "minimumConfidence": 1,
+    "maximumConfidence": 99,
+    "directObservationBaseConfidence": 86,
+    "propagation": {
+      "formula": "sourceConfidence * channelFidelity * domainTrust * evidenceFactor * hopDecay * timeDecay",
+      "hopDecay": 0.9,
+      "dailyTimeDecay": 0.995,
+      "confirmationBiasMaximumModifier": 1.15,
+      "contradictionMaximumModifier": 0.65
+    },
+    "channelFidelity": {
+      "direct_sight": 0.94,
+      "certified_record": 0.92,
+      "trusted_private_message": 0.85,
+      "public_news": 0.78,
+      "organization_notice": 0.8,
+      "market_gossip": 0.62,
+      "anonymous_rumor": 0.42,
+      "dream_or_vision": 0.5
+    },
+    "maximumAutomaticPropagationHopsPerTick": 3,
+    "refutationAutomaticallyDeletesBelief": false,
+    "ragRequiresKnowledgeView": true,
+    "semanticFallbackMustBeVisible": true
+  },
+  "economy": {
+    "inventoryBuckets": [
+      "available",
+      "reserved",
+      "in_transit",
+      "held_in_custody",
+      "equipped",
+      "leased",
+      "seized",
+      "damaged",
+      "consumed",
+      "destroyed"
+    ],
+    "ownershipInterests": [
+      "title",
+      "possession",
+      "custody",
+      "lease",
+      "lien",
+      "mortgage",
+      "seizure",
+      "carry_permission"
+    ],
+    "defaultReservationTtlWorldMinutes": 60,
+    "defaultMarketOrderTtlWorldMinutes": 4320,
+    "partialFillEnabled": true,
+    "negativeBalanceAllowed": false,
+    "shopMayCreateUnstockedItem": false,
+    "backgroundMarketMayUseAggregateClearing": true,
+    "activeMarketRequiresOrders": true,
+    "workOrder": {
+      "minimumQuality": 1,
+      "maximumQuality": 100,
+      "baseWasteRate": 0.08,
+      "minimumWasteRate": 0.01,
+      "maximumWasteRate": 0.45,
+      "facilityOverloadThreshold": 0.85,
+      "facilityBreakdownBaseChance": 0.01,
+      "unfinishedGoodsAreInventory": true
+    },
+    "credit": {
+      "enabled": true,
+      "minimumCreditScore": 20,
+      "defaultGraceWorldMinutes": 1440,
+      "bankruptcyTriggerMissedPayments": 3,
+      "basicSurvivalAssetsProtected": true,
+      "debtMayBeSilentlyCleared": false
+    }
+  },
+  "governance": {
+    "caseStates": [
+      "incident_recorded",
+      "complaint_filed",
+      "authority_detected",
+      "jurisdiction_checked",
+      "investigation_opened",
+      "evidence_collected",
+      "charge_filed",
+      "dismissed",
+      "hearing_scheduled",
+      "verdict_issued",
+      "appeal_filed",
+      "enforcement_started",
+      "restitution_completed",
+      "sentence_completed",
+      "unresolved",
+      "case_closed",
+      "case_reopened"
+    ],
+    "defaultAppealWindowWorldMinutes": 10080,
+    "criticalCaseMaximumIdleWorldMinutes": 4320,
+    "publicServiceQueueWarningWorldMinutes": 2880,
+    "policyAuditIntervalWorldMinutes": 43200,
+    "consent": {
+      "revocableByDefault": true,
+      "transferrableByDefault": false,
+      "scopeRequired": true,
+      "expiryRequiredForSensitiveActions": true,
+      "emergencyOverrideRequiresReview": true
+    },
+    "reputationDimensions": [
+      "world_fame",
+      "regional_fame",
+      "organization_trust",
+      "professional_credibility",
+      "legal_record",
+      "fear",
+      "individual_trust",
+      "boundary_trust"
+    ]
+  },
+  "opportunity": {
+    "requiresRootPressure": true,
+    "requiresObjectivePredicates": true,
+    "requiresRewardFundingSource": true,
+    "defaultTtlWorldMinutes": 4320,
+    "maximumOpenOpportunitiesPerPressure": 5,
+    "maximumExposedOpportunitiesPerPlayerRegion": 12,
+    "interventionFamilies": [
+      "combat",
+      "investigation",
+      "negotiation",
+      "logistics",
+      "crafting",
+      "medical",
+      "legal",
+      "political",
+      "economic",
+      "stealth",
+      "supernatural",
+      "care"
+    ],
+    "intensityWeights": {
+      "opposition": 0.2,
+      "environmentalHazard": 0.14,
+      "objectiveComplexity": 0.16,
+      "informationUncertainty": 0.13,
+      "logisticalBurden": 0.12,
+      "legalPoliticalRisk": 0.12,
+      "irreversibility": 0.13
+    },
+    "intensityBands": [
+      {
+        "id": "low",
+        "min": 0,
+        "max": 34
+      },
+      {
+        "id": "medium",
+        "min": 35,
+        "max": 59
+      },
+      {
+        "id": "high",
+        "min": 60,
+        "max": 79
+      },
+      {
+        "id": "extreme",
+        "min": 80,
+        "max": 100
+      }
+    ]
+  },
+  "journeyScore": {
+    "weights": {
+      "objectiveCompletion": 0.25,
+      "causalImpact": 0.2,
+      "methodQuality": 0.15,
+      "riskTaken": 0.12,
+      "integrity": 0.1,
+      "resourceEfficiency": 0.1,
+      "discoveryValue": 0.08
+    },
+    "bands": [
+      {
+        "grade": "D",
+        "min": 0,
+        "max": 39
+      },
+      {
+        "grade": "C",
+        "min": 40,
+        "max": 54
+      },
+      {
+        "grade": "B",
+        "min": 55,
+        "max": 69
+      },
+      {
+        "grade": "A",
+        "min": 70,
+        "max": 84
+      },
+      {
+        "grade": "S",
+        "min": 85,
+        "max": 94
+      },
+      {
+        "grade": "SS",
+        "min": 95,
+        "max": 100
+      }
+    ],
+    "combatPowerDirectScoreWeight": 0,
+    "overwhelmingForceSideEffectPenaltyEnabled": true,
+    "nonCombatCleanResolutionCanReachMaximumGrade": true
+  },
+  "outcomes": {
+    "types": [
+      "clean_success",
+      "costly_success",
+      "partial_success",
+      "stalemate",
+      "withdrawal",
+      "failure",
+      "catastrophe"
+    ],
+    "minimumConsequenceDomains": 2,
+    "failureMayResetWorldState": false,
+    "privateMirrorRequiresZeroCanonicalEffects": true,
+    "catastropheRequiresIrreversibilityReview": true
+  },
+  "narrative": {
+    "directorMayCreateFacts": false,
+    "maximumActiveThreadsPerRegion": 7,
+    "maximumPrimaryThreadsPerPlayer": 3,
+    "recentSceneFingerprintWindow": 12,
+    "recentResolutionFamilyWindow": 8,
+    "minimumCooldownWorldMinutes": 10080,
+    "threadDormancyWorldMinutes": 43200,
+    "contentStates": [
+      "draft",
+      "test",
+      "active",
+      "cooldown",
+      "deprecated",
+      "superseded",
+      "retired",
+      "archived"
+    ],
+    "era": {
+      "defaultLengthWorldDays": 21900,
+      "closureRequiresSummary": true,
+      "closureRequiresUnresolvedLegacyList": true,
+      "closureDeletesOpenThreads": false
+    }
+  },
+  "capability": {
+    "requiredFields": [
+      "verbs",
+      "domains",
+      "validTargetTypes",
+      "rangeModelRef",
+      "durationModelRef",
+      "resourceCosts",
+      "timeCostWorldMinutes",
+      "prerequisites",
+      "resistanceModelRef",
+      "sideEffectModelRefs",
+      "evidenceSignatureRefs",
+      "legalClassRefs"
+    ],
+    "timeTravel": {
+      "mayDeleteCanonicalEvents": false,
+      "forecastProducesFact": false,
+      "forecastProducesObservation": true
+    },
+    "memoryAlteration": {
+      "changesFact": false,
+      "changesBeliefOrMemory": true,
+      "leavesEvidenceSignature": true
+    },
+    "resurrection": {
+      "deletesDeathEvent": false,
+      "restoresMissedConsequences": false,
+      "requiresNewLifeStateEvent": true
+    },
+    "teleportation": {
+      "requiresOriginAndDestination": true,
+      "bypassesRouteWithoutExternality": false
+    }
+  },
+  "scheduler": {
+    "phaseOrder": [
+      "ingest_events",
+      "update_fact_projections",
+      "update_world_stocks",
+      "derive_pressures",
+      "update_actor_minds",
+      "generate_action_proposals",
+      "validate_and_reserve",
+      "resolve_actions",
+      "advance_institutions",
+      "propagate_information",
+      "derive_opportunities",
+      "update_narrative_views",
+      "update_indexes_and_metrics",
+      "create_snapshot_if_due"
+    ],
+    "sameTickRecursiveEffectsAllowed": false,
+    "maximumCatchupWindowPerBatchWorldMinutes": 43200,
+    "automaticCatchupLoop": true,
+    "idempotencyRequired": true,
+    "deterministicOrderingRequired": true
+  },
+  "persistence": {
+    "snapshotEveryEvents": 10000,
+    "snapshotEveryWorldMinutes": 360,
+    "partitionEveryEvents": 1000000,
+    "hotHistoryWorldDays": 90,
+    "warmHistoryWorldDays": 730,
+    "coldHistoryRetainsEvidenceChain": true,
+    "startupMayRequireGenesisReplay": false,
+    "offlineGenesisAuditRequired": true,
+    "contentMigrationRequiredForBreakingChanges": true,
+    "readonlyProtectionOnAppendFailure": true,
+    "backupDiscoversLedgersFromSchemaRegistry": true
+  },
+  "health": {
+    "correctnessFailures": [
+      "canonical_append_failure",
+      "orphan_effect",
+      "resource_conservation_violation",
+      "opportunity_without_root_pressure",
+      "ruleset_version_mismatch",
+      "content_version_mismatch"
+    ],
+    "warningThresholds": {
+      "worldClockLagMinutes": 60,
+      "projectionLagEvents": 500,
+      "ragIndexLagEvents": 1000,
+      "snapshotAgeEvents": 20000,
+      "criticalPressureAgeWorldMinutes": 2880,
+      "caseBacklogAgeWorldMinutes": 10080,
+      "contentRepetitionRate": 0.2
+    },
+    "criticalThresholds": {
+      "worldClockLagMinutes": 1440,
+      "projectionLagEvents": 5000,
+      "ragIndexLagEvents": 10000,
+      "snapshotAgeEvents": 100000,
+      "criticalPressureAgeWorldMinutes": 10080,
+      "resourceConservationViolations": 1,
+      "orphanEffects": 1
+    }
+  },
+  "implementationPhases": [
+    {
+      "id": 0,
+      "name": "event_and_projection_boundary",
+      "exitCriteria": [
+        "causal_event_envelope",
+        "schema_registry",
+        "idempotency_contract",
+        "resource_conservation_validator",
+        "orphan_effect_validator"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "pressure_mind_information",
+      "exitCriteria": [
+        "world_pressure_state_machine",
+        "actor_goal_and_commitment",
+        "action_proposal_validation",
+        "fact_observation_claim_belief_separation",
+        "knowledge_view_rag_filter"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "unified_economy_and_opportunity",
+      "exitCriteria": [
+        "unified_inventory",
+        "budget_reservation",
+        "buy_and_sell_orders",
+        "work_orders",
+        "shipment_and_delivery",
+        "pressure_derived_opportunities",
+        "failure_updates_world"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "governance_ecology_narrative",
+      "exitCriteria": [
+        "case_state_machine",
+        "policy_state_machine",
+        "consent_grants",
+        "ecology_population_stock_flow",
+        "readonly_narrative_director",
+        "content_lifecycle"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "lineage_and_long_term_operations",
+      "exitCriteria": [
+        "lineage_projects",
+        "cross_life_commitments",
+        "seekable_snapshots",
+        "history_partitioning",
+        "content_migration_matrix",
+        "automatic_catchup",
+        "world_health_observability"
+      ]
+    }
+  ]
+}

@@ -1,8 +1,80 @@
 import { type EpochEvent } from "./events.ts";
 import { type EpochProjection, type EpochRiskReview } from "./gameCore.ts";
 import { type EpochEventType, type EpochTrustClass } from "./protocol.ts";
+import {
+  extractJourneyRunReceiptEventIds,
+  validateJourneyRunReceipt,
+  type JourneyRunReceipt,
+} from "./journeyRunReceiptRules.ts";
 
 type AnyRecord = Record<string, unknown>;
+
+type JourneyAuditLifecycleStage = "start" | "propose" | "commit" | "settled";
+type JourneyAuditSourceType = "canonical_event" | "validated_result_receipt" | "legacy_mission_audit";
+
+export interface EpochTenRunJourneyAuditEventLink {
+  readonly eventId: string;
+  readonly eventType: string;
+  readonly stage?: JourneyAuditLifecycleStage;
+  readonly sourceType: JourneyAuditSourceType;
+}
+
+export interface EpochTenRunJourneyAuditReceiptLink {
+  readonly receiptId: string;
+  readonly runId: string;
+  readonly journeyId: string;
+  readonly sourceType: "validated_result_receipt";
+  readonly eventIds: readonly string[];
+  readonly matchedEventIds: readonly string[];
+}
+
+export interface EpochTenRunJourneyAuditExclusion {
+  readonly sourceType: JourneyAuditSourceType | "model_narrative" | "unknown";
+  readonly reason: string;
+  readonly runId?: string;
+  readonly journeyId?: string;
+  readonly eventId?: string;
+  readonly eventType?: string;
+  readonly receiptId?: string;
+}
+
+export interface EpochTenRunJourneyAuditEntry {
+  readonly runId: string;
+  readonly journeyId: string;
+  readonly sourceTypes: readonly JourneyAuditSourceType[];
+  readonly mirrorMode: boolean;
+  readonly completed: true;
+  readonly completionBasis: "canonical_settled_event" | "validated_result_receipt";
+  readonly startedAt?: string;
+  readonly settledAt?: string;
+  readonly receipt?: EpochTenRunJourneyAuditReceiptLink;
+  readonly events: readonly EpochTenRunJourneyAuditEventLink[];
+  readonly excluded: readonly EpochTenRunJourneyAuditExclusion[];
+}
+
+export interface EpochTenRunJourneyAudit {
+  readonly ok: boolean;
+  readonly available: number;
+  readonly required: 10;
+  readonly runs: readonly EpochTenRunJourneyAuditEntry[];
+  readonly sourceTypes: readonly JourneyAuditSourceType[];
+  readonly receiptEventLinks: readonly EpochTenRunJourneyAuditReceiptLink[];
+  readonly excluded: readonly EpochTenRunJourneyAuditExclusion[];
+  readonly reason?: string;
+}
+
+type JourneyAuditRunAccumulator = {
+  runId: string;
+  journeyId: string;
+  sourceTypes: Set<JourneyAuditSourceType>;
+  mirrorMode: boolean;
+  settledEvent?: EpochProjection["events"][number];
+  receipt?: EpochTenRunJourneyAuditReceiptLink;
+  events: EpochTenRunJourneyAuditEventLink[];
+  excluded: EpochTenRunJourneyAuditExclusion[];
+  startedAt?: string;
+  settledAt?: string;
+};
 
 export interface EpochAuditEventSummary {
   readonly eventId: string;
@@ -123,6 +195,263 @@ const AUDIT_REDACTED_KEYS = /api.?key|secret|token|signature|visibleText|transcr
 function recordValue(value: unknown): AnyRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value) ? value as AnyRecord : {};
 }
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function booleanValue(value: unknown): boolean {
+  return value === true || value === "true";
+}
+
+function lowerText(...values: readonly unknown[]): string {
+  return values
+    .map((value) => typeof value === "string" ? value : "")
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function uniqueStrings(values: readonly string[]): readonly string[] {
+  return [...new Set(values.filter((value) => value.trim()))];
+}
+
+function canonicalJourneyStage(event: EpochProjection["events"][number]): JourneyAuditLifecycleStage | undefined {
+  const payload = recordValue(event.payload);
+  const actionText = lowerText(
+    event.eventType,
+    payload.eventType,
+    payload.action,
+    payload.actionType,
+    payload.command,
+    payload.kind,
+    payload.phase,
+    payload.status,
+    payload.lifecycle,
+  );
+  const journeyText = lowerText(event.eventType, payload.journeyId, payload.runId, payload.mode, payload.playMode);
+  const isJourney = journeyText.includes("journey") || actionText.includes("journey");
+  if (!isJourney) return undefined;
+  if (actionText.includes("start_journey") || actionText.includes("journey_started") || actionText.includes("journey_start")) return "start";
+  if (actionText.includes("propose") || actionText.includes("proposed") || actionText.includes("proposal")) return "propose";
+  if (actionText.includes("commit") || actionText.includes("committed")) return "commit";
+  if (actionText.includes("settled") || actionText.includes("settlement") || actionText.includes("solidified")) return "settled";
+  return undefined;
+}
+
+function journeyIdFromRecord(record: AnyRecord): string | undefined {
+  return stringValue(record.journeyId)
+    || stringValue(record.journey_id)
+    || stringValue(record.missionJourneyId)
+    || stringValue(record.contextJourneyId);
+}
+
+function runIdFromRecord(record: AnyRecord): string | undefined {
+  return stringValue(record.runId)
+    || stringValue(record.run_id)
+    || stringValue(record.partyRunId)
+    || stringValue(record.missionRunId);
+}
+
+function journeyEventIdentity(event: EpochProjection["events"][number]) {
+  const payload = recordValue(event.payload);
+  const journeyId = journeyIdFromRecord(payload)
+    || (lowerText(event.aggregateType).includes("journey") ? event.aggregateId : undefined)
+    || stringValue(payload.missionId);
+  const runId = runIdFromRecord(payload)
+    || (lowerText(event.aggregateType).includes("run") ? event.aggregateId : undefined)
+    || journeyId;
+  return { journeyId, runId };
+}
+
+function mirrorModeFromRecord(record: AnyRecord): boolean {
+  const mode = lowerText(record.mode, record.playMode, record.runMode, record.journeyMode);
+  return mode.includes("mirror") || booleanValue(record.mirrorMode) || booleanValue(record.isMirror);
+}
+
+function findJourneyRunReceipt(value: unknown, depth = 0): JourneyRunReceipt | undefined {
+  if (depth > 5 || !value || typeof value !== "object") return undefined;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = findJourneyRunReceipt(item, depth + 1);
+      if (nested) return nested;
+    }
+    return undefined;
+  }
+  const record = value as AnyRecord;
+  if (record.receiptType === "journey_run_receipt" && validateJourneyRunReceipt(record).ok) {
+    return record as unknown as JourneyRunReceipt;
+  }
+  for (const nested of Object.values(record)) {
+    const receipt = findJourneyRunReceipt(nested, depth + 1);
+    if (receipt) return receipt;
+  }
+  return undefined;
+}
+
+function exclusionForNonCanonicalEvent(event: EpochProjection["events"][number]): EpochTenRunJourneyAuditExclusion | undefined {
+  const payload = recordValue(event.payload);
+  const text = lowerText(event.eventType, payload.kind, payload.type, payload.source, payload.summary, payload.narrative);
+  if (text.includes("fake") || text.includes("mock") || text.includes("fixture")) {
+    return {
+      sourceType: "legacy_mission_audit",
+      reason: "legacy_fake_run_not_completion_basis",
+      eventId: event.eventId,
+      eventType: event.eventType,
+      runId: runIdFromRecord(payload),
+      journeyId: journeyIdFromRecord(payload),
+    };
+  }
+  if (text.includes("narrative") || text.includes("model")) {
+    return {
+      sourceType: "model_narrative",
+      reason: "model_narrative_not_completion_basis",
+      eventId: event.eventId,
+      eventType: event.eventType,
+      runId: runIdFromRecord(payload),
+      journeyId: journeyIdFromRecord(payload),
+    };
+  }
+  if (lowerText(event.eventType, payload.missionId).includes("mission")) {
+    return {
+      sourceType: "legacy_mission_audit",
+      reason: "legacy_mission_audit_retained_but_not_completion_basis",
+      eventId: event.eventId,
+      eventType: event.eventType,
+      runId: runIdFromRecord(payload),
+      journeyId: journeyIdFromRecord(payload) || stringValue(payload.missionId),
+    };
+  }
+  return undefined;
+}
+
+export function epochTenRunJourneyAudit(projection: EpochProjection): EpochTenRunJourneyAudit {
+  const required = 10 as const;
+  const byRun = new Map<string, JourneyAuditRunAccumulator>();
+  const receiptEventLinks: EpochTenRunJourneyAuditReceiptLink[] = [];
+  const excluded: EpochTenRunJourneyAuditExclusion[] = [];
+  const canonicalEventIds = new Set(projection.events.map((event) => event.eventId));
+
+  function entryFor(runId: string, journeyId: string) {
+    const existing = byRun.get(runId);
+    if (existing) return existing;
+    const created: JourneyAuditRunAccumulator = {
+      runId,
+      journeyId,
+      sourceTypes: new Set<JourneyAuditSourceType>(),
+      mirrorMode: false,
+      events: [],
+      excluded: [],
+    };
+    byRun.set(runId, created);
+    return created;
+  }
+
+  for (const event of projection.events) {
+    const payload = recordValue(event.payload);
+    const receipt = findJourneyRunReceipt(payload);
+    if (receipt) {
+      const eventIds = extractJourneyRunReceiptEventIds(receipt);
+      const link: EpochTenRunJourneyAuditReceiptLink = {
+        receiptId: receipt.receiptId,
+        runId: receipt.runId,
+        journeyId: receipt.journeyId,
+        sourceType: "validated_result_receipt",
+        eventIds,
+        matchedEventIds: eventIds.filter((eventId) => canonicalEventIds.has(eventId)),
+      };
+      const entry = entryFor(receipt.runId, receipt.journeyId);
+      entry.sourceTypes.add("validated_result_receipt");
+      entry.receipt = link;
+      entry.mirrorMode = entry.mirrorMode || mirrorModeFromRecord(payload) || mirrorModeFromRecord(receipt as unknown as AnyRecord);
+      entry.settledAt = entry.settledAt || receipt.generatedAt || event.createdAt;
+      receiptEventLinks.push(link);
+    } else {
+      const nestedReceipt = recordValue(payload.receipt);
+      if (lowerText(payload.receiptType, nestedReceipt.receiptType).includes("receipt")) {
+        const badReceiptId = stringValue(payload.receiptId) || stringValue(nestedReceipt.receiptId);
+        excluded.push({
+        sourceType: "unknown",
+        reason: "result_receipt_failed_validation",
+        eventId: event.eventId,
+        eventType: event.eventType,
+        receiptId: badReceiptId,
+        });
+      }
+    }
+
+    const stage = canonicalJourneyStage(event);
+    const identity = journeyEventIdentity(event);
+    if (stage && identity.runId && identity.journeyId) {
+      const entry = entryFor(identity.runId, identity.journeyId);
+      entry.sourceTypes.add("canonical_event");
+      entry.mirrorMode = entry.mirrorMode || mirrorModeFromRecord(payload);
+      entry.events.push({
+        eventId: event.eventId,
+        eventType: event.eventType,
+        stage,
+        sourceType: "canonical_event",
+      });
+      if (stage === "start") entry.startedAt = entry.startedAt || event.createdAt;
+      if (stage === "settled") {
+        entry.settledEvent = event;
+        entry.settledAt = entry.settledAt || event.createdAt;
+      }
+      continue;
+    }
+
+    const nonCanonical = exclusionForNonCanonicalEvent(event);
+    if (nonCanonical) excluded.push(nonCanonical);
+  }
+
+  const completed = [...byRun.values()]
+    .map((entry) => {
+      if (!entry.settledEvent && !entry.receipt) {
+        entry.excluded.push({
+          sourceType: entry.sourceTypes.has("canonical_event") ? "canonical_event" : "unknown",
+          reason: "journey_started_or_committed_without_settlement",
+          runId: entry.runId,
+          journeyId: entry.journeyId,
+        });
+        return undefined;
+      }
+      return {
+        runId: entry.runId,
+        journeyId: entry.journeyId,
+        sourceTypes: [...entry.sourceTypes],
+        mirrorMode: entry.mirrorMode,
+        completed: true,
+        completionBasis: entry.receipt ? "validated_result_receipt" : "canonical_settled_event",
+        startedAt: entry.startedAt,
+        settledAt: entry.settledAt,
+        receipt: entry.receipt,
+        events: entry.events,
+        excluded: entry.excluded,
+      } satisfies EpochTenRunJourneyAuditEntry;
+    })
+    .filter((entry): entry is EpochTenRunJourneyAuditEntry => Boolean(entry))
+    .sort((left, right) => (right.settledAt || "").localeCompare(left.settledAt || ""))
+    .slice(0, required);
+
+  const allExcluded = [
+    ...excluded,
+    ...[...byRun.values()].flatMap((entry) => entry.excluded),
+  ];
+  const sourceTypes = uniqueStrings(completed.flatMap((entry) => entry.sourceTypes)) as readonly JourneyAuditSourceType[];
+  return {
+    ok: completed.length === required,
+    available: completed.length,
+    required,
+    runs: completed,
+    sourceTypes,
+    receiptEventLinks,
+    excluded: allExcluded,
+    reason: completed.length === required ? undefined : "ten_run_audit_requires_exactly_ten_settled_journeys",
+  };
+}
+
+export const phase6TenRunJourneyAudit = epochTenRunJourneyAudit;
+export const tenRunJourneyAudit = epochTenRunJourneyAudit;
 
 function eventIsForAgent(event: EpochProjection["events"][number], agentId: string) {
   return event.agentId === agentId || event.aggregateId === agentId;

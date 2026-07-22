@@ -24,9 +24,27 @@ import {
   type OrganizationTreasuryChangedPayload,
 } from "./events.ts";
 import {
+  causalWorldEventsFromEpochEvents,
+} from "./causalEpochAdapter.ts";
+import {
+  applyCausalEventToSnapshot,
+  emptyCausalWorldSnapshot,
+  type CausalWorldSnapshotV1,
+} from "./causalWorldSnapshot.ts";
+import {
+  phase6CanonicalCursor,
+  type Phase6CanonicalCursor,
+  type Phase6CanonicalEventRef,
+} from "./phase6ProjectionDeltaRules.ts";
+import {
+  projectPlayerCondition,
+  type PlayerConditionProjection,
+} from "./playerConditionProjectionRules.ts";
+import {
   type EpochAgentIdentity,
   type EpochAbuseScoreRelease,
   type EpochAbuseScoreDecay,
+  type AttributeInput,
   type EpochConflictTrace,
   type EpochDirectTrade,
   type EpochGameCoreOptions,
@@ -73,6 +91,69 @@ import {
 } from "./gameCore.ts";
 import type { JourneySceneContractSeed } from "./journeySceneContractRules.ts";
 import { JOURNEY_FIRST_ENTRY_RESERVE } from "./journeyActionResolutionRules.ts";
+import {
+  adaptPhase6JourneySettlementInput,
+  type Phase6JourneySettlementAdapterFailure,
+  type Phase6JourneySettlementAuthoritativeInputs,
+} from "./phase6JourneySettlementAdapter.ts";
+import {
+  createPhase6RunAssemblyRuntime,
+  type Phase6RunAssemblyRuntimeInput,
+  type Phase6RunAssemblyRuntimeSettleResult,
+} from "./phase6RunAssemblyRuntime.ts";
+import {
+  PHASE6_JOURNEY_CONTEXT_RUNTIME_VERSION,
+  createPhase6JourneyContextRuntime,
+  type Phase6JourneyContextRuntimeCaptureStartInput,
+  type Phase6JourneyContextRuntimeCaptureStartResult,
+  type Phase6JourneyContextRuntimeFinalizeResult,
+  type Phase6JourneyContextRunAssemblyRuntime,
+} from "./phase6JourneyContextRuntime.ts";
+import type {
+  Phase6JourneyContextRecord,
+  Phase6JourneyContextSqliteStore,
+} from "./phase6JourneyContextStore.ts";
+import {
+  createPhase6ExperimentRuntime,
+  type Phase6CompleteExperimentRuntimeInput,
+  type Phase6CompleteRunWithReceiptRuntimeInput,
+  type Phase6CreateExperimentRuntimeInput,
+  type Phase6ExperimentRuntime,
+  type Phase6ExperimentRuntimeCommandRecord,
+  type Phase6ExperimentRuntimeStore,
+  type Phase6FailRunRuntimeInput,
+  type Phase6StartRunRuntimeInput,
+  type Phase6SummaryRuntimeInput,
+} from "./phase6ExperimentRuntime.ts";
+import type {
+  Phase6ExperimentSqliteStore,
+  Phase6RegisterStoredRunInput,
+} from "./phase6ExperimentStore.ts";
+import type {
+  Phase6RagTraceBindingLookup,
+  Phase6RagTraceListQuery,
+  Phase6RagTraceRecord,
+  Phase6RagTraceSqliteStore,
+} from "./phase6RagTraceStore.ts";
+import type {
+  CapturePhase6ServerRagTraceInput,
+} from "./phase6ServerRagTraceRules.ts";
+import type {
+  Phase6Experiment,
+  Phase6ExperimentSummary,
+  Phase6Run,
+} from "./phase6ExperimentRules.ts";
+import type {
+  JourneyRunReceiptRepositoryAdapter,
+} from "./journeySettlementRuntime.ts";
+import type {
+  JourneyRunReceipt,
+  JourneyRunReceiptHash,
+} from "./journeyRunReceiptRules.ts";
+import {
+  PHASE6_MCP_JOURNEY_CONTEXT_ADAPTER_VERSION,
+  type Phase6McpJourneyCompletionContextInput,
+} from "./phase6McpJourneyContextAdapter.ts";
 import {
   JOURNEY_TIER_REWARDS,
   deriveJourneyHiddenTask,
@@ -260,7 +341,6 @@ import {
 import {
   eventsInfoView,
   messagesInfoView,
-  progressInfoView,
   type EpochClaimableLegendNewsInfo,
   type EpochEquipmentEffectInfo,
   type EpochInventoryItemInfo,
@@ -269,6 +349,7 @@ import {
   type EpochProgressView,
   type EpochRegionActiveAgent,
 } from "./activityRuntimeReadModel.ts";
+import { progressView } from "./progressReadModel.ts";
 import { hostedSessionsInfoView, type EpochHostedSessionInfo } from "./hostedSessionRuntimeReadModel.ts";
 import {
   agentMemoryInfoView,
@@ -511,11 +592,120 @@ function traceConflictTargetFromInput(input: AnyRecord) {
 export interface EpochRuntimeOptions extends EpochGameCoreOptions {
   readonly initialResultPages?: readonly EpochSharedResultPage[];
   readonly resolveJourneyHiddenTaskSeal?: JourneyHiddenTaskSealResolver;
+  readonly phase6RunAssemblyRepository?: JourneyRunReceiptRepositoryAdapter;
+  readonly phase6RunAssemblyRuntime?: EpochPhase6RunAssemblyRuntime;
+  readonly phase6JourneyContextStore?: Phase6JourneyContextSqliteStore;
+  readonly phase6JourneyContextRuntime?: EpochPhase6JourneyContextRuntime;
+  readonly phase6ExperimentStore?: Phase6ExperimentSqliteStore;
+  readonly phase6ExperimentRuntime?: Phase6ExperimentRuntime;
+  readonly phase6RagTraceStore?: Phase6RagTraceSqliteStore;
   readonly attestedRunners?: readonly EpochAttestedRunnerConfig[];
   readonly abuseLimits?: EpochRuntimeAbuseLimits;
   readonly operatorKey?: string;
   readonly registrationSecret?: string;
 }
+
+export interface EpochPhase6JourneyAdapterFailure {
+  readonly ok: false;
+  readonly status: "adapter_failed";
+  readonly adapter: Phase6JourneySettlementAdapterFailure;
+}
+
+export type EpochPhase6JourneySettlementResult =
+  | EpochPhase6JourneyAdapterFailure
+  | Phase6RunAssemblyRuntimeSettleResult;
+
+export interface EpochPhase6RunAssemblyRuntime {
+  readonly assembleAndSettle: (input: Phase6RunAssemblyRuntimeInput) => Promise<Phase6RunAssemblyRuntimeSettleResult>;
+  readonly loadReceipt: (receiptId: string) => Promise<JourneyRunReceipt | undefined>;
+}
+
+export interface EpochPhase6JourneyContextRuntime {
+  readonly captureStart: (
+    input: Phase6JourneyContextRuntimeCaptureStartInput,
+  ) => Phase6JourneyContextRuntimeCaptureStartResult;
+  readonly finalizeAndSettle: (
+    journeyId: string,
+    completion: Phase6McpJourneyCompletionContextInput,
+  ) => Promise<Phase6JourneyContextRuntimeFinalizeResult>;
+  readonly loadContext: (journeyId: string) => Phase6JourneyContextRecord | undefined;
+  readonly loadReceipt: Phase6JourneyContextRunAssemblyRuntime["loadReceipt"];
+}
+
+const PHASE6_RUNTIME_BY_OPTIONS = new WeakMap<EpochRuntimeOptions, EpochPhase6RunAssemblyRuntime>();
+const PHASE6_CONTEXT_RUNTIME_BY_OPTIONS = new WeakMap<EpochRuntimeOptions, EpochPhase6JourneyContextRuntime>();
+const PHASE6_EXPERIMENT_RUNTIME_BY_OPTIONS = new WeakMap<EpochRuntimeOptions, Phase6ExperimentRuntime>();
+
+function phase6RunAssemblyRuntimeForOptions(options: EpochRuntimeOptions): EpochPhase6RunAssemblyRuntime {
+  if (options.phase6RunAssemblyRuntime) return options.phase6RunAssemblyRuntime;
+  const cached = PHASE6_RUNTIME_BY_OPTIONS.get(options);
+  if (cached) return cached;
+  if (!options.phase6RunAssemblyRepository) throw new Error("phase6_run_assembly_runtime_required");
+  const runtime = createPhase6RunAssemblyRuntime({
+    repository: options.phase6RunAssemblyRepository,
+    now: () => serverIsoTime(options.clock || (() => new Date())),
+  });
+  PHASE6_RUNTIME_BY_OPTIONS.set(options, runtime);
+  return runtime;
+}
+
+function phase6JourneyContextRuntimeForOptions(options: EpochRuntimeOptions): EpochPhase6JourneyContextRuntime {
+  if (options.phase6JourneyContextRuntime) return options.phase6JourneyContextRuntime;
+  const cached = PHASE6_CONTEXT_RUNTIME_BY_OPTIONS.get(options);
+  if (cached) return cached;
+  if (!options.phase6JourneyContextStore) throw new Error("phase6_journey_context_runtime_required");
+  const runtime = createPhase6JourneyContextRuntime({
+    contextStore: options.phase6JourneyContextStore,
+    runAssemblyRuntime: phase6RunAssemblyRuntimeForOptions(options),
+  });
+  PHASE6_CONTEXT_RUNTIME_BY_OPTIONS.set(options, runtime);
+  return runtime;
+}
+
+function phase6ExperimentRuntimeForOptions(options: EpochRuntimeOptions): Phase6ExperimentRuntime {
+  if (!options.phase6ExperimentStore) throw new Error("phase6_experiment_runtime_required");
+  if (options.phase6ExperimentRuntime) return options.phase6ExperimentRuntime;
+  const cached = PHASE6_EXPERIMENT_RUNTIME_BY_OPTIONS.get(options);
+  if (cached) return cached;
+  const runtime = createPhase6ExperimentRuntime({
+    store: createPhase6ExperimentRuntimeStore(options.phase6ExperimentStore),
+    now: () => serverIsoTime(options.clock || (() => new Date())),
+  });
+  PHASE6_EXPERIMENT_RUNTIME_BY_OPTIONS.set(options, runtime);
+  return runtime;
+}
+
+function createPhase6ExperimentRuntimeStore(
+  sqliteStore: Phase6ExperimentSqliteStore,
+): Phase6ExperimentRuntimeStore {
+  const commands = new Map<string, Phase6ExperimentRuntimeCommandRecord>();
+  return {
+    transaction(operation) {
+      return operation({
+        loadExperiment: (experimentId) => sqliteStore.load(experimentId),
+        saveExperiment: () => {},
+        loadCommand: (commandId) => commands.get(commandId),
+        saveCommand: (record) => {
+          commands.set(record.commandId, record);
+        },
+      });
+    },
+  };
+}
+
+function phase6ExperimentStoreForOptions(options: EpochRuntimeOptions): Phase6ExperimentSqliteStore {
+  if (!options.phase6ExperimentStore) throw new Error("phase6_experiment_runtime_required");
+  return options.phase6ExperimentStore;
+}
+
+function phase6RagTraceStoreForOptions(options: EpochRuntimeOptions): Phase6RagTraceSqliteStore {
+  if (!options.phase6RagTraceStore) throw new Error("phase6_rag_trace_store_unavailable");
+  return options.phase6RagTraceStore;
+}
+
+type EpochPhase6BeginExperimentRunInput = Omit<Phase6StartRunRuntimeInput, "run"> & {
+  readonly run: Phase6StartRunRuntimeInput["run"] & Pick<Phase6RegisterStoredRunInput, "journeyId">;
+};
 
 export interface EpochMaintenanceRunSummary {
   readonly tickId: string;
@@ -577,6 +767,24 @@ export interface EpochExplorerAuthVerification {
   readonly verified: true;
 }
 
+export interface EpochExplorationMetrics {
+  readonly combatPower: number;
+  readonly rating: number;
+  readonly intensity: "low" | "medium" | "high";
+  readonly riskBreakdown: {
+    readonly low: number;
+    readonly medium: number;
+    readonly high: number;
+  };
+  readonly resourceDelta: Record<string, number>;
+  readonly attributeDelta: Record<string, number>;
+  readonly memoryDelta: {
+    readonly confirmed: number;
+    readonly rumor: number;
+    readonly private: number;
+  };
+}
+
 export interface EpochExplorationRun {
   readonly agentId: string;
   readonly explorerId: string;
@@ -586,6 +794,7 @@ export interface EpochExplorationRun {
   readonly sessions: readonly EpochHostedSession[];
   readonly actions: readonly EpochHostedActionRecord[];
   readonly resultPage: EpochSharedResultPage;
+  readonly metrics: EpochExplorationMetrics;
 }
 
 export interface EpochServerHostedJobsInfo {
@@ -870,6 +1079,160 @@ const SYSTEM_IDENTITY_ROLES = [
   "数据校准员", "药圃照料员", "补给联络员", "遗迹勘探员", "安全观察员", "生态采样员",
 ] as const;
 
+function phase6EventRefFromEpochEvent(event: EpochEvent): Phase6CanonicalEventRef {
+  return {
+    eventId: event.eventId,
+    eventType: event.eventType,
+    aggregateType: event.aggregateType,
+    aggregateId: event.aggregateId,
+    createdAt: event.createdAt,
+    trustClass: event.trustClass,
+    ...(event.causationId ? { causationId: event.causationId } : {}),
+    ...(event.correlationId ? { correlationId: event.correlationId } : {}),
+  };
+}
+
+function runtimeWorldId(
+  input: AnyRecord,
+  causalEvents: ReturnType<typeof causalWorldEventsFromEpochEvents>,
+): string {
+  return typeof input.worldId === "string" && input.worldId.trim()
+    ? input.worldId.trim()
+    : causalEvents[0]?.worldId || "epoch:runtime";
+}
+
+function runtimeCausalSnapshot(projection: EpochProjection, input: AnyRecord = {}): CausalWorldSnapshotV1 | undefined {
+  if (input.snapshot && typeof input.snapshot === "object" && !Array.isArray(input.snapshot)) {
+    const snapshot = input.snapshot as Partial<CausalWorldSnapshotV1>;
+    if (typeof snapshot.worldId === "string" && snapshot.replayCursor && snapshot.domains) {
+      return snapshot as CausalWorldSnapshotV1;
+    }
+  }
+  const causalEvents = causalWorldEventsFromEpochEvents(projection.events, { limit: projection.events.length });
+  if (causalEvents.length === 0 && (typeof input.worldId !== "string" || !input.worldId.trim())) return undefined;
+  return causalEvents
+    .slice()
+    .reverse()
+    .reduce(
+      (snapshot, event) => applyCausalEventToSnapshot(snapshot, event, { allowDuplicate: true }),
+      emptyCausalWorldSnapshot(runtimeWorldId(input, causalEvents)),
+    );
+}
+
+function runtimePlayerConditionProjection(
+  projection: EpochProjection,
+  input: AnyRecord = {},
+): PlayerConditionProjection {
+  const snapshot = runtimeCausalSnapshot(projection, input);
+  return projectPlayerCondition({
+    snapshot,
+    canonicalCursor: runtimeCanonicalCursor(projection),
+    causalEvents: causalWorldEventsFromEpochEvents(projection.events, { limit: projection.events.length }),
+    identityId: typeof input.identityId === "string" ? input.identityId : undefined,
+    agentId: typeof input.agentId === "string" ? input.agentId : undefined,
+  });
+}
+
+function runtimeCanonicalCursor(projection: EpochProjection): Phase6CanonicalCursor {
+  return phase6CanonicalCursor(projection.events.map(phase6EventRefFromEpochEvent));
+}
+
+function runtimeWorldTime(projection: EpochProjection, snapshot?: CausalWorldSnapshotV1): string | undefined {
+  const latestEvent = projection.events[projection.events.length - 1];
+  const payload = latestEvent?.payload as Readonly<Record<string, unknown>> | undefined;
+  return snapshot?.replayCursor.lastRecordedAt
+    || (typeof payload?.worldTime === "string" ? payload.worldTime : undefined)
+    || latestEvent?.createdAt;
+}
+
+function withRuntimeAuthorityInput(projection: EpochProjection, input: AnyRecord = {}): AnyRecord {
+  const snapshot = runtimeCausalSnapshot(projection, input);
+  return {
+    ...input,
+    ...(snapshot ? { snapshot, worldId: snapshot.worldId } : {}),
+    regionId: canonicalRegionIdFromInput(input.regionId) || (typeof input.regionId === "string" ? input.regionId : undefined),
+    worldTime: runtimeWorldTime(projection, snapshot),
+    canonicalCursor: runtimeCanonicalCursor(projection),
+  };
+}
+
+function hasAvailableInjuryProjection(value: unknown): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  if (!value || typeof value !== "object") return false;
+  const record = value as Readonly<Record<string, unknown>>;
+  if (record.status === "available") return true;
+  if (typeof record.injurySeverity === "number" && Number.isFinite(record.injurySeverity)) return true;
+  if (Array.isArray(record.injuries) && record.injuries.length > 0) return true;
+  if (Array.isArray(record.injuryStates) && record.injuryStates.length > 0) return true;
+  return false;
+}
+
+function hasAvailablePlayerCondition(progress: unknown): boolean {
+  if (!progress || typeof progress !== "object") return false;
+  const record = progress as Readonly<Record<string, unknown>>;
+  return hasAvailableInjuryProjection(record.status) || hasAvailableInjuryProjection(record.injuries) || hasAvailableInjuryProjection(record.injuryStates);
+}
+
+function assertPhase6InjuriesAvailable(progress: unknown): void {
+  if (hasAvailablePlayerCondition(progress)) return;
+  throw new Error("phase6_capture_injuries_unavailable:real_injury_projection_required");
+}
+
+function phase6ProgressWithRuntimeCondition(
+  projection: EpochProjection,
+  progress: unknown,
+  identityId?: string,
+): unknown {
+  if (!progress || typeof progress !== "object" || hasAvailablePlayerCondition(progress)) return progress;
+  const record = progress as AnyRecord;
+  const condition = runtimePlayerConditionProjection(projection, {
+    ...record,
+    identityId: identityId || (typeof record.identityId === "string" ? record.identityId : undefined),
+    agentId: typeof record.agentId === "string" ? record.agentId : identityId,
+  });
+  if (condition.status !== "available") return progress;
+  return {
+    ...record,
+    status: {
+      status: "available",
+      ...condition.condition,
+      cursor: condition.cursor,
+      sourceEventIds: condition.sourceEventIds,
+      provenance: condition.provenance,
+    },
+    injuries: condition.injuries,
+    injuryStates: condition.injuries,
+  };
+}
+
+function phase6PanelWithRuntimeCondition(
+  projection: EpochProjection,
+  panel: Phase6JourneySettlementAuthoritativeInputs["beforePanel"],
+  identityId?: string,
+): Phase6JourneySettlementAuthoritativeInputs["beforePanel"] {
+  return {
+    ...panel,
+    progress: phase6ProgressWithRuntimeCondition(projection, panel.progress, identityId) as Phase6JourneySettlementAuthoritativeInputs["beforePanel"]["progress"],
+  };
+}
+
+function phase6InjuriesAdapterFailure(): Phase6JourneyContextRuntimeCaptureStartResult {
+  return {
+    ok: false,
+    status: "adapter_failed",
+    runtimeVersion: PHASE6_JOURNEY_CONTEXT_RUNTIME_VERSION,
+    adapter: {
+      ok: false,
+      adapterVersion: PHASE6_MCP_JOURNEY_CONTEXT_ADAPTER_VERSION,
+      errors: [{
+        code: "PHASE6_MCP_JOURNEY_CONTEXT_FIELD_REQUIRED",
+        path: "$.progress.injuries",
+        message: "Phase 6 capture requires a real injury projection; unavailable injury placeholders are not accepted.",
+      }],
+    },
+  };
+}
+
 function systemAssignedIdentityName(input: { readonly explorerId: string; readonly generation: number }) {
   const digest = sha256Hex(`${input.explorerId}:${input.generation}`);
   const origin = SYSTEM_IDENTITY_ORIGINS[Number.parseInt(digest.slice(0, 8), 16) % SYSTEM_IDENTITY_ORIGINS.length]!;
@@ -990,6 +1353,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     ownerVerifiedContext: ownerVerifiedContextFromInput,
     startHostedSession: (input, context) => commandResult(core.startHostedSession(input, context)),
     submitHostedAction: (input, context) => commandResult(core.submitHostedAction(input, context)),
+    grantAttributeProgression: (input: AttributeInput, context) => commandResult(core.grantAttribute(input, context)),
     createResultPageFromPayload: resultPageRuntime.createFromPayload,
   });
 
@@ -1215,6 +1579,9 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     confirmAction: highValueConfirmationRuntime.confirm,
     confirmations: highValueConfirmationRuntime.list,
     ingestCanonicalEvents: core.ingestCanonicalEvents,
+    causalWorldEvents: (input: AnyRecord = {}) => ({
+      events: causalWorldEventsFromEpochEvents(core.project().events, input),
+    }),
     events: (input: AnyRecord = {}) => eventsInfoView(core.project(), input),
     interactionEvents: (offset = 0) => core.project().events.slice(offset),
     worldContextVersions: (): EpochWorldContextVersions => publicWorldReadModel.worldContextVersions(),
@@ -1267,10 +1634,39 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     registerExplorer,
     verifyExplorerAuth,
     rotateExplorerRecovery: explorerAuthRuntime.rotateExplorerRecovery,
-    progress: (input: AnyRecord = {}) => progressInfoView(core.project(), input, {
-      now: serverIsoTime(clock),
-      maxDowntimeSeconds: options.maxDowntimeSeconds,
-    }),
+    progress: (input: AnyRecord = {}) => {
+      const projection = core.project();
+      const authorityInput = withRuntimeAuthorityInput(projection, input);
+      const view = progressView(projection, {
+        agentId: typeof authorityInput.agentId === "string" ? authorityInput.agentId : undefined,
+        explorerId: typeof authorityInput.explorerId === "string" ? authorityInput.explorerId : undefined,
+        limit: Number(authorityInput.limit || 20),
+        now: serverIsoTime(clock),
+        maxDowntimeSeconds: options.maxDowntimeSeconds,
+        worldId: typeof authorityInput.worldId === "string" ? authorityInput.worldId : undefined,
+        regionId: typeof authorityInput.regionId === "string" ? authorityInput.regionId : undefined,
+        worldTime: typeof authorityInput.worldTime === "string" ? authorityInput.worldTime : undefined,
+        canonicalCursor: authorityInput.canonicalCursor,
+      });
+      const condition = runtimePlayerConditionProjection(projection, {
+        ...authorityInput,
+        identityId: typeof authorityInput.identityId === "string" ? authorityInput.identityId : view.identity?.agentId,
+        agentId: typeof authorityInput.agentId === "string" ? authorityInput.agentId : view.agentId,
+      });
+      if (condition.status !== "available") return view;
+      return {
+        ...view,
+        status: {
+          status: "available",
+          ...condition.condition,
+          cursor: condition.cursor,
+          sourceEventIds: condition.sourceEventIds,
+          provenance: condition.provenance,
+        },
+        injuries: condition.injuries,
+        injuryStates: condition.injuries,
+      };
+    },
     grantJourneyEntryReserve: (input: AnyRecord = {}) => {
       const journeyId = assertNonEmptyString(input.journeyId, "journey_id");
       const agentId = assertNonEmptyString(input.agentId, "agent_id");
@@ -1381,13 +1777,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         rarity: item.rarity,
         sourceEventIds,
       }, maintenanceContext(input, `${reason}:item:${item.itemKey}`))));
-      const attributeGrants = existing ? [] : rewardBundle.attributes.map((attribute) => commandResult(core.grantAttribute({
-        agentId,
-        attributeId: attribute.attributeId,
-        amount: attribute.amount,
-        reason,
-        sourceEventIds,
-      }, maintenanceContext(input, `${reason}:attribute:${attribute.attributeId}`))));
+      const attributeGrants: readonly [] = [];
       const persistenceEvents = [
         ...epochEventsForPersistence(resourceGrant),
         ...itemGrants.flatMap((grant) => epochEventsForPersistence(grant)),
@@ -2003,8 +2393,14 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         );
       });
     },
-    inventory: (input: AnyRecord = {}): EpochInventoryInfo => inventoryInfoView(core.project(), input),
-    shop: (input: AnyRecord = {}): EpochShopInfo => shopInfoView(input),
+    inventory: (input: AnyRecord = {}): EpochInventoryInfo => {
+      const projection = core.project();
+      return inventoryInfoView(projection, withRuntimeAuthorityInput(projection, input));
+    },
+    shop: (input: AnyRecord = {}): EpochShopInfo => {
+      const projection = core.project();
+      return shopInfoView(withRuntimeAuthorityInput(projection, input));
+    },
     createInventoryItem: (input: AnyRecord = {}): EpochRuntimeResult<EpochInventoryItem> => {
       assertOperatorKey(input);
       return idempotently("create_item", input, () => commandResult(core.createInventoryItem({
@@ -2136,8 +2532,14 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         correlationId: typeof input.correlationId === "string" ? input.correlationId : undefined,
       }))));
     },
-    market: (input: AnyRecord = {}): EpochMarketInfo => marketInfoView(core.project(), input),
-    directTrades: (input: AnyRecord = {}): EpochDirectTradeInfo => directTradesInfoView(core.project(), input),
+    market: (input: AnyRecord = {}): EpochMarketInfo => {
+      const projection = core.project();
+      return marketInfoView(projection, withRuntimeAuthorityInput(projection, input));
+    },
+    directTrades: (input: AnyRecord = {}): EpochDirectTradeInfo => {
+      const projection = core.project();
+      return directTradesInfoView(projection, withRuntimeAuthorityInput(projection, input));
+    },
     bounties: (input: AnyRecord = {}): EpochBountyInfo => bountiesInfoView(core.project(), input),
     createMarketOrder: (input: AnyRecord = {}) => {
       const sellerAgentId = assertNonEmptyString(input.sellerAgentId || input.agentId, "seller_agent_id");
@@ -2509,6 +2911,149 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         }, ownerVerifiedContextFromInput(input, identity.explorerId)));
       });
     },
+    settlePhase6Journey: async (
+      authoritativeInput: Phase6JourneySettlementAuthoritativeInputs,
+    ): Promise<EpochPhase6JourneySettlementResult> => {
+      const projection = core.project();
+      const conditionedInput = {
+        ...authoritativeInput,
+        beforePanel: phase6PanelWithRuntimeCondition(projection, authoritativeInput.beforePanel, authoritativeInput.beforePanel.player.identityId),
+        afterPanel: phase6PanelWithRuntimeCondition(projection, authoritativeInput.afterPanel, authoritativeInput.afterPanel.player.identityId),
+      };
+      assertPhase6InjuriesAvailable(conditionedInput.beforePanel.progress);
+      assertPhase6InjuriesAvailable(conditionedInput.afterPanel.progress);
+      const adapted = adaptPhase6JourneySettlementInput(conditionedInput);
+      if (!adapted.ok) {
+        return {
+          ok: false,
+          status: "adapter_failed",
+          adapter: adapted,
+        };
+      }
+      return phase6RunAssemblyRuntimeForOptions(options).assembleAndSettle(adapted.value);
+    },
+    loadPhase6RunReceipt: async (receiptId: string): Promise<JourneyRunReceipt | undefined> =>
+      phase6RunAssemblyRuntimeForOptions(options).loadReceipt(receiptId),
+    capturePhase6JourneyStart: (
+      input: Phase6JourneyContextRuntimeCaptureStartInput,
+    ): Phase6JourneyContextRuntimeCaptureStartResult => {
+      const projection = core.project();
+      const conditionedInput = {
+        ...input,
+        context: {
+          ...input.context,
+          progress: phase6ProgressWithRuntimeCondition(projection, input.context.progress, input.identity.identityId) as Phase6JourneyContextRuntimeCaptureStartInput["context"]["progress"],
+        },
+      };
+      if (!hasAvailablePlayerCondition(conditionedInput.context.progress)) return phase6InjuriesAdapterFailure();
+      return phase6JourneyContextRuntimeForOptions(options).captureStart(conditionedInput);
+    },
+    finalizePhase6Journey: (
+      journeyId: string,
+      completion: Phase6McpJourneyCompletionContextInput,
+    ): Promise<Phase6JourneyContextRuntimeFinalizeResult> => {
+      const projection = core.project();
+      const conditionedCompletion = {
+        ...completion,
+        afterPanel: phase6PanelWithRuntimeCondition(projection, completion.afterPanel, completion.afterPanel.player.identityId),
+      };
+      assertPhase6InjuriesAvailable(conditionedCompletion.afterPanel.progress);
+      return phase6JourneyContextRuntimeForOptions(options).finalizeAndSettle(journeyId, conditionedCompletion);
+    },
+    loadPhase6JourneyContext: (journeyId: string): Phase6JourneyContextRecord | undefined =>
+      phase6JourneyContextRuntimeForOptions(options).loadContext(journeyId),
+    createPhase6Experiment: async (
+      input: Phase6CreateExperimentRuntimeInput,
+    ): Promise<Phase6Experiment> => {
+      const store = phase6ExperimentStoreForOptions(options);
+      const existing = store.load(input.experimentId);
+      if (existing) return existing;
+      await phase6ExperimentRuntimeForOptions(options).createExperiment(input);
+      return store.create(input);
+    },
+    beginPhase6ExperimentRun: async (
+      input: EpochPhase6BeginExperimentRunInput,
+    ): Promise<Phase6Run> => {
+      const store = phase6ExperimentStoreForOptions(options);
+      const existingRun = store.load(input.experimentId)?.runs.find((run) => run.runIndex === input.run.runIndex);
+      if (existingRun) return existingRun;
+      await phase6ExperimentRuntimeForOptions(options).startRun(input);
+      const stored = store.registerRun(input.experimentId, {
+        ...input.run,
+        journeyId: input.run.journeyId,
+      });
+      const run = stored.runs.find((candidate) => candidate.runIndex === input.run.runIndex);
+      if (!run) throw new Error(`phase6_experiment_run_missing_after_begin:${input.run.runIndex}`);
+      return run;
+    },
+    completePhase6ExperimentRun: async (
+      input: Phase6CompleteRunWithReceiptRuntimeInput,
+    ): Promise<Phase6Run> => {
+      const store = phase6ExperimentStoreForOptions(options);
+      const existingRun = store.load(input.experimentId)?.runs.find((run) => run.runIndex === input.runIndex);
+      if (existingRun?.state === "complete") return existingRun;
+      await phase6ExperimentRuntimeForOptions(options).completeRunWithReceipt(input);
+      const stored = store.completeRun(input.experimentId, input.runIndex, {
+        resultReceipt: input.receipt,
+      });
+      const run = stored.runs.find((candidate) => candidate.runIndex === input.runIndex);
+      if (!run) throw new Error(`phase6_experiment_run_missing_after_complete:${input.runIndex}`);
+      return run;
+    },
+    failPhase6ExperimentRun: async (
+      input: Phase6FailRunRuntimeInput,
+    ): Promise<Phase6Run> => {
+      const store = phase6ExperimentStoreForOptions(options);
+      const existingRun = store.load(input.experimentId)?.runs.find((run) => run.runIndex === input.runIndex);
+      if (existingRun?.state === "failed") return existingRun;
+      await phase6ExperimentRuntimeForOptions(options).failRun(input);
+      const stored = store.failRun(input.experimentId, input.runIndex, {
+        reason: input.reason,
+        receipt: input.receipt,
+      });
+      const run = stored.runs.find((candidate) => candidate.runIndex === input.runIndex);
+      if (!run) throw new Error(`phase6_experiment_run_missing_after_fail:${input.runIndex}`);
+      return run;
+    },
+    completePhase6Experiment: async (
+      input: Phase6CompleteExperimentRuntimeInput,
+    ): Promise<Phase6Experiment> => {
+      const store = phase6ExperimentStoreForOptions(options);
+      const existing = store.load(input.experimentId);
+      if (existing?.state === "complete") return existing;
+      await phase6ExperimentRuntimeForOptions(options).completeExperiment(input);
+      return store.completeExperiment(input.experimentId);
+    },
+      phase6ExperimentStatus: (
+        input: Phase6SummaryRuntimeInput,
+      ): Promise<Phase6ExperimentSummary> =>
+        phase6ExperimentRuntimeForOptions(options).summary(input),
+      phase6ExperimentRun: (input: AnyRecord = {}) => {
+        const experimentId = assertNonEmptyString(input.experimentId, "phase6_experiment_id");
+        const runIndex = Number(input.runIndex);
+        if (!Number.isInteger(runIndex) || runIndex < 1 || runIndex > 10) {
+          throw new Error("phase6_experiment_run_index_invalid");
+        }
+        return phase6ExperimentStoreForOptions(options)
+          .load(experimentId)
+          ?.runs.find((run) => run.runIndex === runIndex);
+      },
+      capturePhase6RagTrace: (
+      input: CapturePhase6ServerRagTraceInput,
+    ): Phase6RagTraceRecord =>
+      phase6RagTraceStoreForOptions(options).capture(input),
+    loadPhase6RagTrace: (
+      traceHash: JourneyRunReceiptHash,
+    ): Phase6RagTraceRecord | undefined =>
+      phase6RagTraceStoreForOptions(options).load(traceHash),
+    loadPhase6RagTraceByBinding: (
+      binding: Phase6RagTraceBindingLookup,
+    ): Phase6RagTraceRecord | undefined =>
+      phase6RagTraceStoreForOptions(options).loadByBinding(binding),
+    listPhase6RagTraces: (
+      query?: Phase6RagTraceListQuery,
+    ): readonly Phase6RagTraceRecord[] =>
+      phase6RagTraceStoreForOptions(options).list(query),
     journeyHostedSession: (input: AnyRecord = {}): EpochHostedSession => {
       const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
       const journeyId = typeof input.journeyId === "string" ? input.journeyId.trim() : "";

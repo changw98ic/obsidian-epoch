@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import readline from "node:readline";
 import { gunzipSync } from "node:zlib";
 import { createSequentialEpochIdFactory } from "./lib/epoch/protocol.ts";
+import { isDirectEntrypoint } from "./lib/cliEntrypoint.ts";
 import { createAgentHttpServer } from "./lib/httpServer.ts";
 import { MCP_PROTOCOL_VERSION, createAgentWorldRuntime } from "./lib/mcpTools.ts";
 import {
@@ -1353,7 +1354,7 @@ export async function runEpochInstallSmoke(options: InstallSmokeOptions = {}) {
   }
 }
 
-if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {
+if (isDirectEntrypoint(import.meta.url)) {
   const cliArgs = process.argv.slice(2);
   runEpochInstallSmoke({
     serverBase: parseServerArg(cliArgs),

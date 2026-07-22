@@ -320,6 +320,30 @@ export const GENERIC_JOURNEY_ARRIVAL_ACTION_RECIPES: readonly GrayHarborTravelPh
   },
 ];
 
+export const GENERIC_JOURNEY_MAIN_ACTION_RECIPES: readonly GrayHarborTravelPhaseActionRecipe[] = [
+  {
+    optionKey: "inspect_confirmed_scene",
+    risk: "low",
+    allowedEffectKinds: ["journey_progress", "clue_created"],
+    label: (location) => `在${location.label}核验当前可见环境与已确认线索`,
+    intent: (location) => `只记录${location.label}已有 source facts，不把推测写成世界事实。`,
+  },
+  {
+    optionKey: "advance_mandate_carefully",
+    risk: "medium",
+    allowedEffectKinds: ["journey_progress", "world_reference"],
+    label: (location) => `在${location.label}沿已确认路径谨慎推进当前目标`,
+    intent: (location) => `围绕本局 mandate 在${location.label}推进一步，不声明未由服务器结算的成果。`,
+  },
+  {
+    optionKey: "leave_without_commitment",
+    risk: "low",
+    allowedEffectKinds: ["journey_progress"],
+    label: (location) => `离开${location.label}，不接受未经核验的承诺`,
+    intent: (location) => `保留已确认记录并从${location.label}安全退出，不虚构任务完成。`,
+  },
+];
+
 export const GRAY_HARBOR_RETURN_ACTION_RECIPES: readonly GrayHarborTravelPhaseActionRecipe[] = [
   {
     optionKey: "return_by_known_route",
@@ -721,9 +745,6 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
   if (phase === "main" && !generatedTaskObjective && taskRoute && taskRoute.sceneType !== input.sceneType) {
     throw new Error("journey_task_scene_type_mismatch");
   }
-  if (phase === "main" && !generatedTaskObjective && !taskRoute && !legacyGrayHarborScene) {
-    throw new Error("journey_task_route_not_found");
-  }
   if (phase === "main" && !generatedTaskObjective && legacyGrayHarborScene && !["livelihood", "relationship"].includes(input.sceneType)) {
     throw new Error("journey_scene_contract_type_not_supported");
   }
@@ -736,7 +757,7 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
   const relationshipParticipant = phase === "main" && !generatedTaskObjective && legacyGrayHarborScene && input.sceneType === "relationship"
     ? worldObjects.find((object) => ["agent", "npc"].includes(object.type))
     : undefined;
-  if (phase === "main" && input.sceneType === "relationship" && !relationshipParticipant) {
+  if (phase === "main" && legacyGrayHarborScene && input.sceneType === "relationship" && !relationshipParticipant) {
     throw new Error("gray_harbor_relationship_scene_incomplete");
   }
   const stateBinding = {
@@ -877,6 +898,17 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
             },
           }),
         ]
+    : phase === "main" && !taskRoute && !legacyGrayHarborScene
+    ? GENERIC_JOURNEY_MAIN_ACTION_RECIPES.map((recipe) => signedResolvedAction({
+        optionKey: recipe.optionKey,
+        risk: recipe.risk,
+        allowedEffectKinds: recipe.allowedEffectKinds,
+        resolved: {
+          label: recipe.label(sceneRegion),
+          intent: recipe.intent(sceneRegion),
+          targetObjects: [sceneRegion],
+        },
+      }))
     : phase === "main" && input.sceneType === "livelihood"
     ? GRAY_HARBOR_LIVELIHOOD_ACTION_RECIPES.map((recipe) => signedResolvedAction({
         optionKey: recipe.optionKey,
@@ -935,6 +967,8 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
       ? `${context.organization.label}在${context.location.label}登记了一组可核验的生计行动；${context.clerk.label}负责当班复核。此行目标：${mandate.objective}。`
       : relationshipParticipant
         ? `${relationshipParticipant.label}当前位于${sceneRegion.label}；只能选择不替对方作出承诺的会面行动。此行目标：${mandate.objective}。`
+        : phase === "main"
+        ? `身份正在${sceneRegion.label}执行当前 mandate；只能选择基于已确认区域事实的通用行动。此行目标：${mandate.objective}。`
         : phase === "arrival"
         ? `身份已抵达${sceneRegion.label}入口；只能从服务器签发的到达行动中选择。此行目标：${mandate.objective}。`
         : `身份准备从${sceneRegion.label}返程；只能整理已核验事实并选择已确认路线。`,

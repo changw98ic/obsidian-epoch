@@ -9,6 +9,7 @@ import {
 import { LEGACY_AGENT_WORLD_CHANNEL_CLASS, LEGACY_AGENT_WORLD_DELIVERY_TRUST } from "./legacyTrust.ts";
 import { hashRunPayload } from "./tickets.ts";
 import type { JourneyRuntimeEvent } from "./epoch/journeyReadModel.ts";
+export { createJsonlCausalIdempotencyManifestStore } from "./epoch/causalIdempotencyPersistence.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -131,6 +132,71 @@ function dedupeCanonicalResultPages(values: readonly JsonRecord[]) {
     .map((entry) => entry.page);
 }
 
+const NON_PERSISTENT_PHASE6_COMPACT_RESULT_KEYS = new Set([
+  "authority",
+  "pageId",
+  "receiptId",
+  "result",
+  "rulesetVersion",
+  "transportVersion",
+  "verified",
+]);
+const NON_PERSISTENT_JOURNEY_STATUS_PAGE_REFERENCE_KEYS = new Set([
+  "createdAt",
+  "pageId",
+  "urlPath",
+]);
+
+function isPersistedResultPage(page: JsonRecord) {
+  return nonEmptyString(page.pageId) !== undefined
+    && nonEmptyString(page.createdAt) !== undefined
+    && nonEmptyString(page.urlPath) !== undefined;
+}
+
+function isCompleteRuntimeResultPage(page: JsonRecord) {
+  return isPersistedResultPage(page)
+    && nonEmptyString(page.createdBy) !== undefined
+    && nonEmptyString(page.idempotencyKey) !== undefined;
+}
+
+function isNonPersistentPhase6CompactResultProjection(record: JsonRecord, page: JsonRecord) {
+  const keys = Object.keys(page);
+  return record.command === "obsidian_epoch.phase6_result_compact"
+    && page.authority === "server_phase6_result"
+    && page.transportVersion === "phase6_result.compact.v1"
+    && page.verified === true
+    && nonEmptyString(page.pageId) !== undefined
+    && nonEmptyString(page.receiptId) !== undefined
+    && nonEmptyString(page.rulesetVersion) !== undefined
+    && isRecord(page.result)
+    && keys.length === NON_PERSISTENT_PHASE6_COMPACT_RESULT_KEYS.size
+    && keys.every((key) => NON_PERSISTENT_PHASE6_COMPACT_RESULT_KEYS.has(key));
+}
+
+function isNonPersistentJourneyStatusPageReference(record: JsonRecord, page: JsonRecord) {
+  const pageId = nonEmptyString(page.pageId);
+  const createdAt = nonEmptyString(page.createdAt);
+  const urlPath = nonEmptyString(page.urlPath);
+  const keys = Object.keys(page);
+  if (record.command !== "obsidian_epoch.journey_status_compact"
+    || !pageId
+    || !createdAt
+    || !Number.isFinite(Date.parse(createdAt))
+    || !urlPath
+    || keys.length !== NON_PERSISTENT_JOURNEY_STATUS_PAGE_REFERENCE_KEYS.size
+    || !keys.every((key) => NON_PERSISTENT_JOURNEY_STATUS_PAGE_REFERENCE_KEYS.has(key))) {
+    return false;
+  }
+  try {
+    const parsed = new URL(urlPath, "http://127.0.0.1");
+    return parsed.pathname === `/epoch/result/${pageId}`
+      && nonEmptyString(parsed.searchParams.get("shareToken")) !== undefined
+      && /^\d+$/.test(parsed.searchParams.get("shareVersion") || "");
+  } catch {
+    return false;
+  }
+}
+
 export function validateCanonicalRecoveryConflicts({
   epochEvents = [],
   journeyEvents = [],
@@ -142,7 +208,7 @@ export function validateCanonicalRecoveryConflicts({
   readonly commandEvents?: readonly object[];
   readonly resultPages?: readonly object[];
 } = {}) {
-  const commandRecords = commandEvents.map(recordValue);
+  const commandRecords = commandEvents.map(recordValue).map(assertAgentCommandCommit);
   dedupeCanonicalRecords(
     commandRecords.filter((record) => nonEmptyString(record.commandId) && nonEmptyString(record.command)),
     (record) => record.commandId,
@@ -209,7 +275,15 @@ function assertAgentCommandCommit(record: JsonRecord): AgentCommandCommitRecord 
   if (!nonEmptyString(record.commandId)) throw new Error("agent_command_commit_command_id_required");
   const journeyEvents = assertRecordArray(record, "journeyEvents");
   const epochEvents = assertRecordArray(record, "epochEvents");
-  const resultPages = assertRecordArray(record, "resultPages");
+  const resultPages = assertRecordArray(record, "resultPages").filter((page) => {
+    if (isNonPersistentPhase6CompactResultProjection(record, page)) return false;
+    if (isNonPersistentJourneyStatusPageReference(record, page)) return false;
+    if (record.command === "obsidian_epoch.journey_status_compact" && !isCompleteRuntimeResultPage(page)) {
+      throw new Error("agent_command_commit_result_page_invalid");
+    }
+    if (isPersistedResultPage(page)) return true;
+    throw new Error("agent_command_commit_result_page_invalid");
+  });
   for (const event of journeyEvents) {
     const invalidBase = !nonEmptyString(event.eventId)
       || !nonEmptyString(event.eventType)
@@ -227,13 +301,6 @@ function assertAgentCommandCommit(record: JsonRecord): AgentCommandCommitRecord 
     }
   }
   epochEventsFromPersistenceRecord({ type: "epoch_event_batch", events: epochEvents });
-  for (const page of resultPages) {
-    if (!nonEmptyString(page.pageId)
-      || !nonEmptyString(page.createdAt)
-      || !nonEmptyString(page.urlPath)) {
-      throw new Error("agent_command_commit_result_page_invalid");
-    }
-  }
   return {
     ...record,
     type: "agent_command_commit",

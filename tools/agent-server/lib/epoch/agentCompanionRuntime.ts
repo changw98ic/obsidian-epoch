@@ -22,6 +22,7 @@ import type { EpochJourney, JourneyWorldCommit } from "./journeyRules.ts";
 import {
   adjudicateJourneyTask,
   buildFallbackJourneyTaskPlan,
+  type JourneyFallbackRiskProfile,
   nextJourneyTaskObjective,
   validateJourneyTaskProposal,
 } from "./journeyGeneratedTaskRules.ts";
@@ -55,6 +56,13 @@ interface IdempotencyRecord {
 
 function isRecord(value: unknown): value is UnknownRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function phase6FallbackRiskProfile(value: unknown): JourneyFallbackRiskProfile | undefined {
+  if (!isRecord(value)) return undefined;
+  return value.intensity === "low" || value.intensity === "medium" || value.intensity === "high" || value.intensity === "dynamic"
+    ? value.intensity
+    : undefined;
 }
 
 function isEpochAgentIdentity(value: unknown): value is EpochAgentIdentity {
@@ -343,6 +351,7 @@ export class AgentCompanionRuntime {
               taskType: generation.taskType,
               scenarioMapId: generation.scenarioMapId,
               availableWorldObjects: generation.availableWorldObjects,
+              riskProfile: phase6FallbackRiskProfile(input.phase6Scenario),
             })
           : validateJourneyTaskProposal({
               proposal: input.taskProposal,

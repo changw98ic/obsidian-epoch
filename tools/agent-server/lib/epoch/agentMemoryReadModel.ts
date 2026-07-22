@@ -4,6 +4,7 @@ import { npcCandidateSourceEventIds, npcCandidatesView } from "./npcCandidateRea
 export type EpochAgentMemoryLayer = "confirmed" | "rumor" | "privateRun";
 
 export interface EpochAgentMemoryItem {
+  readonly kind?: "npc" | "hostedAction";
   readonly layer: EpochAgentMemoryLayer;
   readonly candidateId: string;
   readonly agentId: string;
@@ -33,6 +34,11 @@ export interface EpochAgentMemoryInfo {
   readonly confirmedMemory: readonly EpochAgentMemoryItem[];
   readonly rumorMemory: readonly EpochAgentMemoryItem[];
   readonly privateRunMemory: readonly EpochAgentMemoryItem[];
+  readonly totals: {
+    readonly confirmed: number;
+    readonly rumor: number;
+    readonly privateRun: number;
+  };
 }
 
 function agentMemoryItem(
@@ -111,6 +117,39 @@ export function agentMemoryView(
   const rumorMemory: EpochAgentMemoryItem[] = [];
   const privateRunMemory: EpochAgentMemoryItem[] = [];
 
+  const sourceEventIdByActionId = new Map<string, string>();
+  for (const event of projection.events) {
+    if (event.eventType === "hosted_action_recorded") {
+      sourceEventIdByActionId.set(event.payload.actionId, event.eventId);
+    }
+  }
+  for (const session of Object.values(projection.hostedSessions)) {
+    if (input.agentId && session.agentId !== input.agentId) continue;
+    if (input.regionId && session.regionId !== input.regionId) continue;
+    for (const action of session.actions) {
+      const sourceEventId = sourceEventIdByActionId.get(action.actionId);
+      const item: EpochAgentMemoryItem = {
+        kind: "hostedAction",
+        layer: session.channelClass === "server_hosted" ? "confirmed" : "privateRun",
+        candidateId: action.actionId,
+        agentId: action.agentId,
+        regionId: session.regionId,
+        displayName: action.optionLabel,
+        title: session.channelClass === "server_hosted"
+          ? `服务器确认行动: ${action.optionLabel}`
+          : `私有托管行动: ${action.optionLabel}`,
+        summary: action.outcomeSummary,
+        status: "promoted",
+        reviewLevel: "clear",
+        reviewFlags: [],
+        submittedAt: action.recordedAt,
+        sourceEventIds: sourceEventId ? [sourceEventId] : [],
+      };
+      if (session.channelClass === "server_hosted") confirmedMemory.push(item);
+      else privateRunMemory.push(item);
+    }
+  }
+
   for (const candidate of candidates) {
     const isCanonical = (candidate.status === "promoted" || candidate.status === "merged") && Boolean(candidate.canonicalNpcId);
     const isOperatorReviewed = Boolean(candidate.reviewedAt);
@@ -129,6 +168,17 @@ export function agentMemoryView(
     }
   }
 
+  const newestFirst = (left: EpochAgentMemoryItem, right: EpochAgentMemoryItem) =>
+    right.submittedAt.localeCompare(left.submittedAt) || left.candidateId.localeCompare(right.candidateId);
+  confirmedMemory.sort(newestFirst);
+  rumorMemory.sort(newestFirst);
+  privateRunMemory.sort(newestFirst);
+  const totals = {
+    confirmed: confirmedMemory.length,
+    rumor: rumorMemory.length,
+    privateRun: privateRunMemory.length,
+  };
+
   return {
     agentId: input.agentId,
     regionId: input.regionId,
@@ -140,5 +190,6 @@ export function agentMemoryView(
     confirmedMemory: confirmedMemory.slice(0, limit),
     rumorMemory: rumorMemory.slice(0, limit),
     privateRunMemory: privateRunMemory.slice(0, limit),
+    totals,
   };
 }

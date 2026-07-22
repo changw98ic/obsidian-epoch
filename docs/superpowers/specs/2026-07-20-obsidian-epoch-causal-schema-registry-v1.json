@@ -1,0 +1,160 @@
+{
+  "registryId": "obsidian_epoch_causal_schema_registry",
+  "registryVersion": "1.0.0",
+  "status": "normative",
+  "effectiveDate": "2026-07-20",
+  "canonicalHashAlgorithm": "sha256",
+  "canonicalSerialization": "obsidian_canonical_json_v1",
+  "schemaVersion": 1,
+  "registryHash": "sha256:099f78077c649ee7eecda4ad1deedbef360387ee114c1372a7345924a0c66b05",
+  "schemaEntries": [
+    {
+      "schemaId": "causal.event.epoch.v1",
+      "family": "event",
+      "version": 1,
+      "status": "active",
+      "description": "Epoch event envelope canonical schema for Phase 0 causal hashing."
+    },
+    {
+      "schemaId": "causal.event.domain.v1",
+      "family": "event",
+      "version": 1,
+      "status": "active",
+      "description": "Infinite-world domain event schema with explicit causes, effects, and proof hashes."
+    },
+    {
+      "schemaId": "causal.root_reason.command.v1",
+      "family": "root_reason",
+      "version": 1,
+      "status": "active",
+      "description": "Command, causation, correlation, and idempotency reason fields."
+    },
+    {
+      "schemaId": "causal.source.event_ids.v1",
+      "family": "source",
+      "version": 1,
+      "status": "active",
+      "description": "Ordered source event id references used to derive the event."
+    },
+    {
+      "schemaId": "causal.sink.aggregate.v1",
+      "family": "sink",
+      "version": 1,
+      "status": "active",
+      "description": "Aggregate sink addressed by aggregateType and aggregateId."
+    },
+    {
+      "schemaId": "causal.enforcement.phase0.v1",
+      "family": "enforcement",
+      "version": 1,
+      "status": "active",
+      "description": "Phase 0 enforcement policy: reject unknown and retired schemas."
+    },
+    {
+      "schemaId": "causal.enforcement.legacy.v0",
+      "family": "enforcement",
+      "version": 0,
+      "status": "retired",
+      "description": "Pre-Phase 0 placeholder retained only to produce retired-schema errors.",
+      "replacedBy": "causal.enforcement.phase0.v1",
+      "deprecatedSince": "1.0.0"
+    }
+  ],
+  "activeDomainEventTypes": [
+    "world_pressure_opened",
+    "world_pressure_updated",
+    "world_pressure_transformed",
+    "world_pressure_closed",
+    "observation_acquired",
+    "market_order_placed",
+    "ecology_tick_resolved",
+    "resource_node_registered",
+    "resource_production_assigned",
+    "resource_production_committed",
+    "resource_node_replenished",
+    "life_profile_created",
+    "life_profile_advanced",
+    "mission_outcome_settled",
+    "economy_transaction_committed",
+    "crafting_job_resolved",
+    "progression_change_committed",
+    "governance_action_resolved",
+    "supernatural_action_resolved",
+    "legacy_cycle_changed",
+    "enterprise_tick_resolved"
+  ],
+  "runtimeCommandPolicy": {
+    "commandTypes": [
+      "world_tick",
+      "resource_node_register",
+      "resource_production_assign",
+      "resource_produce",
+      "resource_node_replenish",
+      "life_profile_create",
+      "life_profile_advance",
+      "mission_settle",
+      "economy_buy",
+      "economy_sell",
+      "economy_craft",
+      "economy_repair",
+      "progression_reward",
+      "progression_breakthrough",
+      "progression_talent",
+      "progression_skill",
+      "progression_carry",
+      "governance_action",
+      "supernatural_cast",
+      "legacy_transition",
+      "project_tick"
+    ],
+    "eventTypes": [
+      "ecology_tick_resolved",
+      "resource_node_registered",
+      "resource_production_assigned",
+      "resource_production_committed",
+      "resource_node_replenished",
+      "life_profile_created",
+      "life_profile_advanced",
+      "mission_outcome_settled",
+      "economy_transaction_committed",
+      "crafting_job_resolved",
+      "progression_change_committed",
+      "governance_action_resolved",
+      "supernatural_action_resolved",
+      "legacy_cycle_changed",
+      "enterprise_tick_resolved"
+    ]
+  },
+  "retiredEventAliases": [
+    {
+      "eventType": "world_pressure_detected",
+      "replacementEventType": "world_pressure_opened",
+      "deprecatedSince": "1.0.0",
+      "retiredReason": "published_alias_replaced_by_world_pressure_opened"
+    },
+    {
+      "eventType": "world_pressure_changed",
+      "replacementEventType": "world_pressure_updated",
+      "deprecatedSince": "1.0.0",
+      "retiredReason": "published_alias_replaced_by_world_pressure_updated"
+    },
+    {
+      "eventType": "world_pressure_mobilized",
+      "replacementEventType": "world_pressure_updated",
+      "deprecatedSince": "1.0.0",
+      "retiredReason": "published_alias_replaced_by_world_pressure_updated"
+    },
+    {
+      "eventType": "world_pressure_resolving",
+      "replacementEventType": "world_pressure_updated",
+      "deprecatedSince": "1.0.0",
+      "retiredReason": "published_alias_replaced_by_world_pressure_updated"
+    },
+    {
+      "eventType": "world_pressure_resolved",
+      "replacementEventType": "world_pressure_closed",
+      "deprecatedSince": "1.0.0",
+      "retiredReason": "published_alias_replaced_by_world_pressure_closed"
+    }
+  ]
+}

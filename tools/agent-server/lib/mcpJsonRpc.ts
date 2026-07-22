@@ -46,7 +46,9 @@ function parameterErrorCodes() {
     "downtime_mode_invalid",
     "downtime_not_active",
     "hosted_session_not_active",
+    "explorer_id_required",
     "idempotency_key_conflict",
+    "legacy_agent_world_tool_removed",
     "idempotency_key_required",
     "party_run_settlement_requires_server_trust",
     "resource_insufficient",
@@ -141,6 +143,9 @@ export async function handleMcpJsonRpcMessage(
         retryAfterMs,
         ...(retryAt ? { retryAt } : {}),
       });
+    }
+    if (messageText === "explorer_auth_required" || messageText === "explorer_auth_invalid") {
+      return mcpJsonRpcErrorResponse(id, -32001, messageText);
     }
     if (messageText.startsWith("community_")) {
       return mcpJsonRpcErrorResponse(id, -32602, messageText);

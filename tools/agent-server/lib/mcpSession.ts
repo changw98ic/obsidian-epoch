@@ -12,6 +12,16 @@ export interface McpClientInfo {
   readonly name: string;
   readonly title?: string;
   readonly version: string;
+  readonly description?: string;
+  readonly websiteUrl?: string;
+  readonly icons?: readonly McpClientIcon[];
+}
+
+export interface McpClientIcon {
+  readonly src: string;
+  readonly mimeType?: string;
+  readonly sizes?: readonly string[];
+  readonly theme?: "light" | "dark";
 }
 
 export interface McpInitializeParams {
@@ -120,7 +130,45 @@ function parseCapabilities(value: unknown): McpClientCapabilities {
   return Object.freeze(capabilities);
 }
 
-const CLIENT_INFO_FIELDS = new Set(["name", "title", "version"]);
+const CLIENT_INFO_FIELDS = new Set([
+  "name",
+  "title",
+  "version",
+  "description",
+  "websiteUrl",
+  "icons",
+]);
+const CLIENT_ICON_FIELDS = new Set(["src", "mimeType", "sizes", "theme"]);
+
+function parseClientIcons(value: unknown): readonly McpClientIcon[] {
+  if (!Array.isArray(value)) invalidParams("clientInfo.icons");
+  return Object.freeze(value.map((entry, index) => {
+    const field = `clientInfo.icons[${index}]`;
+    if (!isRecord(entry)) invalidParams(field);
+    for (const key of Object.keys(entry)) {
+      if (!CLIENT_ICON_FIELDS.has(key)) invalidParams(`${field}.${key}`);
+    }
+    const src = requiredString(entry.src, `${field}.src`);
+    if (entry.mimeType !== undefined && typeof entry.mimeType !== "string") {
+      invalidParams(`${field}.mimeType`);
+    }
+    if (entry.sizes !== undefined && (
+      !Array.isArray(entry.sizes)
+      || entry.sizes.some((size) => typeof size !== "string" || size.trim().length === 0)
+    )) {
+      invalidParams(`${field}.sizes`);
+    }
+    if (entry.theme !== undefined && entry.theme !== "light" && entry.theme !== "dark") {
+      invalidParams(`${field}.theme`);
+    }
+    return Object.freeze({
+      src,
+      ...(entry.mimeType === undefined ? {} : { mimeType: entry.mimeType }),
+      ...(entry.sizes === undefined ? {} : { sizes: Object.freeze([...entry.sizes]) }),
+      ...(entry.theme === undefined ? {} : { theme: entry.theme }),
+    }) as McpClientIcon;
+  }));
+}
 
 function parseClientInfo(value: unknown): McpClientInfo {
   if (!isRecord(value)) invalidParams("clientInfo");
@@ -130,10 +178,20 @@ function parseClientInfo(value: unknown): McpClientInfo {
   const name = requiredString(value.name, "clientInfo.name");
   const version = requiredString(value.version, "clientInfo.version");
   if (value.title !== undefined && typeof value.title !== "string") invalidParams("clientInfo.title");
+  if (value.description !== undefined && typeof value.description !== "string") {
+    invalidParams("clientInfo.description");
+  }
+  const websiteUrl = value.websiteUrl === undefined
+    ? undefined
+    : requiredString(value.websiteUrl, "clientInfo.websiteUrl");
+  const icons = value.icons === undefined ? undefined : parseClientIcons(value.icons);
   return Object.freeze({
     name,
     version,
     ...(value.title === undefined ? {} : { title: value.title }),
+    ...(value.description === undefined ? {} : { description: value.description }),
+    ...(websiteUrl === undefined ? {} : { websiteUrl }),
+    ...(icons === undefined ? {} : { icons }),
   });
 }
 

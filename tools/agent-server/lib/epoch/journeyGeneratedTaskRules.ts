@@ -138,6 +138,28 @@ export interface JourneyTaskPlanInstallation {
   readonly hiddenTaskSeal: JourneyHiddenTaskSeal;
 }
 
+export type JourneyFallbackRiskProfile = "low" | "medium" | "high" | "dynamic";
+
+export function journeyFallbackRiskForScenario(input: {
+  readonly profile: JourneyFallbackRiskProfile;
+  readonly objectiveKind: JourneyGeneratedTaskObjective["kind"];
+  readonly objectiveSequence: number;
+  readonly actionIndex: number;
+  readonly baseRisk: JourneyTaskRisk;
+}): JourneyTaskRisk {
+  if (input.profile === "low") return "low";
+  if (input.profile === "medium") {
+    if (input.objectiveKind === "choice") return "low";
+    return input.actionIndex === 0 ? "medium" : "low";
+  }
+  if (input.profile === "high") {
+    if (input.objectiveKind === "choice") return input.actionIndex === 0 ? "medium" : "low";
+    return input.actionIndex === 0 ? "high" : "medium";
+  }
+  const dynamic = ["low", "medium", "high"] as const;
+  return dynamic[(input.objectiveSequence + input.actionIndex) % dynamic.length] ?? input.baseRisk;
+}
+
 export type JourneyHiddenTaskSealResolver = (
   journeyId: string,
   plan: JourneyGeneratedTaskPlan,
@@ -162,6 +184,12 @@ export interface JourneyAttributeReward {
 export interface JourneyRewardBundle {
   readonly resources: readonly JourneyTierReward[];
   readonly items: readonly JourneyRewardItem[];
+  readonly attributeProgression: {
+    readonly mode: "no-direct-gain";
+    readonly evidenceSystem: "progressionRules.attributeEvidenceXp";
+    readonly summary: string;
+  };
+  /** Legacy-compatible field. New Journey settlement must keep this empty. */
   readonly attributes: readonly JourneyAttributeReward[];
 }
 
@@ -194,36 +222,12 @@ function rewardItemName(plan: JourneyGeneratedTaskPlan): string {
   }
 }
 
-const ATTRIBUTE_REWARD_BY_COMPLETION: Readonly<Record<JourneyCompletionResultKind, EpochAttributeId>> = {
-  item: "agility",
-  knowledge: "intellect",
-  relationship: "willpower",
-  service: "physique",
-  world_state: "spirituality",
-};
-
-const ATTRIBUTE_REWARD_AMOUNT_BY_TIER: Readonly<Record<Exclude<JourneyCompletionTier, "未及格">, number>> = {
-  及格: 1,
-  良好: 2,
-  优秀: 3,
-  惊世: 4,
-};
-
 const ITEM_REWARD_RARITY_BY_TIER: Readonly<Record<Exclude<JourneyCompletionTier, "未及格">, JourneyRewardItem["rarity"] | undefined>> = {
   及格: undefined,
   良好: "common",
   优秀: "rare",
   惊世: "legendary",
 };
-
-function rewardAttributesForPlan(
-  plan: JourneyGeneratedTaskPlan,
-  tier: Exclude<JourneyCompletionTier, "未及格">,
-): readonly JourneyAttributeReward[] {
-  const completion = plan.completionResult ?? inferJourneyCompletionResult(plan.successResult);
-  const attributeId = ATTRIBUTE_REWARD_BY_COMPLETION[completion.kind];
-  return [{ attributeId, amount: ATTRIBUTE_REWARD_AMOUNT_BY_TIER[tier] }];
-}
 
 export function journeyRewardBundleForPlan(
   plan: JourneyGeneratedTaskPlan,
@@ -237,7 +241,12 @@ export function journeyRewardBundleForPlan(
     .slice(0, 20);
   return {
     resources: [reward],
-    attributes: rewardAttributesForPlan(plan, tier),
+    attributeProgression: {
+      mode: "no-direct-gain",
+      evidenceSystem: "progressionRules.attributeEvidenceXp",
+      summary: "Journey completion records server evidence and material/resource rewards only; it does not directly grant permanent base attributes.",
+    },
+    attributes: [],
     items: itemRarity ? [{
       itemKey: `journey_reward_${itemHash}`,
       displayName: rewardItemName(plan),
@@ -1025,6 +1034,7 @@ export function buildFallbackJourneyTaskPlan(input: {
   readonly taskType: string;
   readonly scenarioMapId: string;
   readonly availableWorldObjects: readonly JourneyAvailableWorldObject[];
+  readonly riskProfile?: JourneyFallbackRiskProfile;
 }): JourneyTaskPlanInstallation {
   const route = catalogFallbackRoute(input) ?? fallbackRouteFromMap(input);
   const primary = route.actions.find((action) => action.completesMission) ?? route.actions[0];
@@ -1220,7 +1230,25 @@ export function buildFallbackJourneyTaskPlan(input: {
     objectives,
     routes,
   };
-  return validateJourneyTaskProposal({ ...input, proposal, source: "server_fallback" });
+  const calibratedProposal: JourneyTaskProposal = input.riskProfile
+    ? {
+        ...proposal,
+        objectives: proposal.objectives.map((objective) => ({
+          ...objective,
+          actions: objective.actions.map((action, actionIndex) => ({
+            ...action,
+            risk: journeyFallbackRiskForScenario({
+              profile: input.riskProfile as JourneyFallbackRiskProfile,
+              objectiveKind: objective.kind,
+              objectiveSequence: objective.sequence,
+              actionIndex,
+              baseRisk: action.risk,
+            }),
+          })),
+        })),
+      }
+    : proposal;
+  return validateJourneyTaskProposal({ ...input, proposal: calibratedProposal, source: "server_fallback" });
 }
 
 function fallbackRouteFromMap(input: {

@@ -252,6 +252,7 @@ test("turn hosted action rules build hosted options with social hooks and visibl
 
 test("turn hosted action rules build turn and hosted action payloads", () => {
   assert.deepEqual(turnHostedActionRewardGrantPayload({
+    agentId: "agent_1",
     reward: { resourceId: "focus", amount: 1, reason: "turn_observe" },
     balanceBefore: 4,
   }), {
@@ -259,6 +260,10 @@ test("turn hosted action rules build turn and hosted action payloads", () => {
     amount: 1,
     reason: "turn_observe",
     balanceAfter: 5,
+    accountRef: "agent:agent_1",
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: "100",
   });
 
   const turnOptions = turnActionOptions("turn_1", idFactory, true);
@@ -414,6 +419,10 @@ test("turn hosted action rules plan turn card creation and resolution event sequ
     amount: 1,
     reason: "turn_anomaly",
     balanceAfter: 4,
+    accountRef: "agent:agent_1",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "100",
   });
   assert.deepEqual(lifetimeRequests, [{
     delta: -2,
@@ -511,6 +520,10 @@ test("turn hosted action rules plan hosted session and action event sequences", 
     amount: 1,
     reason: "hosted_anomaly",
     balanceAfter: 8,
+    accountRef: "agent:agent_1",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "100",
   });
   assert.deepEqual(lifetimeRequests, [{
     delta: -2,

@@ -557,7 +557,7 @@ test("default runtime continues sequential event IDs after a SQLite restart", as
   }
 });
 
-test("appendSqliteEpochEventBatch rolls back the record and all indexes on an event conflict", async () => {
+test("appendSqliteEpochEventBatch treats identical epoch events as idempotent and rolls back payload conflicts", async () => {
   const tempDir = await mkdtemp(path.join(tmpdir(), "epoch-sqlite-batch-rollback-"));
   const dbPath = path.join(tempDir, "agent-world.sqlite");
   try {
@@ -573,16 +573,41 @@ test("appendSqliteEpochEventBatch rolls back the record and all indexes on an ev
       idempotencyKey: "issue-sqlite-batch-rollback-1",
     });
 
+    await appendSqliteEpochEventBatch(dbPath, [identity.events[0], identity.events[0]]);
+    assert.equal(readSqliteJsonlRecords(dbPath, "epoch-events.jsonl").length, 1);
+    const indexedAfterIdenticalDuplicate = new DatabaseSync(dbPath);
+    try {
+      const row = indexedAfterIdenticalDuplicate.prepare("SELECT COUNT(*) AS count FROM epoch_events")
+        .get() as { count: number };
+      assert.equal(Number(row.count), 1);
+    } finally {
+      indexedAfterIdenticalDuplicate.close();
+    }
+
+    const conflictingCore = createEpochGameCore({
+      idFactory: createSequentialEpochIdFactory("sqlite_batch_rollback"),
+    });
+    const conflictingIdentity = conflictingCore.issueIdentity({
+      explorerId: "explorer_sqlite_batch_rollback_conflict",
+      identityName: "SQLite 回滚冲突者",
+    }, {
+      actorExplorerId: "explorer_sqlite_batch_rollback_conflict",
+      trustClass: "untrusted_client",
+      idempotencyKey: "issue-sqlite-batch-rollback-conflict",
+    });
+    assert.equal(conflictingIdentity.events[0].eventId, identity.events[0].eventId);
+    assert.notDeepEqual(conflictingIdentity.events[0].payload, identity.events[0].payload);
+
     await assert.rejects(
-      appendSqliteEpochEventBatch(dbPath, [identity.events[0], identity.events[0]]),
-      /UNIQUE constraint failed: epoch_events\.event_id/,
+      appendSqliteEpochEventBatch(dbPath, [conflictingIdentity.events[0]]),
+      /epoch_event_recovery_conflict/,
     );
 
-    assert.equal(readSqliteJsonlRecords(dbPath, "epoch-events.jsonl").length, 0);
+    assert.equal(readSqliteJsonlRecords(dbPath, "epoch-events.jsonl").length, 1);
     const db = new DatabaseSync(dbPath);
     try {
       const row = db.prepare("SELECT COUNT(*) AS count FROM epoch_events").get() as { count: number };
-      assert.equal(Number(row.count), 0);
+      assert.equal(Number(row.count), 1);
     } finally {
       db.close();
     }

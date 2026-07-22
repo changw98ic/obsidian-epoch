@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { adjudicateRun } from "./adjudicator.ts";
 import {
   buildPublicWorldView,
@@ -21,10 +22,23 @@ import { resolveEpochFrontstageStatus } from "./frontstageStatus.ts";
 import { createLoreLedger } from "./lore.ts";
 import { createEpochOperationSwitchRegistry, type EpochOperationGateInput } from "./operationSwitches.ts";
 import { createLegacyOutboxLedger, graphSyncFromOutboxEntries, type LegacyOutboxCreateInput } from "./outbox.ts";
-import { createEpochRuntime } from "./epoch/runtime.ts";
+import { createEpochRuntime, type EpochSharedResultPage } from "./epoch/runtime.ts";
 import { projectEpochEvents } from "./epoch/gameCore.ts";
 import { createAgentCompanionRuntime } from "./epoch/agentCompanionRuntime.ts";
 import type { EpochEvent } from "./epoch/events.ts";
+import {
+  causalWorldEventFromEpochEvent,
+} from "./epoch/causalEpochAdapter.ts";
+import {
+  createInfiniteWorldRuntime,
+  type InfiniteWorldCommandV1,
+} from "./epoch/infiniteWorldRuntime.ts";
+import {
+  causalPlayerPanel,
+  causalPlayerTenRunAudit,
+  type CausalPlayerIdentityReadModel,
+  type CausalPlayerReadCaller,
+} from "./epoch/causalPlayerReadModel.ts";
 import {
   createEpochWorldClockRuntime,
   type CreateEpochWorldClockRuntimeOptions,
@@ -57,10 +71,38 @@ import {
 } from "./epoch/journeyGeneratedTaskRules.ts";
 import { journeyMetricsView } from "./epoch/journeyMetricsReadModel.ts";
 import {
+  type JourneyRunReceipt,
+} from "./epoch/journeyRunReceiptRules.ts";
+import {
   buildPersistedJourneyNarrative,
   buildServerJourneyEpisodeFacts,
 } from "./epoch/journeyNarrativeRules.ts";
-import { currentMcpRequestContext } from "./mcpRequestContext.ts";
+import {
+  PHASE6_MCP_CONTRACT_RULESET_VERSION,
+  PHASE6_MCP_TOOL_PHASE6_RESULT,
+  PHASE6_MCP_TOOL_RUN_RECEIPT,
+  validatePhase6McpPhase6ResultRead,
+  validatePhase6McpRunReceiptInput,
+  validatePhase6McpRunReceiptRead,
+  type Phase6McpErrorCode,
+} from "./epoch/phase6McpContractRules.ts";
+import {
+  PHASE6_EXPERIMENT_MCP_CONTRACT_RULESET_VERSION,
+  PHASE6_EXPERIMENT_MCP_TOOL_BEGIN_EXPERIMENT,
+  PHASE6_EXPERIMENT_MCP_TOOL_BEGIN_RUN,
+  PHASE6_EXPERIMENT_MCP_TOOL_SCHEMAS,
+  PHASE6_EXPERIMENT_MCP_TOOL_STATUS,
+  validatePhase6BeginExperimentInput,
+  validatePhase6BeginRunInput,
+  validatePhase6ExperimentStatusInput,
+  type Phase6ExperimentMcpErrorCode,
+} from "./epoch/phase6ExperimentMcpContractRules.ts";
+import { createEpochResultPageReadModel } from "./epoch/resultPageReadModel.ts";
+import {
+  currentMcpRequestContext,
+  isMcpResultAlreadyPersisted,
+  markMcpResultAlreadyPersisted,
+} from "./mcpRequestContext.ts";
 import { currentMcpRequestAuthContext } from "./mcpRequestAuthContext.ts";
 import {
   EPOCH_ACTIVE_IDENTITY_TOOL_NAMES,
@@ -70,11 +112,31 @@ import {
   attachEpochEventsForPersistence,
   boundedEpochTransportValue,
   epochEventsForPersistence,
+  publicEpochEvent,
 } from "./epoch/runtimePublicProjectionRules.ts";
 import {
   journeyEventsForPersistence,
   mergeJourneyEventsForPersistence,
 } from "./epoch/journeyPersistence.ts";
+import { PHASE6_ECONOMY_SNAPSHOT_VERSION } from "./epoch/phase6EconomyAuditRules.ts";
+import {
+  buildPhase6ProjectionDelta,
+  phase6CanonicalCursor,
+} from "./epoch/phase6ProjectionDeltaRules.ts";
+import { phase6EventsAfterCursor } from "./epoch/phase6EventWindowRules.ts";
+import { buildPhase6PanelSnapshotDocument } from "./epoch/phase6PanelSnapshotAdapter.ts";
+import { buildPhase6ServerPreSettlement } from "./epoch/phase6ServerPreSettlementRules.ts";
+import { buildPhase6ServerOutcomeEvidence } from "./epoch/phase6ServerOutcomeRules.ts";
+import {
+  PHASE6_AUTHORITATIVE_SCENARIO_MATRIX,
+  assertPhase6ScenarioBinding,
+  phase6ScenarioForRun,
+} from "./epoch/phase6ScenarioMatrixRules.ts";
+import {
+  attachPhase6CommittedResultForPersistence,
+  createPhase6CommittedResultSqliteStore,
+  type Phase6CommittedResultSqliteStore,
+} from "./epoch/phase6CommittedResultStore.ts";
 import { createProgressionLedger } from "./progression.ts";
 import { assertPublicSafe } from "./safety.ts";
 import { createTicketRegistry, hashRunPayload } from "./tickets.ts";
@@ -221,6 +283,7 @@ type RuntimeOptions = AnyRecord & {
   outbox?: object;
   outboxEvents?: readonly object[];
   journeyEvents?: readonly object[];
+  infiniteWorld?: AnyRecord;
 };
 type AgentWorldRuntime = ReturnType<typeof createAgentWorldRuntime>;
 type McpToolDefinition = {
@@ -251,7 +314,7 @@ export type AgentWorldRemoteMcpRuntime = Omit<AgentWorldMcpRuntime, "runtime"> &
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
 export const MCP_SERVER_INFO = {
   name: "obsidian-epoch-agent-world",
-  version: "0.1.0",
+  version: "0.1.2",
 };
 
 const EPOCH_OWNER_RECOVERY_NON_ACTIVE_IDENTITY_TOOLS = [
@@ -259,6 +322,8 @@ const EPOCH_OWNER_RECOVERY_NON_ACTIVE_IDENTITY_TOOLS = [
   "obsidian_epoch.rotate_recovery",
   "obsidian_epoch.reincarnate",
   "obsidian_epoch.player_data_export",
+  "obsidian_epoch.player_panel",
+  "obsidian_epoch.ten_run_audit",
   "obsidian_epoch.owner_trace_conflicts",
   "obsidian_epoch.owner_trace_conflict_memories",
   "obsidian_epoch.revoke_result_page",
@@ -382,6 +447,204 @@ function stringValue(value: unknown, fallback = "") {
 
 function optionalString(value: unknown) {
   return typeof value === "string" && value ? value : undefined;
+}
+
+type Phase6ReceiptSqliteRow = {
+  readonly receipt_id: string;
+  readonly journey_id: string;
+  readonly receipt_json: string;
+};
+const PHASE6_EXPERIMENT_SCENARIO_MATRIX = PHASE6_AUTHORITATIVE_SCENARIO_MATRIX;
+const PHASE6_EXPERIMENT_VERSION_BINDING = {
+  rulesVersion: PHASE6_EXPERIMENT_MCP_CONTRACT_RULESET_VERSION,
+  catalogVersion: "obsidian-epoch-phase6-authoritative-catalog-v0.1.0",
+  codeVersion: MCP_SERVER_INFO.version,
+} as const;
+const phase6ExperimentExplorerBindings = new Map<string, AnyRecord>();
+const phase6CommittedResultStoresByPath = new Map<string, {
+  readonly db: DatabaseSync;
+  readonly store: Phase6CommittedResultSqliteStore;
+}>();
+
+function phase6McpError(code: Phase6McpErrorCode): never {
+  throw new Error(code);
+}
+
+function phase6McpValue<T>(
+  result: { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: { readonly code: Phase6McpErrorCode } },
+) {
+  if (!result.ok) phase6McpError(result.error.code);
+  return result.value;
+}
+
+function phase6ExperimentMcpError(code: Phase6ExperimentMcpErrorCode): never {
+  throw new Error(`phase6_experiment:${code}`);
+}
+
+function phase6ExperimentMcpValue<T>(
+  result: { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: { readonly code: Phase6ExperimentMcpErrorCode } },
+) {
+  if (!result.ok) phase6ExperimentMcpError(result.error.code);
+  return result.value;
+}
+
+function phase6ExperimentRuntimeError(error: unknown): never {
+  const message = error instanceof Error ? error.message : "";
+  if (/invalid_legacy/i.test(message)) throw new Error("phase6_experiment:invalid_legacy");
+  if (/not registered|not_found/i.test(message)) phase6ExperimentMcpError("not_found");
+  if (/already|conflict|changed|different|duplicate/i.test(message)) phase6ExperimentMcpError("conflict");
+  phase6ExperimentMcpError("invalid_input");
+}
+
+function phase6ExperimentHash(scope: string, payload: unknown) {
+  return hashRunPayload({
+    scope,
+    rulesetVersion: PHASE6_EXPERIMENT_MCP_CONTRACT_RULESET_VERSION,
+    scenarioMatrix: PHASE6_EXPERIMENT_SCENARIO_MATRIX,
+    versions: PHASE6_EXPERIMENT_VERSION_BINDING,
+    payload,
+  }).slice(0, 32);
+}
+
+function phase6ExperimentId(input: unknown) {
+  return `phase6_exp_${phase6ExperimentHash("begin_phase6_experiment", input)}`;
+}
+
+function phase6RunSeed(input: unknown) {
+  return { seed: `phase6_seed_${phase6ExperimentHash("begin_phase6_run_seed", input)}` };
+}
+
+function phase6RunReceipt(input: unknown) {
+  return {
+    receiptId: `phase6_run_receipt_${phase6ExperimentHash("begin_phase6_run_receipt", input)}`,
+    receiptVersion: "phase6-run-receipt-ref-v0.1.0",
+  };
+}
+
+function phase6JourneyBinding(input: AnyRecord) {
+  const id = phase6ExperimentHash("begin_phase6_run_journey", input);
+  return {
+    journeyId: optionalString(input.journeyId),
+    runId: `phase6_run_${id}`,
+  };
+}
+
+function phase6ExperimentStartJourneyBinding(result: AnyRecord, scenarioTag?: string) {
+  const versions = recordValue(result.versions);
+  const scenarioMatrix = recordValue(result.scenarioMatrix);
+  const seed = recordValue(result.seed);
+  const runReceipt = recordValue(result.runReceipt);
+  return {
+    experimentId: optionalString(result.experimentId),
+    runIndex: result.runIndex,
+    scenarioTag: optionalString(result.scenarioTag) || scenarioTag,
+    seed: optionalString(seed.seed),
+    receiptId: optionalString(runReceipt.receiptId),
+    receiptVersion: optionalString(runReceipt.receiptVersion),
+    journeyId: optionalString(result.journeyId),
+    runId: optionalString(result.runId),
+    expectedVersion: Number(result.expectedVersion),
+    rulesVersion: optionalString(versions.rulesVersion),
+    catalogVersion: optionalString(versions.catalogVersion),
+    codeVersion: optionalString(versions.codeVersion),
+    scenarioMatrixId: optionalString(scenarioMatrix.id),
+    scenarioMatrixVersion: optionalString(scenarioMatrix.version),
+    identity: recordValue(result.identity),
+    explorer: recordValue(result.explorer),
+    scenarioMatrix,
+    versions,
+    runReceipt,
+  };
+}
+
+function phase6ExperimentExplorerForStatus(status: AnyRecord) {
+  const experimentId = optionalString(status.experimentId);
+  const persistedExplorer = recordValue(status.explorer);
+  if (optionalString(persistedExplorer.explorerId)) return persistedExplorer;
+  const explorerId = optionalString(status.explorerId);
+  if (explorerId) {
+    return {
+      explorerId,
+      ...(optionalString(status.explorerDisplayName)
+        ? { displayName: optionalString(status.explorerDisplayName) }
+        : {}),
+    };
+  }
+  const boundExplorer = experimentId ? phase6ExperimentExplorerBindings.get(experimentId) : undefined;
+  if (boundExplorer && optionalString(boundExplorer.explorerId)) return boundExplorer;
+  throw new Error("phase6_experiment_invalid_legacy:explorer_missing");
+}
+
+function phase6ReceiptSqlitePath(options: AnyRecord) {
+  return optionalString(options.sqlitePath)
+    || optionalString(recordValue(options.persistence).sqlitePath)
+    || optionalString(recordValue(options.store).sqlitePath)
+    || optionalString(recordValue(options.health).sqlitePath)
+    || process.env.AGENT_SERVER_SQLITE_PATH;
+}
+
+function isPhase6ReceiptSqliteRow(value: unknown): value is Phase6ReceiptSqliteRow {
+  return isRecord(value)
+    && typeof value.receipt_id === "string"
+    && typeof value.journey_id === "string"
+    && typeof value.receipt_json === "string";
+}
+
+function loadPhase6ReceiptFromSqlite(sqlitePath: string | undefined, receiptId: string) {
+  if (!sqlitePath) return undefined;
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(sqlitePath, { readOnly: true });
+    const row = db.prepare(`
+      SELECT receipt_id, journey_id, receipt_json
+      FROM journey_run_receipts
+      WHERE receipt_id = ?
+    `).get(receiptId);
+    if (!row) return undefined;
+    if (!isPhase6ReceiptSqliteRow(row)) phase6McpError("invalid_receipt");
+    try {
+      return JSON.parse(row.receipt_json);
+    } catch {
+      phase6McpError("invalid_receipt");
+    }
+  } catch (error) {
+    if (error instanceof Error && /no such table|SQLITE_CANTOPEN|SQLITE_NOTADB/.test(error.message)) {
+      return undefined;
+    }
+    throw error;
+  } finally {
+    db?.close();
+  }
+}
+
+function phase6CommittedResultStoreForOptions(
+  options: AnyRecord,
+  epochOptions: AnyRecord,
+): Phase6CommittedResultSqliteStore | undefined {
+  const configured = epochOptions.phase6CommittedResultStore;
+  if (configured && typeof configured === "object") {
+    const store = configured as Partial<Phase6CommittedResultSqliteStore>;
+    if (typeof store.append === "function" && typeof store.listByJourneyId === "function") {
+      return configured as Phase6CommittedResultSqliteStore;
+    }
+  }
+  const sqlitePath = phase6ReceiptSqlitePath(options);
+  if (!sqlitePath) return undefined;
+  const cached = phase6CommittedResultStoresByPath.get(sqlitePath);
+  if (cached) return cached.store;
+  const db = new DatabaseSync(sqlitePath);
+  const store = createPhase6CommittedResultSqliteStore(db);
+  phase6CommittedResultStoresByPath.set(sqlitePath, { db, store });
+  return store;
+}
+
+function validatePhase6McpPageIdInput(input: unknown) {
+  const value = requireObject(input, "phase6_result_input");
+  const allowed = new Set(["pageId"]);
+  if (Object.keys(value).some((key) => !allowed.has(key))) phase6McpError("forbidden");
+  const pageId = optionalString(value.pageId);
+  if (!pageId) phase6McpError("not_found");
+  return { pageId };
 }
 
 function numberValue(value: unknown, fallback = 0) {
@@ -932,6 +1195,16 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     : Array.isArray(epochOptions.initialEvents)
       ? epochOptions.initialEvents
       : []) as readonly EpochEvent[];
+  const infiniteWorldOptions = recordValue(options.infiniteWorld);
+  const infiniteWorldId = optionalString(infiniteWorldOptions.worldId)
+    || process.env.OBSIDIAN_EPOCH_WORLD_ID
+    || process.env.AGENT_WORLD_ID
+    || "obsidian_epoch_world_default";
+  const infiniteWorld = createInfiniteWorldRuntime({
+    ...infiniteWorldOptions,
+    worldId: infiniteWorldId,
+    initialEvents: causalEventsFromEpochEvents(initialEpochEvents, infiniteWorldId),
+  });
   const initialJourneyEvents = Array.isArray(options.journeyEvents)
     ? options.journeyEvents as readonly JourneyRuntimeEvent[]
     : Array.isArray(journeyOptions.initialEvents)
@@ -947,16 +1220,22 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     : undefined;
   let resolveJourneyHiddenTaskSeal: JourneyHiddenTaskSealResolver = (journeyId, plan) =>
     sealFromProjection(initialJourneyProjection, journeyId, plan);
+  const initialResultPages = Array.isArray(options.resultPages)
+    ? options.resultPages
+    : Array.isArray(epochOptions.initialResultPages)
+      ? epochOptions.initialResultPages
+      : [];
+  // Phase 6 pages share the SQLite result_pages index but have their own public read contract.
+  const initialEpochResultPages = initialResultPages.filter((page) =>
+    optionalString(recordValue(page).createdBy) !== "obsidian_epoch.phase6");
   const epochRuntime = createEpochRuntime({
     ...epochOptions,
     initialEvents: initialEpochEvents,
-    initialResultPages: Array.isArray(options.resultPages)
-      ? options.resultPages
-      : Array.isArray(epochOptions.initialResultPages)
-        ? epochOptions.initialResultPages
-        : [],
+    initialResultPages: initialEpochResultPages,
     resolveJourneyHiddenTaskSeal: (journeyId, plan) => resolveJourneyHiddenTaskSeal(journeyId, plan),
   });
+  const phase6ReceiptSqlite = phase6ReceiptSqlitePath(options);
+  const phase6ResultPages = createEpochResultPageReadModel(initialResultPages as readonly EpochSharedResultPage[]);
   const worldClockRuntime = createEpochWorldClockRuntime({
     initialEvents: initialEpochEvents,
     ...(typeof worldClockOptions.idFactory === "function"
@@ -3513,6 +3792,254 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       assertPublicSafe(input);
       return epochRuntime.resultPage(input);
     },
+    epochBeginPhase6Experiment: async (input: AnyRecord = {}) => {
+      const readInput = phase6ExperimentMcpValue(validatePhase6BeginExperimentInput(input));
+      assertPublicSafe(readInput);
+      const boundInput = {
+        ...readInput,
+        experimentId: phase6ExperimentId(readInput),
+        scenarioMatrix: PHASE6_EXPERIMENT_SCENARIO_MATRIX,
+        versions: PHASE6_EXPERIMENT_VERSION_BINDING,
+      };
+      try {
+        const method = (epochRuntime as AnyRecord).createPhase6Experiment;
+        if (typeof method !== "function") throw new Error("phase6_experiment_runtime_unavailable");
+        const result = recordValue(await method.call(epochRuntime, boundInput));
+        phase6ExperimentExplorerBindings.set(boundInput.experimentId, readInput.explorer);
+        return {
+          ...result,
+          experimentId: boundInput.experimentId,
+          state: "planned",
+          identity: readInput.identity,
+          explorer: readInput.explorer,
+          scenarioMatrix: PHASE6_EXPERIMENT_SCENARIO_MATRIX,
+          versions: PHASE6_EXPERIMENT_VERSION_BINDING,
+        };
+      } catch (error) {
+        phase6ExperimentRuntimeError(error);
+      }
+    },
+    epochBeginPhase6Run: async (input: AnyRecord = {}) => {
+      const readInput = phase6ExperimentMcpValue(validatePhase6BeginRunInput(input));
+      assertPublicSafe(readInput);
+      const scenario = assertPhase6ScenarioBinding(readInput.runIndex, readInput.scenarioTag);
+      const seed = phase6RunSeed(readInput);
+      const runReceipt = phase6RunReceipt(readInput);
+      const journeyBinding = phase6JourneyBinding(readInput);
+      const journeyId = optionalString(journeyBinding.journeyId);
+      if (!journeyId || !optionalString(journeyBinding.runId)) {
+        throw new Error("phase6_experiment_journey_binding_missing");
+      }
+      const boundInput = {
+        commandId: readInput.commandId,
+        experimentId: readInput.experimentId,
+        run: {
+          runIndex: readInput.runIndex,
+          scenarioTag: scenario.tag,
+          identity: {},
+          scenarioMatrix: PHASE6_EXPERIMENT_SCENARIO_MATRIX,
+          versions: PHASE6_EXPERIMENT_VERSION_BINDING,
+          seed,
+          runReceipt,
+          journeyId,
+        },
+      };
+      try {
+        const statusMethod = (epochRuntime as AnyRecord).phase6ExperimentStatus;
+        if (typeof statusMethod !== "function") throw new Error("phase6_experiment_runtime_unavailable");
+        const status = recordValue(await statusMethod.call(epochRuntime, { experimentId: readInput.experimentId }));
+        const experimentIdentityId = optionalString(status.identityId);
+        if (!experimentIdentityId) throw new Error("phase6_experiment_identity_missing");
+        const explorer = phase6ExperimentExplorerForStatus(status);
+        const preparedStatus = companionRuntime.journeyRuntime().status(journeyId);
+        const preparedJourney = recordValue(preparedStatus.journey);
+        if (optionalString(preparedJourney.status) !== "prepared") {
+          throw new Error("phase6_experiment_journey_not_prepared");
+        }
+        const preparedIdentityId = optionalString(preparedJourney.agentId);
+        if (!preparedIdentityId) throw new Error("phase6_experiment_journey_identity_missing");
+        if (optionalString(preparedJourney.explorerId) !== optionalString(explorer.explorerId)) {
+          throw new Error("phase6_experiment_journey_explorer_mismatch");
+        }
+        const preparedIdentityArchive = recordValue(epochRuntime.identityArchive({ agentId: preparedIdentityId }));
+        const lineage = Array.isArray(preparedIdentityArchive.lineage)
+          ? preparedIdentityArchive.lineage.filter((entry): entry is string => typeof entry === "string")
+          : [];
+        if (preparedIdentityId !== experimentIdentityId && !lineage.includes(experimentIdentityId)) {
+          throw new Error("phase6_experiment_journey_identity_lineage_mismatch");
+        }
+        const identity = { identityId: preparedIdentityId };
+        assertPhase6ScenarioBinding(
+          readInput.runIndex,
+          readInput.scenarioTag,
+          optionalString(recordValue(preparedJourney.taskRequest).taskType),
+        );
+        const expectedVersion = Number(preparedJourney.version);
+        if (!Number.isInteger(expectedVersion) || expectedVersion < 0) {
+          throw new Error("phase6_experiment_journey_version_invalid");
+        }
+        const method = (epochRuntime as AnyRecord).beginPhase6ExperimentRun;
+        if (typeof method !== "function") throw new Error("phase6_experiment_runtime_unavailable");
+        const result = recordValue(await method.call(epochRuntime, {
+          ...boundInput,
+          explorer,
+          run: {
+            ...boundInput.run,
+            identity,
+            explorer,
+          },
+        }));
+        const metadata = {
+          ...result,
+          experimentId: readInput.experimentId,
+          runIndex: readInput.runIndex,
+          scenarioTag: scenario.tag,
+          journeyId,
+          runId: optionalString(journeyBinding.runId),
+          expectedVersion,
+          identity,
+          explorer,
+          scenarioMatrix: PHASE6_EXPERIMENT_SCENARIO_MATRIX,
+          versions: PHASE6_EXPERIMENT_VERSION_BINDING,
+          seed,
+          runReceipt,
+        };
+        if (optionalString(recordValue(metadata.explorer).explorerId) !== optionalString(explorer.explorerId)) {
+          throw new Error("phase6_experiment_explorer_mismatch");
+        }
+        return {
+          ...metadata,
+          startJourneyBinding: phase6ExperimentStartJourneyBinding(metadata, scenario.tag),
+        };
+      } catch (error) {
+        phase6ExperimentRuntimeError(error);
+      }
+    },
+      epochPhase6ExperimentStatus: async (input: AnyRecord = {}) => {
+      const readInput = phase6ExperimentMcpValue(validatePhase6ExperimentStatusInput(input));
+      assertPublicSafe(readInput);
+      try {
+        const method = (epochRuntime as AnyRecord).phase6ExperimentStatus;
+        if (typeof method !== "function") throw new Error("phase6_experiment_runtime_unavailable");
+        return method.call(epochRuntime, readInput);
+      } catch (error) {
+        phase6ExperimentRuntimeError(error);
+      }
+      },
+      epochPhase6ExperimentRun: (input: AnyRecord = {}) => {
+        assertPublicSafe(input);
+        const method = (epochRuntime as AnyRecord).phase6ExperimentRun;
+        if (typeof method !== "function") throw new Error("phase6_experiment_runtime_unavailable");
+        return method.call(epochRuntime, input);
+      },
+      epochPhase6ExperimentRunByJourneyId: (input: AnyRecord = {}) => {
+        assertPublicSafe(input);
+        const store = recordValue(epochOptions).phase6ExperimentStore as
+          | { loadRunByJourneyId?: (journeyId: string) => unknown }
+          | undefined;
+        if (typeof store?.loadRunByJourneyId !== "function") throw new Error("phase6_experiment_runtime_unavailable");
+        const journeyId = optionalString(input.journeyId);
+        if (!journeyId) throw new Error("phase6_journey_id_required");
+        return store.loadRunByJourneyId(journeyId);
+      },
+      epochCapturePhase6JourneyStart: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      const method = (epochRuntime as AnyRecord).capturePhase6JourneyStart;
+      if (typeof method !== "function") throw new Error("phase6_experiment_runtime_unavailable");
+      return method.call(epochRuntime, input);
+    },
+    epochLoadPhase6JourneyContext: (journeyId: string) => {
+      assertPublicSafe({ journeyId });
+      const method = (epochRuntime as AnyRecord).loadPhase6JourneyContext;
+      if (typeof method !== "function") throw new Error("phase6_experiment_runtime_unavailable");
+      return method.call(epochRuntime, journeyId);
+    },
+    epochCapturePhase6RagTrace: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      const method = (epochRuntime as AnyRecord).capturePhase6RagTrace;
+      if (typeof method !== "function") throw new Error("phase6_experiment_runtime_unavailable");
+      return method.call(epochRuntime, input);
+    },
+    epochLoadPhase6RagTraceByBinding: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      const method = (epochRuntime as AnyRecord).loadPhase6RagTraceByBinding;
+      if (typeof method !== "function") throw new Error("phase6_experiment_runtime_unavailable");
+      return method.call(epochRuntime, input);
+    },
+    epochListPhase6RagTraces: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      const method = (epochRuntime as AnyRecord).listPhase6RagTraces;
+      if (typeof method !== "function") throw new Error("phase6_experiment_runtime_unavailable");
+      return method.call(epochRuntime, input);
+    },
+    epochFinalizePhase6Journey: async (journeyId: string, completion: AnyRecord = {}) => {
+      assertPublicSafe({ journeyId, completion });
+      const method = (epochRuntime as AnyRecord).finalizePhase6Journey;
+      if (typeof method !== "function") throw new Error("phase6_experiment_runtime_unavailable");
+      return method.call(epochRuntime, journeyId, completion);
+    },
+    epochCompletePhase6ExperimentRun: async (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      try {
+        const method = (epochRuntime as AnyRecord).completePhase6ExperimentRun;
+        if (typeof method !== "function") throw new Error("phase6_experiment_runtime_unavailable");
+        return method.call(epochRuntime, input);
+      } catch (error) {
+        phase6ExperimentRuntimeError(error);
+      }
+    },
+    epochFailPhase6ExperimentRun: async (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      try {
+        const method = (epochRuntime as AnyRecord).failPhase6ExperimentRun;
+        if (typeof method !== "function") throw new Error("phase6_experiment_runtime_unavailable");
+        return method.call(epochRuntime, input);
+      } catch (error) {
+        phase6ExperimentRuntimeError(error);
+      }
+    },
+    epochPhase6RunReceipt: (input: AnyRecord = {}) => {
+      const readInput = phase6McpValue(validatePhase6McpRunReceiptInput(input));
+      if (!readInput.receiptId) phase6McpError("not_found");
+      assertPublicSafe(readInput);
+      const receipt = loadPhase6ReceiptFromSqlite(phase6ReceiptSqlite, readInput.receiptId) as JourneyRunReceipt | undefined;
+      if (readInput.journeyId && receipt && receipt.journeyId !== readInput.journeyId) {
+        phase6McpError("invalid_receipt");
+      }
+      return {
+        rulesetVersion: PHASE6_MCP_CONTRACT_RULESET_VERSION,
+        ...phase6McpValue(validatePhase6McpRunReceiptRead({ receipt })),
+      };
+    },
+    epochPhase6Result: (input: AnyRecord = {}) => {
+      const { pageId } = validatePhase6McpPageIdInput(input);
+      assertPublicSafe({ pageId });
+      const page = phase6ResultPages.get(pageId);
+      if (!page) phase6McpError("not_found");
+      const sidecar = phase6ResultPages.phase6Sidecar(pageId);
+      if (!sidecar || sidecar.ok !== true || !sidecar.page) phase6McpError("settlement_pending");
+      const receiptId = sidecar?.page?.receipt.receiptId;
+      const receipt = receiptId
+        ? loadPhase6ReceiptFromSqlite(phase6ReceiptSqlite, receiptId) as JourneyRunReceipt | undefined
+        : undefined;
+      return {
+        rulesetVersion: PHASE6_MCP_CONTRACT_RULESET_VERSION,
+        pageId,
+        verified: true,
+        ...phase6McpValue(validatePhase6McpPhase6ResultRead({
+          pageId,
+          receiptId: receiptId || pageId,
+          receipt,
+          result: sidecar?.page,
+          verified: true,
+        })),
+      };
+    },
+    epochStorePhase6ResultPage: (page: EpochSharedResultPage) => {
+      assertPublicSafe(page);
+      phase6ResultPages.set(page.pageId, page);
+      return { pageId: page.pageId, stored: true };
+    },
     epochCreateResultPage: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
       assertOperationSwitchOpen({
@@ -3546,7 +4073,288 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       return epochRuntime.audit(input);
     },
     epochRecordRejectedCommand: (input: AnyRecord = {}) => epochRuntime.recordRejectedCommand(input),
+    infiniteWorldId: () => infiniteWorldId,
+    infiniteWorldCommand: async (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      assertInfiniteWorldOwnerOrOperator(input, epochRuntime);
+      const command = normalizeInfiniteWorldToolCommand(input, infiniteWorldId);
+      const result = await infiniteWorld.execute(command);
+      const response = {
+        ok: true,
+        worldId: result.event.worldId,
+        event: result.event,
+        manifest: result.manifest,
+        replayed: result.replayed,
+        duplicate: result.replayed,
+        warnings: result.manifest.warnings,
+        projectionStatus: result.manifest.projectionStatus,
+        health: result.manifest.projectionStatus === "degraded" ? infiniteWorld.health() : undefined,
+        epochEvents: result.epochEvents,
+      };
+      return attachEpochEventsForPersistence(response, result.replayed ? [] : result.epochEvents);
+    },
+    infiniteWorldSnapshot: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      epochRuntime.operatorOverview({ operatorKey: input.operatorKey, limit: 1 });
+      return {
+        ok: true,
+        worldId: infiniteWorldId,
+        snapshot: infiniteWorld.snapshot(),
+        checkpoint: infiniteWorld.checkpoint(),
+      };
+    },
+    infiniteWorldPlayerPanel: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      const caller = infiniteWorldReadCaller(input, epochRuntime);
+      return {
+        ok: true,
+        worldId: infiniteWorldId,
+        panel: causalPlayerPanel({
+          snapshot: infiniteWorld.snapshot(),
+          caller,
+          identity: infiniteWorldPlayerIdentity(caller, epochRuntime),
+          ragQuery: optionalString(input.ragQuery),
+          ragPage: {
+            cursor: optionalString(input.ragCursor),
+            limit: typeof input.ragLimit === "number" ? input.ragLimit : undefined,
+          },
+          runPage: {
+            cursor: optionalString(input.runCursor),
+            limit: typeof input.runLimit === "number" ? input.runLimit : undefined,
+          },
+        }),
+      };
+    },
+    infiniteWorldTenRunAudit: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      const caller = infiniteWorldReadCaller(input, epochRuntime);
+      const panel = causalPlayerPanel({
+        snapshot: infiniteWorld.snapshot(),
+        caller,
+        identity: infiniteWorldPlayerIdentity(caller, epochRuntime),
+        ragQuery: optionalString(input.ragQuery),
+        ragPage: {
+          cursor: optionalString(input.ragCursor),
+          limit: typeof input.ragLimit === "number" ? input.ragLimit : undefined,
+        },
+        runPage: { limit: 10 },
+      });
+      const available = panel.recentRuns.page.total;
+      const required = 10;
+      if (available < required) {
+        return {
+          ok: false,
+          worldId: infiniteWorldId,
+          available,
+          required,
+          reason: "ten_run_audit_requires_exactly_ten_recent_runs",
+          audit: undefined,
+        };
+      }
+      return {
+        ok: true,
+        worldId: infiniteWorldId,
+        available,
+        required,
+        audit: causalPlayerTenRunAudit(panel),
+      };
+    },
+    infiniteWorldHealth: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return {
+        ok: true,
+        worldId: infiniteWorldId,
+        health: infiniteWorld.health(),
+      };
+    },
+    infiniteWorldMigrate: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      epochRuntime.operatorOverview({ operatorKey: input.operatorKey, limit: 1 });
+      if (input.dryRun === false) throw new Error("infinite_world_migrate_dry_run_required");
+      return {
+        ok: true,
+        worldId: infiniteWorldId,
+        migration: infiniteWorld.migrate(input.snapshot, true),
+      };
+    },
   };
+}
+
+function causalEventsFromEpochEvents(
+  events: readonly EpochEvent[],
+  worldId: string,
+) {
+  return events.flatMap((event, index) => {
+    try {
+      const causalEvent = causalWorldEventFromEpochEvent(event);
+      return causalEvent && causalEvent.worldId === worldId ? [causalEvent] : [];
+    } catch (error) {
+      if (event?.eventType === "causal_world_event_recorded") {
+        const eventId = optionalString((event as unknown as AnyRecord).eventId) || "unknown";
+        const cause = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `causal_world_event_recovery_failed:index=${index}:id=${eventId}:type=causal_world_event_recorded:cause=${cause}`,
+        );
+      }
+      return [];
+    }
+  });
+}
+
+function normalizeInfiniteWorldToolCommand(input: AnyRecord, worldId: string): InfiniteWorldCommandV1 {
+  const commandInput = recordValue(input.command);
+  return {
+    ...commandInput,
+    worldId: optionalString(commandInput.worldId) || worldId,
+  } as unknown as InfiniteWorldCommandV1;
+}
+
+function assertInfiniteWorldOwnerOrOperator(
+  input: AnyRecord,
+  epochRuntime: {
+    operatorOverview: (input: AnyRecord) => unknown;
+    progress: (input: AnyRecord) => unknown;
+    playerDataExport: (input: AnyRecord) => unknown;
+  },
+) {
+  if (optionalString(input.operatorKey)) {
+    epochRuntime.operatorOverview({ operatorKey: input.operatorKey, limit: 1 });
+    return;
+  }
+  const command = recordValue(input.command);
+  const actor = recordValue(command.actor);
+  const recoveryCode = optionalString(input.recoveryCode);
+  const actorId = optionalString(actor.actorId);
+  if (actor.actorType === "player_identity" && actorId && recoveryCode) {
+    const progress = recordValue(epochRuntime.progress({ agentId: actorId }));
+    const identity = recordValue(progress.identity);
+    const explorerId = optionalString(identity.explorerId);
+    if (!explorerId) throw new Error("infinite_world_owner_identity_not_found");
+    epochRuntime.playerDataExport({ explorerId, recoveryCode, limit: 1 });
+    return;
+  }
+  throw new Error("infinite_world_owner_or_operator_auth_required");
+}
+
+function infiniteWorldReadCaller(
+  input: AnyRecord,
+  epochRuntime: {
+    operatorOverview: (input: AnyRecord) => unknown;
+    progress: (input: AnyRecord) => unknown;
+    playerDataExport: (input: AnyRecord) => unknown;
+    organizations: (input: AnyRecord) => unknown;
+  },
+): CausalPlayerReadCaller {
+  const agentId = optionalString(input.agentId) || optionalString(input.identityId);
+  const recoveryCode = optionalString(input.recoveryCode);
+  if (optionalString(input.operatorKey)) {
+    epochRuntime.operatorOverview({ operatorKey: input.operatorKey, limit: 1 });
+    return {
+      playerId: optionalString(input.playerId),
+      identityId: optionalString(input.identityId) || agentId,
+      agentId,
+      explorerId: optionalString(input.explorerId),
+      regionId: optionalString(input.regionId),
+      organizationIds: stringArray(input.organizationIds),
+      evidenceIds: stringArray(input.evidenceIds),
+      accountRefs: accountRefsForIdentity(optionalString(input.identityId) || agentId),
+      itemRefs: stringArray(input.itemRefs),
+      legalAccess: ["public", "owner", "member", "source-bound", "operator"],
+    };
+  }
+  if (!agentId) throw new Error("infinite_world_owner_or_operator_auth_required");
+  const progress = recordValue(epochRuntime.progress({ agentId, limit: 1 }));
+  const identity = recordValue(progress.identity);
+  const explorerId = optionalString(identity.explorerId) || optionalString(progress.explorerId);
+  if (!explorerId) throw new Error("infinite_world_owner_identity_not_found");
+  const requestAuth = currentMcpRequestAuthContext();
+  const playerRequestAuthorized = requestAuth?.kind === "player"
+    && requestAuth.explorerId === explorerId;
+  if (!playerRequestAuthorized) {
+    if (!recoveryCode) throw new Error("infinite_world_owner_or_operator_auth_required");
+    epochRuntime.playerDataExport({ explorerId, recoveryCode, limit: 1 });
+  }
+  const identityId = optionalString(input.identityId) || optionalString(identity.agentId) || agentId;
+  return {
+    playerId: optionalString(input.playerId) || explorerId,
+    identityId,
+    agentId,
+    explorerId,
+    regionId: optionalString(input.regionId) || optionalString(identity.regionId),
+    organizationIds: activeOrganizationIdsForAgent(epochRuntime, agentId),
+    evidenceIds: stringArray(input.evidenceIds),
+    accountRefs: accountRefsForIdentity(identityId),
+    itemRefs: stringArray(input.itemRefs),
+    legalAccess: ["public", "owner", "member", "source-bound"],
+  };
+}
+
+function infiniteWorldPlayerIdentity(
+  caller: CausalPlayerReadCaller,
+  epochRuntime: { identityArchive: (input: AnyRecord) => unknown },
+): CausalPlayerIdentityReadModel {
+  const requestedIdentityId = caller.identityId || caller.agentId;
+  if (!requestedIdentityId) {
+    return {
+      explorerId: caller.explorerId,
+      status: "unavailable",
+      lineage: [],
+      canStartJourney: false,
+      reincarnationRequired: false,
+      source: "caller_fallback",
+    };
+  }
+  const archive = recordValue(epochRuntime.identityArchive({ agentId: requestedIdentityId }));
+  const identity = recordValue(archive.identity);
+  const status = identity.status === "active" || identity.status === "archived"
+    ? identity.status
+    : "unavailable";
+  const lineage = uniqueStringArray(stringArray(archive.lineage));
+  const generation = Number(identity.generation);
+  const nextAgentId = optionalString(identity.nextAgentId);
+  return {
+    identityId: optionalString(identity.agentId) || requestedIdentityId,
+    agentId: optionalString(identity.agentId) || requestedIdentityId,
+    explorerId: optionalString(identity.explorerId) || caller.explorerId,
+    status,
+    ...(Number.isSafeInteger(generation) && generation > 0 ? { generation } : {}),
+    ...(optionalString(identity.previousAgentId) ? { previousAgentId: optionalString(identity.previousAgentId) } : {}),
+    ...(nextAgentId ? { nextAgentId } : {}),
+    lineage,
+    ...(lineage[0] ? { lineageRootAgentId: lineage[0] } : {}),
+    canStartJourney: status === "active",
+    reincarnationRequired: status === "archived" && !nextAgentId,
+    source: "epoch_identity_archive",
+  };
+}
+
+function activeOrganizationIdsForAgent(
+  epochRuntime: { organizations: (input: AnyRecord) => unknown },
+  agentId: string,
+): readonly string[] {
+  const view = recordValue(epochRuntime.organizations({ agentId }));
+  return uniqueStringArray(recordArray(view.memberships)
+    .filter((membership) => membership.status === "active")
+    .map((membership) => optionalString(membership.organizationId)));
+}
+
+function accountRefsForIdentity(identityId: string | undefined): readonly string[] {
+  if (!identityId) return [];
+  return [
+    `identity:${identityId}`,
+    `identity:${identityId}:wallet`,
+    `identity:${identityId}:inventory`,
+    `identity:${identityId}:progression`,
+    `identity:${identityId}:skill_tree`,
+  ];
+}
+
+function stringArray(value: unknown): readonly string[] {
+  return Array.isArray(value) ? uniqueStringArray(value.map(optionalString)) : [];
+}
+
+function uniqueStringArray(values: readonly (string | undefined)[]): readonly string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))].sort((left, right) => left.localeCompare(right));
 }
 
 const objectSchema = (properties: AnyRecord, required: string[] = []) => ({
@@ -3556,7 +4364,28 @@ const objectSchema = (properties: AnyRecord, required: string[] = []) => ({
   required,
 });
 
-export const AGENT_WORLD_TOOLS = [
+const REMOVED_LEGACY_AGENT_WORLD_TOOLS = new Set([
+  "agent_world.context_package",
+  "agent_world.context_snapshots",
+  "agent_world.start_run",
+  "agent_world.run_heartbeat",
+  "agent_world.submit_battle_report",
+  "agent_world.archive_local_report",
+  "agent_world.outbox",
+  "agent_world.replay_outbox",
+  "agent_world.review_queue",
+  "agent_world.public_world",
+  "agent_world.progression_state",
+  "agent_world.operation_check",
+]);
+
+function assertLegacyAgentWorldToolRemoved(name: string) {
+  if (REMOVED_LEGACY_AGENT_WORLD_TOOLS.has(name)) {
+    throw new Error("legacy_agent_world_tool_removed");
+  }
+}
+
+const MCP_TOOL_DEFINITIONS = [
   {
     name: "agent_world.context_package",
     title: "Context package",
@@ -3679,6 +4508,82 @@ export const AGENT_WORLD_TOOLS = [
     }, ["explorerId"]),
   },
   {
+    name: "obsidian_epoch.command",
+    title: "Infinite world command",
+    description: "Submit one canonical Infinite World command. Accepts the 15-command union under command and requires owner recovery authorization or operatorKey.",
+    inputSchema: objectSchema({
+      command: { type: "object" },
+      recoveryCode: { type: "string" },
+      operatorKey: { type: "string" },
+    }, ["command"]),
+  },
+  {
+    name: "obsidian_epoch.world_snapshot",
+    title: "Infinite world snapshot",
+    description: "Operator-only read of the canonical Infinite World causal snapshot and checkpoint metadata.",
+    inputSchema: objectSchema({
+      operatorKey: { type: "string" },
+    }, ["operatorKey"]),
+  },
+  {
+    name: "obsidian_epoch.player_panel",
+    title: "Infinite world player panel",
+    description: "Owner/operator read of the server-derived Infinite World player panel: resources, progression, loadout, scoped RAG, combat readiness and recent run audits.",
+    inputSchema: objectSchema({
+      agentId: { type: "string" },
+      identityId: { type: "string" },
+      explorerId: { type: "string" },
+      playerId: { type: "string" },
+      recoveryCode: { type: "string" },
+      operatorKey: { type: "string" },
+      regionId: { type: "string" },
+      organizationIds: { type: "array", items: { type: "string" } },
+      evidenceIds: { type: "array", items: { type: "string" } },
+      itemRefs: { type: "array", items: { type: "string" } },
+      ragQuery: { type: "string" },
+      ragCursor: { type: "string" },
+      ragLimit: { type: "number" },
+      runCursor: { type: "string" },
+      runLimit: { type: "number" },
+    }),
+  },
+  {
+    name: "obsidian_epoch.ten_run_audit",
+    title: "Infinite world ten run audit",
+    description: "Owner/operator read of an exact-ten recent-run audit with descriptive non-causal correlation only. Returns available/required when fewer than ten runs exist.",
+    inputSchema: objectSchema({
+      agentId: { type: "string" },
+      identityId: { type: "string" },
+      explorerId: { type: "string" },
+      playerId: { type: "string" },
+      recoveryCode: { type: "string" },
+      operatorKey: { type: "string" },
+      regionId: { type: "string" },
+      organizationIds: { type: "array", items: { type: "string" } },
+      evidenceIds: { type: "array", items: { type: "string" } },
+      itemRefs: { type: "array", items: { type: "string" } },
+      ragQuery: { type: "string" },
+      ragCursor: { type: "string" },
+      ragLimit: { type: "number" },
+    }),
+  },
+  {
+    name: "obsidian_epoch.world_health",
+    title: "Infinite world health",
+    description: "Read Infinite World causal runtime health including degraded projection status.",
+    inputSchema: objectSchema({}),
+  },
+  {
+    name: "obsidian_epoch.world_migrate",
+    title: "Infinite world migration dry run",
+    description: "Operator-only dry-run migration for Infinite World causal snapshots. Non-dry-run migration is not exposed through MCP.",
+    inputSchema: objectSchema({
+      operatorKey: { type: "string" },
+      snapshot: { type: "object" },
+      dryRun: { type: "boolean" },
+    }, ["operatorKey"]),
+  },
+  {
     name: "agent_world.community_react",
     title: "Community reaction",
     description: "Record a player-authenticated reaction to a public claim, conflict, faction, or run. The explorer is derived from the player bearer token; supplied explorerId values are ignored.",
@@ -3742,6 +4647,14 @@ export const AGENT_WORLD_TOOLS = [
     title: "Transparency verify",
     description: "Verify the append-only public adjudication record chain.",
     inputSchema: objectSchema({}),
+  },
+  {
+    name: "obsidian_epoch.register_explorer",
+    title: "Register explorer",
+    description: "Register a new explorer and issue its first playable identity. Preserve the returned explorerId, recoveryCode and value.agentId for authenticated Journey calls.",
+    inputSchema: objectSchema({
+      idempotencyKey: { type: "string" },
+    }, ["idempotencyKey"]),
   },
   {
     name: "obsidian_epoch.quickstart",
@@ -3833,6 +4746,27 @@ export const AGENT_WORLD_TOOLS = [
       episodeCount: { type: "number" },
       decisionMode: { type: "string", enum: ["agent_native", "host_sampling"] },
       taskGenerationMode: { type: "string", enum: ["model_sampling", "server_fallback"] },
+      startJourneyBinding: { type: "object" },
+      phase6StartJourneyBinding: { type: "object" },
+      recoveryCode: { type: "string" },
+      localSecret: { type: "string" },
+      idempotencyKey: { type: "string" },
+    }, ["journeyId", "expectedVersion", "idempotencyKey"]),
+  },
+  {
+    name: "obsidian_epoch.start_journey_compact",
+    title: "Start journey compact",
+    description: "Owner-authorized Journey start with a bounded transport response. The server executes and persists the same authoritative start flow as start_journey.",
+    inputSchema: objectSchema({
+      journeyId: { type: "string" },
+      expectedVersion: { type: "number" },
+      realDurationMs: { type: "number" },
+      worldDurationMs: { type: "number" },
+      episodeCount: { type: "number" },
+      decisionMode: { type: "string", enum: ["agent_native", "host_sampling"] },
+      taskGenerationMode: { type: "string", enum: ["model_sampling", "server_fallback"] },
+      startJourneyBinding: { type: "object" },
+      phase6StartJourneyBinding: { type: "object" },
       recoveryCode: { type: "string" },
       localSecret: { type: "string" },
       idempotencyKey: { type: "string" },
@@ -3842,6 +4776,18 @@ export const AGENT_WORLD_TOOLS = [
     name: "obsidian_epoch.propose_journey_step",
     title: "Propose journey step",
     description: "Owner-authorized proposal for the current mission task. Returns the mission state, a server-signed SceneContract and concrete action options without committing an outcome.",
+    inputSchema: objectSchema({
+      journeyId: { type: "string" },
+      expectedVersion: { type: "number" },
+      recoveryCode: { type: "string" },
+      localSecret: { type: "string" },
+      idempotencyKey: { type: "string" },
+    }, ["journeyId", "expectedVersion", "idempotencyKey"]),
+  },
+  {
+    name: "obsidian_epoch.propose_journey_step_compact",
+    title: "Propose journey step (compact external-agent transport)",
+    description: "Return the same server-signed SceneContract through a bounded compact transport that keeps every commit binding and signature inline for external MCP agents.",
     inputSchema: objectSchema({
       journeyId: { type: "string" },
       expectedVersion: { type: "number" },
@@ -3868,9 +4814,36 @@ export const AGENT_WORLD_TOOLS = [
     }, ["journeyId", "sceneId", "episodeId", "actionOptionId", "expectedVersion", "signature", "idempotencyKey"]),
   },
   {
+    name: "obsidian_epoch.commit_journey_action_compact",
+    title: "Commit journey action (compact external-agent transport)",
+    description: "Commit the same server-signed action and return a bounded authoritative version/status delta suitable for external MCP agents without changing settlement semantics.",
+    inputSchema: objectSchema({
+      journeyId: { type: "string" },
+      sceneId: { type: "string" },
+      episodeId: { type: "string" },
+      actionOptionId: { type: "string" },
+      expectedVersion: { type: "number" },
+      signature: { type: "string" },
+      visibleText: { type: "string" },
+      recoveryCode: { type: "string" },
+      localSecret: { type: "string" },
+      idempotencyKey: { type: "string" },
+    }, ["journeyId", "sceneId", "episodeId", "actionOptionId", "expectedVersion", "signature", "idempotencyKey"]),
+  },
+  {
     name: "obsidian_epoch.journey_status",
     title: "Journey status",
     description: "Read an owner-authorized mission, staged task statuses, grounded episodes and next poll time; settled missions resolve explicitly to completed or failed and include a complete grounded story report.",
+    inputSchema: objectSchema({
+      journeyId: { type: "string" },
+      recoveryCode: { type: "string" },
+      localSecret: { type: "string" },
+    }, ["journeyId"]),
+  },
+  {
+    name: "obsidian_epoch.journey_status_compact",
+    title: "Journey status (compact external-agent transport)",
+    description: "Read the same owner-authorized journey and Phase 6 finalization through a bounded status, version, receipt and result-page projection for external MCP agents.",
     inputSchema: objectSchema({
       journeyId: { type: "string" },
       recoveryCode: { type: "string" },
@@ -4131,6 +5104,8 @@ export const AGENT_WORLD_TOOLS = [
       entityId: { type: "string" },
       regionId: { type: "string" },
       limit: { type: "number", minimum: 1, maximum: 30 },
+      startJourneyBinding: { type: "object" },
+      phase6StartJourneyBinding: { type: "object" },
     }, ["query"]),
   },
   {
@@ -4143,6 +5118,8 @@ export const AGENT_WORLD_TOOLS = [
       fromWorldTime: { type: "string" },
       toWorldTime: { type: "string" },
       limit: { type: "number", minimum: 1, maximum: 30 },
+      startJourneyBinding: { type: "object" },
+      phase6StartJourneyBinding: { type: "object" },
     }, ["query"]),
   },
   {
@@ -5620,6 +6597,103 @@ export const AGENT_WORLD_TOOLS = [
       limit: { type: "number" },
     }),
   },
+  ...PHASE6_EXPERIMENT_MCP_TOOL_SCHEMAS.map((schema) => ({
+    name: schema.name,
+    title: schema.name.replace(/^obsidian_epoch\./, "").replace(/_/g, " "),
+    description: schema.description,
+    inputSchema: schema.inputSchema as AnyRecord & {
+      readonly required: string[];
+      readonly properties: Record<string, unknown>;
+    },
+    annotations: {
+      readOnlyHint: schema.readonly,
+      destructiveHint: !schema.readonly,
+      idempotentHint: true,
+      openWorldHint: false,
+      phase6ExperimentContract: {
+        rulesetVersion: PHASE6_EXPERIMENT_MCP_CONTRACT_RULESET_VERSION,
+        errorCodes: schema.errorCodes,
+      },
+    },
+  })),
+  {
+    name: PHASE6_MCP_TOOL_RUN_RECEIPT,
+    title: "Phase 6 run receipt",
+    description: "Public read-only lookup of a server-settled Journey run receipt from the SQLite append-only receipt store. receiptId is required; journeyId is only an optional consistency check.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        receiptId: { type: "string" },
+        journeyId: { type: "string" },
+      },
+      required: ["receiptId"],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: PHASE6_MCP_TOOL_PHASE6_RESULT,
+    title: "Phase 6 result",
+    description: "Public read-only lookup of a verified Phase 6 result sidecar by result page id. Reads only the verified sidecar and matching SQLite receipt.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        pageId: { type: "string" },
+      },
+      required: ["pageId"],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "obsidian_epoch.run_receipt_compact",
+    title: "Phase 6 run receipt compact",
+    description: "Bounded transport projection of a fully validated server-settled Journey run receipt. The authoritative receipt remains in the append-only SQLite store.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        receiptId: { type: "string" },
+        journeyId: { type: "string" },
+      },
+      required: ["receiptId"],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: "obsidian_epoch.phase6_result_compact",
+    title: "Phase 6 result compact",
+    description: "Bounded transport projection of a verified Phase 6 result sidecar. Validation always runs against the complete persisted receipt and result before projection.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        pageId: { type: "string" },
+      },
+      required: ["pageId"],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
   {
     name: "obsidian_epoch.create_result_page",
     title: "Create result page",
@@ -5684,6 +6758,9 @@ export const AGENT_WORLD_TOOLS = [
   },
 ];
 
+export const AGENT_WORLD_TOOLS = MCP_TOOL_DEFINITIONS
+  .filter((tool) => !REMOVED_LEGACY_AGENT_WORLD_TOOLS.has(tool.name));
+
 export function epochAgentWorldToolNames() {
   return AGENT_WORLD_TOOLS
     .map((tool) => tool.name)
@@ -5714,10 +6791,13 @@ function toolResult(value: unknown) {
       enumerable: false,
     });
   }
+  if (isMcpResultAlreadyPersisted(value)) markMcpResultAlreadyPersisted(result);
   return result as McpToolResult;
 }
 
 const REJECTED_COMMAND_AUDIT_TOOLS = new Set([
+  "obsidian_epoch.command",
+  "obsidian_epoch.world_migrate",
   "obsidian_epoch.identity",
   "obsidian_epoch.rotate_recovery",
   "obsidian_epoch.archive_identity",
@@ -5829,6 +6909,8 @@ function serverAssignedIdentityInput(input: AnyRecord) {
 
 export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): AgentWorldMcpRuntime {
   const runtime = (options.runtime ?? createAgentWorldRuntime(options)) as AgentWorldRuntime;
+  const epochOptions = recordValue(options.epoch);
+  const phase6CommittedResults = phase6CommittedResultStoreForOptions(options, epochOptions);
   const recordRejectedCommands = options.recordRejectedCommands !== false;
   const authoritativeIdentityIssuance = options.authoritativeIdentityIssuance === true;
   const worldMemorySearch = options.worldMemorySearch;
@@ -5846,6 +6928,992 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     delete sanitized.groupId;
     return sanitized;
   };
+  const phase6BindingFromStartJourneyArgs = (args: AnyRecord) => {
+    const binding = recordValue(args.startJourneyBinding || args.phase6StartJourneyBinding);
+    const experimentId = optionalString(binding.experimentId);
+    if (!experimentId) return undefined;
+    const runIndex = Number(binding.runIndex);
+    const seed = optionalString(binding.seed);
+    const receiptId = optionalString(binding.receiptId)
+      || optionalString(recordValue(binding.runReceipt).receiptId);
+    const identity = recordValue(binding.identity);
+    const explorer = recordValue(binding.explorer);
+    const versions = recordValue(binding.versions);
+    const scenarioMatrix = recordValue(binding.scenarioMatrix);
+    const normalized = {
+      experimentId,
+      runIndex,
+      scenarioTag: optionalString(binding.scenarioTag),
+      seed,
+      receiptId,
+      journeyId: optionalString(binding.journeyId),
+      runId: optionalString(binding.runId),
+      retrievalExpected: binding.retrievalExpected === true && binding.retrievalExpectedSource === "server_policy",
+      receiptVersion: optionalString(binding.receiptVersion)
+        || optionalString(recordValue(binding.runReceipt).receiptVersion)
+        || "v2",
+      identity,
+      explorer,
+      scenarioMatrix: {
+        id: optionalString(scenarioMatrix.id) || optionalString(binding.scenarioMatrixId),
+        version: optionalString(scenarioMatrix.version) || optionalString(binding.scenarioMatrixVersion),
+      },
+      versions: {
+        rulesVersion: optionalString(versions.rulesVersion) || optionalString(binding.rulesVersion),
+        catalogVersion: optionalString(versions.catalogVersion) || optionalString(binding.catalogVersion),
+        codeVersion: optionalString(versions.codeVersion) || optionalString(binding.codeVersion),
+      },
+    };
+    if (!Number.isInteger(normalized.runIndex) || normalized.runIndex < 1 || normalized.runIndex > 10) {
+      throw new Error("phase6_settlement_binding_invalid:runIndex");
+    }
+    for (const [path, value] of [
+      ["seed", normalized.seed],
+      ["scenarioTag", normalized.scenarioTag],
+      ["receiptId", normalized.receiptId],
+      ["journeyId", normalized.journeyId],
+      ["runId", normalized.runId],
+      ["identity.identityId", optionalString(identity.identityId)],
+      ["explorer.explorerId", optionalString(explorer.explorerId)],
+      ["scenarioMatrix.id", normalized.scenarioMatrix.id],
+      ["scenarioMatrix.version", normalized.scenarioMatrix.version],
+      ["versions.rulesVersion", normalized.versions.rulesVersion],
+      ["versions.catalogVersion", normalized.versions.catalogVersion],
+      ["versions.codeVersion", normalized.versions.codeVersion],
+    ] as const) {
+      if (!value) throw new Error(`phase6_settlement_binding_invalid:${path}`);
+    }
+    const scenario = assertPhase6ScenarioBinding(normalized.runIndex, normalized.scenarioTag as string);
+    return { ...normalized, scenario };
+  };
+  const phase6BindingFromRagArgs = (args: AnyRecord) => phase6BindingFromStartJourneyArgs(args);
+  const phase6TraceBinding = (
+    binding: NonNullable<ReturnType<typeof phase6BindingFromStartJourneyArgs>>,
+    args: AnyRecord,
+  ) => {
+    const worldClock = recordValue(runtime.epochWorldClock({}));
+    const worldState = recordValue(runtime.epochWorldState({
+      ...args,
+      regionId: optionalString(args.regionId),
+      includeShipments: true,
+    }));
+    const worldId = optionalString(worldState.worldId) || optionalString(worldClock.worldId) || "obsidian_epoch";
+    return {
+      world: {
+        worldId,
+        ...(optionalString(args.regionId) ? { regionId: optionalString(args.regionId) } : {}),
+        ...(optionalString(worldClock.worldTime) ? { worldTime: optionalString(worldClock.worldTime) } : {}),
+        ...(typeof worldState.version === "number" ? { simulationVersion: worldState.version } : {}),
+      },
+        identity: {
+          agentId: optionalString(binding.identity.identityId),
+          explorerId: optionalString(binding.explorer.explorerId),
+          requestedAgentId: optionalString(args.agentId) || optionalString(binding.identity.identityId),
+          resolvedAgentId: optionalString(binding.identity.identityId),
+        },
+      experiment: {
+        experimentId: binding.experimentId,
+        runIndex: binding.runIndex,
+        seed: binding.seed,
+      },
+      run: {
+        runId: binding.runId,
+        journeyId: binding.journeyId,
+        receiptId: binding.receiptId,
+      },
+    };
+  };
+  const phase6Sha256 = (value: unknown) => `sha256:${hashRunPayload(value)}`;
+  const phase6ChunkContent = (chunk: AnyRecord) =>
+    optionalString(chunk.content)
+    || optionalString(chunk.text)
+    || optionalString(chunk.body)
+    || optionalString(chunk.excerpt)
+    || optionalString(chunk.summary)
+    || JSON.stringify({
+      id: optionalString(chunk.chunkId) || optionalString(chunk.id),
+      title: optionalString(chunk.title),
+      path: optionalString(chunk.path) || optionalString(chunk.sourcePath),
+      entityId: optionalString(chunk.entityId),
+    });
+  const phase6RetrievalConfig = (source: "world_knowledge" | "world_memory", args: AnyRecord) => ({
+    retrieverName: source,
+    retrieverVersion: "obsidian-epoch-mcp-server-retriever-v1",
+    corpusVersion: source === "world_knowledge"
+      ? "canonical-world-content-registry-v1"
+      : "solidified-world-memory-v1",
+    rankingVersion: "mcp-result-order-v1",
+    retrievalMode: "hybrid",
+    limit: typeof args.limit === "number" ? Math.max(1, Math.min(30, Math.trunc(args.limit))) : 10,
+    filters: {
+      ...(optionalString(args.collection) ? { collection: optionalString(args.collection) } : {}),
+      ...(optionalString(args.entityId) ? { entityId: optionalString(args.entityId) } : {}),
+      ...(optionalString(args.regionId) ? { regionId: optionalString(args.regionId) } : {}),
+      ...(optionalString(args.fromWorldTime) ? { fromWorldTime: optionalString(args.fromWorldTime) } : {}),
+      ...(optionalString(args.toWorldTime) ? { toWorldTime: optionalString(args.toWorldTime) } : {}),
+    },
+  });
+  const phase6RetrievedChunks = (result: AnyRecord) => {
+    const chunks = [
+      ...recordArray(result.retrievedChunks),
+      ...recordArray(recordValue(result.retrieval).chunks),
+      ...recordArray(result.chunks),
+      ...recordArray(result.hits),
+    ];
+    return chunks.flatMap((chunk, index) => {
+      const chunkId = optionalString(chunk.chunkId) || optionalString(chunk.id);
+      const documentId = optionalString(chunk.documentId) || optionalString(chunk.docId) || optionalString(chunk.entityId) || chunkId;
+      const sourceId = optionalString(chunk.sourceId)
+        || optionalString(chunk.source)
+        || optionalString(chunk.sourcePath)
+        || optionalString(chunk.path)
+        || documentId;
+      const rank = Number(chunk.rank ?? index + 1);
+      if (!chunkId || !documentId || !sourceId || !Number.isInteger(rank)) return [];
+      const content = phase6ChunkContent(chunk);
+      return [{
+        chunkId,
+        documentId,
+        sourceId,
+        sourceHash: phase6Sha256({ sourceId, documentId, content }),
+        rank,
+        ...(typeof chunk.score === "number" ? { score: chunk.score } : {}),
+        ...(typeof chunk.relevance === "number" ? { relevance: chunk.relevance } : {}),
+        quoteHash: phase6Sha256({ chunkId, content }),
+        ...(isRecord(chunk.metadata) ? { metadata: chunk.metadata } : {}),
+      }];
+    });
+  };
+  const phase6InjectedChunkIds = (retrievedChunks: readonly AnyRecord[]) =>
+    retrievedChunks.map((chunk) => optionalString(chunk.chunkId)).filter((id): id is string => Boolean(id));
+  const phase6GroundingHits = (
+    chunks: readonly AnyRecord[],
+    retrievedChunkIds: ReadonlySet<string>,
+    sourceEventIds: readonly string[],
+  ) => {
+    return chunks.flatMap((chunk, index) => {
+      const chunkId = optionalString(chunk.chunkId);
+      const documentId = optionalString(chunk.documentId);
+      const sourceId = optionalString(chunk.sourceId);
+      if (!chunkId || !documentId || !sourceId || !retrievedChunkIds.has(chunkId)) return [];
+      return [{
+        hitId: `server-grounding-${index + 1}:${chunkId}`,
+        chunkId,
+        documentId,
+        sourceId,
+        citationId: `mcp:${chunkId}`,
+        quoteHash: optionalString(chunk.quoteHash),
+        eventIds: sourceEventIds,
+      }];
+    });
+  };
+  const capturePhase6RagTraceForResult = async (
+    source: "world_knowledge" | "world_memory",
+    args: AnyRecord,
+    resultValue: unknown,
+  ) => {
+    const binding = phase6BindingFromRagArgs(args);
+    if (!binding) return undefined;
+    const result = recordValue(resultValue);
+    await validatePhase6ExperimentBinding(binding);
+    const retrievedChunks = phase6RetrievedChunks(result);
+    const retrievedChunkIds = new Set(retrievedChunks.map((chunk) => chunk.chunkId));
+    const serverObservedUsedChunkIds = phase6InjectedChunkIds(retrievedChunks)
+      .filter((chunkId) => retrievedChunkIds.has(chunkId));
+    const sourceEventIds = phase6EventsFromView({ ...args, limit: 50 }).map((event) => event.eventId);
+    const groundingHits = phase6GroundingHits(retrievedChunks, retrievedChunkIds, sourceEventIds);
+    const retrievalConfig = phase6RetrievalConfig(source, args);
+    const retrievalExpected = Boolean(optionalString(args.query));
+    const serverNoRetrievalReason = optionalString(result.noRetrievalReason)
+      || optionalString(result.retrievalPolicyReason)
+      || optionalString(recordValue(result.retrieval).noRetrievalReason);
+    const allowedNoRetrievalReason = (
+      serverNoRetrievalReason === "not_needed"
+      || serverNoRetrievalReason === "policy_skipped"
+      || serverNoRetrievalReason === "empty_query"
+      || serverNoRetrievalReason === "upstream_disabled"
+    ) ? serverNoRetrievalReason : undefined;
+    if (!retrievalExpected && !allowedNoRetrievalReason) {
+      throw new Error("phase6_rag_trace_no_retrieval_policy_reason_missing");
+    }
+    if (retrievalExpected && retrievedChunks.length === 0) {
+      throw new Error("phase6_rag_trace_source_missing");
+    }
+    return runtime.epochCapturePhase6RagTrace({
+      binding: phase6TraceBinding(binding, args),
+      query: optionalString(args.query),
+      source,
+      ...(Object.keys(retrievalConfig).length > 0 ? { retrievalConfig } : {}),
+      retrievedChunks,
+      serverObservedUsedChunkIds,
+      serverObservedGroundingHits: groundingHits,
+      retrievalExpected,
+      ...(allowedNoRetrievalReason ? { noRetrievalReason: allowedNoRetrievalReason } : {}),
+      recordedAt: new Date().toISOString(),
+      sourceEventIds,
+    });
+  };
+    const requirePhase6AuthoritativeRecord = (value: unknown, path: string) => {
+      const record = recordValue(value);
+      if (Object.keys(record).length === 0) throw new Error(`phase6_settlement_context_missing:${path}`);
+      return record;
+    };
+    const phase6DefinedValue = (value: unknown): unknown => {
+      if (Array.isArray(value)) {
+        return value.flatMap((entry) => entry === undefined ? [] : [phase6DefinedValue(entry)]);
+      }
+      if (!isRecord(value)) return value;
+      return Object.fromEntries(Object.entries(value)
+        .filter(([, entry]) => entry !== undefined)
+        .map(([key, entry]) => [key, phase6DefinedValue(entry)]));
+    };
+    const phase6DefinedRecord = (value: unknown, path: string) =>
+      requirePhase6AuthoritativeRecord(phase6DefinedValue(value), path);
+  const phase6EventsFromView = (input: AnyRecord) => {
+    const events = recordValue(runtime.epochEvents(input)).events;
+    return Array.isArray(events)
+      ? events.filter((event): event is EpochEvent => isRecord(event))
+      : [];
+  };
+  const phase6EconomySnapshot = (label: string, agentId: string, progress: AnyRecord, inventory: AnyRecord, worldMinute: unknown) => {
+    const resources = recordValue(progress.resources);
+    const resourceEntries = Object.entries(resources)
+      .filter((entry): entry is [string, number] => typeof entry[1] === "number" && Number.isFinite(entry[1]))
+      .map(([resourceId, amount]) => ({
+        accountRef: `agent:${agentId}`,
+        assetKey: `resource:${resourceId}`,
+        unit: "unit",
+        bucket: "available",
+        quantityMinor: String(Math.trunc(amount * 100)),
+      }));
+    const inventoryItems = Array.isArray(inventory.items)
+      ? inventory.items
+      : Array.isArray(progress.inventoryItems)
+        ? progress.inventoryItems
+        : [];
+    const itemEntries = inventoryItems
+      .filter((item): item is AnyRecord => isRecord(item))
+      .map((item) => ({
+        accountRef: `agent:${agentId}`,
+        assetKey: `item:${optionalString(item.itemKey) || optionalString(item.itemId) || "unknown"}`,
+        unit: "item",
+        bucket: "available",
+        quantityMinor: "1",
+      }));
+    const minute = Number(worldMinute);
+    return {
+      snapshotVersion: PHASE6_ECONOMY_SNAPSHOT_VERSION,
+      snapshotId: `phase6:${label}:${hashRunPayload({ agentId, resources, inventoryItems })}`,
+      ...(Number.isSafeInteger(minute) ? { asOfWorldMinute: minute } : {}),
+      entries: [...resourceEntries, ...itemEntries],
+    };
+  };
+  const phase6PanelProjection = (
+    phase: "before" | "after",
+    args: AnyRecord,
+    journey: AnyRecord,
+    canonicalEvents: readonly EpochEvent[],
+  ) => {
+    const agentId = optionalString(journey.agentId) || optionalString(args.agentId);
+    if (!agentId) throw new Error("phase6_settlement_context_missing:agentId");
+    const rawProgress = recordValue(runtime.epochProgress({ ...args, agentId }));
+      const progress = phase6DefinedRecord({
+        ...rawProgress,
+      ...(Array.isArray(rawProgress.latestEvents)
+        ? {
+            latestEvents: rawProgress.latestEvents.map((event) =>
+              isRecord(event) ? publicEpochEvent(event as EpochEvent) : event),
+          }
+        : {}),
+      }, "progress");
+      const inventory = phase6DefinedRecord(runtime.epochInventory({ ...args, agentId }), "inventory");
+    const playerPanelResult = recordValue(runtime.infiniteWorldPlayerPanel({
+      ...args,
+      agentId,
+      explorerId: optionalString(progress.explorerId) || optionalString(args.explorerId),
+      ragLimit: typeof args.ragLimit === "number" ? args.ragLimit : 20,
+    }));
+      const panel = phase6DefinedRecord(playerPanelResult.panel, "playerPanel");
+      const worldClock = phase6DefinedRecord(runtime.epochWorldClock({}), "worldClock");
+      const worldState = phase6DefinedRecord(runtime.epochWorldState({
+        ...args,
+        regionId: optionalString(journey.destinationRegionId) || optionalString(args.regionId),
+        includeShipments: true,
+      }), "worldState");
+    const worldMinute = worldClock.worldMinute || recordValue(worldClock.time).minute;
+    const productionSource = recordValue(worldState.production || recordValue(worldState.economy).production);
+    const production = Object.keys(productionSource).length > 0
+      ? productionSource
+      : {
+          status: "legitimate_no_production",
+          reason: "world_state_has_no_materialized_production",
+          regionId: optionalString(worldState.regionId)
+            || optionalString(recordValue(worldState.region).regionId)
+            || optionalString(journey.destinationRegionId)
+            || "epoch:runtime-region",
+          ...(Number.isSafeInteger(Number(worldMinute)) ? { asOfWorldMinute: Number(worldMinute) } : {}),
+          entries: [],
+        };
+    const worldTime = optionalString(worldClock.worldTime)
+      || optionalString(recordValue(worldClock.time).worldTime)
+      || (Number.isSafeInteger(Number(worldMinute)) ? epochWorldTimeFromMinute(Number(worldMinute)) : undefined);
+    const economy = {
+      inventory,
+      inventoryInfo: inventory,
+      production,
+      snapshot: phase6EconomySnapshot(phase, agentId, progress, inventory, worldMinute),
+    };
+    const ragPanel = requirePhase6AuthoritativeRecord(panel.rag, "ragPanel");
+    const canonicalCursor = phase6CanonicalCursor(canonicalEvents as Parameters<typeof phase6CanonicalCursor>[0]);
+    const worldCursor = {
+      ...canonicalCursor,
+      worldId: optionalString(worldState.worldId)
+        || optionalString(recordValue(worldState.snapshot).worldId)
+        || optionalString(args.worldId)
+          || "obsidian_epoch",
+      regionId: optionalString(worldState.regionId)
+        || optionalString(recordValue(worldState.region).regionId)
+        || optionalString(journey.destinationRegionId)
+        || optionalString(args.regionId)
+        || "epoch:runtime-region",
+      worldTime: worldTime || canonicalCursor.lastCreatedAt || canonicalCursor.value,
+      ...(Number.isSafeInteger(Number(recordValue(worldState.snapshot).simulationVersion))
+        ? { simulationVersion: Number(recordValue(worldState.snapshot).simulationVersion) }
+        : Number.isSafeInteger(Number(worldState.simulationVersion))
+          ? { simulationVersion: Number(worldState.simulationVersion) }
+          : {}),
+    };
+    return {
+      panel: {
+        phase,
+        player: {
+          playerId: optionalString(panel.playerId),
+          agentId,
+          explorerId: optionalString(progress.explorerId) || optionalString(args.explorerId),
+          identityId: optionalString(recordValue(progress.identity).identityId) || agentId,
+          identity: progress.identity,
+          progression: requirePhase6AuthoritativeRecord(panel.progression, "player.progression"),
+          combatReadiness: requirePhase6AuthoritativeRecord(panel.combat, "player.combatReadiness"),
+          wallet: requirePhase6AuthoritativeRecord(panel.wallet, "player.wallet"),
+          injuries: progress.injuries,
+          injuryStates: progress.injuryStates,
+          production,
+        },
+        progress,
+        economy,
+        ragPanel,
+        worldCursor,
+      },
+      projection: {
+        events: canonicalEvents,
+        rag: ragPanel,
+        world: worldState,
+        worldClock,
+        worldSimulation: worldState,
+        inventory,
+        resources: progress.resources,
+      },
+      canonicalCursor: worldCursor,
+    };
+  };
+    const validatePhase6ExperimentBinding = async (binding: NonNullable<ReturnType<typeof phase6BindingFromStartJourneyArgs>>) => {
+    const status = recordValue(await runtime.epochPhase6ExperimentStatus({ experimentId: binding.experimentId }));
+    if (optionalString(status.experimentId) !== binding.experimentId) {
+      throw new Error("phase6_settlement_binding_conflict:experimentId");
+    }
+    if (optionalString(status.identityId) !== optionalString(binding.identity.identityId)) {
+      throw new Error("phase6_settlement_binding_conflict:identity");
+    }
+    const persistedExplorer = phase6ExperimentExplorerForStatus(status);
+    if (optionalString(persistedExplorer.explorerId) !== optionalString(binding.explorer.explorerId)) {
+      throw new Error("phase6_settlement_binding_conflict:explorer");
+    }
+    for (const key of ["rulesVersion", "catalogVersion", "codeVersion"] as const) {
+      if (optionalString(status[key]) !== binding.versions[key]) {
+        throw new Error(`phase6_settlement_binding_conflict:${key}`);
+      }
+    }
+    if (optionalString(status.scenarioMatrixVersion) !== binding.scenarioMatrix.version) {
+      throw new Error("phase6_settlement_binding_conflict:scenarioMatrixVersion");
+    }
+      return status;
+    };
+    const phase6BindingFromStoredJourney = (journeyId: string) => {
+      const storedContext = recordValue(runtime.epochLoadPhase6JourneyContext(journeyId));
+      if (Object.keys(storedContext).length === 0) return undefined;
+      const metadata = recordValue(storedContext.metadata);
+      const experimentId = optionalString(metadata.experimentId);
+      const runIndex = Number(metadata.runIndex);
+      if (!experimentId || !Number.isInteger(runIndex)) {
+        throw new Error("phase6_settlement_context_missing:metadata");
+      }
+      const run = recordValue(runtime.epochPhase6ExperimentRunByJourneyId({ journeyId })
+        || runtime.epochPhase6ExperimentRun({ experimentId, runIndex }));
+      if (Object.keys(run).length === 0) {
+        throw new Error("phase6_settlement_context_missing:experiment_run");
+      }
+      const runReceipt = recordValue(run.runReceipt);
+      const runSeed = recordValue(run.seed);
+      const metadataSeed = recordValue(metadata.seed);
+      const runIdentity = recordValue(run.identity);
+      const runExplorer = recordValue(run.explorer);
+      const runScenarioMatrix = recordValue(run.scenarioMatrix);
+      const runVersions = recordValue(run.versions);
+      const binding = phase6BindingFromStartJourneyArgs({
+        startJourneyBinding: {
+          experimentId,
+          runIndex,
+          scenarioTag: phase6ScenarioForRun(runIndex).tag,
+          seed: optionalString(runSeed.seed) || optionalString(metadataSeed.seed),
+          receiptId: optionalString(runReceipt.receiptId),
+          receiptVersion: optionalString(runReceipt.receiptVersion),
+          journeyId,
+          runId: optionalString(metadata.runId),
+          identity: Object.keys(runIdentity).length > 0 ? runIdentity : recordValue(metadata.identity),
+          explorer: runExplorer,
+          scenarioMatrix: Object.keys(runScenarioMatrix).length > 0
+            ? runScenarioMatrix
+            : recordValue(metadata.scenarioMatrix),
+          versions: Object.keys(runVersions).length > 0 ? runVersions : recordValue(metadata.versions),
+          runReceipt,
+        },
+      });
+      if (!binding) throw new Error("phase6_settlement_context_missing:binding");
+      return { binding, storedContext };
+    };
+  const completePhase6Run = async (
+    binding: NonNullable<ReturnType<typeof phase6BindingFromStartJourneyArgs>>,
+    journey: AnyRecord,
+    receipt: AnyRecord,
+  ) => {
+    const receiptExplorerId = optionalString(receipt.explorerId);
+    if (receiptExplorerId && receiptExplorerId !== optionalString(binding.explorer.explorerId)) {
+      throw new Error("phase6_settlement_binding_conflict:receipt.explorerId");
+    }
+    return runtime.epochCompletePhase6ExperimentRun({
+      commandId: `phase6-start-journey:${optionalString(journey.journeyId)}:complete:${optionalString(receipt.receiptId)}`,
+      experimentId: binding.experimentId,
+      runIndex: binding.runIndex,
+      receipt: {
+        receiptVersion: "v2",
+        experimentId: binding.experimentId,
+        runIndex: binding.runIndex,
+        identity: binding.identity,
+        explorer: binding.explorer,
+        explorerId: binding.explorer.explorerId,
+        versions: binding.versions,
+        seed: { seed: binding.seed },
+        receiptId: optionalString(receipt.receiptId),
+      },
+    });
+  };
+  const failPhase6Run = async (
+    binding: NonNullable<ReturnType<typeof phase6BindingFromStartJourneyArgs>>,
+    journeyId: string,
+    reason: string,
+  ) => runtime.epochFailPhase6ExperimentRun({
+    commandId: `phase6-start-journey:${journeyId || binding.experimentId}:fail:${hashRunPayload(reason).slice(0, 16)}`,
+    experimentId: binding.experimentId,
+    runIndex: binding.runIndex,
+    reason,
+  });
+    const phase6RagTracePayload = (value: unknown) => {
+      const record = recordValue(value);
+      const trace = recordValue(record.trace);
+      return Object.keys(trace).length > 0 ? trace : record;
+    };
+    const phase6RagTraceForBinding = (
+      binding: NonNullable<ReturnType<typeof phase6BindingFromStartJourneyArgs>>,
+    ) => {
+      const traces = runtime.epochListPhase6RagTraces({
+      experimentId: binding.experimentId,
+      runIndex: binding.runIndex,
+      journeyId: binding.journeyId,
+      limit: 20,
+    });
+      const stored = Array.isArray(traces)
+        ? traces.find((trace) => recordValue(trace).status === "ok" || recordValue(trace).status === "legitimate_no_retrieval")
+        : undefined;
+      return stored ? phase6RagTracePayload(stored) : undefined;
+  };
+  const phase6SourceMissingFinding = (path: string, source: string, message: string) => ({
+    code: "source_missing",
+    severity: "error",
+    path,
+    source,
+    message,
+  });
+  const phase6CanonicalEventIds = (events: readonly EpochEvent[]) => [
+    ...new Set(events.map((event) => optionalString((event as AnyRecord).eventId) || optionalString((event as AnyRecord).id)).filter(Boolean)),
+  ];
+  const phase6SettlementEventIds = (committedResults: readonly ReturnType<typeof runtime.epochCommitJourneyAction>[]) =>
+    phase6CanonicalEventIds(committedResults.flatMap((committed) => epochEventsForPersistence(committed)));
+    const phase6SnapshotReceipt = (panel: unknown, path: string) => {
+      const snapshot = buildPhase6PanelSnapshotDocument(panel as Parameters<typeof buildPhase6PanelSnapshotDocument>[0]);
+      if (snapshot.ok !== true) {
+        const findings = snapshot.errors
+          .slice(0, 8)
+          .map((entry) => `${entry.code}@${entry.path}:${entry.message.slice(0, 180)}`)
+          .join(",");
+        throw new Error(`phase6_settlement_snapshot_invalid:${path}:${findings || "unknown"}`);
+      }
+      return {
+      body: snapshot.value.snapshot,
+      hash: snapshot.value.hash,
+    };
+  };
+  const phase6StructuredDeltas = (
+    beforeProjection: unknown,
+    afterProjection: unknown,
+    canonicalEvents: readonly EpochEvent[],
+  ) => {
+    const projectionDelta = buildPhase6ProjectionDelta({
+      before: beforeProjection as Parameters<typeof buildPhase6ProjectionDelta>[0]["before"],
+      after: afterProjection as Parameters<typeof buildPhase6ProjectionDelta>[0]["after"],
+      canonicalEvents: canonicalEvents as Parameters<typeof buildPhase6ProjectionDelta>[0]["canonicalEvents"],
+    });
+    const eventIds = phase6CanonicalEventIds(canonicalEvents);
+    if (eventIds.length === 0) return [];
+    return [{
+      op: projectionDelta.worldDelta.changed || projectionDelta.ragDelta.changed ? "set" : "link",
+      target: {
+        kind: "phase6_projection_delta",
+        id: projectionDelta.cursor.value,
+      },
+      path: ["phase6", "projectionDelta"],
+      after: phase6DefinedValue(projectionDelta.receipt),
+      reason: "server_canonical_projection_delta",
+      eventIds,
+    }];
+  };
+  const phase6EventWithCursorEvidence = (
+    event: EpochEvent,
+    beforeCursor: AnyRecord,
+    afterCursor: AnyRecord,
+  ): EpochEvent => {
+    const record = event as AnyRecord;
+    return {
+      ...record,
+      beforeWorldCursor: record.beforeWorldCursor || record.worldCursorBefore || beforeCursor,
+      afterWorldCursor: record.afterWorldCursor || record.worldCursorAfter || record.worldCursor || afterCursor,
+    } as EpochEvent;
+  };
+    const phase6FinalizedSidecar = (
+    binding: NonNullable<ReturnType<typeof phase6BindingFromStartJourneyArgs>>,
+    journey: AnyRecord,
+    finalized: AnyRecord,
+    canonicalEvents: readonly EpochEvent[],
+    worldCursor: AnyRecord,
+  ) => {
+    const assembly = recordValue(recordValue(finalized.assembly).assembly);
+    const artifacts = recordValue(assembly.artifacts);
+    const resultPageOutput = recordValue(artifacts.resultPageOutput);
+    const settledReceipt = recordValue(artifacts.receipt);
+    if (resultPageOutput.ok !== true || resultPageOutput.verified !== true || optionalString(settledReceipt.version) !== "journey_run_receipt.v2") {
+      throw new Error("phase6_settlement_finalized_v2_sidecar_missing");
+    }
+    const resultPageReceipt = recordValue(recordValue(resultPageOutput.page).receipt);
+    if (optionalString(settledReceipt.receiptId) !== optionalString(resultPageReceipt.receiptId)) {
+      throw new Error("phase6_settlement_finalized_v2_sidecar_receipt_mismatch");
+    }
+    const expectedReceiptHash = optionalString(recordValue(settledReceipt.integrity).payloadHash);
+    const pageAudit = recordValue(recordValue(recordValue(resultPageOutput.page).sections).audit);
+    const pageIntegrity = recordValue(pageAudit.integrity);
+    const pageReceiptHash = optionalString(pageIntegrity.receiptPayloadHash);
+    const receiptIntegrityHash = optionalString(recordValue(settledReceipt.integrity).payloadHash);
+    if (pageReceiptHash !== expectedReceiptHash || receiptIntegrityHash !== expectedReceiptHash) {
+      throw new Error("phase6_settlement_finalized_v2_receipt_hash_mismatch");
+    }
+    const receiptEventGroups = recordValue(settledReceipt.eventIds);
+    const receiptEventIds = [
+      ...(Array.isArray(receiptEventGroups.source) ? receiptEventGroups.source : []),
+      ...(Array.isArray(receiptEventGroups.settlement) ? receiptEventGroups.settlement : []),
+      ...(Array.isArray(receiptEventGroups.derived) ? receiptEventGroups.derived : []),
+    ].map(optionalString).filter(Boolean);
+    const canonicalIds = new Set(phase6CanonicalEventIds(canonicalEvents));
+    for (const [path, expected, actual] of [
+      ["receipt.experimentId", binding.experimentId, optionalString(settledReceipt.experimentId)],
+      ["receipt.runIndex", String(binding.runIndex), String(settledReceipt.runIndex ?? "")],
+      ["receipt.seed", binding.seed, optionalString(settledReceipt.seed)],
+      ["receipt.journeyId", binding.journeyId, optionalString(settledReceipt.journeyId)],
+      ["receipt.journeyId.current", optionalString(journey.journeyId), optionalString(settledReceipt.journeyId)],
+      ["receipt.explorerId", binding.explorer.explorerId, optionalString(settledReceipt.explorerId)],
+      ["receipt.rulesetVersion", binding.versions.rulesVersion, optionalString(settledReceipt.rulesetVersion)],
+      ["receipt.catalogVersion", binding.versions.catalogVersion, optionalString(settledReceipt.catalogVersion)],
+      ["receipt.codeVersion", binding.versions.codeVersion, optionalString(settledReceipt.codeVersion)],
+      ["receipt.scenarioMatrixVersion", binding.scenarioMatrix.version, optionalString(settledReceipt.scenarioMatrixVersion)],
+      ["receipt.world.worldId", optionalString(worldCursor.worldId), optionalString(recordValue(settledReceipt.world).worldId)],
+      ["receipt.world.regionId", optionalString(worldCursor.regionId), optionalString(recordValue(settledReceipt.world).regionId)],
+      ["receipt.world.worldTimeAfter", optionalString(worldCursor.worldTime), optionalString(recordValue(settledReceipt.world).worldTimeAfter)],
+    ] as const) {
+      if (!expected || expected !== actual) throw new Error(`phase6_settlement_finalized_v2_binding_mismatch:${path}`);
+    }
+    if (receiptEventIds.length === 0 || receiptEventIds.some((eventId) => !canonicalIds.has(eventId))) {
+      throw new Error("phase6_settlement_finalized_v2_event_binding_mismatch");
+    }
+    const sidecar = {
+      ok: true,
+      verified: true,
+      findings: [],
+      page: resultPageOutput.page,
+    };
+    const pageId = optionalString(recordValue(resultPageOutput.page).pageId)
+      || `phase6_result_${optionalString(settledReceipt.receiptId)}`;
+    const storedResultPage = {
+      pageId,
+      createdAt: optionalString(settledReceipt.generatedAt) || new Date().toISOString(),
+      urlPath: `/phase6/result/${encodeURIComponent(pageId)}`,
+      createdBy: "obsidian_epoch.phase6",
+      idempotencyKey: `phase6-result:${optionalString(settledReceipt.receiptId)}`,
+      status: "active",
+      shareVersion: 1,
+      payload: {
+        receipt: { phase6: sidecar },
+      },
+    } as unknown as EpochSharedResultPage;
+    runtime.epochStorePhase6ResultPage(storedResultPage);
+      return { pageId, sidecar, receipt: settledReceipt, resultPageOutput, storedResultPage };
+    };
+    const phase6SettlementCache = new Map<string, AnyRecord>();
+    const finalizePhase6JourneyFromPersistedState = async (input: {
+      readonly args: AnyRecord;
+      readonly binding: NonNullable<ReturnType<typeof phase6BindingFromStartJourneyArgs>>;
+      readonly current: AnyRecord;
+      readonly committedResults?: readonly ReturnType<typeof runtime.epochCommitJourneyAction>[];
+      readonly experimentStatus?: unknown;
+      readonly capture?: unknown;
+      readonly ragTrace?: unknown;
+      readonly storedContext?: AnyRecord;
+      readonly journeyRuntime?: unknown;
+    }) => {
+      const journey = recordValue(input.current.journey);
+      if (optionalString(journey.status) !== "settled") {
+        return {
+          ok: true,
+          status: "captured",
+          experimentStatus: input.experimentStatus,
+          capture: input.capture,
+          startJourneyBinding: input.binding,
+        };
+      }
+      const journeyId = optionalString(journey.journeyId);
+      if (!journeyId) throw new Error("phase6_settlement_context_missing:journeyId");
+      const cached = phase6SettlementCache.get(journeyId);
+      if (cached) return cached;
+      const storedContext = input.storedContext
+        || recordValue(runtime.epochLoadPhase6JourneyContext(journeyId));
+      if (Object.keys(storedContext).length === 0) {
+        throw new Error("phase6_settlement_context_missing:stored_before_context");
+      }
+      const settledReceiptId = optionalString(storedContext.settledReceiptId);
+      if (settledReceiptId) {
+        const receipt = recordValue(loadPhase6ReceiptFromSqlite(phase6ReceiptSqlite, settledReceiptId));
+        if (Object.keys(receipt).length === 0) {
+          throw new Error("phase6_settlement_context_missing:settled_receipt");
+        }
+        const restored = {
+          ok: true,
+          status: "settled",
+          restored: true,
+          experimentStatus: input.experimentStatus,
+          receiptId: settledReceiptId,
+          receipt,
+        };
+        phase6SettlementCache.set(journeyId, restored);
+        return restored;
+      }
+
+      const failSettlement = async (status: string, reason: string, details: AnyRecord = {}) => {
+        const experimentRun = await failPhase6Run(input.binding, journeyId, reason);
+        return {
+          ok: false,
+          status,
+          experimentStatus: input.experimentStatus,
+          capture: input.capture,
+          ...details,
+          experimentRun,
+        };
+      };
+
+      try {
+        const beforeSnapshot = requirePhase6AuthoritativeRecord(
+          storedContext.beforeSnapshot,
+          "stored.beforeSnapshot",
+        );
+        const storedMetadata = requirePhase6AuthoritativeRecord(
+          storedContext.metadata,
+          "stored.metadata",
+        );
+        const storedVersions = requirePhase6AuthoritativeRecord(
+          storedMetadata.versions,
+          "stored.metadata.versions",
+        );
+        const storedSeed = requirePhase6AuthoritativeRecord(
+          storedMetadata.seed,
+          "stored.metadata.seed",
+        );
+        const storedScenarioMatrix = requirePhase6AuthoritativeRecord(
+          storedMetadata.scenarioMatrix,
+          "stored.metadata.scenarioMatrix",
+        );
+        const beforeEconomy = requirePhase6AuthoritativeRecord(
+          beforeSnapshot.economy,
+          "stored.beforeSnapshot.economy",
+        );
+        const economyBefore = requirePhase6AuthoritativeRecord(
+          beforeEconomy.snapshot,
+          "stored.beforeSnapshot.economy.snapshot",
+        );
+        const afterEvents = phase6EventsFromView({ ...input.args, limit: 1_000 });
+        const storedCanonicalCursor = requirePhase6AuthoritativeRecord(
+          storedContext.canonicalCursor,
+          "stored.canonicalCursor",
+        );
+        const runEvents = phase6EventsAfterCursor(afterEvents, {
+          eventCount: Number(storedCanonicalCursor.eventCount),
+          lastEventId: optionalString(storedCanonicalCursor.lastEventId),
+          lastCreatedAt: optionalString(storedCanonicalCursor.lastCreatedAt),
+        });
+        const explicitCommittedResults = input.committedResults && input.committedResults.length > 0
+          ? input.committedResults
+          : undefined;
+        const committedResults = explicitCommittedResults
+          ?? phase6CommittedResults?.listByJourneyId(journeyId).map((record) => record.result)
+          ?? [];
+        if (committedResults.length === 0) {
+          throw new Error("phase6_settlement_context_missing:committed_results_sidecar");
+        }
+        const rawCanonicalEvents = [...new Map([
+          ...runEvents,
+          ...committedResults.flatMap((committed) => epochEventsForPersistence(committed)),
+        ].map((event) => [event.eventId, event])).values()];
+        const globalEvents = [...new Map([
+          ...afterEvents,
+          ...committedResults.flatMap((committed) => epochEventsForPersistence(committed)),
+        ].map((event) => [event.eventId, event])).values()];
+        const initialAfter = phase6PanelProjection("after", input.args, journey, globalEvents);
+        const beforeWorldCursor = recordValue(beforeSnapshot.worldCursor);
+        const afterWorldCursor = recordValue(initialAfter.panel.worldCursor);
+        let previousWorldCursor = beforeWorldCursor;
+        const canonicalEvents = rawCanonicalEvents.map((event) => {
+          const withCursor = phase6EventWithCursorEvidence(event, previousWorldCursor, afterWorldCursor);
+          previousWorldCursor = afterWorldCursor;
+          return withCursor;
+        });
+        const after = phase6PanelProjection("after", input.args, journey, globalEvents);
+        const persistedRagTrace = phase6RagTracePayload(
+          input.ragTrace || phase6RagTraceForBinding(input.binding),
+        );
+        if (!persistedRagTrace) {
+          return failSettlement(
+            "pre_settlement_failed",
+            "phase6_rag_trace_required_missing",
+            {
+              findings: [phase6SourceMissingFinding(
+                "$.persistedRagTrace",
+                "phase6_rag_trace_store",
+                "Strict Phase 6 settlement requires a server-persisted RAG trace or explicit legitimate_no_retrieval trace for the run/journey binding.",
+              )],
+            },
+          );
+        }
+        const outcomeEvidence = buildPhase6ServerOutcomeEvidence({
+          canonicalEvents,
+          committedResults,
+          journeyBinding: {
+            runId: optionalString(storedMetadata.runId),
+            journeyId,
+            agentId: optionalString(journey.agentId) || optionalString(input.args.agentId),
+            explorerId: input.binding.explorer.explorerId,
+            receiptId: input.binding.receiptId,
+            status: optionalString(journey.status),
+            settledAt: optionalString(journey.settledAt),
+            updatedAt: optionalString(journey.updatedAt),
+          },
+          worldCursor: afterWorldCursor as Parameters<typeof buildPhase6ServerOutcomeEvidence>[0]["worldCursor"],
+          journeyEndState: journey,
+        });
+        if (outcomeEvidence.ok !== true) {
+          return failSettlement("outcome_evidence_failed", "phase6_outcome_evidence_failed", {
+            findings: outcomeEvidence.findings,
+          });
+        }
+        const sourceEventIds = phase6CanonicalEventIds(canonicalEvents);
+        const settlementEventIds = phase6SettlementEventIds(committedResults);
+        const now = new Date().toISOString();
+        const preSettlementStores = {
+          beforePanel: beforeSnapshot,
+          beforeProjection: beforeSnapshot,
+          economyBefore,
+          experiment: {
+            experimentId: optionalString(storedMetadata.experimentId),
+            runIndex: Number(storedMetadata.runIndex),
+            seed: optionalString(storedSeed.seed),
+          },
+          version: {
+            rulesetVersion: optionalString(storedVersions.rulesVersion),
+            catalogVersion: optionalString(storedVersions.catalogVersion),
+            codeVersion: optionalString(storedVersions.codeVersion),
+            scenarioMatrixVersion: optionalString(storedScenarioMatrix.version),
+          },
+          beforeWorldCursor,
+        } as unknown as Parameters<typeof buildPhase6ServerPreSettlement>[0]["stores"];
+        const preSettlement = buildPhase6ServerPreSettlement({
+          stores: preSettlementStores,
+          runtime: {
+            metadata: {
+              runId: optionalString(storedMetadata.runId),
+              journeyId,
+              agentId: optionalString(journey.agentId) || optionalString(input.args.agentId),
+              explorerId: input.binding.explorer.explorerId,
+              receiptId: input.binding.receiptId,
+              generatedAt: now,
+              startedAt: optionalString(journey.startedAt) || now,
+              settledAt: optionalString(journey.settledAt) || optionalString(journey.updatedAt) || now,
+              world: {
+                worldId: optionalString(afterWorldCursor.worldId),
+                regionId: optionalString(afterWorldCursor.regionId),
+                worldTimeBefore: optionalString(beforeWorldCursor.worldTime),
+                worldTimeAfter: optionalString(afterWorldCursor.worldTime),
+                ...(Number.isSafeInteger(Number(afterWorldCursor.simulationVersion))
+                  ? { simulationVersion: Number(afterWorldCursor.simulationVersion) }
+                  : {}),
+              },
+            },
+            afterPanel: after.panel,
+            afterProjection: after.projection,
+            canonicalEvents,
+            economy: {
+              next: requirePhase6AuthoritativeRecord(after.panel.economy.snapshot, "after.economy.snapshot"),
+              sourceEvents: canonicalEvents,
+            },
+            worldCursor: afterWorldCursor as Parameters<typeof buildPhase6ServerPreSettlement>[0]["runtime"]["worldCursor"],
+            now,
+            journeyRuntime: (input.journeyRuntime || input.current) as Parameters<typeof buildPhase6ServerPreSettlement>[0]["runtime"]["journeyRuntime"],
+          },
+          serverOutcomeResolution: outcomeEvidence.value.serverOutcomeResolution,
+          serverActionResolutions: outcomeEvidence.value.serverActionResolutions as Parameters<typeof buildPhase6ServerPreSettlement>[0]["serverActionResolutions"],
+          receiptBasis: {
+            deltas: phase6StructuredDeltas(beforeSnapshot, after.projection, canonicalEvents) as Parameters<typeof buildPhase6ServerPreSettlement>[0]["receiptBasis"]["deltas"],
+            eventIds: { source: sourceEventIds, settlement: settlementEventIds, derived: [] },
+            snapshots: {
+              before: phase6SnapshotReceipt(beforeSnapshot, "before.snapshot"),
+              after: phase6SnapshotReceipt(after.panel, "after.snapshot"),
+            },
+            outcome: outcomeEvidence.value.receiptBasisOutcome as Parameters<typeof buildPhase6ServerPreSettlement>[0]["receiptBasis"]["outcome"],
+          },
+          persistedRagTrace: persistedRagTrace as Parameters<typeof buildPhase6ServerPreSettlement>[0]["persistedRagTrace"],
+        });
+        if (preSettlement.ok !== true) {
+          return failSettlement("pre_settlement_failed", "phase6_pre_settlement_failed", {
+            findings: preSettlement.findings,
+            scoringEvidence: recordValue(preSettlement).scoringEvidence,
+            ragEvidence: recordValue(preSettlement).ragEvidence,
+          });
+        }
+        const finalized = recordValue(await runtime.epochFinalizePhase6Journey(
+          journeyId,
+          preSettlement.value.authoritativeInput,
+        ));
+        if (finalized.ok !== true) {
+          return failSettlement(
+            "finalize_failed",
+            `phase6_journey_finalize_failed:${optionalString(finalized.status) || "unknown"}`,
+            { finalize: finalized },
+          );
+        }
+        const finalizedSidecar = phase6FinalizedSidecar(
+          input.binding,
+          journey,
+          finalized,
+          canonicalEvents,
+          afterWorldCursor,
+        );
+        const resultPagePersistence = currentMcpRequestContext()?.persistPartial;
+        if (resultPagePersistence) {
+          await resultPagePersistence(
+            "obsidian_epoch.phase6_result_page",
+            { page: finalizedSidecar.storedResultPage },
+          );
+        } else if (phase6ReceiptSqlite) {
+          throw new Error("phase6_result_page_persistence_unavailable");
+        }
+        const experimentRun = await completePhase6Run(input.binding, journey, finalizedSidecar.receipt);
+        const settlement = {
+          ok: true,
+          status: optionalString(finalized.status) || "settled",
+          experimentStatus: input.experimentStatus,
+          capture: input.capture,
+          preSettlement: {
+            ok: true,
+            rulesetVersion: preSettlement.rulesetVersion,
+            scoringEvidence: preSettlement.value.scoringEvidence,
+            ragEvidence: preSettlement.value.ragEvidence,
+            finalizeContract: preSettlement.value.finalizeContract,
+          },
+          finalize: finalized,
+          resultPage: finalizedSidecar.sidecar.page,
+          resultPageOutput: finalizedSidecar.resultPageOutput,
+          pageId: finalizedSidecar.pageId,
+          receiptId: optionalString(finalizedSidecar.receipt.receiptId),
+          receipt: finalizedSidecar.receipt,
+          experimentRun,
+        };
+        phase6SettlementCache.set(journeyId, settlement);
+        return settlement;
+      } catch (error) {
+        return failSettlement(
+          "finalize_failed",
+          error instanceof Error ? error.message : "phase6_journey_finalize_failed",
+          { error: errorCodeForRejectedCommand(error) },
+        );
+      }
+    };
+    const commitJourneyActionWithPersistence = async (
+      args: AnyRecord,
+      options: { readonly externalTransport?: boolean } = {},
+    ): Promise<ReturnType<typeof runtime.epochCommitJourneyAction>> => {
+      const result = runtime.epochCommitJourneyAction(args);
+      const partialPersistence = phase6CommittedResults
+        ? currentMcpRequestContext()?.persistPartial
+        : undefined;
+      if (phase6CommittedResults) {
+        const committedJourneyId = optionalString(recordValue(result.journey).journeyId)
+          || optionalString(args.journeyId);
+        if (!committedJourneyId) throw new Error("phase6_committed_result_journey_id_missing");
+        if (recordValue(result).duplicate === true || epochEventsForPersistence(result).length === 0) {
+          const settledActionId = optionalString(recordValue(result.settledAction).actionId);
+          const journeyVersion = Number(recordValue(result.journey).version);
+          const alreadyPersisted = settledActionId && Number.isSafeInteger(journeyVersion)
+            && phase6CommittedResults.listByJourneyId(committedJourneyId).some((entry) => {
+              const storedResult = recordValue(entry.result);
+              return optionalString(recordValue(storedResult.settledAction).actionId) === settledActionId
+                && Number(recordValue(storedResult.journey).version) === journeyVersion;
+            });
+          if (!alreadyPersisted) {
+            throw new Error("phase6_committed_result_duplicate_sidecar_missing");
+          }
+          markMcpResultAlreadyPersisted(result);
+        } else if (partialPersistence) {
+          if (partialPersistence.supportsPhase6CommittedResultAtomicWrite !== true) {
+            throw new Error("phase6_committed_result_atomic_persistence_unavailable");
+          }
+          attachPhase6CommittedResultForPersistence(result, {
+            journeyId: committedJourneyId,
+            result,
+          });
+          await partialPersistence("obsidian_epoch.commit_journey_action", result);
+        } else {
+          phase6CommittedResults.append(committedJourneyId, result);
+        }
+      }
+      if (options.externalTransport && partialPersistence) {
+        const externalResult = { ...result };
+        if (isMcpResultAlreadyPersisted(result)) markMcpResultAlreadyPersisted(externalResult);
+        return externalResult;
+      }
+      return result;
+    };
   async function startJourneyWithSampling(args: AnyRecord) {
     const requestContext = currentMcpRequestContext();
     const samplingRequested = args.decisionMode === "host_sampling";
@@ -5853,18 +7921,80 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     const partialPersistence = requestContext?.persistPartial as (((toolName: string, result: unknown) => Promise<void>) & {
       readonly runMutation?: <T>(operation: () => Promise<T> | T) => Promise<T>;
     }) | undefined;
+    const returnWithPartialPersistenceOwnership = <TResult extends object>(result: TResult): TResult =>
+      partialPersistence ? markMcpResultAlreadyPersisted(result) : result;
     const runStage = samplingRequested && partialPersistence?.runMutation
       ? partialPersistence.runMutation
       : async <T>(operation: () => Promise<T> | T) => operation();
+    const phase6Binding = phase6BindingFromStartJourneyArgs(args);
+    if (phase6Binding && optionalString(args.journeyId) !== phase6Binding.journeyId) {
+      throw new Error("phase6_start_journey_binding_journey_mismatch");
+    }
+    const phase6ExperimentStatus = phase6Binding
+      ? await validatePhase6ExperimentBinding(phase6Binding)
+      : undefined;
+    let phase6RagTrace = phase6Binding ? phase6RagTraceForBinding(phase6Binding) : undefined;
+    if (phase6Binding?.retrievalExpected && !phase6RagTrace) {
+      const failedRun = await failPhase6Run(
+        phase6Binding,
+        phase6Binding.journeyId,
+        "phase6_rag_trace_required_missing",
+      );
+      return {
+        phase6Settlement: {
+          ok: false,
+          status: "rag_trace_missing",
+          finding: phase6SourceMissingFinding(
+            "$.ragTrace",
+            "phase6_rag_trace_store",
+            "retrievalExpected=true but no valid server-observed RAG trace was recorded for the Phase 6 run/journey binding.",
+          ),
+          experimentRun: failedRun,
+        },
+        nextAction: "obsidian_epoch.phase6_experiment_status",
+      };
+    }
     const worldWindow = await runStage(async () => {
       const result = runtime.epochReserveJourneyWorldWindow(args);
       await partialPersistence?.("obsidian_epoch.start_journey", result);
       return result;
     });
+    const phase6BeforeEvents = phase6Binding ? phase6EventsFromView({ ...args, limit: 1_000 }) : [];
+    if (phase6Binding && !phase6RagTrace && !phase6Binding.retrievalExpected) {
+      const preparedJourney = recordValue(worldWindow.journey);
+      const traceArgs = {
+        ...args,
+        regionId: optionalString(preparedJourney.destinationRegionId),
+      };
+      phase6RagTrace = phase6RagTracePayload(runtime.epochCapturePhase6RagTrace({
+        binding: phase6TraceBinding(phase6Binding, traceArgs),
+        source: "world_knowledge",
+        retrievalConfig: phase6RetrievalConfig("world_knowledge", traceArgs),
+        retrievedChunks: [],
+        serverObservedUsedChunkIds: [],
+        serverObservedGroundingHits: [],
+        retrievalExpected: false,
+        noRetrievalReason: !worldKnowledgeSearch && !worldMemorySearch
+          ? "upstream_disabled"
+          : "not_needed",
+        recordedAt: new Date().toISOString(),
+        sourceEventIds: [],
+      }));
+    }
+    let phase6Before: ReturnType<typeof phase6PanelProjection> | undefined;
+    if (phase6Binding) {
+      phase6Before = phase6PanelProjection(
+        "before",
+        args,
+        recordValue(worldWindow.journey),
+        phase6BeforeEvents,
+      );
+    }
     const boundArgs = {
       ...args,
       expectedVersion: worldWindow.journey.mirrorWindow?.startExpectedVersion
         ?? worldWindow.journey.version,
+      ...(phase6Binding ? { phase6Scenario: phase6Binding.scenario } : {}),
     };
     const taskContext = runtime.epochJourneyTaskGenerationContext(boundArgs);
     const generatedPlanRequested = args.taskGenerationMode === "model_sampling"
@@ -5899,6 +8029,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
           "Describe the achieved result with completionResult.kind (item,knowledge,world_state,service,relationship) and completionResult.returnMode (carry,report,none). Only physical items may use carry; reports, experiments, repairs, trials and relationships normally remain on site or are reported.",
           "If a supplied object has type agent, it may be involved only through an explicit action target; describe the observable cooperative or competitive effect without inventing consent, resource loss or identity changes.",
           "Risk labels are non-authoritative hints; the server recomputes risk from task semantics, scene type, action wording, and targeted map objects. Never include completion state, grade/tier, reward, hidden task, hidden condition, or claims that an action already happened.",
+          "When phase6Scenario is present, its taskType and intensity are server policy. Keep the route on that objective and make the two action options express materially different costs at the requested low, medium, high, or dynamic intensity.",
           "Top-level fields: title,premise,primaryObjective,successResult,completionResult,objectives,routes.",
           "CompletionResult fields: kind,returnMode,summary.",
           "Route fields: routeId,kind,title,factionObjectId(optional),objectiveIds,unlockedByObjectiveIds. Route kind is choice or unlock.",
@@ -5918,6 +8049,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
             resources: taskContext.resources,
             attributes: taskContext.attributes,
             carriedInventoryItems: taskContext.carriedInventoryItems,
+            ...(phase6Binding ? { phase6Scenario: phase6Binding.scenario } : {}),
             scenarioMapId: taskContext.scenarioMapId,
             mirrorWindow: taskContext.mirrorWindow,
             worldSlice: taskContext.worldSlice,
@@ -5940,7 +8072,9 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       if (sampledTask.ok) taskProposal = sampledTask.proposal;
     }
     const startOnce = (startArgs: AnyRecord) => runStage(async () => {
-      const result = runtime.epochStartJourneyAgentNative(startArgs);
+      const result = phase6Binding && samplingRequested
+        ? runtime.epochStartJourney(startArgs)
+        : runtime.epochStartJourneyAgentNative(startArgs);
       await partialPersistence?.("obsidian_epoch.start_journey", result);
       return result;
     });
@@ -5962,6 +8096,100 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       };
       started = await startOnce(boundArgs);
     }
+    let phase6Capture: unknown;
+    if (phase6Binding) {
+      try {
+        phase6Before = phase6Before ?? phase6PanelProjection(
+          "before",
+          args,
+          recordValue(started.journey),
+          phase6BeforeEvents,
+        );
+        phase6Capture = runtime.epochCapturePhase6JourneyStart({
+          journeyId: started.journey.journeyId,
+            runId: phase6Binding.runId,
+          identity: phase6Binding.identity,
+          canonicalCursor: phase6Before.canonicalCursor,
+          context: {
+            player: phase6Before.panel.player,
+            progress: phase6Before.panel.progress,
+            economy: phase6Before.panel.economy,
+            ragPanel: {
+              ...phase6Before.panel.ragPanel,
+              ...(phase6RagTrace ? { phase6Trace: {
+                traceHash: optionalString(recordValue(phase6RagTrace).traceHash),
+                payloadHash: optionalString(recordValue(phase6RagTrace).payloadHash),
+                status: optionalString(recordValue(phase6RagTrace).status),
+                source: optionalString(recordValue(phase6RagTrace).source),
+                recordedAt: optionalString(recordValue(phase6RagTrace).recordedAt),
+              } } : {}),
+            },
+            worldCursor: phase6Before.panel.worldCursor,
+            experiment: {
+              experimentId: phase6Binding.experimentId,
+              runIndex: phase6Binding.runIndex,
+              seed: phase6Binding.seed,
+            },
+            version: {
+              rulesetVersion: phase6Binding.versions.rulesVersion,
+              catalogVersion: phase6Binding.versions.catalogVersion,
+              codeVersion: phase6Binding.versions.codeVersion,
+              scenarioMatrixVersion: phase6Binding.scenarioMatrix.version,
+            },
+          },
+          scenarioMatrix: phase6Binding.scenarioMatrix,
+        });
+        if (recordValue(phase6Capture).ok !== true) {
+          const failedRun = await failPhase6Run(
+            phase6Binding,
+            started.journey.journeyId,
+            "phase6_journey_start_capture_failed",
+          );
+          const result = {
+            ...started,
+            phase6Settlement: {
+              ok: false,
+              status: "capture_failed",
+              experimentStatus: phase6ExperimentStatus,
+              capture: phase6Capture,
+              experimentRun: failedRun,
+            },
+            nextAction: "obsidian_epoch.phase6_experiment_status",
+          };
+          attachEpochEventsForPersistence(result, [
+            ...epochEventsForPersistence(worldWindow),
+            ...epochEventsForPersistence(started),
+          ]);
+          return returnWithPartialPersistenceOwnership(
+            mergeJourneyEventsForPersistence(result, worldWindow, started),
+          );
+        }
+      } catch (error) {
+        const failedRun = await failPhase6Run(
+          phase6Binding,
+          optionalString(recordValue(started.journey).journeyId) || phase6Binding.experimentId,
+          error instanceof Error ? error.message : "phase6_journey_start_capture_failed",
+        );
+        const result = {
+          ...started,
+          phase6Settlement: {
+            ok: false,
+            status: "capture_failed",
+            experimentStatus: phase6ExperimentStatus,
+            error: errorCodeForRejectedCommand(error),
+            experimentRun: failedRun,
+          },
+          nextAction: "obsidian_epoch.phase6_experiment_status",
+        };
+        attachEpochEventsForPersistence(result, [
+          ...epochEventsForPersistence(worldWindow),
+          ...epochEventsForPersistence(started),
+        ]);
+        return returnWithPartialPersistenceOwnership(
+          mergeJourneyEventsForPersistence(result, worldWindow, started),
+        );
+      }
+    }
     if (!samplingRequested || !requestContext?.sampling) {
       const result = {
         ...started,
@@ -5972,13 +8200,22 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
           trust: "untrusted_client",
           fallback: samplingRequested ? "capability_absent" : "agent_native",
         },
+        ...(phase6Binding ? { phase6Settlement: {
+          ok: true,
+          status: "captured",
+          experimentStatus: phase6ExperimentStatus,
+          capture: phase6Capture,
+          startJourneyBinding: phase6Binding,
+        } } : {}),
         nextAction: "obsidian_epoch.propose_journey_step",
       };
       attachEpochEventsForPersistence(result, [
         ...epochEventsForPersistence(worldWindow),
         ...epochEventsForPersistence(started),
       ]);
-      return mergeJourneyEventsForPersistence(result, worldWindow, started);
+      return returnWithPartialPersistenceOwnership(
+        mergeJourneyEventsForPersistence(result, worldWindow, started),
+      );
     }
 
     let current: { readonly journey: typeof started.journey; readonly nextAction?: string; readonly [key: string]: unknown } = started;
@@ -6118,11 +8355,13 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
           ...epochEventsForPersistence(started),
           ...epochEventsForPersistence(proposal),
         ]);
-        return mergeJourneyEventsForPersistence(result, worldWindow, started, proposal);
+        return returnWithPartialPersistenceOwnership(
+          mergeJourneyEventsForPersistence(result, worldWindow, started, proposal),
+        );
       }
       samplingDecisions.push(sampling);
-      const committed = await runStage(async () => {
-        const result = runtime.epochCommitJourneyAction({
+      const committed = await runStage(() =>
+        commitJourneyActionWithPersistence({
           ...args,
           journeyId: started.journey.journeyId,
           sceneId: contract.sceneId,
@@ -6134,16 +8373,13 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
             ? sampling.decision.userFacingMessage
             : `旅程行动：${proposal.proposal.episode.title}`,
           idempotencyKey: `${baseIdempotencyKey}:objective-${stepIndex + 1}-commit`,
-        });
-        await partialPersistence?.("obsidian_epoch.commit_journey_action", result);
-        return result;
-      });
+        }));
       committedResults.push(committed);
       current = committed;
       if (!("nextAction" in committed) || committed.nextAction !== "obsidian_epoch.propose_journey_step") break;
     }
     await requestContext.notifyProgress?.(1, "Host 行动选择已逐项校验并提交服务端结算。");
-    const result = {
+    const result: AnyRecord = {
       ...started,
       ...current,
       ...(lastProposal ? { proposal: lastProposal.proposal } : {}),
@@ -6152,16 +8388,57 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       samplingDecisions,
       nextAction: "obsidian_epoch.journey_status",
     };
+    let finalizedJourneyVerification: ReturnType<typeof ensureSettledJourneyVerification> | undefined;
+    if (phase6Binding) {
+      result.phase6Settlement = {
+        ok: true,
+        status: "captured",
+        experimentStatus: phase6ExperimentStatus,
+        capture: phase6Capture,
+        startJourneyBinding: phase6Binding,
+      };
+        if (recordValue(current.journey).status === "settled") {
+          const settledJourneyId = optionalString(recordValue(current.journey).journeyId);
+          if (!settledJourneyId) throw new Error("phase6_settlement_context_missing:journeyId");
+          finalizedJourneyVerification = ensureSettledJourneyVerification(
+            runtime.epochJourneyStatus({ ...args, journeyId: settledJourneyId }),
+            args,
+          );
+          Object.assign(result, finalizedJourneyVerification.status);
+          if (finalizedJourneyVerification.finalVerification) {
+            result.finalVerification = finalizedJourneyVerification.finalVerification;
+          }
+          result.phase6Settlement = await finalizePhase6JourneyFromPersistedState({
+            args,
+            binding: phase6Binding,
+            current: recordValue(finalizedJourneyVerification.status),
+            committedResults,
+            experimentStatus: phase6ExperimentStatus,
+            capture: phase6Capture,
+            ragTrace: phase6RagTrace,
+            journeyRuntime: result,
+          });
+        }
+    }
     attachEpochEventsForPersistence(result, [
       ...epochEventsForPersistence(worldWindow),
       ...epochEventsForPersistence(started),
       ...(partialPersistence
         ? []
         : committedResults.flatMap((committed) => epochEventsForPersistence(committed))),
+      ...(finalizedJourneyVerification
+        ? epochEventsForPersistence(finalizedJourneyVerification.status)
+        : []),
     ]);
-    return partialPersistence
+    return returnWithPartialPersistenceOwnership(partialPersistence
       ? mergeJourneyEventsForPersistence(result)
-      : mergeJourneyEventsForPersistence(result, worldWindow, started, ...committedResults);
+      : mergeJourneyEventsForPersistence(
+          result,
+          worldWindow,
+          started,
+          ...committedResults,
+          ...(finalizedJourneyVerification ? [finalizedJourneyVerification.status] : []),
+        ));
   }
 
   function ensureSettledJourneyVerification(
@@ -6305,19 +8582,46 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     };
   }
 
-  function journeyStatusWithFinalVerification(args: AnyRecord) {
+  async function journeyStatusWithFinalVerification(args: AnyRecord) {
     const initial = runtime.epochJourneyStatus(args);
     const finalized = ensureSettledJourneyVerification(initial, args);
-    if (finalized.finalVerification) {
-      const result = {
+    const finalizedJourney = recordValue(finalized.status.journey);
+    let phase6Settlement: AnyRecord | undefined;
+    if (optionalString(finalizedJourney.status) === "settled") {
+      const restored = phase6BindingFromStoredJourney(optionalString(finalizedJourney.journeyId));
+      if (restored) {
+        const experimentStatus = await validatePhase6ExperimentBinding(restored.binding);
+        phase6Settlement = await finalizePhase6JourneyFromPersistedState({
+          args,
+          binding: restored.binding,
+          current: recordValue(finalized.status),
+          experimentStatus,
+          capture: {
+            ok: true,
+            status: "restored",
+            journeyId: restored.binding.journeyId,
+          },
+          ragTrace: phase6RagTraceForBinding(restored.binding),
+          storedContext: restored.storedContext,
+          journeyRuntime: finalized.status,
+        });
+      }
+    }
+    const baseResult = finalized.finalVerification
+      ? {
           ...finalized.status,
           finalVerification: finalized.finalVerification,
-      };
-      attachEpochEventsForPersistence(result, epochEventsForPersistence(finalized.status));
-      return mergeJourneyEventsForPersistence(result, initial, finalized.status);
-    }
-    return initial;
+        }
+      : initial;
+    if (!phase6Settlement && !finalized.finalVerification) return finalized.status;
+    const result = {
+      ...baseResult,
+      ...(phase6Settlement ? { phase6Settlement } : {}),
+    };
+    attachEpochEventsForPersistence(result, epochEventsForPersistence(finalized.status));
+    return mergeJourneyEventsForPersistence(result, initial, finalized.status);
   }
+
 
   function agentBriefingWithFinalVerification(args: AnyRecord) {
     const briefing = runtime.epochAgentBriefing({ ...args, deferReturnDelivery: true });
@@ -6337,6 +8641,611 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     );
     return mergeJourneyEventsForPersistence(result, briefing, ...finalizations.map((finalized) => finalized.status));
   }
+
+  const compactTransportArray = (value: unknown): readonly unknown[] => Array.isArray(value) ? value : [];
+  const compactJourneyForTransport = (value: unknown) => {
+    const journey = recordValue(value);
+    const taskPlan = recordValue(journey.taskPlan);
+    return {
+      journeyId: journey.journeyId,
+      agentId: journey.agentId,
+      explorerId: journey.explorerId,
+      correlationId: journey.correlationId,
+      status: journey.status,
+      originRegionId: journey.originRegionId,
+      destinationRegionId: journey.destinationRegionId,
+      worldMode: journey.worldMode,
+      episodeIds: compactTransportArray(journey.episodeIds),
+      sourceEventIds: compactTransportArray(journey.sourceEventIds),
+      version: journey.version,
+      ...(Object.keys(taskPlan).length ? { taskPlan: {
+        version: taskPlan.version,
+        source: taskPlan.source,
+        taskType: taskPlan.taskType,
+        scenarioMapId: taskPlan.scenarioMapId,
+        title: taskPlan.title,
+        primaryObjective: taskPlan.primaryObjective,
+        objectiveCount: compactTransportArray(taskPlan.objectives).length,
+        routeCount: compactTransportArray(taskPlan.routes).length,
+      } } : {}),
+      startedAtWorldTime: journey.startedAtWorldTime,
+      dueAtWorldTime: journey.dueAtWorldTime,
+      dueAtRealTime: journey.dueAtRealTime,
+      nextPollAt: journey.nextPollAt,
+    };
+  };
+  const compactMissionForTransport = (value: unknown) => {
+    const mission = recordValue(value);
+    if (Object.keys(mission).length === 0) return undefined;
+    return {
+      kind: mission.kind,
+      version: mission.version,
+      missionId: mission.missionId,
+      journeyId: mission.journeyId,
+      title: mission.title,
+      playerObjective: mission.playerObjective,
+      primaryObjective: mission.primaryObjective,
+      status: mission.status,
+      currentTaskId: mission.currentTaskId,
+      tasks: compactTransportArray(mission.tasks).map((value) => {
+        const task = recordValue(value);
+        return {
+          taskId: task.taskId,
+          sequence: task.sequence,
+          title: task.title,
+          objective: task.objective,
+          completionCriteria: task.completionCriteria,
+          status: task.status,
+        };
+      }),
+      outcome: mission.outcome,
+      adjudication: mission.adjudication,
+    };
+  };
+  const compactEpisodeForTransport = (value: unknown) => {
+    const episode = recordValue(value);
+    if (Object.keys(episode).length === 0) return undefined;
+    const serverFacts = recordValue(episode.serverFacts);
+    const narrative = recordValue(episode.narrative);
+    return {
+      episodeId: episode.episodeId,
+      phase: episode.phase,
+      type: episode.type,
+      title: episode.title,
+      generatedTaskObjective: episode.generatedTaskObjective,
+      settlement: episode.settlement,
+      ...(Object.keys(serverFacts).length ? { serverFacts: {
+        sourceEventIds: serverFacts.sourceEventIds,
+        action: serverFacts.action,
+        sharedWorldImpact: serverFacts.sharedWorldImpact,
+        factionAlignment: serverFacts.factionAlignment,
+      } } : {}),
+      ...(Object.keys(narrative).length ? { narrative: {
+        kind: narrative.kind,
+        sourceEventIds: narrative.sourceEventIds,
+        postcard: narrative.postcard,
+      } } : {}),
+    };
+  };
+  const compactNextJourneyTool = (value: unknown, status: unknown) => {
+    const tool = optionalString(value);
+    if (tool === "obsidian_epoch.propose_journey_step") return "obsidian_epoch.propose_journey_step_compact";
+    if (tool === "obsidian_epoch.journey_status") return "obsidian_epoch.journey_status_compact";
+    if (status === "settled") return "obsidian_epoch.run_receipt_compact";
+    return tool;
+  };
+  const preserveCompactTransportEvents = <T extends AnyRecord>(compact: T, result: unknown): T => {
+    attachEpochEventsForPersistence(compact, epochEventsForPersistence(result));
+    const merged = mergeJourneyEventsForPersistence(compact, result) as T;
+    if (isMcpResultAlreadyPersisted(result)) markMcpResultAlreadyPersisted(merged);
+    return merged;
+  };
+  const compactJourneyStartForTransport = (result: unknown) => {
+    const value = recordValue(result);
+    const journey = recordValue(value.journey);
+    const taskGeneration = recordValue(value.taskGeneration);
+    const sampling = recordValue(value.sampling);
+    const phase6Settlement = recordValue(value.phase6Settlement);
+    const startBinding = recordValue(phase6Settlement.startJourneyBinding);
+    return preserveCompactTransportEvents({
+      authority: "server_started_journey",
+      transportVersion: "journey_start.compact.v1",
+      journey: compactJourneyForTransport(journey),
+      mission: compactMissionForTransport(value.mission),
+      episode: compactEpisodeForTransport(
+        value.episode ?? value.arrivalEpisode ?? value.objectiveEpisode,
+      ),
+      taskGeneration: {
+        mode: taskGeneration.mode,
+        status: taskGeneration.status,
+        source: taskGeneration.source,
+        fallbackReason: taskGeneration.fallbackReason,
+        taskType: taskGeneration.taskType,
+        scenarioMapId: taskGeneration.scenarioMapId,
+      },
+      sampling: {
+        ok: sampling.ok,
+        status: sampling.status,
+        source: sampling.source,
+        fallbackReason: sampling.fallbackReason,
+      },
+      ...(Object.keys(phase6Settlement).length ? { phase6Settlement: {
+        ok: phase6Settlement.ok,
+        status: phase6Settlement.status,
+        experimentId: startBinding.experimentId,
+        runId: startBinding.runId,
+        runIndex: startBinding.runIndex,
+        journeyId: startBinding.journeyId,
+        receiptId: startBinding.receiptId,
+      } } : {}),
+      expectedVersion: journey.version,
+      nextAction: compactNextJourneyTool(value.nextAction, journey.status)
+        || "obsidian_epoch.propose_journey_step_compact",
+      compactStateTool: "obsidian_epoch.journey_status_compact",
+    }, result);
+  };
+  const compactJourneyProposalForTransport = (
+    result: ReturnType<typeof runtime.epochProposeJourneyStep>,
+  ) => {
+    const contract = result.proposal.sceneContract;
+    const firstSignedAction = contract?.actionOptions[0];
+    const compactActionOptions = (contract?.actionOptions ?? []).map((action) => {
+      const {
+        signatureAlgorithm: _signatureAlgorithm,
+        signatureVersion: _signatureVersion,
+        signingPurpose: _signingPurpose,
+        signingKeyId: _signingKeyId,
+        serverPublicKey: _serverPublicKey,
+        ...compactAction
+      } = action;
+      return compactAction;
+    });
+    return preserveCompactTransportEvents({
+      authority: "server_signed_scene_contract",
+      transportVersion: "journey_proposal.compact.v1",
+      journey: compactJourneyForTransport(result.journey),
+      policySelection: result.policySelection,
+      preview: result.preview,
+      mission: compactMissionForTransport(result.mission),
+      episode: compactEpisodeForTransport(result.episode),
+      scenePlan: {
+        status: result.scenePlan.status,
+        candidateCount: result.scenePlan.candidates.length,
+        episodeCount: result.scenePlan.episodes.length,
+        usedRoutineFallback: result.scenePlan.usedRoutineFallback,
+      },
+      stepNumber: result.stepNumber,
+      totalSteps: result.totalSteps,
+      proposal: {
+        journeyId: result.proposal.journeyId,
+        episode: compactEpisodeForTransport(result.proposal.episode),
+        stepNumber: result.proposal.stepNumber,
+        totalSteps: result.proposal.totalSteps,
+        sceneContract: contract ? {
+          sceneId: contract.sceneId,
+          journeyId: contract.journeyId,
+          episodeId: contract.episodeId,
+          sceneType: contract.sceneType,
+          phase: contract.phase,
+          worldMode: contract.worldMode,
+          title: contract.title,
+          premise: contract.premise,
+          location: contract.location,
+          participants: contract.participants,
+          confirmedFactIds: contract.confirmedFactIds,
+          actionOptions: compactActionOptions,
+          safeFallbackActionOptionId: contract.safeFallbackActionOptionId,
+          expectedVersion: contract.expectedVersion,
+          expiresAt: contract.expiresAt,
+          ruleVersion: contract.ruleVersion,
+          taskObjective: contract.taskObjective,
+          ...(firstSignedAction ? { verification: {
+            signatureAlgorithm: firstSignedAction.signatureAlgorithm,
+            signatureVersion: firstSignedAction.signatureVersion,
+            signingPurpose: firstSignedAction.signingPurpose,
+            signingKeyId: firstSignedAction.signingKeyId,
+            serverPublicKey: firstSignedAction.serverPublicKey,
+          } } : {}),
+        } : null,
+        actionOptions: result.proposal.actionOptions,
+        expectedVersion: result.proposal.expectedVersion,
+        nextAction: "obsidian_epoch.commit_journey_action_compact",
+      },
+      fullStateTool: "obsidian_epoch.journey_status",
+      compactStateTool: "obsidian_epoch.journey_status_compact",
+    }, result);
+  };
+  const compactJourneyCommitForTransport = (
+    result: ReturnType<typeof runtime.epochCommitJourneyAction>,
+  ) => {
+    const value = recordValue(result);
+    const journey = recordValue(value.journey);
+    const settledAction = recordValue(value.settledAction);
+    const worldCommit = recordValue(value.worldCommit ?? journey.worldCommit);
+    return preserveCompactTransportEvents({
+      authority: "server_committed_journey_action",
+      transportVersion: "journey_commit.compact.v1",
+      journey: compactJourneyForTransport(journey),
+      mission: compactMissionForTransport(value.mission),
+      episode: compactEpisodeForTransport(
+        value.episode ?? value.objectiveEpisode ?? value.mainEpisode ?? value.returnEpisode,
+      ),
+      settledAction: {
+        actionId: settledAction.actionId,
+        actionOptionId: settledAction.actionOptionId,
+        optionLabel: settledAction.optionLabel,
+        risk: settledAction.risk,
+        explanation: settledAction.explanation,
+        visibleText: settledAction.visibleText,
+        outcomeSummary: settledAction.outcomeSummary,
+        journeyResolution: settledAction.journeyResolution,
+        reward: settledAction.reward,
+        recordedAt: settledAction.recordedAt,
+      },
+      taskAdjudication: value.taskAdjudication,
+      rewardGrant: value.rewardGrant,
+      ...(Object.keys(worldCommit).length ? { worldCommit: {
+        status: worldCommit.status,
+        reason: worldCommit.reason,
+        commitEventId: worldCommit.commitEventId,
+        sourceEventIds: worldCommit.sourceEventIds,
+        npcRelationshipCount: compactTransportArray(worldCommit.npcRelationships).length,
+        factionStandingCount: compactTransportArray(worldCommit.factionStandings).length,
+      } } : {}),
+      expectedVersion: journey.version,
+      nextAction: compactNextJourneyTool(value.nextAction, journey.status),
+      compactStateTool: "obsidian_epoch.journey_status_compact",
+    }, result);
+  };
+  const compactJourneyStatusForTransport = (result: unknown) => {
+    const value = recordValue(result);
+    const journey = recordValue(value.journey);
+    const storyReport = recordValue(value.storyReport);
+    const evaluation = recordValue(storyReport.evaluation);
+    const phase6Settlement = recordValue(value.phase6Settlement);
+    const receipt = recordValue(phase6Settlement.receipt);
+    const resultPage = recordValue(phase6Settlement.resultPage);
+    const experimentRun = recordValue(phase6Settlement.experimentRun);
+    const experimentFailure = recordValue(experimentRun.failure);
+    const settlementFindings: AnyRecord[] = [];
+    const settlementFindingKeys = new Set<string>();
+    const settlementFindingObjects = new WeakSet<object>();
+    const collectSettlementFindings = (candidate: unknown): void => {
+      if (!candidate || typeof candidate !== "object" || settlementFindings.length >= 8) return;
+      if (settlementFindingObjects.has(candidate as object)) return;
+      settlementFindingObjects.add(candidate as object);
+      if (Array.isArray(candidate)) {
+        candidate.forEach(collectSettlementFindings);
+        return;
+      }
+      const record = recordValue(candidate);
+      compactTransportArray(record.findings).forEach((entry) => {
+        if (settlementFindings.length >= 8) return;
+        const finding = recordValue(entry);
+        const key = [finding.code, finding.path, finding.message].join("\u0000");
+        if (settlementFindingKeys.has(key)) return;
+        settlementFindingKeys.add(key);
+        const details = Object.fromEntries(Object.entries(recordValue(finding.details))
+          .filter(([, detail]) => detail === null || ["string", "number", "boolean"].includes(typeof detail))
+          .slice(0, 10));
+        settlementFindings.push({
+          code: finding.code,
+          severity: finding.severity,
+          path: finding.path,
+          message: finding.message,
+          ...(Object.keys(details).length > 0 ? { details } : {}),
+        });
+      });
+      Object.entries(record).forEach(([key, entry]) => {
+        if (key !== "findings") collectSettlementFindings(entry);
+      });
+    };
+    collectSettlementFindings(phase6Settlement);
+    const finalVerification = recordValue(value.finalVerification);
+    const verificationPage = recordValue(finalVerification.page);
+    return preserveCompactTransportEvents({
+      authority: "server_journey_status",
+      transportVersion: "journey_status.compact.v1",
+      journey: compactJourneyForTransport(journey),
+      mission: compactMissionForTransport(value.mission),
+      episodeSummaries: compactTransportArray(value.episodes).slice(-6).map((entry) => {
+        const episode = recordValue(entry);
+        const settlement = recordValue(episode.settlement);
+        const objective = recordValue(episode.generatedTaskObjective);
+        const taskObjective = recordValue(settlement.taskObjective);
+        return {
+          episodeId: episode.episodeId,
+          phase: episode.phase,
+          type: episode.type,
+          title: episode.title,
+          objectiveId: objective.objectiveId ?? taskObjective.objectiveId,
+          completionKind: taskObjective.completionKind,
+          outcomeSummary: settlement.outcomeSummary,
+          canonicalEventIds: settlement.canonicalEventIds,
+        };
+      }),
+      taskAdjudication: value.taskAdjudication,
+      rewardGrant: value.rewardGrant,
+      ...(Object.keys(storyReport).length ? { storyReport: {
+        kind: storyReport.kind,
+        version: storyReport.version,
+        journeyId: storyReport.journeyId,
+        profile: storyReport.profile,
+        resolution: storyReport.resolution,
+        evaluation: {
+          taskCompletionGrade: evaluation.taskCompletionGrade,
+          identityFidelityPercent: evaluation.identityFidelityPercent,
+          rewards: evaluation.rewards,
+          rewardConversion: evaluation.rewardConversion,
+          playerImpact: evaluation.playerImpact,
+        },
+        sourceEventIds: storyReport.sourceEventIds,
+      } } : {}),
+      ...(Object.keys(phase6Settlement).length ? { phase6Settlement: {
+        ok: phase6Settlement.ok,
+        status: phase6Settlement.status,
+        restored: phase6Settlement.restored,
+        pageId: phase6Settlement.pageId,
+        receiptId: phase6Settlement.receiptId,
+        error: phase6Settlement.error,
+        findings: settlementFindings,
+        experimentRun: {
+          experimentId: experimentRun.experimentId,
+          runId: experimentRun.runId,
+          runIndex: experimentRun.runIndex,
+          state: experimentRun.state,
+          journeyId: experimentRun.journeyId,
+          receiptId: experimentRun.receiptId,
+          failureReason: experimentFailure.reason,
+        },
+        receipt: {
+          version: receipt.version,
+          receiptId: receipt.receiptId,
+          experimentId: receipt.experimentId,
+          runIndex: receipt.runIndex,
+          journeyId: receipt.journeyId,
+          resultVerified: receipt.resultVerified,
+          integrity: receipt.integrity,
+        },
+        resultPage: {
+          pageId: resultPage.pageId,
+          receiptId: resultPage.receiptId,
+          journeyId: resultPage.journeyId,
+          resultVerified: resultPage.resultVerified,
+        },
+      } } : {}),
+      ...(Object.keys(verificationPage).length ? { finalVerification: {
+        pageId: verificationPage.pageId,
+        urlPath: verificationPage.urlPath,
+        createdAt: verificationPage.createdAt,
+      } } : {}),
+      expectedVersion: journey.version,
+      nextAction: compactNextJourneyTool(value.nextAction, journey.status),
+      ...(journey.status === "settled" ? {
+        nextActions: ["obsidian_epoch.run_receipt_compact", "obsidian_epoch.phase6_result_compact"],
+      } : {}),
+    }, result);
+  };
+
+  const compactPhase6Value = (value: unknown): unknown => {
+    if (value === null || value === undefined || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return value;
+    }
+    let serialized = "";
+    try {
+      serialized = JSON.stringify(value);
+    } catch {
+      return { omitted: true, reason: "non_serializable" };
+    }
+    if (serialized.length <= 512) return value;
+    return { omitted: true, byteLength: serialized.length };
+  };
+
+  const compactPhase6EventIds = (value: unknown) => {
+    const ids = compactTransportArray(value).filter((entry): entry is string => typeof entry === "string");
+    return { count: ids.length, values: ids.slice(0, 16) };
+  };
+
+  const compactPhase6MetricMap = (value: unknown) => Object.fromEntries(
+    Object.entries(recordValue(value)).map(([dimension, metricValue]) => {
+      const metric = recordValue(metricValue);
+      return [dimension, {
+        value: metric.value,
+        evidence: compactPhase6EventIds(metric.evidence),
+      }];
+    }),
+  );
+
+  const compactPhase6ChangeSet = (value: unknown) => {
+    const changeSet = recordValue(value);
+    const changes = compactTransportArray(changeSet.changes);
+    return {
+      mode: changeSet.mode,
+      noChangeReason: changeSet.noChangeReason,
+      changeCount: changes.length,
+      changes: changes.slice(0, 8).map((entry) => {
+        const change = recordValue(entry);
+        return {
+          id: change.id,
+          label: change.label,
+          before: compactPhase6Value(change.before),
+          after: compactPhase6Value(change.after),
+          eventIds: compactPhase6EventIds(change.eventIds),
+        };
+      }),
+      eventIds: compactPhase6EventIds(changeSet.eventIds),
+    };
+  };
+
+  const compactPhase6RunReceiptForTransport = (result: unknown) => {
+    const value = recordValue(result);
+    const receipt = recordValue(value.receipt);
+    const snapshots = recordValue(receipt.snapshots);
+    const beforeSnapshot = recordValue(snapshots.before);
+    const afterSnapshot = recordValue(snapshots.after);
+    const deltas = compactTransportArray(receipt.deltas);
+    const rag = recordValue(receipt.rag);
+    const claims = compactTransportArray(rag.claims);
+    const eventIds = recordValue(receipt.eventIds);
+    const outcome = recordValue(receipt.outcome);
+    const targetKinds: Record<string, number> = {};
+    deltas.forEach((entry) => {
+      const kind = optionalString(recordValue(recordValue(entry).target).kind) || "unknown";
+      targetKinds[kind] = (targetKinds[kind] || 0) + 1;
+    });
+    return preserveCompactTransportEvents({
+      authority: "server_phase6_run_receipt",
+      transportVersion: "phase6_run_receipt.compact.v1",
+      verified: true,
+      rulesetVersion: value.rulesetVersion,
+      receipt: {
+        receiptType: receipt.receiptType,
+        version: receipt.version,
+        authority: receipt.authority,
+        receiptId: receipt.receiptId,
+        runId: receipt.runId,
+        journeyId: receipt.journeyId,
+        agentId: receipt.agentId,
+        explorerId: receipt.explorerId,
+        experimentId: receipt.experimentId,
+        runIndex: receipt.runIndex,
+        seed: receipt.seed,
+        rulesetVersion: receipt.rulesetVersion,
+        catalogVersion: receipt.catalogVersion,
+        codeVersion: receipt.codeVersion,
+        scenarioMatrixVersion: receipt.scenarioMatrixVersion,
+        generatedAt: receipt.generatedAt,
+        startedAt: receipt.startedAt,
+        settledAt: receipt.settledAt,
+        world: receipt.world,
+        snapshots: {
+          before: { hash: beforeSnapshot.hash },
+          after: { hash: afterSnapshot.hash },
+        },
+        deltas: {
+          count: deltas.length,
+          byTargetKind: targetKinds,
+          entries: deltas.slice(0, 10).map((entry) => {
+            const delta = recordValue(entry);
+            const target = recordValue(delta.target);
+            return {
+              op: delta.op,
+              target: { kind: target.kind, id: target.id },
+              path: compactTransportArray(delta.path).slice(0, 12),
+              before: compactPhase6Value(delta.before),
+              after: compactPhase6Value(delta.after),
+              amount: delta.amount,
+              reason: delta.reason,
+              eventIds: compactPhase6EventIds(delta.eventIds),
+            };
+          }),
+        },
+        score: compactPhase6MetricMap(receipt.score),
+        suitability: compactPhase6MetricMap(receipt.suitability),
+        rag: {
+          queryHash: rag.queryHash,
+          corpusHash: rag.corpusHash,
+          claimCount: claims.length,
+          claims: claims.slice(0, 12),
+        },
+        eventIds: {
+          source: compactPhase6EventIds(eventIds.source),
+          settlement: compactPhase6EventIds(eventIds.settlement),
+          derived: compactPhase6EventIds(eventIds.derived),
+        },
+        outcome: {
+          status: outcome.status,
+          grade: outcome.grade,
+          scoreBps: outcome.scoreBps,
+          summary: outcome.summary,
+          keys: Object.keys(outcome).sort(),
+        },
+        integrity: receipt.integrity,
+      },
+      nextAction: "obsidian_epoch.phase6_result_compact",
+    }, result);
+  };
+
+  const compactPhase6ResultForTransport = (result: unknown) => {
+    const value = recordValue(result);
+    const page = recordValue(value.result);
+    const receipt = recordValue(page.receipt);
+    const sections = recordValue(page.sections);
+    const identityProgression = recordValue(sections.identityProgression);
+    const settlement = recordValue(sections.settlement);
+    const economyConservation = recordValue(settlement.economyConservation);
+    const assets = compactTransportArray(economyConservation.assets);
+    const scores = compactTransportArray(sections.scores);
+    const rag = recordValue(sections.rag);
+    const audit = recordValue(sections.audit);
+    const integrity = recordValue(audit.integrity);
+    return preserveCompactTransportEvents({
+      authority: "server_phase6_result",
+      transportVersion: "phase6_result.compact.v1",
+      verified: value.verified === true,
+      rulesetVersion: value.rulesetVersion,
+      pageId: value.pageId,
+      receiptId: value.receiptId,
+      result: {
+        rulesetVersion: page.rulesetVersion,
+        deterministic: page.deterministic,
+        receipt: {
+          receiptId: receipt.receiptId,
+          runId: receipt.runId,
+          createdAt: receipt.createdAt,
+          payloadHash: receipt.payloadHash,
+          canonicalEventIds: compactPhase6EventIds(receipt.canonicalEventIds),
+          canonicalEventCount: compactTransportArray(receipt.canonicalEvents).length,
+        },
+        sections: {
+          world: compactPhase6ChangeSet(sections.world),
+          identityProgression: {
+            identity: compactPhase6ChangeSet(identityProgression.identity),
+            progression: compactPhase6ChangeSet(identityProgression.progression),
+          },
+          settlement: {
+            status: settlement.status,
+            settlementId: settlement.settlementId,
+            eventIds: compactPhase6EventIds(settlement.eventIds),
+            economyConservation: {
+              conserved: economyConservation.conserved,
+              assetCount: assets.length,
+              assets: assets.slice(0, 20),
+              auditFindingIds: compactPhase6EventIds(economyConservation.auditFindingIds),
+            },
+          },
+          scores: scores.map((entry) => {
+            const score = recordValue(entry);
+            return {
+              dimension: score.dimension,
+              score: score.score,
+              basis: score.basis,
+              source: score.source,
+              fallback: score.fallback,
+              eventIds: compactPhase6EventIds(score.eventIds),
+            };
+          }),
+          rag: {
+            ...compactPhase6ChangeSet(rag),
+            evidenceIds: compactPhase6EventIds(rag.evidenceIds),
+            retrievalSnapshotId: rag.retrievalSnapshotId,
+          },
+          audit: {
+            auditId: audit.auditId,
+            eventIds: compactPhase6EventIds(audit.eventIds),
+            integrity: {
+              ok: integrity.ok,
+              receiptPayloadHash: integrity.receiptPayloadHash,
+              resultPagePayloadHash: integrity.resultPagePayloadHash,
+              canonicalEventIds: compactPhase6EventIds(integrity.canonicalEventIds),
+              checkedAt: integrity.checkedAt,
+            },
+          },
+        },
+      },
+    }, result);
+  };
+
   const handlers = new Map<string, (args: AnyRecord) => unknown>([
     ["agent_world.context_package", (args) => runtime.getContext(args)],
     ["agent_world.context_snapshots", (args) => runtime.contextSnapshots(args)],
@@ -6356,6 +9265,12 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     ["agent_world.public_world", () => runtime.publicWorld()],
     ["agent_world.progression_state", (args) => runtime.progressionState(args)],
     ["agent_world.operation_check", (args) => runtime.operationCheck(args)],
+    ["obsidian_epoch.command", (args) => runtime.infiniteWorldCommand(args)],
+    ["obsidian_epoch.world_snapshot", (args) => runtime.infiniteWorldSnapshot(args)],
+    ["obsidian_epoch.player_panel", (args) => runtime.infiniteWorldPlayerPanel(args)],
+    ["obsidian_epoch.ten_run_audit", (args) => runtime.infiniteWorldTenRunAudit(args)],
+    ["obsidian_epoch.world_health", (args) => runtime.infiniteWorldHealth(args)],
+    ["obsidian_epoch.world_migrate", (args) => runtime.infiniteWorldMigrate(args)],
     ["agent_world.community_react", (args) => runtime.communityReact(authenticatedCommunityInput(args))],
     ["agent_world.community_comment", (args) => runtime.communityComment(authenticatedCommunityInput(args))],
     ["agent_world.community_flag", (args) => runtime.communityFlag(authenticatedCommunityInput(args))],
@@ -6366,6 +9281,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     ["agent_world.community_moderate", (args) => runtime.communityModerate(args)],
     ["agent_world.community_thread", (args) => runtime.communityThread(args)],
     ["agent_world.transparency_verify", () => runtime.transparencyVerify()],
+    ["obsidian_epoch.register_explorer", (args) => runtime.epochRegisterExplorer(args)],
     ["obsidian_epoch.quickstart", (args) => epochQuickstart(args)],
     ["obsidian_epoch.identity", (args) => {
       if (args.agentId && !args.explorerId) return runtime.epochIdentity(args);
@@ -6378,9 +9294,18 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     ["obsidian_epoch.agent_briefing", (args) => agentBriefingWithFinalVerification(args)],
     ["obsidian_epoch.prepare_journey", (args) => runtime.epochPrepareJourney(args)],
     ["obsidian_epoch.start_journey", startJourneyWithSampling],
+    ["obsidian_epoch.start_journey_compact", async (args) =>
+      compactJourneyStartForTransport(await startJourneyWithSampling(args))],
     ["obsidian_epoch.propose_journey_step", (args) => runtime.epochProposeJourneyStep(args)],
-    ["obsidian_epoch.commit_journey_action", (args) => runtime.epochCommitJourneyAction(args)],
+    ["obsidian_epoch.propose_journey_step_compact", (args) =>
+      compactJourneyProposalForTransport(runtime.epochProposeJourneyStep(args))],
+    ["obsidian_epoch.commit_journey_action", (args) =>
+      commitJourneyActionWithPersistence(args, { externalTransport: true })],
+    ["obsidian_epoch.commit_journey_action_compact", async (args) =>
+      compactJourneyCommitForTransport(await commitJourneyActionWithPersistence(args, { externalTransport: true }))],
     ["obsidian_epoch.journey_status", (args) => journeyStatusWithFinalVerification(args)],
+    ["obsidian_epoch.journey_status_compact", async (args) =>
+      compactJourneyStatusForTransport(await journeyStatusWithFinalVerification(args))],
     ["obsidian_epoch.recall_journey", (args) => runtime.epochRecallJourney(args)],
     ["obsidian_epoch.journey_album", (args) => runtime.epochJourneyAlbum(args)],
     ["obsidian_epoch.agent_memory", (args) => runtime.epochAgentMemory(args)],
@@ -6403,11 +9328,15 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     ["obsidian_epoch.world_content", (args) => runtime.epochWorldContent(args)],
     ["obsidian_epoch.world_knowledge", async (args) => {
       if (!worldKnowledgeSearch) throw new Error("world_knowledge_unavailable");
-      return worldKnowledgeSearch(args);
+      const result = await worldKnowledgeSearch(args);
+      const phase6RagTrace = await capturePhase6RagTraceForResult("world_knowledge", args, result);
+      return phase6RagTrace ? { ...recordValue(result), phase6RagTrace } : result;
     }],
     ["obsidian_epoch.world_memory", async (args) => {
       if (!worldMemorySearch) throw new Error("world_memory_unavailable");
-      return worldMemorySearch(args);
+      const result = await worldMemorySearch(args);
+      const phase6RagTrace = await capturePhase6RagTraceForResult("world_memory", args, result);
+      return phase6RagTrace ? { ...recordValue(result), phase6RagTrace } : result;
     }],
     ["obsidian_epoch.advance_world_clock", (args) => runtime.epochAdvanceWorldClock(args)],
     ["obsidian_epoch.migrate_world_content", (args) => runtime.epochMigrateWorldContent(args)],
@@ -6525,6 +9454,13 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     ["obsidian_epoch.review_npc_candidate", (args) => runtime.epochReviewNpcCandidate(args)],
     ["obsidian_epoch.tick_npc_lifecycle", (args) => runtime.epochTickNpcLifecycle(args)],
     ["obsidian_epoch.result_page", (args) => runtime.epochResultPage(args)],
+    [PHASE6_EXPERIMENT_MCP_TOOL_BEGIN_EXPERIMENT, (args) => runtime.epochBeginPhase6Experiment(args)],
+    [PHASE6_EXPERIMENT_MCP_TOOL_BEGIN_RUN, (args) => runtime.epochBeginPhase6Run(args)],
+    [PHASE6_EXPERIMENT_MCP_TOOL_STATUS, (args) => runtime.epochPhase6ExperimentStatus(args)],
+    [PHASE6_MCP_TOOL_RUN_RECEIPT, (args) => runtime.epochPhase6RunReceipt(args)],
+    [PHASE6_MCP_TOOL_PHASE6_RESULT, (args) => runtime.epochPhase6Result(args)],
+    ["obsidian_epoch.run_receipt_compact", (args) => compactPhase6RunReceiptForTransport(runtime.epochPhase6RunReceipt(args))],
+    ["obsidian_epoch.phase6_result_compact", (args) => compactPhase6ResultForTransport(runtime.epochPhase6Result(args))],
     ["obsidian_epoch.create_result_page", (args) => runtime.epochCreateResultPage(args)],
     ["obsidian_epoch.revoke_result_page", (args) => runtime.epochRevokeResultPage(args)],
     ["obsidian_epoch.delete_result_page", (args) => runtime.epochDeleteResultPage(args)],
@@ -6539,6 +9475,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     runtime,
     listTools: () => AGENT_WORLD_TOOLS.map((tool) => ({ ...tool, inputSchema: { ...tool.inputSchema } })),
     callTool: async (name: string, args: AnyRecord = {}) => {
+      assertLegacyAgentWorldToolRemoved(name);
       const handler = handlers.get(name);
       if (!handler) throw new Error(`unknown_tool:${name}`);
       try {
@@ -6577,6 +9514,7 @@ export function createAgentWorldRemoteMcpRuntime(options: {
     serverBase,
     listTools: () => AGENT_WORLD_TOOLS.map((tool) => ({ ...tool, inputSchema: { ...tool.inputSchema } })),
     callTool: async (name: string, args: AnyRecord = {}) => {
+      assertLegacyAgentWorldToolRemoved(name);
       const forwardedArgs = name === "obsidian_epoch.quickstart" ? { serverBase, ...(args || {}) } : (args || {});
       const response = await fetchFn(`${serverBase}/api/epoch/mcp/tools/call`, {
         method: "POST",

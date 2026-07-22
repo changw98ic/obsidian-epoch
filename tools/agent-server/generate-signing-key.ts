@@ -1,4 +1,5 @@
 import { generateReleaseSigningKey } from "./lib/signingKey.ts";
+import { isDirectEntrypoint } from "./lib/cliEntrypoint.ts";
 
 function renderHumanOutput(material: ReturnType<typeof generateReleaseSigningKey>) {
   return [
@@ -16,7 +17,7 @@ function renderHumanOutput(material: ReturnType<typeof generateReleaseSigningKey
   ].join("\n");
 }
 
-if (process.argv[1] && import.meta.url === new URL(process.argv[1], "file:").href) {
+if (isDirectEntrypoint(import.meta.url)) {
   const material = generateReleaseSigningKey();
   if (process.argv.includes("--json")) {
     console.log(JSON.stringify(material));
