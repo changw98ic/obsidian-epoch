@@ -16,6 +16,8 @@ interface ResourcePanelProps {
 }
 
 export function ResourcePanel({ entries, epochAssetUrl }: ResourcePanelProps) {
+  const safeEntries = entries || [];
+
   return (
     <article className="agent-panel">
       <div className="agent-panel-head">
@@ -23,7 +25,7 @@ export function ResourcePanel({ entries, epochAssetUrl }: ResourcePanelProps) {
         <b>服务器结算</b>
       </div>
       <div className="agent-resource-grid">
-        {entries.map((entry) => (
+        {safeEntries.map((entry) => (
           <span
             className={entry.media ? "agent-resource-media-row" : undefined}
             key={entry.resourceId}

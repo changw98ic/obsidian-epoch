@@ -202,6 +202,7 @@ import type {
   EpochDiplomacyRecord,
   EpochDowntimeMode,
   EpochEvent,
+  EpochExplorationMetrics,
   EpochExplorerProfileInfo,
   EpochHostedActionOption,
   EpochHostedSession,
@@ -704,10 +705,12 @@ function agentNarrativeHomepage({
     `第 ${identity.generation} 世签发 · ${formatDate(identity.createdAt)}`,
     ...recentTimeline,
   ];
-  const scar = identity.personality.latestSourceEventId
-    ? `最近伤痕来自 ${playerRecordLabel(identity.personality.latestSourceEventId, "事件")}；等待你确认是否写入性格漂移。`
-    : identity.personality.traits.length
-      ? `已写入 ${identity.personality.traits.join(" / ")}，暂无新的未确认伤痕。`
+  const personalityTraits = identity.personality?.traits || [];
+  const latestPersonalitySourceEventId = identity.personality?.latestSourceEventId;
+  const scar = latestPersonalitySourceEventId
+    ? `最近伤痕来自 ${playerRecordLabel(latestPersonalitySourceEventId, "事件")}；等待你确认是否写入性格漂移。`
+    : personalityTraits.length
+      ? `已写入 ${personalityTraits.join(" / ")}，暂无新的未确认伤痕。`
       : "暂无伤痕记录；重大伤痕、污染或背叛会先生成确认提案。";
   const relationshipChange = primaryRelationship
     ? `${playerRelationshipKindLabel(primaryRelationship.kind)} · ${playerAgentLabel(primaryRelationship.targetAgentId)} · ${primaryRelationship.scoreDelta >= 0 ? "+" : ""}${primaryRelationship.scoreDelta} · ${primaryRelationship.reason}`
@@ -744,6 +747,103 @@ function resourceEntries(
     amount: resources[resourceId] || 0,
     media: resourceMedia[resourceId],
   }));
+}
+
+function normalizeProgressView(progress?: EpochProgressView | null): EpochProgressView {
+  const base = progress || ({} as EpochProgressView);
+  const fallbackEligibility: EpochProgressView["actionEligibility"] = {
+    statusField: "progress.identity.status",
+    status: base.identity?.status || "missing",
+    canUseActiveTools: base.identity?.status === "active",
+    reason: base.identity ? "服务器未返回行动权限投影，已按身份状态兜底。" : "等待服务器签发身份。",
+    activeOnlyTools: [],
+    blockedTools: [],
+    recommendedTools: [],
+  };
+  return {
+    ...base,
+    lineage: base.lineage || [],
+    identities: base.identities || [],
+    resources: base.resources || {},
+    resourceMedia: base.resourceMedia || {},
+    inventoryItems: base.inventoryItems || [],
+    equipmentEffects: base.equipmentEffects || [],
+    downtime: base.downtime || null,
+    custody: base.custody || null,
+    pendingDowntime: base.pendingDowntime || null,
+    actionEligibility: base.actionEligibility || fallbackEligibility,
+    claimableLegendNews: base.claimableLegendNews || [],
+    downtimeDiaryEntries: base.downtimeDiaryEntries || [],
+    personalityDrifts: base.personalityDrifts || [],
+    latestEvents: base.latestEvents || [],
+  };
+}
+
+function normalizeResultPage(resultPage: EpochResultPage): EpochResultPage {
+  const receipt = resultPage.receipt || ({} as EpochResultPage["receipt"]);
+  return {
+    ...resultPage,
+    progress: normalizeProgressView(resultPage.progress),
+    nextActions: resultPage.nextActions || [],
+    receipt: {
+      ...receipt,
+      focus: receipt.focus || {
+        kind: "agent_snapshot",
+        id: resultPage.progress?.agentId || "missing",
+      },
+      trustClasses: receipt.trustClasses || [],
+      canonicalEvents: receipt.canonicalEvents || [],
+    },
+    regionalContext: resultPage.regionalContext
+      ? {
+        ...resultPage.regionalContext,
+        messages: resultPage.regionalContext.messages || [],
+        news: resultPage.regionalContext.news || [],
+        commissions: resultPage.regionalContext.commissions || [],
+        raids: resultPage.regionalContext.raids || [],
+        retaliations: resultPage.regionalContext.retaliations || [],
+        traces: resultPage.regionalContext.traces || [],
+      }
+      : undefined,
+  };
+}
+
+function signedDelta(value: number) {
+  return value > 0 ? `+${value}` : `${value}`;
+}
+
+function formatDeltaRecord(delta?: Record<string, number>) {
+  const entries = Object.entries(delta || {}).filter(([, value]) => value !== 0);
+  return entries.length ? entries.map(([key, value]) => `${key} ${signedDelta(value)}`).join(" / ") : "无变化";
+}
+
+function normalizeExplorationMetrics(metrics?: EpochExplorationMetrics | null): EpochExplorationMetrics | null {
+  if (!metrics) return null;
+  return {
+    combatPower: metrics.combatPower || 0,
+    rating: metrics.rating || 0,
+    intensity: metrics.intensity || "low",
+    riskBreakdown: {
+      low: metrics.riskBreakdown?.low || 0,
+      medium: metrics.riskBreakdown?.medium || 0,
+      high: metrics.riskBreakdown?.high || 0,
+    },
+    resourceDelta: metrics.resourceDelta || {},
+    attributeDelta: metrics.attributeDelta || {},
+    memoryDelta: {
+      confirmed: metrics.memoryDelta?.confirmed || 0,
+      rumor: metrics.memoryDelta?.rumor || 0,
+      private: metrics.memoryDelta?.private || 0,
+    },
+  };
+}
+
+function memoryTotals(memory: EpochAgentMemoryInfo | null) {
+  return {
+    confirmed: memory?.totals?.confirmed ?? memory?.confirmedMemory?.length ?? 0,
+    rumor: memory?.totals?.rumor ?? memory?.rumorMemory?.length ?? 0,
+    privateRun: memory?.totals?.privateRun ?? memory?.privateRunMemory?.length ?? 0,
+  };
 }
 
 function hostedOptionSummary(option: EpochHostedActionOption) {
@@ -901,7 +1001,7 @@ function resultImpactMapItems(resultPage: EpochResultPage): readonly ResultImpac
     });
   }
 
-  const commission = context.commissions[0];
+  const commission = (context.commissions || [])[0];
   if (commission) {
     items.push({
       kind: "委托",
@@ -910,7 +1010,7 @@ function resultImpactMapItems(resultPage: EpochResultPage): readonly ResultImpac
     });
   }
 
-  const raid = context.raids[0];
+  const raid = (context.raids || [])[0];
   if (raid) {
     items.push({
       kind: "争议",
@@ -919,7 +1019,7 @@ function resultImpactMapItems(resultPage: EpochResultPage): readonly ResultImpac
     });
   }
 
-  const retaliation = context.retaliations[0];
+  const retaliation = (context.retaliations || [])[0];
   if (retaliation) {
     items.push({
       kind: "争议",
@@ -928,7 +1028,7 @@ function resultImpactMapItems(resultPage: EpochResultPage): readonly ResultImpac
     });
   }
 
-  const trace = context.traces[0];
+  const trace = (context.traces || [])[0];
   if (trace) {
     items.push({
       kind: "争议",
@@ -941,21 +1041,22 @@ function resultImpactMapItems(resultPage: EpochResultPage): readonly ResultImpac
 }
 
 function shareCardStatusForResult(resultPage: EpochResultPage): ShareCardStatus {
-  const isConfirmed = resultPage.receipt.canonicalEvents.length > 0;
+  const canonicalEvents = resultPage.receipt?.canonicalEvents || [];
+  const isConfirmed = canonicalEvents.length > 0;
   const hasContestedContext = Boolean(
-    resultPage.regionalContext?.traces.length
-      || resultPage.regionalContext?.raids.length
-      || resultPage.regionalContext?.retaliations.length,
+    (resultPage.regionalContext?.traces || []).length
+      || (resultPage.regionalContext?.raids || []).length
+      || (resultPage.regionalContext?.retaliations || []).length,
   );
   const level = isConfirmed ? "证实" : hasContestedContext ? "争议" : "传闻";
 
   return {
     level,
-    sourceBattleReport: `${resultPage.receipt.focus.kind}:${resultPage.receipt.focus.id}`,
+    sourceBattleReport: resultPage.receipt?.focus ? `${resultPage.receipt.focus.kind}:${resultPage.receipt.focus.id}` : "server_result_receipt:missing",
     confirmedLabel: isConfirmed ? "已证实" : "未证实",
     visualState: isConfirmed ? "confirmed" : "provisional",
     note: isConfirmed
-      ? `校验证明包含 ${resultPage.receipt.canonicalEvents.length} 条可审计事件`
+      ? `校验证明包含 ${canonicalEvents.length} 条可审计事件`
       : "传闻/争议只显示为未证实",
     publicSafeSummary: resultPage.publicSafeSummary,
   };
@@ -1006,6 +1107,7 @@ export default function AgentExplorer({
   const [agentBriefing, setAgentBriefing] = useState<EpochAgentBriefingView | null>(null);
   const [agentBriefingSyncedAt, setAgentBriefingSyncedAt] = useState("");
   const [agentMemory, setAgentMemory] = useState<EpochAgentMemoryInfo | null>(null);
+  const [lastExplorationMetrics, setLastExplorationMetrics] = useState<EpochExplorationMetrics | null>(null);
   const [personalMigrationSummary, setPersonalMigrationSummary] = useState<EpochPersonalMigrationSummary | null>(null);
   const [explorerProfile, setExplorerProfile] = useState<EpochExplorerProfileInfo | null>(null);
   const [competitiveLadderMode, setCompetitiveLadderMode] = useState<EpochCompetitiveLadderMode>("ranked");
@@ -1375,7 +1477,7 @@ export default function AgentExplorer({
         disabled: isBusy || !explorer,
       };
     }
-    if (primaryBriefingAction || resultPage?.nextActions.length || primaryHostedSession?.status === "active") {
+    if (primaryBriefingAction || (resultPage?.nextActions || []).length || primaryHostedSession?.status === "active") {
       return {
         kind: "接续",
         label: "接续下一步",
@@ -1398,13 +1500,13 @@ export default function AgentExplorer({
             || resultPage.focusHostedSession?.actions.at(-1)?.outcomeSummary
             || "本次结果已生成，可继续审档或公开。";
         case "score":
-          return `历程 ${resultPage.progress.latestEvents.length} 条 · 服务器已结算 · 收获项 ${resourceEntries(resultPage.progress.resources).filter((item) => item.amount > 0).length}`;
+          return `历程 ${(resultPage.progress.latestEvents || []).length} 条 · 服务器已结算 · 收获项 ${resourceEntries(resultPage.progress.resources || {}).filter((item) => item.amount > 0).length}`;
         case "drop":
-          return resourceEntries(resultPage.progress.resources).filter((item) => item.amount > 0).map((item) => `${item.label}${item.amount}`).join(" / ")
+          return resourceEntries(resultPage.progress.resources || {}).filter((item) => item.amount > 0).map((item) => `${item.label}${item.amount}`).join(" / ")
             || "暂无可领取资源，继续托管或接续行动。";
         case "next":
-          return resultPage.nextActions[0]
-            ? `${resultPage.nextActions[0].label} · ${playerToolLabel(resultPage.nextActions[0].toolName)}`
+          return (resultPage.nextActions || [])[0]
+            ? `${(resultPage.nextActions || [])[0].label} · ${playerToolLabel((resultPage.nextActions || [])[0].toolName)}`
             : "暂无服务器建议行动，可刷新进度或接续托管。";
       }
     })()
@@ -1422,7 +1524,11 @@ export default function AgentExplorer({
     return !partyInviteAuditPartyRunIds.size || !partyRunId || partyInviteAuditPartyRunIds.has(partyRunId);
   });
   const identityPersonalityDrifts = (progress?.personalityDrifts || []).filter((drift) => drift.agentId === currentAgentId);
-  const activePersonalityTraits = identity?.personality.traits || [];
+  const activePersonalityTraits = identity?.personality?.traits || [];
+  const activePersonalitySourceEventId = identity?.personality?.latestSourceEventId;
+  const attributeEntries = Object.entries(progress?.attributes || {});
+  const skillEntries = progress?.skills || [];
+  const agentMemoryTotals = memoryTotals(agentMemory);
   const worldOverviewPage = worldOverview
     ? worldOverview.publicPages.world
     : installManifest?.publicPages.world || "/epoch/world";
@@ -1520,9 +1626,14 @@ export default function AgentExplorer({
       }),
       clearBriefingSyncedAt: () => setAgentBriefingSyncedAt(""),
       commit: ({ briefing, memory, personalMigrationSummary, abuseStatus }) => {
-        setAgentBriefing(briefing);
+        const normalizedBriefing = {
+          ...briefing,
+          progress: normalizeProgressView(briefing.progress),
+          pendingActions: briefing.pendingActions || [],
+        };
+        setAgentBriefing(normalizedBriefing);
         setAgentBriefingSyncedAt(briefing.generatedAt);
-        setProgress(briefing.progress);
+        setProgress(normalizedBriefing.progress);
         setAgentMemory(memory);
         setPersonalMigrationSummary(personalMigrationSummary);
         setAbuseStatus(abuseStatus);
@@ -1579,6 +1690,7 @@ export default function AgentExplorer({
     setLastWebBridgeAction(null);
     setCurrentTurnCard(null);
     setResultPage(null);
+    setLastExplorationMetrics(null);
     setSharedResultPage(null);
     setAgentBriefing(null);
     setAgentBriefingSyncedAt("");
@@ -3324,13 +3436,15 @@ export default function AgentExplorer({
         recoveryCode: explorer.recoveryCode,
         idempotencyKey: idempotencyKey("web_one_shot_run"),
       });
-      const completedSessionIds = new Set(run.value.sessions.map((session) => session.sessionId));
+      const sessions = run.value.sessions || [];
+      const completedSessionIds = new Set(sessions.map((session) => session.sessionId));
       setHostedSessions([
-        ...run.value.sessions,
+        ...sessions,
         ...(await getEpochHostedSessions(currentAgentId)).sessions.filter((session) => !completedSessionIds.has(session.sessionId)),
       ]);
       setSharedResultPage(run.value.resultPage);
-      if (run.value.resultPage.payload) setResultPage(run.value.resultPage.payload);
+      setLastExplorationMetrics(normalizeExplorationMetrics(run.value.metrics));
+      if (run.value.resultPage.payload) setResultPage(normalizeResultPage(run.value.resultPage.payload));
       resetInterventionBudgetForNewRun();
       await refreshProgress();
     });
@@ -3637,7 +3751,7 @@ export default function AgentExplorer({
   async function loadResultPage() {
     if (!currentAgentId) return;
     await runAction("result", async () => {
-      setResultPage(await getEpochResultPage(currentAgentId));
+      setResultPage(normalizeResultPage(await getEpochResultPage(currentAgentId)));
     });
   }
 
@@ -3654,7 +3768,7 @@ export default function AgentExplorer({
         idempotencyKey: idempotencyKey("web_result_page"),
       });
       setSharedResultPage(created.page);
-      if (created.page.payload) setResultPage(created.page.payload);
+      if (created.page.payload) setResultPage(normalizeResultPage(created.page.payload));
     });
   }
 
@@ -3677,7 +3791,7 @@ export default function AgentExplorer({
         idempotencyKey: idempotencyKey("web_turn_result_page"),
       });
       setSharedResultPage(created.page);
-      if (created.page.payload) setResultPage(created.page.payload);
+      if (created.page.payload) setResultPage(normalizeResultPage(created.page.payload));
     });
   }
 
@@ -3700,7 +3814,7 @@ export default function AgentExplorer({
         idempotencyKey: idempotencyKey("web_bridge_result_page"),
       });
       setSharedResultPage(created.page);
-      if (created.page.payload) setResultPage(created.page.payload);
+      if (created.page.payload) setResultPage(normalizeResultPage(created.page.payload));
     });
   }
 
@@ -3714,7 +3828,7 @@ export default function AgentExplorer({
         idempotencyKey: idempotencyKey("web_revoke_result_page"),
       });
       setSharedResultPage(revoked.page);
-      if (revoked.page.payload) setResultPage(revoked.page.payload);
+      if (revoked.page.payload) setResultPage(normalizeResultPage(revoked.page.payload));
       await loadWorldOverview();
     });
   }
@@ -4026,7 +4140,7 @@ export default function AgentExplorer({
                 <small>{playerEventDetail(event)}</small>
               </span>
             ))}
-            {!((agentBriefing?.pendingActions.length || 0) || progress?.downtimeDiaryEntries?.length || progress?.latestEvents.length) ? <span><em>待同步</em><small>刷新进度后显示服务器实况。</small></span> : null}
+            {!(((agentBriefing?.pendingActions || []).length) || (progress?.downtimeDiaryEntries || []).length || (progress?.latestEvents || []).length) ? <span><em>待同步</em><small>刷新进度后显示服务器实况。</small></span> : null}
           </div>
         </section>
         <section className="agent-player-quick-panel" aria-label="首屏快速面板" data-first-screen-block="quick-panel">
@@ -4479,7 +4593,7 @@ export default function AgentExplorer({
                   {identity.inheritance ? (
                     <>
                       <div><dt>传说回响</dt><dd>{identity.inheritance.legendEcho}</dd></div>
-                      <div><dt>前世区域</dt><dd>{identity.inheritance.knownRegions.join(" / ") || "暂无"}</dd></div>
+                      <div><dt>前世区域</dt><dd>{(identity.inheritance.knownRegions || []).join(" / ") || "暂无"}</dd></div>
                       <div><dt>轮回伤痕</dt><dd>{identity.inheritance.scar || "无"}</dd></div>
                     </>
                   ) : null}
@@ -4493,7 +4607,7 @@ export default function AgentExplorer({
                 <span>
                   <b>性格漂移</b>
                   <em>{activePersonalityTraits.length ? activePersonalityTraits.join(" / ") : "暂无已写入特质"}</em>
-                  <small>{identity.personality.latestSourceEventId ? `来源 ${identity.personality.latestSourceEventId}` : "重大伤痕、污染或背叛会生成服务器提案"}</small>
+                  <small>{activePersonalitySourceEventId ? `来源 ${activePersonalitySourceEventId}` : "重大伤痕、污染或背叛会生成服务器提案"}</small>
                 </span>
                 {identityPersonalityDrifts.map((drift) => (
                   <span key={drift.driftId}>
@@ -4514,13 +4628,29 @@ export default function AgentExplorer({
                   </span>
                 ))}
               </div>
+              <div className="agent-mini-list">
+                <span>
+                  <b>属性</b>
+                  <em>{attributeEntries.length ? attributeEntries.map(([key, value]) => `${key} ${value}`).join(" / ") : "暂无服务器属性"}</em>
+                  <small>服务器 attributes 字段；旧投影缺失时显示空态。</small>
+                </span>
+                <span>
+                  <b>技能</b>
+                  <em>
+                    {skillEntries.length
+                      ? skillEntries.map((skill) => `${skill.label || skill.name || skill.skillId || skill.id || "未命名技能"}${skill.level !== undefined ? ` Lv.${skill.level}` : ""}${skill.rank ? ` ${skill.rank}` : ""}`).join(" / ")
+                      : "暂无服务器技能"}
+                  </em>
+                  <small>{skillEntries[0]?.summary || skillEntries[0]?.description || "能力数据返回后会在这里展示。"}</small>
+                </span>
+              </div>
             </>
           ) : (
             <p>签发系统身份后，这里会显示寿命、世代和定档状态。</p>
           )}
-          {progress?.identities.length ? (
+          {(progress?.identities || []).length ? (
             <div className="agent-mini-list agent-identity-list">
-              {progress.identities.map((item) => (
+              {(progress?.identities || []).map((item) => (
                 <span key={item.agentId}>
                   <b>{item.identityName}</b>
                   <em>{item.status} · 第 {item.generation} 世 · 寿命 {item.lifetime.remaining}/{item.lifetime.max}</em>
@@ -4537,13 +4667,22 @@ export default function AgentExplorer({
           <div className="agent-panel-head">
             <span>记忆分层</span>
             <b>
-              服务器确认 {agentMemory?.confirmedMemory.length || 0} / 风险传闻 {agentMemory?.rumorMemory.length || 0} / 私有经历 {agentMemory?.privateRunMemory.length || 0}
+              服务器确认 {agentMemoryTotals.confirmed} / 风险传闻 {agentMemoryTotals.rumor} / 私有经历 {agentMemoryTotals.privateRun}
             </b>
           </div>
+          {lastExplorationMetrics?.memoryDelta ? (
+            <p>
+              本局记忆增量：确认 {signedDelta(lastExplorationMetrics.memoryDelta.confirmed)}
+              {" / "}传闻 {signedDelta(lastExplorationMetrics.memoryDelta.rumor)}
+              {" / "}私有 {signedDelta(lastExplorationMetrics.memoryDelta.private)}
+            </p>
+          ) : (
+            <p>本局记忆增量：完整探索完成后显示；当前仅展示服务器总量。</p>
+          )}
           <dl>
-            <div><dt>服务器确认</dt><dd>{agentMemory?.guidance.confirmed || "等待当前身份记忆"}</dd></div>
-            <div><dt>风险传闻</dt><dd>{agentMemory?.guidance.rumor || "待审 claims 不进入结算"}</dd></div>
-            <div><dt>私有经历</dt><dd>{agentMemory?.guidance.privateRun || "被拒故事只属于本局"}</dd></div>
+            <div><dt>服务器确认</dt><dd>{agentMemory?.guidance?.confirmed || "等待当前身份记忆"}</dd></div>
+            <div><dt>风险传闻</dt><dd>{agentMemory?.guidance?.rumor || "待审 claims 不进入结算"}</dd></div>
+            <div><dt>私有经历</dt><dd>{agentMemory?.guidance?.privateRun || "被拒故事只属于本局"}</dd></div>
           </dl>
           <div className="agent-mini-list">
             {(agentMemory?.confirmedMemory || []).slice(0, 2).map((item) => (
@@ -4564,6 +4703,9 @@ export default function AgentExplorer({
                 <em>{item.rejectionReason || item.reviewLevel}</em>
               </span>
             ))}
+            {agentMemoryTotals.confirmed + agentMemoryTotals.rumor + agentMemoryTotals.privateRun === 0 ? (
+              <span>暂无记忆条目；完成探索或提交 NPC 线索后会写入分层记忆。</span>
+            ) : null}
           </div>
         </article>
 
@@ -5539,12 +5681,23 @@ export default function AgentExplorer({
                   <div><dt>托管/桥接</dt><dd>{resultPage.focusHostedSession.actions.at(-1)?.optionLabel} · {resultPage.focusHostedSession.actions.at(-1)?.outcomeSummary}</dd></div>
                 ) : null}
                 {resultPage.receipt ? (
-                  <div><dt>校验证明</dt><dd>服务器已结算 · {resultPage.receipt.canonicalEvents.length} 条可校验记录</dd></div>
+                  <div><dt>校验证明</dt><dd>服务器已结算 · {(resultPage.receipt?.canonicalEvents || []).length} 条可校验记录</dd></div>
                 ) : null}
-                <div><dt>事件</dt><dd>{resultPage.progress.latestEvents.length}</dd></div>
-                <div><dt>资源</dt><dd>{resourceEntries(resultPage.progress.resources).filter((item) => item.amount > 0).map((item) => `${item.label}${item.amount}`).join(" / ") || "无"}</dd></div>
+                <div><dt>事件</dt><dd>{(resultPage.progress.latestEvents || []).length}</dd></div>
+                <div><dt>资源</dt><dd>{resourceEntries(resultPage.progress.resources || {}).filter((item) => item.amount > 0).map((item) => `${item.label}${item.amount}`).join(" / ") || "无"}</dd></div>
+                {lastExplorationMetrics ? (
+                  <>
+                    <div><dt>完整探索</dt><dd>战力 {lastExplorationMetrics.combatPower} · 评分 {lastExplorationMetrics.rating} · 强度 {lastExplorationMetrics.intensity}</dd></div>
+                    <div><dt>风险分布</dt><dd>低 {lastExplorationMetrics.riskBreakdown.low} / 中 {lastExplorationMetrics.riskBreakdown.medium} / 高 {lastExplorationMetrics.riskBreakdown.high}</dd></div>
+                    <div><dt>资源增量</dt><dd>{formatDeltaRecord(lastExplorationMetrics.resourceDelta)}</dd></div>
+                    <div><dt>属性增量</dt><dd>{formatDeltaRecord(lastExplorationMetrics.attributeDelta)}</dd></div>
+                    <div><dt>记忆增量</dt><dd>确认 {signedDelta(lastExplorationMetrics.memoryDelta.confirmed)} / 传闻 {signedDelta(lastExplorationMetrics.memoryDelta.rumor)} / 私有 {signedDelta(lastExplorationMetrics.memoryDelta.private)}</dd></div>
+                  </>
+                ) : (
+                  <div><dt>完整探索</dt><dd>metrics 尚未返回；后端完成后会显示战力、评分、风险和增量。</dd></div>
+                )}
                 {resultPage.regionalContext ? (
-                  <div><dt>区域上下文</dt><dd>{playerRegionLabel(resultPage.regionalContext.regionId)} · {resultPage.regionalContext.regionControl?.controllingFactionId ? "已有公开控制者" : "暂无阵营掌控"} · 发言 {resultPage.regionalContext.messages.length} / 新闻 {resultPage.regionalContext.news.length} / 委托 {resultPage.regionalContext.commissions.length} / 对抗 {resultPage.regionalContext.raids.length + resultPage.regionalContext.retaliations.length + resultPage.regionalContext.traces.length}</dd></div>
+                  <div><dt>区域上下文</dt><dd>{playerRegionLabel(resultPage.regionalContext.regionId)} · {resultPage.regionalContext.regionControl?.controllingFactionId ? "已有公开控制者" : "暂无阵营掌控"} · 发言 {(resultPage.regionalContext.messages || []).length} / 新闻 {(resultPage.regionalContext.news || []).length} / 委托 {(resultPage.regionalContext.commissions || []).length} / 对抗 {(resultPage.regionalContext.raids || []).length + (resultPage.regionalContext.retaliations || []).length + (resultPage.regionalContext.traces || []).length}</dd></div>
                 ) : null}
               </dl>
               <PublicReceiptDisclosure
@@ -5636,7 +5789,7 @@ export default function AgentExplorer({
         <article className="agent-panel">
           <div className="agent-panel-head">
             <span>最近事件</span>
-            <b>{progress?.latestEvents.length || 0}</b>
+            <b>{(progress?.latestEvents || []).length}</b>
           </div>
           <div className="agent-event-list">
             {(progress?.latestEvents || []).slice(0, 6).map((event) => (

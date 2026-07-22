@@ -1459,6 +1459,11 @@ export interface EpochAgentMemoryItem {
 export interface EpochAgentMemoryInfo {
   agentId?: string;
   regionId?: string;
+  totals?: {
+    confirmed: number;
+    rumor: number;
+    privateRun: number;
+  };
   guidance: {
     confirmed: string;
     rumor: string;
@@ -3196,6 +3201,25 @@ export interface EpochExplorationRun {
   sessions: readonly EpochHostedSession[];
   actions: readonly EpochHostedActionRecord[];
   resultPage: EpochSharedResultPage;
+  metrics?: EpochExplorationMetrics;
+}
+
+export interface EpochExplorationMetrics {
+  combatPower: number;
+  rating: number;
+  intensity: "low" | "medium" | "high";
+  riskBreakdown: {
+    low: number;
+    medium: number;
+    high: number;
+  };
+  resourceDelta: Record<string, number>;
+  attributeDelta: Record<string, number>;
+  memoryDelta: {
+    confirmed: number;
+    rumor: number;
+    private: number;
+  };
 }
 
 export type EpochServerHostedJobStatus = "queued" | "completed" | "skipped";
@@ -3377,6 +3401,8 @@ export interface EpochProgressView {
   identity?: EpochAgentIdentity;
   lineage: readonly string[];
   identities: readonly EpochAgentIdentity[];
+  attributes?: Record<string, number>;
+  skills?: readonly EpochAgentSkillInfo[];
   resources: Partial<Record<EpochResourceId, number>>;
   resourceMedia: Partial<Record<EpochResourceId, EpochResourceMedia>>;
   inventoryItems: readonly EpochInventoryItem[];
@@ -3404,6 +3430,18 @@ export interface EpochProgressView {
   personalityDrifts: readonly EpochPersonalityDrift[];
   identitySlots?: EpochIdentitySlotState;
   latestEvents: readonly EpochEvent[];
+}
+
+export interface EpochAgentSkillInfo {
+  skillId?: string;
+  id?: string;
+  name?: string;
+  label?: string;
+  level?: number;
+  rank?: string;
+  summary?: string;
+  description?: string;
+  source?: string;
 }
 
 export type EpochRegionCommissionSourceType = "objective" | "resource_node" | "anomaly" | "bounty" | "party_run" | "social_hook";

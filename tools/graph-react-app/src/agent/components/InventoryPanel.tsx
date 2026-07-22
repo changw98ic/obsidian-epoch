@@ -45,15 +45,18 @@ export function InventoryPanel({
   shopOfferId,
   shopOffers,
 }: InventoryPanelProps) {
+  const inventoryItems = progress?.inventoryItems || [];
+  const equipmentEffects = progress?.equipmentEffects || [];
+
   return (
     <article className="agent-panel">
       <div className="agent-panel-head">
         <span>背包</span>
-        <b>{progress?.inventoryItems.length || 0} items</b>
+        <b>{inventoryItems.length} items</b>
       </div>
-      {progress?.inventoryItems.length ? (
+      {inventoryItems.length ? (
         <div className="agent-mini-list">
-          {progress.inventoryItems.slice(0, 6).map((item) => (
+          {inventoryItems.slice(0, 6).map((item) => (
             <span className="agent-item-media-row" key={item.itemId}>
               {item.media ? (
                 <img
@@ -72,9 +75,9 @@ export function InventoryPanel({
       ) : (
         <p>暂无服务器发放物品</p>
       )}
-      {progress?.equipmentEffects.length ? (
+      {equipmentEffects.length ? (
         <div className="agent-mini-list agent-equipment-effects">
-          {progress.equipmentEffects.map((effect) => (
+          {equipmentEffects.map((effect) => (
             <span key={effect.itemId}>
               <b>{effect.displayName}</b>
               <em>{effect.label}</em>
