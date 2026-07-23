@@ -6,7 +6,7 @@ import readline from "node:readline";
 import test from "node:test";
 
 const MCP_ENTRYPOINT = fileURLToPath(new URL("../mcp.ts", import.meta.url));
-const TSX_LOADER = fileURLToPath(new URL("../../graph-react-app/node_modules/tsx/dist/loader.mjs", import.meta.url));
+const TSX_LOADER = fileURLToPath(new URL("../../graph-react-app/node_modules/tsx/dist/loader.ts", import.meta.url));
 const PHASE6_RUNTIME_TOOLS = [
   "obsidian_epoch.register_explorer",
   "obsidian_epoch.begin_phase6_experiment",

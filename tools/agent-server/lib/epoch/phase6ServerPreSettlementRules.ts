@@ -17,6 +17,7 @@ import {
 } from "./phase6ServerRagTraceRules.ts";
 import {
   buildPhase6ServerScoringEvidence,
+  type Phase6ServerCanonicalEvent,
   type Phase6ServerScoringResult,
   type Phase6ServerScoringWorldCursor,
 } from "./phase6ServerScoringRules.ts";
@@ -652,7 +653,7 @@ export function buildPhase6ServerPreSettlement(
   }
 
   const scoringEvidence = buildPhase6ServerScoringEvidence({
-    canonicalEvents: input.runtime.canonicalEvents,
+    canonicalEvents: input.runtime.canonicalEvents as unknown as readonly Phase6ServerCanonicalEvent[],
     beforeSnapshot: input.stores.beforePanel,
     afterSnapshot: input.runtime.afterPanel,
     outcomeResolution: input.serverOutcomeResolution,

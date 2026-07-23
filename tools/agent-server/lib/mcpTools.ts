@@ -132,6 +132,7 @@ import {
   assertPhase6ScenarioBinding,
   phase6ScenarioForRun,
 } from "./epoch/phase6ScenarioMatrixRules.ts";
+import { PHASE6_RUN_INDEXES } from "./epoch/phase6ExperimentRules.ts";
 import {
   attachPhase6CommittedResultForPersistence,
   createPhase6CommittedResultSqliteStore,
@@ -302,7 +303,7 @@ type McpToolResult = {
 export type AgentWorldMcpRuntime = {
   readonly protocolVersion: string;
   readonly serverInfo: typeof MCP_SERVER_INFO;
-  readonly capabilities: { readonly tools: AnyRecord };
+  readonly capabilities: { readonly tools: AnyRecord; readonly prompts: AnyRecord };
   readonly runtime: AgentWorldRuntime;
   readonly listTools: () => McpToolDefinition[];
   readonly callTool: (name: string, args?: AnyRecord) => Promise<McpToolResult>;
@@ -3805,7 +3806,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         const method = (epochRuntime as AnyRecord).createPhase6Experiment;
         if (typeof method !== "function") throw new Error("phase6_experiment_runtime_unavailable");
         const result = recordValue(await method.call(epochRuntime, boundInput));
-        phase6ExperimentExplorerBindings.set(boundInput.experimentId, readInput.explorer);
+        phase6ExperimentExplorerBindings.set(boundInput.experimentId, readInput.explorer as unknown as AnyRecord);
         return {
           ...result,
           experimentId: boundInput.experimentId,
@@ -3820,38 +3821,96 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       }
     },
     epochBeginPhase6Run: async (input: AnyRecord = {}) => {
+      try {
       const readInput = phase6ExperimentMcpValue(validatePhase6BeginRunInput(input));
       assertPublicSafe(readInput);
-      const scenario = assertPhase6ScenarioBinding(readInput.runIndex, readInput.scenarioTag);
-      const seed = phase6RunSeed(readInput);
-      const runReceipt = phase6RunReceipt(readInput);
-      const journeyBinding = phase6JourneyBinding(readInput);
-      const journeyId = optionalString(journeyBinding.journeyId);
-      if (!journeyId || !optionalString(journeyBinding.runId)) {
-        throw new Error("phase6_experiment_journey_binding_missing");
-      }
-      const boundInput = {
-        commandId: readInput.commandId,
-        experimentId: readInput.experimentId,
-        run: {
-          runIndex: readInput.runIndex,
-          scenarioTag: scenario.tag,
-          identity: {},
-          scenarioMatrix: PHASE6_EXPERIMENT_SCENARIO_MATRIX,
-          versions: PHASE6_EXPERIMENT_VERSION_BINDING,
-          seed,
-          runReceipt,
-          journeyId,
-        },
-      };
-      try {
         const statusMethod = (epochRuntime as AnyRecord).phase6ExperimentStatus;
         if (typeof statusMethod !== "function") throw new Error("phase6_experiment_runtime_unavailable");
         const status = recordValue(await statusMethod.call(epochRuntime, { experimentId: readInput.experimentId }));
         const experimentIdentityId = optionalString(status.identityId);
         if (!experimentIdentityId) throw new Error("phase6_experiment_identity_missing");
         const explorer = phase6ExperimentExplorerForStatus(status);
-        const preparedStatus = companionRuntime.journeyRuntime().status(journeyId);
+
+        // Auto-determine runIndex from existing runs if not provided
+        const existingRuns = Array.isArray(status.runs) ? status.runs : [];
+        const usedRunIndexes = new Set(
+          existingRuns
+            .map((r) => Number(recordValue(r).runIndex))
+            .filter((n) => Number.isInteger(n)),
+        );
+        const runIndex = readInput.runIndex
+          ?? PHASE6_RUN_INDEXES.find((idx) => !usedRunIndexes.has(idx));
+        if (runIndex === undefined) throw new Error("phase6_experiment_no_available_run_index");
+
+        // Auto-determine scenarioTag from the scenario matrix if not provided
+        const scenario = phase6ScenarioForRun(runIndex);
+        const scenarioTag = readInput.scenarioTag ?? scenario.tag;
+        assertPhase6ScenarioBinding(runIndex, scenarioTag);
+
+        // Idempotency: if this run already exists, return the existing binding
+        const existingRun = existingRuns.find((r) => Number(recordValue(r).runIndex) === runIndex);
+        if (existingRun) {
+          const existingRunData = recordValue(existingRun);
+          return {
+            ...existingRunData,
+            experimentId: readInput.experimentId,
+            runIndex,
+            scenarioTag: optionalString(existingRunData.scenarioTag) || scenario.tag,
+            state: optionalString(existingRunData.state) || "running",
+            identity: recordValue(existingRunData.identity),
+            explorer,
+            scenarioMatrix: PHASE6_EXPERIMENT_SCENARIO_MATRIX,
+            versions: PHASE6_EXPERIMENT_VERSION_BINDING,
+            seed: recordValue(existingRunData.seed),
+            runReceipt: recordValue(existingRunData.runReceipt),
+            startJourneyBinding: recordValue(existingRunData.startJourneyBinding),
+          };
+        }
+
+        // Auto-resolve journeyId from the most recent prepared journey for this identity
+        let journeyId = readInput.journeyId;
+        if (!journeyId) {
+          const projection = companionRuntime.journeyRuntime().projection();
+          const candidateIds = projection.journeyIdsByAgent[experimentIdentityId] ?? [];
+          for (let i = candidateIds.length - 1; i >= 0; i--) {
+            const candidateId = candidateIds[i];
+            if (typeof candidateId !== "string") continue;
+            const record = projection.journeys[candidateId];
+            if (record && record.journey.status === "prepared") {
+              journeyId = candidateId;
+              break;
+            }
+          }
+        }
+        if (!journeyId) throw new Error("phase6_experiment_journey_binding_missing");
+
+        // Auto-generate commandId from experimentId + runIndex if not provided
+        const commandId = readInput.commandId
+          ?? `phase6_cmd_${phase6ExperimentHash("begin_phase6_run_command", { experimentId: readInput.experimentId, runIndex })}`;
+
+        const resolvedInput = { commandId, experimentId: readInput.experimentId, runIndex, scenarioTag, journeyId };
+        const seed = phase6RunSeed(resolvedInput);
+        const runReceipt = phase6RunReceipt(resolvedInput);
+        const journeyBinding = phase6JourneyBinding(resolvedInput as unknown as AnyRecord);
+        const boundJourneyId = optionalString(journeyBinding.journeyId);
+        if (!boundJourneyId || !optionalString(journeyBinding.runId)) {
+          throw new Error("phase6_experiment_journey_binding_missing");
+        }
+        const boundInput = {
+          commandId,
+          experimentId: readInput.experimentId,
+          run: {
+            runIndex,
+            scenarioTag: scenario.tag,
+            identity: {},
+            scenarioMatrix: PHASE6_EXPERIMENT_SCENARIO_MATRIX,
+            versions: PHASE6_EXPERIMENT_VERSION_BINDING,
+            seed,
+            runReceipt,
+            journeyId: boundJourneyId,
+          },
+        };
+        const preparedStatus = companionRuntime.journeyRuntime().status(boundJourneyId);
         const preparedJourney = recordValue(preparedStatus.journey);
         if (optionalString(preparedJourney.status) !== "prepared") {
           throw new Error("phase6_experiment_journey_not_prepared");
@@ -3870,8 +3929,8 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         }
         const identity = { identityId: preparedIdentityId };
         assertPhase6ScenarioBinding(
-          readInput.runIndex,
-          readInput.scenarioTag,
+          runIndex,
+          scenarioTag,
           optionalString(recordValue(preparedJourney.taskRequest).taskType),
         );
         const expectedVersion = Number(preparedJourney.version);
@@ -3892,9 +3951,9 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         const metadata = {
           ...result,
           experimentId: readInput.experimentId,
-          runIndex: readInput.runIndex,
+          runIndex,
           scenarioTag: scenario.tag,
-          journeyId,
+          journeyId: boundJourneyId,
           runId: optionalString(journeyBinding.runId),
           expectedVersion,
           identity,
@@ -4024,8 +4083,6 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         : undefined;
       return {
         rulesetVersion: PHASE6_MCP_CONTRACT_RULESET_VERSION,
-        pageId,
-        verified: true,
         ...phase6McpValue(validatePhase6McpPhase6ResultRead({
           pageId,
           receiptId: receiptId || pageId,
@@ -4033,6 +4090,8 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
           result: sidecar?.page,
           verified: true,
         })),
+        pageId,
+        verified: true,
       };
     },
     epochStorePhase6ResultPage: (page: EpochSharedResultPage) => {
@@ -6601,7 +6660,7 @@ const MCP_TOOL_DEFINITIONS = [
     name: schema.name,
     title: schema.name.replace(/^obsidian_epoch\./, "").replace(/_/g, " "),
     description: schema.description,
-    inputSchema: schema.inputSchema as AnyRecord & {
+    inputSchema: schema.inputSchema as unknown as AnyRecord & {
       readonly required: string[];
       readonly properties: Record<string, unknown>;
     },
@@ -6911,6 +6970,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
   const runtime = (options.runtime ?? createAgentWorldRuntime(options)) as AgentWorldRuntime;
   const epochOptions = recordValue(options.epoch);
   const phase6CommittedResults = phase6CommittedResultStoreForOptions(options, epochOptions);
+  const phase6ReceiptSqlite = phase6ReceiptSqlitePath(options);
   const recordRejectedCommands = options.recordRejectedCommands !== false;
   const authoritativeIdentityIssuance = options.authoritativeIdentityIssuance === true;
   const worldMemorySearch = options.worldMemorySearch;
@@ -7222,7 +7282,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       ...(Array.isArray(rawProgress.latestEvents)
         ? {
             latestEvents: rawProgress.latestEvents.map((event) =>
-              isRecord(event) ? publicEpochEvent(event as EpochEvent) : event),
+              isRecord(event) ? publicEpochEvent(event as unknown as EpochEvent) : event),
           }
         : {}),
       }, "progress");
@@ -7321,12 +7381,16 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     if (optionalString(status.experimentId) !== binding.experimentId) {
       throw new Error("phase6_settlement_binding_conflict:experimentId");
     }
-    if (optionalString(status.identityId) !== optionalString(binding.identity.identityId)) {
-      throw new Error("phase6_settlement_binding_conflict:identity");
-    }
     const persistedExplorer = phase6ExperimentExplorerForStatus(status);
     if (optionalString(persistedExplorer.explorerId) !== optionalString(binding.explorer.explorerId)) {
       throw new Error("phase6_settlement_binding_conflict:explorer");
+    }
+    if (optionalString(status.identityId) !== optionalString(binding.identity.identityId)) {
+      const archive = recordValue(runtime.epochIdentityArchive({ agentId: optionalString(binding.identity.identityId) || "" }));
+      const lineage = Array.isArray(archive.lineage) ? archive.lineage : [];
+      if (!lineage.includes(optionalString(status.identityId) || "")) {
+        throw new Error("phase6_settlement_binding_conflict:identity");
+      }
     }
     for (const key of ["rulesVersion", "catalogVersion", "codeVersion"] as const) {
       if (optionalString(status[key]) !== binding.versions[key]) {
@@ -7339,7 +7403,13 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       return status;
     };
     const phase6BindingFromStoredJourney = (journeyId: string) => {
-      const storedContext = recordValue(runtime.epochLoadPhase6JourneyContext(journeyId));
+      let storedContext: AnyRecord;
+      try {
+        storedContext = recordValue(runtime.epochLoadPhase6JourneyContext(journeyId));
+      } catch (error) {
+        if (error instanceof Error && error.message === "phase6_journey_context_runtime_required") return undefined;
+        throw error;
+      }
       if (Object.keys(storedContext).length === 0) return undefined;
       const metadata = recordValue(storedContext.metadata);
       const experimentId = optionalString(metadata.experimentId);
@@ -7444,7 +7514,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     message,
   });
   const phase6CanonicalEventIds = (events: readonly EpochEvent[]) => [
-    ...new Set(events.map((event) => optionalString((event as AnyRecord).eventId) || optionalString((event as AnyRecord).id)).filter(Boolean)),
+    ...new Set(events.map((event) => optionalString((event as unknown as AnyRecord).eventId) || optionalString((event as unknown as AnyRecord).id)).filter(Boolean)),
   ];
   const phase6SettlementEventIds = (committedResults: readonly ReturnType<typeof runtime.epochCommitJourneyAction>[]) =>
     phase6CanonicalEventIds(committedResults.flatMap((committed) => epochEventsForPersistence(committed)));
@@ -7491,12 +7561,12 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     beforeCursor: AnyRecord,
     afterCursor: AnyRecord,
   ): EpochEvent => {
-    const record = event as AnyRecord;
+    const record = event as unknown as AnyRecord;
     return {
       ...record,
       beforeWorldCursor: record.beforeWorldCursor || record.worldCursorBefore || beforeCursor,
       afterWorldCursor: record.afterWorldCursor || record.worldCursorAfter || record.worldCursor || afterCursor,
-    } as EpochEvent;
+    } as unknown as EpochEvent;
   };
     const phase6FinalizedSidecar = (
     binding: NonNullable<ReturnType<typeof phase6BindingFromStartJourneyArgs>>,
@@ -7723,14 +7793,14 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
           journeyBinding: {
             runId: optionalString(storedMetadata.runId),
             journeyId,
-            agentId: optionalString(journey.agentId) || optionalString(input.args.agentId),
-            explorerId: input.binding.explorer.explorerId,
+            agentId: optionalString(journey.agentId) || optionalString(input.args.agentId) || "",
+            explorerId: optionalString(input.binding.explorer.explorerId),
             receiptId: input.binding.receiptId,
             status: optionalString(journey.status),
             settledAt: optionalString(journey.settledAt),
             updatedAt: optionalString(journey.updatedAt),
           },
-          worldCursor: afterWorldCursor as Parameters<typeof buildPhase6ServerOutcomeEvidence>[0]["worldCursor"],
+          worldCursor: afterWorldCursor as unknown as Parameters<typeof buildPhase6ServerOutcomeEvidence>[0]["worldCursor"],
           journeyEndState: journey,
         });
         if (outcomeEvidence.ok !== true) {
@@ -7739,7 +7809,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
           });
         }
         const sourceEventIds = phase6CanonicalEventIds(canonicalEvents);
-        const settlementEventIds = phase6SettlementEventIds(committedResults);
+        const settlementEventIds = phase6SettlementEventIds(committedResults as Parameters<typeof phase6SettlementEventIds>[0]);
         const now = new Date().toISOString();
         const preSettlementStores = {
           beforePanel: beforeSnapshot,
@@ -7762,47 +7832,47 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
           stores: preSettlementStores,
           runtime: {
             metadata: {
-              runId: optionalString(storedMetadata.runId),
+              runId: optionalString(storedMetadata.runId) || "",
               journeyId,
-              agentId: optionalString(journey.agentId) || optionalString(input.args.agentId),
-              explorerId: input.binding.explorer.explorerId,
-              receiptId: input.binding.receiptId,
+              agentId: optionalString(journey.agentId) || optionalString(input.args.agentId) || "",
+              explorerId: optionalString(input.binding.explorer.explorerId) || "",
+              receiptId: input.binding.receiptId || "",
               generatedAt: now,
               startedAt: optionalString(journey.startedAt) || now,
               settledAt: optionalString(journey.settledAt) || optionalString(journey.updatedAt) || now,
               world: {
-                worldId: optionalString(afterWorldCursor.worldId),
-                regionId: optionalString(afterWorldCursor.regionId),
-                worldTimeBefore: optionalString(beforeWorldCursor.worldTime),
-                worldTimeAfter: optionalString(afterWorldCursor.worldTime),
+                worldId: optionalString(afterWorldCursor.worldId) || "",
+                regionId: optionalString(afterWorldCursor.regionId) || "",
+                worldTimeBefore: optionalString(beforeWorldCursor.worldTime) || "",
+                worldTimeAfter: optionalString(afterWorldCursor.worldTime) || "",
                 ...(Number.isSafeInteger(Number(afterWorldCursor.simulationVersion))
                   ? { simulationVersion: Number(afterWorldCursor.simulationVersion) }
                   : {}),
               },
             },
-            afterPanel: after.panel,
+            afterPanel: after.panel as unknown as Parameters<typeof buildPhase6ServerPreSettlement>[0]["runtime"]["afterPanel"],
             afterProjection: after.projection,
             canonicalEvents,
             economy: {
-              next: requirePhase6AuthoritativeRecord(after.panel.economy.snapshot, "after.economy.snapshot"),
+              next: requirePhase6AuthoritativeRecord(after.panel.economy.snapshot, "after.economy.snapshot") as unknown as Parameters<typeof buildPhase6ServerPreSettlement>[0]["runtime"]["economy"]["next"],
               sourceEvents: canonicalEvents,
             },
-            worldCursor: afterWorldCursor as Parameters<typeof buildPhase6ServerPreSettlement>[0]["runtime"]["worldCursor"],
+            worldCursor: afterWorldCursor as unknown as Parameters<typeof buildPhase6ServerPreSettlement>[0]["runtime"]["worldCursor"],
             now,
             journeyRuntime: (input.journeyRuntime || input.current) as Parameters<typeof buildPhase6ServerPreSettlement>[0]["runtime"]["journeyRuntime"],
           },
           serverOutcomeResolution: outcomeEvidence.value.serverOutcomeResolution,
-          serverActionResolutions: outcomeEvidence.value.serverActionResolutions as Parameters<typeof buildPhase6ServerPreSettlement>[0]["serverActionResolutions"],
+          serverActionResolutions: outcomeEvidence.value.serverActionResolutions as unknown as Parameters<typeof buildPhase6ServerPreSettlement>[0]["serverActionResolutions"],
           receiptBasis: {
             deltas: phase6StructuredDeltas(beforeSnapshot, after.projection, canonicalEvents) as Parameters<typeof buildPhase6ServerPreSettlement>[0]["receiptBasis"]["deltas"],
-            eventIds: { source: sourceEventIds, settlement: settlementEventIds, derived: [] },
+            eventIds: { source: sourceEventIds.filter((x): x is string => x !== undefined), settlement: settlementEventIds.filter((x): x is string => x !== undefined), derived: [] },
             snapshots: {
-              before: phase6SnapshotReceipt(beforeSnapshot, "before.snapshot"),
-              after: phase6SnapshotReceipt(after.panel, "after.snapshot"),
+              before: phase6SnapshotReceipt(beforeSnapshot, "before.snapshot") as unknown as Parameters<typeof buildPhase6ServerPreSettlement>[0]["receiptBasis"]["snapshots"]["before"],
+              after: phase6SnapshotReceipt(after.panel, "after.snapshot") as unknown as Parameters<typeof buildPhase6ServerPreSettlement>[0]["receiptBasis"]["snapshots"]["after"],
             },
-            outcome: outcomeEvidence.value.receiptBasisOutcome as Parameters<typeof buildPhase6ServerPreSettlement>[0]["receiptBasis"]["outcome"],
+            outcome: outcomeEvidence.value.receiptBasisOutcome as unknown as Parameters<typeof buildPhase6ServerPreSettlement>[0]["receiptBasis"]["outcome"],
           },
-          persistedRagTrace: persistedRagTrace as Parameters<typeof buildPhase6ServerPreSettlement>[0]["persistedRagTrace"],
+          persistedRagTrace: persistedRagTrace as unknown as Parameters<typeof buildPhase6ServerPreSettlement>[0]["persistedRagTrace"],
         });
         if (preSettlement.ok !== true) {
           return failSettlement("pre_settlement_failed", "phase6_pre_settlement_failed", {
@@ -7835,8 +7905,8 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
             "obsidian_epoch.phase6_result_page",
             { page: finalizedSidecar.storedResultPage },
           );
-        } else if (phase6ReceiptSqlite) {
-          throw new Error("phase6_result_page_persistence_unavailable");
+        } else if (phase6CommittedResults && journey?.journeyId) {
+          phase6CommittedResults.append(String(journey.journeyId), finalizedSidecar.storedResultPage);
         }
         const experimentRun = await completePhase6Run(input.binding, journey, finalizedSidecar.receipt);
         const settlement = {
@@ -7927,7 +7997,8 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       ? partialPersistence.runMutation
       : async <T>(operation: () => Promise<T> | T) => operation();
     const phase6Binding = phase6BindingFromStartJourneyArgs(args);
-    if (phase6Binding && optionalString(args.journeyId) !== phase6Binding.journeyId) {
+    const explicitJourneyId = optionalString(args.journeyId);
+    if (phase6Binding && explicitJourneyId && explicitJourneyId !== phase6Binding.journeyId) {
       throw new Error("phase6_start_journey_binding_journey_mismatch");
     }
     const phase6ExperimentStatus = phase6Binding
@@ -7937,7 +8008,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     if (phase6Binding?.retrievalExpected && !phase6RagTrace) {
       const failedRun = await failPhase6Run(
         phase6Binding,
-        phase6Binding.journeyId,
+        phase6Binding.journeyId || "",
         "phase6_rag_trace_required_missing",
       );
       return {
@@ -8588,7 +8659,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     const finalizedJourney = recordValue(finalized.status.journey);
     let phase6Settlement: AnyRecord | undefined;
     if (optionalString(finalizedJourney.status) === "settled") {
-      const restored = phase6BindingFromStoredJourney(optionalString(finalizedJourney.journeyId));
+      const restored = phase6BindingFromStoredJourney(optionalString(finalizedJourney.journeyId) || "");
       if (restored) {
         const experimentStatus = await validatePhase6ExperimentBinding(restored.binding);
         phase6Settlement = await finalizePhase6JourneyFromPersistedState({
@@ -9471,7 +9542,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
   return {
     protocolVersion: MCP_PROTOCOL_VERSION,
     serverInfo: MCP_SERVER_INFO,
-    capabilities: { tools: {} },
+    capabilities: { tools: {}, prompts: {} },
     runtime,
     listTools: () => AGENT_WORLD_TOOLS.map((tool) => ({ ...tool, inputSchema: { ...tool.inputSchema } })),
     callTool: async (name: string, args: AnyRecord = {}) => {
@@ -9510,7 +9581,7 @@ export function createAgentWorldRemoteMcpRuntime(options: {
   return {
     protocolVersion: MCP_PROTOCOL_VERSION,
     serverInfo: MCP_SERVER_INFO,
-    capabilities: { tools: {} },
+    capabilities: { tools: {}, prompts: {} },
     serverBase,
     listTools: () => AGENT_WORLD_TOOLS.map((tool) => ({ ...tool, inputSchema: { ...tool.inputSchema } })),
     callTool: async (name: string, args: AnyRecord = {}) => {

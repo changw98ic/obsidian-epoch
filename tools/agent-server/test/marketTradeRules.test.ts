@@ -214,11 +214,15 @@ test("market trade rules plan created and listing lock payloads", () => {
     createdAt: filledAt,
   });
 
-  assert.deepEqual(marketOrderLockSpendPayload("order_created", "aether", 3, 7), {
+  assert.deepEqual(marketOrderLockSpendPayload("order_created", "aether", 3, 7, "agent_seller"), {
     resourceId: "aether",
     amount: 3,
     reason: "market_order_lock:order_created",
     balanceAfter: 7,
+    accountRef: "agent:agent_seller",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "300",
   });
 });
 
@@ -262,6 +266,10 @@ test("market trade rules plan creation event sequences", () => {
     amount: 3,
     reason: "market_order_lock:order_resource",
     balanceAfter: 6,
+    accountRef: "agent:agent_seller",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "300",
   });
   assert.equal(created.payload.sellKind, "resource");
   assert.equal(created.payload.sellResourceId, "aether");
@@ -355,6 +363,8 @@ test("market trade rules plan fill ledger and item transfer payloads", () => {
 
   assert.deepEqual(marketOrderPaymentPayloads({
     order,
+    buyerAgentId: "agent_buyer",
+    sellerAgentId: "agent_seller",
     buyerBalanceAfter: 60,
     sellerProceedsAmount: 38,
     sellerBalanceAfter: 52,
@@ -364,35 +374,55 @@ test("market trade rules plan fill ledger and item transfer payloads", () => {
       amount: 40,
       reason: "market_order_fill:order_filled",
       balanceAfter: 60,
+      accountRef: "agent:agent_buyer",
+      assetKey: "resource:coin",
+      unit: "unit",
+      quantityMinor: "4000",
     },
     grant: {
       resourceId: "coin",
       amount: 38,
       reason: "market_order_payment:order_filled",
       balanceAfter: 52,
+      accountRef: "agent:agent_seller",
+      assetKey: "resource:coin",
+      unit: "unit",
+      quantityMinor: "3800",
     },
   });
-  assert.deepEqual(marketOrderBuyerPaymentSpendPayload(order, 60), {
+  assert.deepEqual(marketOrderBuyerPaymentSpendPayload(order, 60, "agent_buyer"), {
     resourceId: "coin",
     amount: 40,
     reason: "market_order_fill:order_filled",
     balanceAfter: 60,
+    accountRef: "agent:agent_buyer",
+    assetKey: "resource:coin",
+    unit: "unit",
+    quantityMinor: "4000",
   });
-  assert.deepEqual(marketOrderSellerPaymentGrantPayload(order, 38, 52), {
+  assert.deepEqual(marketOrderSellerPaymentGrantPayload(order, 38, 52, "agent_seller"), {
     resourceId: "coin",
     amount: 38,
     reason: "market_order_payment:order_filled",
     balanceAfter: 52,
+    accountRef: "agent:agent_seller",
+    assetKey: "resource:coin",
+    unit: "unit",
+    quantityMinor: "3800",
   });
   assert.deepEqual(marketOrderGoodsGrantAsset(order), {
     resourceId: "aether",
     amount: 4,
   });
-  assert.deepEqual(marketOrderGoodsGrantPayload(order, 11), {
+  assert.deepEqual(marketOrderGoodsGrantPayload(order, 11, "agent_buyer"), {
     resourceId: "aether",
     amount: 4,
     reason: "market_order_goods:order_filled",
     balanceAfter: 11,
+    accountRef: "agent:agent_buyer",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "400",
   });
   assert.equal(marketOrderGoodsGrantAsset(marketOrder({
     orderId: "item_order",
@@ -566,11 +596,15 @@ test("market trade rules plan cancel expiry and refund payloads", () => {
     resourceId: "aether",
     amount: 4,
   });
-  assert.deepEqual(marketOrderRefundPayload(order, "expired", 9), {
+  assert.deepEqual(marketOrderRefundPayload(order, "expired", 9, "agent_seller"), {
     resourceId: "aether",
     amount: 4,
     reason: "market_order_expired:order_terminal",
     balanceAfter: 9,
+    accountRef: "agent:agent_seller",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "400",
   });
   assert.equal(marketOrderRefundPayload(marketOrder({
     sellKind: "item",

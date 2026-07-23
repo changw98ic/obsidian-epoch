@@ -68,6 +68,8 @@ export interface MarketOrderRefundAsset {
 
 export interface MarketOrderPaymentPayloadsInput {
   readonly order: MarketTradeOrderForRules;
+  readonly buyerAgentId: string;
+  readonly sellerAgentId: string;
   readonly buyerBalanceAfter: number;
   readonly sellerProceedsAmount: number;
   readonly sellerBalanceAfter: number;
@@ -348,6 +350,7 @@ export function planMarketOrderCreationEvents(input: MarketOrderCreationEventsIn
       input.sellResourceId,
       input.sellAmount,
       input.sellerBalanceBefore - input.sellAmount,
+      input.sellerAgentId,
     )),
     created,
   ];
@@ -386,6 +389,8 @@ export function planMarketOrderFillEvents(input: MarketOrderFillEventsInput): re
   const sellerProceedsAmount = marketSellerProceedsAmount(input.order.priceAmount);
   const paymentPayloads = marketOrderPaymentPayloads({
     order: input.order,
+    buyerAgentId: input.buyerAgentId,
+    sellerAgentId: input.order.sellerAgentId,
     buyerBalanceAfter: input.buyerBalanceBefore - input.order.priceAmount,
     sellerProceedsAmount,
     sellerBalanceAfter: input.sellerPriceBalanceBefore + sellerProceedsAmount,
@@ -394,7 +399,7 @@ export function planMarketOrderFillEvents(input: MarketOrderFillEventsInput): re
   const paymentGranted = resourceGrantedEvent(input.makeEvent, input.order.sellerAgentId, paymentPayloads.grant);
   const goodsAsset = marketOrderGoodsGrantAsset(input.order);
   const goodsPayload = goodsAsset
-    ? marketOrderGoodsGrantPayload(input.order, input.buyerSellBalanceBefore + goodsAsset.amount)
+    ? marketOrderGoodsGrantPayload(input.order, input.buyerSellBalanceBefore + goodsAsset.amount, input.buyerAgentId)
     : undefined;
   const goodsGranted = goodsPayload
     ? resourceGrantedEvent(input.makeEvent, input.buyerAgentId, goodsPayload)
@@ -446,24 +451,34 @@ export function marketOrderLockSpendPayload(
   resourceId: EpochResourceId,
   amount: number,
   balanceAfter: number,
+  agentId: string,
 ): ResourceSpentPayload {
   return {
     resourceId,
     amount,
     reason: `market_order_lock:${orderId}`,
     balanceAfter,
+    accountRef: `agent:${agentId}`,
+    assetKey: `resource:${resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(amount) * 100n).toString(),
   };
 }
 
 export function marketOrderBuyerPaymentSpendPayload(
   order: MarketTradeOrderForRules,
   balanceAfter: number,
+  agentId: string,
 ): ResourceSpentPayload {
   return {
     resourceId: order.priceResourceId,
     amount: order.priceAmount,
     reason: `market_order_fill:${order.orderId}`,
     balanceAfter,
+    accountRef: `agent:${agentId}`,
+    assetKey: `resource:${order.priceResourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(order.priceAmount) * 100n).toString(),
   };
 }
 
@@ -471,22 +486,28 @@ export function marketOrderSellerPaymentGrantPayload(
   order: MarketTradeOrderForRules,
   sellerProceedsAmount: number,
   balanceAfter: number,
+  agentId: string,
 ): ResourceGrantedPayload {
   return {
     resourceId: order.priceResourceId,
     amount: sellerProceedsAmount,
     reason: `market_order_payment:${order.orderId}`,
     balanceAfter,
+    accountRef: `agent:${agentId}`,
+    assetKey: `resource:${order.priceResourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(sellerProceedsAmount) * 100n).toString(),
   };
 }
 
 export function marketOrderPaymentPayloads(input: MarketOrderPaymentPayloadsInput): MarketOrderPaymentPayloads {
   return {
-    spend: marketOrderBuyerPaymentSpendPayload(input.order, input.buyerBalanceAfter),
+    spend: marketOrderBuyerPaymentSpendPayload(input.order, input.buyerBalanceAfter, input.buyerAgentId),
     grant: marketOrderSellerPaymentGrantPayload(
       input.order,
       input.sellerProceedsAmount,
       input.sellerBalanceAfter,
+      input.sellerAgentId,
     ),
   };
 }
@@ -502,6 +523,7 @@ export function marketOrderGoodsGrantAsset(order: MarketTradeOrderForRules): Mar
 export function marketOrderGoodsGrantPayload(
   order: MarketTradeOrderForRules,
   balanceAfter: number,
+  agentId: string,
 ): ResourceGrantedPayload | undefined {
   const asset = marketOrderGoodsGrantAsset(order);
   if (!asset) return undefined;
@@ -510,6 +532,10 @@ export function marketOrderGoodsGrantPayload(
     amount: asset.amount,
     reason: `market_order_goods:${order.orderId}`,
     balanceAfter,
+    accountRef: `agent:${agentId}`,
+    assetKey: `resource:${asset.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(asset.amount) * 100n).toString(),
   };
 }
 
@@ -544,6 +570,7 @@ export function planMarketOrderCancellationEvents(input: MarketOrderCancellation
       input.order,
       "cancel",
       input.sellerRefundBalanceBefore(refundAsset.resourceId) + refundAsset.amount,
+      input.order.sellerAgentId,
     )
     : undefined;
   const refund = refundPayload
@@ -594,6 +621,7 @@ export function planMarketOrderExpiryEvents(input: MarketOrderExpiryEventsInput)
       input.order,
       "expired",
       input.sellerRefundBalanceBefore(refundAsset.resourceId) + refundAsset.amount,
+      input.order.sellerAgentId,
     )
     : undefined;
   const refund = refundPayload
@@ -635,6 +663,7 @@ export function marketOrderRefundPayload(
   order: MarketTradeOrderForRules,
   refundReason: MarketOrderRefundReason,
   balanceAfter: number,
+  agentId: string,
 ): ResourceGrantedPayload | undefined {
   const refundAsset = marketOrderRefundAsset(order);
   if (!refundAsset) return undefined;
@@ -643,6 +672,10 @@ export function marketOrderRefundPayload(
     amount: refundAsset.amount,
     reason: `market_order_${refundReason}:${order.orderId}`,
     balanceAfter,
+    accountRef: `agent:${agentId}`,
+    assetKey: `resource:${refundAsset.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(refundAsset.amount) * 100n).toString(),
   };
 }
 

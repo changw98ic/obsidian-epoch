@@ -59,7 +59,7 @@ async function main() {
           atomic.appendJsonl("epoch-events.jsonl", { type: "epoch_event_batch", events: epochEvents });
           return;
         }
-        return persistence.persistEpochEventBatch(epochEvents);
+        return persistence!.persistEpochEventBatch(epochEvents);
       },
     },
     epoch: {

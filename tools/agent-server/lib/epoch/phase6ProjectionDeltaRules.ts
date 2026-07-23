@@ -227,12 +227,12 @@ export function buildPhase6RagDelta(
 
   const beforeFacts = canonicalPhase6RagMemoryFacts(before);
   const afterFacts = canonicalPhase6RagMemoryFacts(after);
-  const memories = compareFacts(beforeFacts, afterFacts, canonicalEvents, {
+  const memories = [...compareFacts(beforeFacts, afterFacts, canonicalEvents, {
     requireCanonicalEventBinding: true,
-  })
+  })]
     .sort(compareFactChanges)
     .slice(0, PHASE6_RAG_MEMORY_LIMIT)
-    .map((change, index) => ({
+    .map((change: Omit<Phase6RagMemoryDelta, "slot">, index: number) => ({
       slot: index as 0 | 1 | 2,
       ...change,
     }));
@@ -365,9 +365,9 @@ function compareFacts(
 ): readonly Omit<Phase6RagMemoryDelta, "slot">[] {
   const beforeByKey = new Map(beforeFacts.map((fact) => [fact.key, fact]));
   const afterByKey = new Map(afterFacts.map((fact) => [fact.key, fact]));
-  const keys = unique([...beforeByKey.keys(), ...afterByKey.keys()]).sort();
+  const keys = [...unique([...beforeByKey.keys(), ...afterByKey.keys()])].sort();
 
-  return keys.flatMap((key) => {
+  return keys.flatMap((key: string) => {
     const before = beforeByKey.get(key);
     const after = afterByKey.get(key);
     if (before?.text === after?.text) return [];

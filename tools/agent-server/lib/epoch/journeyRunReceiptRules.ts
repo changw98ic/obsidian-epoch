@@ -811,11 +811,11 @@ export function validateJourneyRunReceipt(receipt: unknown): JourneyRunReceiptVa
       if (!isRecord(delta.target) || !nonEmpty(delta.target.kind) || !nonEmpty(delta.target.id)) {
         issues.push(issue("journey_run_receipt_delta_target_invalid", `$.deltas[${index}].target`));
       }
-      if (!Array.isArray(delta.path) || delta.path.some((entry) => !nonEmpty(entry))) {
+      if (!Array.isArray(delta.path) || delta.path.some((entry: unknown) => !nonEmpty(entry))) {
         issues.push(issue("journey_run_receipt_delta_path_invalid", `$.deltas[${index}].path`));
       }
       if (!nonEmpty(delta.reason)) issues.push(issue("journey_run_receipt_delta_reason_required", `$.deltas[${index}].reason`));
-      if (!Array.isArray(delta.eventIds) || delta.eventIds.some((entry) => !nonEmpty(entry))) {
+      if (!Array.isArray(delta.eventIds) || delta.eventIds.some((entry: unknown) => !nonEmpty(entry))) {
         issues.push(issue("journey_run_receipt_delta_event_ids_invalid", `$.deltas[${index}].eventIds`));
       }
     });

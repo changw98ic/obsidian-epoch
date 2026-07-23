@@ -62,6 +62,7 @@ export interface DiplomacyProposedPayloadInput extends DiplomacySeedInput {
 }
 
 export interface DiplomacyFocusSpendPayloadInput {
+  readonly agentId: string;
   readonly diplomacyId: string;
   readonly focusSpent: number;
   readonly focusBalanceBefore: number;
@@ -107,6 +108,7 @@ export interface RelationshipUpdatedPayloadInput {
 }
 
 export interface RelationshipFocusSpendPayloadInput {
+  readonly agentId: string;
   readonly relationshipId: string;
   readonly focusSpent: number;
   readonly focusBalanceBefore: number;
@@ -156,6 +158,7 @@ export interface AgentNpcBondUpdatedPayloadInput {
 }
 
 export interface AgentNpcBondFocusSpendPayloadInput {
+  readonly agentId: string;
   readonly bondId: string;
   readonly focusSpent: number;
   readonly focusBalanceBefore: number;
@@ -292,11 +295,16 @@ export function diplomacyProposalFocusSpendPayload(input: DiplomacyFocusSpendPay
     amount: input.focusSpent,
     reason: `diplomacy_propose:${input.diplomacyId}`,
     balanceAfter: input.focusBalanceBefore - input.focusSpent,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: (BigInt(input.focusSpent) * 100n).toString(),
   };
 }
 
 export function planDiplomacyProposalEvents(input: DiplomacyProposalEventsInput): readonly EpochEvent[] {
   const focusSpent = resourceSpentEvent(input.makeEvent, input.sourceAgentId, diplomacyProposalFocusSpendPayload({
+    agentId: input.sourceAgentId,
     diplomacyId: input.diplomacyId,
     focusSpent: input.focusSpent,
     focusBalanceBefore: input.focusBalanceBefore,
@@ -332,6 +340,10 @@ export function diplomacyResponseFocusSpendPayload(input: DiplomacyFocusSpendPay
     amount: input.focusSpent,
     reason: `diplomacy_response:${input.diplomacyId}`,
     balanceAfter: input.focusBalanceBefore - input.focusSpent,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: (BigInt(input.focusSpent) * 100n).toString(),
   };
 }
 
@@ -339,6 +351,7 @@ export function planDiplomacyResponseEvents(input: DiplomacyResponseEventsInput)
   const events: EpochEvent[] = [];
   if (input.focusSpent > 0) {
     events.push(resourceSpentEvent(input.makeEvent, input.responderAgentId, diplomacyResponseFocusSpendPayload({
+      agentId: input.responderAgentId,
       diplomacyId: input.diplomacyId,
       focusSpent: input.focusSpent,
       focusBalanceBefore: input.focusBalanceBefore,
@@ -375,11 +388,16 @@ export function relationshipFocusSpendPayload(input: RelationshipFocusSpendPaylo
     amount: input.focusSpent,
     reason: `relationship_update:${input.relationshipId}`,
     balanceAfter: input.focusBalanceBefore - input.focusSpent,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: (BigInt(input.focusSpent) * 100n).toString(),
   };
 }
 
 export function planRelationshipUpdateEvents(input: RelationshipUpdateEventsInput): readonly EpochEvent[] {
   const focusSpent = resourceSpentEvent(input.makeEvent, input.sourceAgentId, relationshipFocusSpendPayload({
+    agentId: input.sourceAgentId,
     relationshipId: input.relationshipId,
     focusSpent: input.focusSpent,
     focusBalanceBefore: input.focusBalanceBefore,
@@ -491,11 +509,16 @@ export function agentNpcBondFocusSpendPayload(input: AgentNpcBondFocusSpendPaylo
     amount: input.focusSpent,
     reason: `agent_npc_bond:${input.bondId}`,
     balanceAfter: input.focusBalanceBefore - input.focusSpent,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: (BigInt(input.focusSpent) * 100n).toString(),
   };
 }
 
 export function planAgentNpcBondUpdateEvents(input: AgentNpcBondUpdateEventsInput): readonly EpochEvent[] {
   const focusSpent = resourceSpentEvent(input.makeEvent, input.agentId, agentNpcBondFocusSpendPayload({
+    agentId: input.agentId,
     bondId: input.bondId,
     focusSpent: input.focusSpent,
     focusBalanceBefore: input.focusBalanceBefore,

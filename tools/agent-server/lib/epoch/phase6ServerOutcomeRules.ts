@@ -354,14 +354,14 @@ function isCombatFact(event: IndexedEvent): boolean {
 
 function linkedEventIds(action: IndexedEvent, events: readonly IndexedEvent[]): readonly string[] {
   const sourceId = action.eventId;
-  return unique([
+  return [...unique([
     sourceId,
     ...events
       .filter((event) =>
         text(event.payload.sourceEventId) === sourceId
         || (Array.isArray(event.payload.sourceEventIds) && event.payload.sourceEventIds.map(text).includes(sourceId)))
       .map((event) => event.eventId),
-  ]).sort((left, right) => left.localeCompare(right));
+  ])].sort((left: string, right: string) => left.localeCompare(right));
 }
 
 function actionFacts(
@@ -468,7 +468,7 @@ function buildOutcomeResolution(
   actions: readonly Phase6ServerActionResolutionEvidence[],
   events: readonly IndexedEvent[],
 ): Phase6ServerOutcomeResolutionEvidence {
-  const eventIds = unique(actions.flatMap((action) => action.eventIds)).sort((left, right) => left.localeCompare(right));
+  const eventIds = [...unique(actions.flatMap((action) => action.eventIds))].sort((left: string, right: string) => left.localeCompare(right));
   const first = actions[0];
   const resourceCost = sum(actions.map((action) =>
     action.resourceCost?.paid === false ? 0 : action.resourceCost?.amount ?? 0));

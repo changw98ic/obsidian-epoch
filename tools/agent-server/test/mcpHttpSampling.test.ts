@@ -5,6 +5,7 @@ import { createSequentialEpochIdFactory } from "../lib/epoch/protocol.ts";
 import { createAgentHttpServer } from "../lib/httpServer.ts";
 import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
 import { hydrateAgentRuntimeOptions } from "../lib/store.ts";
+import { createPhase6InMemoryStores } from "./phase6InMemoryStores.ts";
 
 async function postJson(baseUrl: string, pathName: string, body: unknown, headers: Record<string, string> = {}) {
   const response = await fetch(`${baseUrl}${pathName}`, {
@@ -91,8 +92,15 @@ function openSamplingStream(baseUrl: string, pathName: string, headers: Record<s
 
 test("Streamable HTTP carries nested Sampling request and response on one MCP session", async () => {
   const writes = new Map<string, Record<string, unknown>[]>();
+  const phase6Stores = createPhase6InMemoryStores();
   const runtime = createAgentWorldRuntime({
-    epoch: { idFactory: createSequentialEpochIdFactory("http_sampling") },
+    epoch: {
+      idFactory: createSequentialEpochIdFactory("http_sampling"),
+      phase6RunAssemblyRepository: phase6Stores.phase6RunAssemblyRepository,
+      phase6JourneyContextStore: phase6Stores.phase6JourneyContextStore,
+      phase6ExperimentStore: phase6Stores.phase6ExperimentStore,
+      phase6RagTraceStore: phase6Stores.phase6RagTraceStore,
+    },
     journey: {
       now: () => "2026-07-12T00:00:00.000Z",
       worldNow: () => "2026-01-01T08:00:00.000Z",
@@ -101,6 +109,7 @@ test("Streamable HTTP carries nested Sampling request and response on one MCP se
   const server = createAgentHttpServer({
     runtime,
     allowLegacyHttpIdentityRegistration: true,
+    health: { store: { kind: "sqlite", sqlitePath: ":memory:" } },
     persistJsonl: async (fileName, record) => {
       const records = writes.get(fileName) || [];
       records.push(record as Record<string, unknown>);

@@ -15,6 +15,7 @@ import {
 } from "./phase6JourneySettlementAdapter.ts";
 import type {
   Phase6IdentityBinding,
+  Phase6RunIndex,
   Phase6ScenarioMatrixVersion,
 } from "./phase6ExperimentRules.ts";
 import type { Phase6CanonicalCursor } from "./phase6ProjectionDeltaRules.ts";
@@ -280,7 +281,7 @@ export function createPhase6JourneyContextRuntime(options: Phase6JourneyContextR
         journeyId: input.journeyId,
         experimentId: captured.value.experiment.experimentId,
         runId: input.runId,
-        runIndex: captured.value.experiment.runIndex,
+        runIndex: captured.value.experiment.runIndex as Phase6RunIndex,
         identity: input.identity,
         versions: {
           rulesVersion: captured.value.version.rulesetVersion,

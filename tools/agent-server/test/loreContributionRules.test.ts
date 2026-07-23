@@ -123,6 +123,7 @@ test("lore contribution rules describe contribution focus costs", () => {
     reason: "lore_revision_cost",
   });
   assert.deepEqual(loreContributionCostSpendPayload({
+    agentId: "agent_1",
     category: "refutation",
     currentFocus: 3,
   }), {
@@ -130,6 +131,10 @@ test("lore contribution rules describe contribution focus costs", () => {
     amount: 1,
     reason: "lore_refutation_cost",
     balanceAfter: 2,
+    accountRef: "agent:agent_1",
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: "100",
   });
 });
 
@@ -490,6 +495,10 @@ test("lore contribution rules plan record and adjudication event sequences", () 
       amount: 1,
       reason: "lore_revision_cost",
       balanceAfter: 2,
+      accountRef: "agent:epoch_agent_1",
+      assetKey: "resource:focus",
+      unit: "unit",
+      quantityMinor: "100",
     },
   });
 

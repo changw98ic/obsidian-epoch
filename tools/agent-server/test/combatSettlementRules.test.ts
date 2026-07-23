@@ -487,6 +487,7 @@ test("combat settlement rules plan party run settlement payloads", () => {
   assert.equal(partyRunTotalScore(plannedMemberResults), 11);
 
   assert.deepEqual(partyRunMemberRewardGrantPayload({
+    agentId: "agent_vanguard",
     member: plannedMemberResults[1],
     balanceBefore: 6,
   }), {
@@ -494,6 +495,10 @@ test("combat settlement rules plan party run settlement payloads", () => {
     amount: 4,
     reason: "party_run_settlement:party_1",
     balanceAfter: 10,
+    accountRef: "agent:agent_vanguard",
+    assetKey: "resource:coin",
+    unit: "unit",
+    quantityMinor: "400",
   });
 
   const memberResults = [
@@ -731,6 +736,7 @@ test("combat settlement rules plan raid resolved payloads", () => {
   } as const;
 
   assert.deepEqual(raidAttackStaminaSpendPayload({
+    agentId: "agent_attacker",
     raidId: "raid_1",
     staminaSpent: 3,
     attackerStaminaBefore: 8,
@@ -739,9 +745,14 @@ test("combat settlement rules plan raid resolved payloads", () => {
     amount: 3,
     reason: "raid_attack:raid_1",
     balanceAfter: 5,
+    accountRef: "agent:agent_attacker",
+    assetKey: "resource:stamina",
+    unit: "unit",
+    quantityMinor: "300",
   });
 
   assert.deepEqual(raidRewardGrantPayload({
+    agentId: "agent_attacker",
     reward,
     winnerRewardBalanceBefore: 4,
   }), {
@@ -749,6 +760,10 @@ test("combat settlement rules plan raid resolved payloads", () => {
     amount: 1,
     reason: "raid_attack_success",
     balanceAfter: 5,
+    accountRef: "agent:agent_attacker",
+    assetKey: "resource:legend",
+    unit: "unit",
+    quantityMinor: "100",
   });
 
   assert.deepEqual(raidResolvedPayload({
@@ -870,6 +885,7 @@ test("combat settlement rules plan retaliation resolved payloads", () => {
   } as const;
 
   assert.deepEqual(retaliationStaminaSpendPayload({
+    agentId: "agent_retaliator",
     retaliationId: "retaliation_1",
     staminaSpent: 2,
     retaliatorStaminaBefore: 7,
@@ -878,9 +894,14 @@ test("combat settlement rules plan retaliation resolved payloads", () => {
     amount: 2,
     reason: "retaliation:retaliation_1",
     balanceAfter: 5,
+    accountRef: "agent:agent_retaliator",
+    assetKey: "resource:stamina",
+    unit: "unit",
+    quantityMinor: "200",
   });
 
   assert.deepEqual(retaliationRewardGrantPayload({
+    agentId: "agent_retaliator",
     reward,
     winnerRewardBalanceBefore: 9,
   }), {
@@ -888,6 +909,10 @@ test("combat settlement rules plan retaliation resolved payloads", () => {
     amount: 1,
     reason: "retaliation_success",
     balanceAfter: 10,
+    accountRef: "agent:agent_retaliator",
+    assetKey: "resource:legend",
+    unit: "unit",
+    quantityMinor: "100",
   });
 
   assert.deepEqual(retaliationResolvedPayload({

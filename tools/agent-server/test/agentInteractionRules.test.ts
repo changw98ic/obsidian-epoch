@@ -151,6 +151,7 @@ test("agent interaction rules plan social hook created payloads", () => {
 
 test("agent interaction rules plan owner-authored NPC bond payloads", () => {
   assert.deepEqual(agentNpcBondFocusSpendPayload({
+    agentId: "agent_1",
     bondId: "bond_1",
     focusSpent: 3,
     focusBalanceBefore: 10,
@@ -159,6 +160,10 @@ test("agent interaction rules plan owner-authored NPC bond payloads", () => {
     amount: 3,
     reason: "agent_npc_bond:bond_1",
     balanceAfter: 7,
+    accountRef: "agent:agent_1",
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: "300",
   });
 
   assert.deepEqual(agentNpcBondUpdatedPayload({
@@ -395,6 +400,7 @@ test("agent interaction rules plan diplomacy payloads", () => {
   );
 
   assert.deepEqual(diplomacyProposalFocusSpendPayload({
+    agentId: "agent_source",
     diplomacyId: "diplomacy_1",
     focusSpent: 2,
     focusBalanceBefore: 8,
@@ -403,6 +409,10 @@ test("agent interaction rules plan diplomacy payloads", () => {
     amount: 2,
     reason: "diplomacy_propose:diplomacy_1",
     balanceAfter: 6,
+    accountRef: "agent:agent_source",
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: "200",
   });
 
   assert.deepEqual(diplomacyProposedPayload({
@@ -427,6 +437,7 @@ test("agent interaction rules plan diplomacy payloads", () => {
   });
 
   assert.deepEqual(diplomacyResponseFocusSpendPayload({
+    agentId: "agent_target",
     diplomacyId: "diplomacy_1",
     focusSpent: 1,
     focusBalanceBefore: 6,
@@ -435,6 +446,10 @@ test("agent interaction rules plan diplomacy payloads", () => {
     amount: 1,
     reason: "diplomacy_response:diplomacy_1",
     balanceAfter: 5,
+    accountRef: "agent:agent_target",
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: "100",
   });
 
   assert.deepEqual(diplomacyRespondedPayload({
@@ -644,6 +659,7 @@ test("agent interaction rules plan accepted diplomacy relationship and trace eve
 
 test("agent interaction rules plan relationship payloads", () => {
   assert.deepEqual(relationshipFocusSpendPayload({
+    agentId: "agent_source",
     relationshipId: "relationship_1",
     focusSpent: 3,
     focusBalanceBefore: 9,
@@ -652,6 +668,10 @@ test("agent interaction rules plan relationship payloads", () => {
     amount: 3,
     reason: "relationship_update:relationship_1",
     balanceAfter: 6,
+    accountRef: "agent:agent_source",
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: "300",
   });
 
   assert.deepEqual(relationshipUpdatedPayload({

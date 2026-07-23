@@ -6,7 +6,7 @@
   "canonicalHashAlgorithm": "sha256",
   "canonicalSerialization": "obsidian_canonical_json_v1",
   "schemaVersion": 1,
-  "registryHash": "sha256:099f78077c649ee7eecda4ad1deedbef360387ee114c1372a7345924a0c66b05",
+  "registryHash": "sha256:b79c871e6ef959bdead556fdd1610a7857a09a16cd51fb6828fe9660e769ee8e",
   "schemaEntries": [
     {
       "schemaId": "causal.event.epoch.v1",
@@ -81,7 +81,11 @@
     "governance_action_resolved",
     "supernatural_action_resolved",
     "legacy_cycle_changed",
-    "enterprise_tick_resolved"
+    "enterprise_tick_resolved",
+    "narrative_settlement_committed",
+    "actor_mind_updated",
+    "actor_goal_committed",
+    "actor_commitment_updated"
   ],
   "runtimeCommandPolicy": {
     "commandTypes": [
@@ -102,10 +106,16 @@
       "progression_talent",
       "progression_skill",
       "progression_carry",
+      "progression_attribute_evidence",
+      "progression_respec",
       "governance_action",
       "supernatural_cast",
       "legacy_transition",
-      "project_tick"
+      "project_tick",
+      "narrative_settle",
+      "actor_mind_tick",
+      "actor_goal_select",
+      "actor_commitment_update"
     ],
     "eventTypes": [
       "ecology_tick_resolved",
@@ -122,7 +132,11 @@
       "governance_action_resolved",
       "supernatural_action_resolved",
       "legacy_cycle_changed",
-      "enterprise_tick_resolved"
+      "enterprise_tick_resolved",
+      "narrative_settlement_committed",
+      "actor_mind_updated",
+      "actor_goal_committed",
+      "actor_commitment_updated"
     ]
   },
   "retiredEventAliases": [

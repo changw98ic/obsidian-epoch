@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,9 +37,10 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 
-const TEST_RUNTIME_ACTION_SIGNING_PRIVATE_KEY = `-----BEGIN PRIVATE KEY-----
-MC4CAQAwBQYDK2VwBCIEIOM5G679DIS1SCqkg6kYC9tnCRTWgur4dV9APftc9dgw
------END PRIVATE KEY-----`;
+const TEST_RUNTIME_ACTION_SIGNING_PRIVATE_KEY = generateKeyPairSync("ed25519")
+  .privateKey
+  .export({ type: "pkcs8", format: "pem" })
+  .toString();
 const previousRuntimeActionSigningPrivateKey = process.env.AGENT_RUNTIME_ACTION_SIGNING_PRIVATE_KEY_PEM;
 process.env.AGENT_RUNTIME_ACTION_SIGNING_PRIVATE_KEY_PEM = TEST_RUNTIME_ACTION_SIGNING_PRIVATE_KEY;
 after(() => {

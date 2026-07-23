@@ -330,7 +330,7 @@ test("schema v2 atomically backfills command, journey, and result-page indexes f
     journeyEvents: [{
       eventId: "journey_event_v1_backfill",
       journeyId: "journey_v1_backfill",
-      eventType: "journey_settled",
+      eventType: "journey_status_changed",
       agentId: "agent_v1_backfill",
       explorerId: "explorer_v1_backfill",
       occurredAt: "2026-07-15T01:00:00.000Z",

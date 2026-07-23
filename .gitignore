@@ -13,10 +13,9 @@
 # OMX / local orchestration state
 .codegraph/
 .omc/
-.omx/logs/
-.omx/state/
-.omx/artifacts/
-.omx/metrics.json
+.omx/
+designs/.omx/
+.qoder/
 
 # Node/Vite
 tools/graph-react-app/node_modules/

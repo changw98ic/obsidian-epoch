@@ -63,20 +63,29 @@ import {
 } from "./unifiedEconomyRules.ts";
 import {
   convertRunReward,
+  proposeAttributeEvidence,
   proposeBreakthrough,
   proposeExpandCarry,
+  proposeRespec,
   proposeSkillUnlock,
   proposeTalentAllocation,
   PROGRESSION_CONTENT_VERSION,
   PROGRESSION_RULESET_VERSION,
+  type AttributeEvidenceInput,
   type BreakthroughAttemptInput,
   type ExpandCarryInput,
   type ProgressionProposal,
   type ProgressionState,
+  type RespecInput,
   type RunRewardConversionInput,
   type SkillUnlockInput,
   type TalentAllocationInput,
 } from "./progressionRules.ts";
+import {
+  settleNarrativeCandidate,
+  EPOCH_CAUSAL_NARRATIVE_RULE_VERSION,
+  type SettleNarrativeCandidateInput,
+} from "./causalNarrativeRules.ts";
 import {
   proposeMissionConsequences,
   type MissionConsequenceInput,
@@ -84,6 +93,7 @@ import {
 import {
   advanceEcologyTick,
   applyGovernanceAction,
+  deriveGovernancePressures,
   EPOCH_GOVERNANCE_ECOLOGY_RULE_VERSION,
   type EcologyTickInput,
   type GovernanceActionProposal,
@@ -91,8 +101,10 @@ import {
 } from "./governanceEcologyRules.ts";
 import {
   advanceEpochWorldPressures,
+  deriveEpochWorldPressuresFromFactSignals,
   EPOCH_WORLD_PRESSURE_RULE_VERSION,
   type EpochWorldPressure,
+  type EpochWorldPressureFactSignal,
 } from "./worldPressureRules.ts";
 import {
   evaluateSupernaturalCast,
@@ -129,6 +141,17 @@ import {
   type LifeProfileState,
 } from "./lifeProfileRules.ts";
 import {
+  actionProposal,
+  commitmentConflictRefs,
+  selectActorGoals,
+  type ActionProposalInput,
+  type ActorMind,
+  type ActorMindConfig,
+  type CommitmentRef,
+  type GoalCandidate,
+  type GoalRef,
+} from "./actorMindRules.ts";
+import {
   CAUSAL_RESOURCE_SOURCE_REFS,
   createCausalResourcePolicyFromCatalog,
 } from "./causalResourceCatalog.ts";
@@ -156,10 +179,16 @@ export type InfiniteWorldCommandType =
   | "progression_talent"
   | "progression_skill"
   | "progression_carry"
+  | "progression_attribute_evidence"
+  | "progression_respec"
   | "governance_action"
   | "supernatural_cast"
   | "legacy_transition"
-  | "project_tick";
+  | "project_tick"
+  | "narrative_settle"
+  | "actor_mind_tick"
+  | "actor_goal_select"
+  | "actor_commitment_update";
 
 interface InfiniteWorldCommandBase<TType extends InfiniteWorldCommandType, TPayload extends Readonly<Record<string, unknown>>> {
   readonly commandType: TType;
@@ -185,6 +214,7 @@ export interface WorldTickPayload extends Readonly<Record<string, unknown>> {
   readonly targetWorldMinute?: number;
   readonly sourceEventIds?: readonly string[];
   readonly ecology?: EcologyTickInput;
+  readonly governance?: GovernanceState;
   readonly processLifeProfiles?: boolean;
 }
 
@@ -257,6 +287,24 @@ export interface ProjectTickPayload extends Readonly<Record<string, unknown>> {
   readonly input: LegacyProjectAdvanceInput;
 }
 
+export interface ActorMindTickPayload extends Readonly<Record<string, unknown>> {
+  readonly actorMind: ActorMind;
+  readonly goalCandidates: readonly GoalCandidate[];
+  readonly config?: Partial<ActorMindConfig>;
+}
+
+export interface ActorGoalSelectPayload extends Readonly<Record<string, unknown>> {
+  readonly actorMind: ActorMind;
+  readonly goal: GoalRef;
+  readonly actionProposalInput?: ActionProposalInput;
+}
+
+export interface ActorCommitmentUpdatePayload extends Readonly<Record<string, unknown>> {
+  readonly actorMind: ActorMind;
+  readonly commitmentRef: string;
+  readonly status: CommitmentRef["status"];
+}
+
 export type InfiniteWorldCommandV1 =
   | InfiniteWorldCommandBase<"world_tick", WorldTickPayload>
   | InfiniteWorldCommandBase<"resource_node_register", ResourceNodeRegisterPayload>
@@ -278,7 +326,10 @@ export type InfiniteWorldCommandV1 =
   | InfiniteWorldCommandBase<"governance_action", GovernanceActionPayload>
   | InfiniteWorldCommandBase<"supernatural_cast", SupernaturalCastPayload>
   | InfiniteWorldCommandBase<"legacy_transition", LegacyTransitionPayload>
-  | InfiniteWorldCommandBase<"project_tick", ProjectTickPayload>;
+  | InfiniteWorldCommandBase<"project_tick", ProjectTickPayload>
+  | InfiniteWorldCommandBase<"actor_mind_tick", ActorMindTickPayload>
+  | InfiniteWorldCommandBase<"actor_goal_select", ActorGoalSelectPayload>
+  | InfiniteWorldCommandBase<"actor_commitment_update", ActorCommitmentUpdatePayload>;
 
 export interface InfiniteWorldRuntimeResult extends CausalWriteResult {
   readonly epochEvents: readonly EpochEvent[];
@@ -345,10 +396,16 @@ const KNOWN_COMMAND_TYPES: ReadonlySet<string> = new Set<InfiniteWorldCommandTyp
   "progression_talent",
   "progression_skill",
   "progression_carry",
+  "progression_attribute_evidence",
+  "progression_respec",
   "governance_action",
   "supernatural_cast",
   "legacy_transition",
   "project_tick",
+  "narrative_settle",
+  "actor_mind_tick",
+  "actor_goal_select",
+  "actor_commitment_update",
 ]);
 
 const DEFAULT_RECORDED_AT = "1970-01-01T00:00:00.000Z";
@@ -400,6 +457,10 @@ export function createInfiniteWorldRuntime(options: CreateInfiniteWorldRuntimeOp
         "supernatural_action_resolved",
         "legacy_cycle_changed",
         "enterprise_tick_resolved",
+        "narrative_settlement_committed",
+        "actor_mind_updated",
+        "actor_goal_committed",
+        "actor_commitment_updated",
       ],
       rootReasonsByEventType: {
         ...(DEFAULT_CAUSAL_INVARIANT_POLICY.rootReasonsByEventType || {}),
@@ -418,6 +479,10 @@ export function createInfiniteWorldRuntime(options: CreateInfiniteWorldRuntimeOp
         supernatural_action_resolved: ["external_verified_input"],
         legacy_cycle_changed: ["external_verified_input"],
         enterprise_tick_resolved: ["external_verified_input"],
+        narrative_settlement_committed: ["external_verified_input"],
+        actor_mind_updated: ["external_verified_input"],
+        actor_goal_committed: ["external_verified_input"],
+        actor_commitment_updated: ["external_verified_input"],
       },
     },
     loadSnapshot: (command) => runtimeWriteSnapshot(snapshot, command),
@@ -606,6 +671,8 @@ function projectedBalancesForCommand(command: CommandIntentV1, snapshot: CausalW
       const resources = state.resources || {};
       addBalance(`identity:${identityId}:progression`, "functional_xp", "xp", String(resources.functionalXp || 0));
       addBalance(`identity:${identityId}:skill_tree`, "skill_points", "point", String(Math.max(0, (state.functionalStage + 1) * 3)));
+      addBalance(`identity:${identityId}:skill_tree`, "insight_points", "point", String(resources.insightPoints || 0));
+      addBalance(`lineage:${state.lineageId || identityId}:progression`, "lineage_marks", "mark", String(resources.lineageMarks || 0));
       for (const material of resources.materials || []) {
         addBalance(`identity:${identityId}:inventory`, `material.${material.materialId}`, "count", String(material.quantity));
       }
@@ -741,6 +808,8 @@ function domainProposalFor(command: CommandIntentV1, snapshot: CausalWorldSnapsh
     case "progression_talent":
     case "progression_skill":
     case "progression_carry":
+    case "progression_attribute_evidence":
+    case "progression_respec":
       return progressionProposal(command);
     case "governance_action":
       return governanceProposal(command);
@@ -750,6 +819,14 @@ function domainProposalFor(command: CommandIntentV1, snapshot: CausalWorldSnapsh
       return legacyTransitionProposal(command);
     case "project_tick":
       return projectTickProposal(command);
+    case "narrative_settle":
+      return narrativeSettleProposal(command);
+    case "actor_mind_tick":
+      return actorMindTickProposal(command);
+    case "actor_goal_select":
+      return actorGoalSelectProposal(command);
+    case "actor_commitment_update":
+      return actorCommitmentUpdateProposal(command);
     default:
       throw new CausalValidationError("CAUSAL_SCHEMA_UNKNOWN", { commandType: command.commandType });
   }
@@ -760,8 +837,20 @@ function worldTickProposal(command: CommandIntentV1, snapshot: CausalWorldSnapsh
   const currentWorldMinute = payload.currentWorldMinute ?? command.requestedWorldMinute ?? 0;
   const targetWorldMinute = payload.targetWorldMinute ?? command.requestedWorldMinute ?? currentWorldMinute;
   const sourceEventIds = payload.sourceEventIds || command.causalParentEventIds;
+  const governanceState = payload.governance || snapshotGovernanceState(snapshot);
+  const governanceSignals: readonly EpochWorldPressureFactSignal[] = governanceState
+    ? deriveGovernancePressures(governanceState, targetWorldMinute, sourceEventIds || [])
+    : [];
+  const basePressures = payload.pressures || [];
+  const mergedPressures = governanceSignals.length > 0
+    ? deriveEpochWorldPressuresFromFactSignals({
+      signals: governanceSignals,
+      existingPressures: basePressures,
+      openedAtWorldMinute: targetWorldMinute,
+    })
+    : basePressures;
   const pressureResult = advanceEpochWorldPressures({
-    pressures: payload.pressures || [],
+    pressures: mergedPressures,
     toWorldMinute: targetWorldMinute,
     sourceFactEventIds: sourceEventIds,
   });
@@ -787,7 +876,7 @@ function worldTickProposal(command: CommandIntentV1, snapshot: CausalWorldSnapsh
       ...lifeAdvances.flatMap((profile) =>
         lifeProfileEffects(profile.state, command.authorizationRefs, profile.previousDeltaCount)),
     ],
-    payload: cleanRecord({ pressureResult, ecologyResult, lifeAdvances }),
+    payload: cleanRecord({ pressureResult, ecologyResult, governanceSignals, lifeAdvances }),
     subjectRefs: [{ entityType: "world", entityId: command.worldId }],
   };
 }
@@ -1085,7 +1174,7 @@ function cleanEffect(effect: CausalEffectV1, command: CommandIntentV1): CausalEf
 
 function progressionProposal(command: CommandIntentV1): DomainProposal {
   const payload = command.payload as ProgressionCommandPayload<
-    RunRewardConversionInput | BreakthroughAttemptInput | TalentAllocationInput | SkillUnlockInput | ExpandCarryInput
+    RunRewardConversionInput | BreakthroughAttemptInput | TalentAllocationInput | SkillUnlockInput | ExpandCarryInput | AttributeEvidenceInput | RespecInput
   >;
   let proposal: ProgressionProposal;
   if (command.commandType === "progression_reward") proposal = convertRunReward(payload.input as RunRewardConversionInput);
@@ -1095,6 +1184,8 @@ function progressionProposal(command: CommandIntentV1): DomainProposal {
     if (command.commandType === "progression_breakthrough") proposal = proposeBreakthrough(state, payload.input as BreakthroughAttemptInput);
     else if (command.commandType === "progression_talent") proposal = proposeTalentAllocation(state, payload.input as TalentAllocationInput);
     else if (command.commandType === "progression_skill") proposal = proposeSkillUnlock(state, payload.input as SkillUnlockInput);
+    else if (command.commandType === "progression_attribute_evidence") proposal = proposeAttributeEvidence(state, payload.input as AttributeEvidenceInput);
+    else if (command.commandType === "progression_respec") proposal = proposeRespec(state, payload.input as RespecInput);
     else proposal = proposeExpandCarry(state, payload.input as ExpandCarryInput);
   }
   rejectIf(!proposal.ok, proposal.errors, command.commandType);
@@ -1105,6 +1196,20 @@ function progressionProposal(command: CommandIntentV1): DomainProposal {
     contentVersion: PROGRESSION_CONTENT_VERSION,
     effects: proposal.effects,
     payload: proposal as unknown as Readonly<Record<string, unknown>>,
+  };
+}
+
+function narrativeSettleProposal(command: CommandIntentV1): DomainProposal {
+  const payload = command.payload as { readonly input: SettleNarrativeCandidateInput };
+  const result = settleNarrativeCandidate(payload.input);
+  rejectIf(result.errors.length > 0, result.errors, "narrative_settle");
+  return {
+    eventType: "narrative_settlement_committed",
+    namespace: "world",
+    rulesetVersion: EPOCH_CAUSAL_NARRATIVE_RULE_VERSION,
+    contentVersion: "causal-narrative-content.v1",
+    effects: result.effects,
+    payload: result as unknown as Readonly<Record<string, unknown>>,
   };
 }
 
@@ -1171,6 +1276,144 @@ function projectTickProposal(command: CommandIntentV1): DomainProposal {
     payload: result as unknown as Readonly<Record<string, unknown>>,
     warnings: result.warnings,
   };
+}
+
+function actorMindTickProposal(command: CommandIntentV1): DomainProposal {
+  const payload = command.payload as ActorMindTickPayload;
+  const actorMind = payload.actorMind;
+  const selection = selectActorGoals(actorMind, payload.goalCandidates, payload.config);
+  const updatedMind: ActorMind = {
+    ...actorMind,
+    activeGoals: selection.activeGoals,
+    queuedGoals: selection.queuedGoals,
+  };
+  return {
+    eventType: "actor_mind_updated",
+    namespace: "identity",
+    rulesetVersion: "actor-mind-runtime.v1",
+    contentVersion: "actor-mind-content.v1",
+    effects: [
+      actorMindPredicateEffect(`actor_mind_tick:${actorMind.actorRef}`, actorMind.actorRef, command.authorizationRefs),
+    ],
+    payload: { actorRef: actorMind.actorRef, mind: updatedMind, selection },
+    subjectRefs: [{ entityType: "actor", entityId: actorMind.actorRef }],
+  };
+}
+
+function actorGoalSelectProposal(command: CommandIntentV1): DomainProposal {
+  const payload = command.payload as ActorGoalSelectPayload;
+  const actorMind = payload.actorMind;
+  const goal = payload.goal;
+  const activeGoals = [...actorMind.activeGoals.filter((existing) => existing.goalRef !== goal.goalRef), goal]
+    .sort((left, right) => right.score - left.score || left.goalRef.localeCompare(right.goalRef));
+  const queuedGoals = actorMind.queuedGoals.filter((existing) => existing.goalRef !== goal.goalRef);
+  const updatedMind: ActorMind = {
+    ...actorMind,
+    activeGoals,
+    queuedGoals,
+  };
+  const proposal = payload.actionProposalInput
+    ? actionProposal(payload.actionProposalInput)
+    : undefined;
+  const conflictingCommitmentRefs = commitmentConflictRefs(actorMind.commitments, {
+    goalRef: goal.goalRef,
+    label: goal.label,
+    needRefs: [],
+    valueRefs: [],
+    roleDutyRefs: [],
+    relationshipDutyRefs: [],
+    commitmentRefs: [],
+    beliefRefs: goal.supportingBeliefRefs,
+    expectedGain: 0,
+    identityFit: 0,
+    urgency: 0,
+    feasibility: 0,
+    expectedRisk: 0,
+    resourceCost: 0,
+    legalCost: 0,
+  });
+  return {
+    eventType: "actor_goal_committed",
+    namespace: "identity",
+    rulesetVersion: "actor-mind-runtime.v1",
+    contentVersion: "actor-mind-content.v1",
+    effects: [
+      actorMindPredicateEffect(`actor_goal_select:${actorMind.actorRef}:${goal.goalRef}`, actorMind.actorRef, command.authorizationRefs),
+    ],
+    payload: cleanRecord({
+      actorRef: actorMind.actorRef,
+      mind: updatedMind,
+      goal,
+      proposal,
+      conflictingCommitmentRefs,
+    }),
+    subjectRefs: [{ entityType: "actor", entityId: actorMind.actorRef }],
+    warnings: conflictingCommitmentRefs.length > 0 ? ["commitment_conflict_detected"] : undefined,
+  };
+}
+
+function actorCommitmentUpdateProposal(command: CommandIntentV1): DomainProposal {
+  const payload = command.payload as ActorCommitmentUpdatePayload;
+  const actorMind = payload.actorMind;
+  const commitmentIndex = actorMind.commitments.findIndex(
+    (commitment) => commitment.commitmentRef === payload.commitmentRef,
+  );
+  if (commitmentIndex < 0) {
+    throw new CausalValidationError("CAUSAL_SCHEMA_INVALID", {
+      field: "commitmentRef",
+      reason: "commitment_not_found",
+    });
+  }
+  const updatedCommitments = actorMind.commitments.map((commitment, index) =>
+    index === commitmentIndex ? { ...commitment, status: payload.status } : commitment,
+  );
+  const updatedMind: ActorMind = {
+    ...actorMind,
+    commitments: updatedCommitments,
+  };
+  return {
+    eventType: "actor_commitment_updated",
+    namespace: "identity",
+    rulesetVersion: "actor-mind-runtime.v1",
+    contentVersion: "actor-mind-content.v1",
+    effects: [
+      actorMindPredicateEffect(`actor_commitment_update:${actorMind.actorRef}:${payload.commitmentRef}`, actorMind.actorRef, command.authorizationRefs),
+    ],
+    payload: {
+      actorRef: actorMind.actorRef,
+      mind: updatedMind,
+      commitmentRef: payload.commitmentRef,
+      status: payload.status,
+    },
+    subjectRefs: [{ entityType: "actor", entityId: actorMind.actorRef }],
+  };
+}
+
+function actorMindPredicateEffect(
+  effectId: string,
+  actorRef: string,
+  authorizationRefs: readonly string[],
+): CausalEffectV1 {
+  return {
+    effectId,
+    effectType: "world_predicate",
+    targetRef: { entityType: "actor", entityId: actorRef },
+    operation: "actor_mind_state_persisted",
+    after: {
+      predicateId: effectId,
+      subjectRef: { entityType: "actor", entityId: actorRef },
+      operator: "eq",
+      expectedValue: 1,
+      evaluationStatus: "true",
+      evaluatedAtWorldMinute: 0,
+    },
+    sourceEventIds: [effectId],
+    authorizationRefs,
+  };
+}
+
+function snapshotGovernanceState(snapshot: CausalWorldSnapshotV1): GovernanceState | undefined {
+  return snapshot.domains.governanceState;
 }
 
 function registryFromSnapshot(snapshot: CausalWorldSnapshotV1): ResourceProductionRegistry {
@@ -1365,7 +1608,7 @@ function namespaceForCommand(commandType: string, namespace: unknown): CausalNam
   if (namespace === "world" || namespace === "lineage" || namespace === "identity" || namespace === "run") return namespace;
   if (commandType === "mission_settle") return "run";
   if (commandType === "legacy_transition" || commandType === "progression_carry") return "lineage";
-  if (commandType.startsWith("progression_") || commandType.startsWith("life_profile_")) return "identity";
+  if (commandType.startsWith("progression_") || commandType.startsWith("life_profile_") || commandType.startsWith("actor_")) return "identity";
   return "world";
 }
 

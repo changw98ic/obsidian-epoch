@@ -10,6 +10,7 @@ const ignoredDirectoryNames = new Set([
   ".obsidian",
   ".omc",
   ".omx",
+  ".qoder",
   "node_modules",
   "__pycache__",
   "dist",

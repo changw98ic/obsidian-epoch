@@ -1504,10 +1504,12 @@ export default function AgentExplorer({
         case "drop":
           return resourceEntries(resultPage.progress.resources || {}).filter((item) => item.amount > 0).map((item) => `${item.label}${item.amount}`).join(" / ")
             || "暂无可领取资源，继续托管或接续行动。";
-        case "next":
-          return (resultPage.nextActions || [])[0]
-            ? `${(resultPage.nextActions || [])[0].label} · ${playerToolLabel((resultPage.nextActions || [])[0].toolName)}`
+        case "next": {
+          const nextAction = (resultPage.nextActions || [])[0];
+          return nextAction
+            ? `${nextAction.label} · ${playerToolLabel(nextAction.toolName)}`
             : "暂无服务器建议行动，可刷新进度或接续托管。";
+        }
       }
     })()
     : "生成预览后显示结算。";

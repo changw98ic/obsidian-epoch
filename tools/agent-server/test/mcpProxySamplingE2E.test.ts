@@ -7,18 +7,26 @@ import { fileURLToPath } from "node:url";
 import { createSequentialEpochIdFactory } from "../lib/epoch/protocol.ts";
 import { createAgentHttpServer } from "../lib/httpServer.ts";
 import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createPhase6InMemoryStores } from "./phase6InMemoryStores.ts";
 
 test("local Host through package proxy completes remote Streamable HTTP Sampling", async () => {
   let realNow = "2026-07-12T00:00:00.000Z";
   let worldNow = "2026-01-01T08:00:00.000Z";
+  const phase6Stores = createPhase6InMemoryStores();
   const runtime = createAgentWorldRuntime({
-    epoch: { idFactory: createSequentialEpochIdFactory("proxy_sampling") },
+    epoch: {
+      idFactory: createSequentialEpochIdFactory("proxy_sampling"),
+      phase6RunAssemblyRepository: phase6Stores.phase6RunAssemblyRepository,
+      phase6JourneyContextStore: phase6Stores.phase6JourneyContextStore,
+      phase6ExperimentStore: phase6Stores.phase6ExperimentStore,
+      phase6RagTraceStore: phase6Stores.phase6RagTraceStore,
+    },
     journey: {
       now: () => realNow,
       worldNow: () => worldNow,
     },
   });
-  const server = createAgentHttpServer({ runtime });
+  const server = createAgentHttpServer({ runtime, health: { store: { kind: "sqlite", sqlitePath: ":memory:" } } });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   assert.ok(address && typeof address === "object");

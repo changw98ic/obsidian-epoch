@@ -384,7 +384,7 @@ test("server derives all four completion tiers from signed action evidence", () 
   const passing = adjudicateJourneyTask({ plan, hiddenTaskSeal, episodes: evidence(plan, mainSelections) });
   assert.equal(passing.tier, "及格");
   assert.deepEqual(passing.reward, JOURNEY_TIER_REWARDS.及格);
-  assert.deepEqual(passing.rewardBundle?.attributes, [{ attributeId: "intellect", amount: 1 }]);
+  assert.deepEqual(passing.rewardBundle?.attributes, []);
   const unlockIds = new Set(plan.routes?.filter((route) => route.kind === "unlock")
     .flatMap((route) => route.unlockedByObjectiveIds));
   const ordinarySide = sides.find((side) => !unlockIds.has(side.objectiveId)) ?? sides[0];
@@ -393,7 +393,7 @@ test("server derives all four completion tiers from signed action evidence", () 
   assert.equal(good.tier, "良好");
   assert.equal(good.rewardBundle?.items.length, 1);
   assert.equal(good.rewardBundle?.items[0]?.rarity, "common");
-  assert.deepEqual(good.rewardBundle?.attributes, [{ attributeId: "intellect", amount: 2 }]);
+  assert.deepEqual(good.rewardBundle?.attributes, []);
 
   const hidden = deriveJourneyHiddenTask(plan, hiddenTaskSeal);
   const activeObjectives = plan.objectives.filter((objective) => {
@@ -437,7 +437,7 @@ test("server derives all four completion tiers from signed action evidence", () 
   assert.equal(legendary.tier, "惊世");
   assert.deepEqual(legendary.reward, JOURNEY_TIER_REWARDS.惊世);
   assert.deepEqual(legendary.rewardBundle?.resources, [JOURNEY_TIER_REWARDS.惊世]);
-  assert.deepEqual(legendary.rewardBundle?.attributes, [{ attributeId: "intellect", amount: 4 }]);
+  assert.deepEqual(legendary.rewardBundle?.attributes, []);
   assert.equal(legendary.rewardBundle?.items.length, 1);
   assert.match(legendary.rewardBundle?.items[0]?.displayName || "", /信物|纪念|记录器|工具包|装备/u);
   assert.equal(legendary.hiddenTask.completed, true);

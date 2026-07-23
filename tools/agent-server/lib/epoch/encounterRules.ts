@@ -131,6 +131,7 @@ export interface ContestedObjectiveContributionPayloadInput {
 }
 
 export interface ContestedObjectiveContributionSpendPayloadInput {
+  readonly agentId: string;
   readonly objectiveId: string;
   readonly resourceId: EpochResourceId;
   readonly amount: number;
@@ -159,6 +160,7 @@ export interface ContestedObjectiveSettlementPayloadInput {
 }
 
 export interface ContestedObjectiveSettlementRewardGrantPayloadInput {
+  readonly agentId: string;
   readonly reward: EpochServerReward;
   readonly winnerRewardBalanceBefore: number;
 }
@@ -236,6 +238,7 @@ export interface AnomalyEventContestPayloadInput {
 }
 
 export interface AnomalyEventContestFocusSpendPayloadInput {
+  readonly agentId: string;
   readonly anomalyId: string;
   readonly focusSpent: number;
   readonly focusBalanceBefore: number;
@@ -297,6 +300,7 @@ export interface AnomalyEventResolutionPayloadInput {
 }
 
 export interface AnomalyEventResolutionRewardGrantPayloadInput {
+  readonly agentId: string;
   readonly reward: EpochServerReward;
   readonly winnerRewardBalanceBefore: number;
 }
@@ -406,6 +410,7 @@ export function planContestedObjectiveContributionEvents(
   input: ContestedObjectiveContributionEventsInput,
 ): readonly EpochEvent[] {
   const spent = resourceSpentEvent(input.makeEvent, input.agentId, contestedObjectiveContributionSpendPayload({
+    agentId: input.agentId,
     objectiveId: input.objectiveId,
     resourceId: input.resourceId,
     amount: input.amount,
@@ -463,6 +468,10 @@ export function contestedObjectiveContributionSpendPayload(
     amount: input.amount,
     reason: `objective_contribution:${input.objectiveId}`,
     balanceAfter: input.balanceBefore - input.amount,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: `resource:${input.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(input.amount) * 100n).toString(),
   };
 }
 
@@ -490,6 +499,10 @@ export function planRaceCommissionCompletionEvents(
       amount: input.reward.amount,
       reason: input.reward.reason,
       balanceAfter: input.rewardBalanceBefore + input.reward.amount,
+      accountRef: `agent:${input.agentId}`,
+      assetKey: `resource:${input.reward.resourceId}`,
+      unit: "unit",
+      quantityMinor: (BigInt(input.reward.amount) * 100n).toString(),
     }),
   ];
 }
@@ -524,6 +537,7 @@ export function planContestedObjectiveSettlementEvents(
   const reward = settledPayload.reward;
   if (winner && reward) {
     nextEvents.push(resourceGrantedEvent(input.makeEvent, winner.agentId, contestedObjectiveSettlementRewardGrantPayload({
+      agentId: winner.agentId,
       reward,
       winnerRewardBalanceBefore: input.winnerRewardBalanceBefore,
     })));
@@ -578,6 +592,10 @@ export function contestedObjectiveSettlementRewardGrantPayload(
     amount: input.reward.amount,
     reason: input.reward.reason,
     balanceAfter: input.winnerRewardBalanceBefore + input.reward.amount,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: `resource:${input.reward.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(input.reward.amount) * 100n).toString(),
   };
 }
 
@@ -736,11 +754,16 @@ export function anomalyEventContestFocusSpendPayload(
     amount: input.focusSpent,
     reason: `anomaly_event_contest:${input.anomalyId}`,
     balanceAfter: input.focusBalanceBefore - input.focusSpent,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: (BigInt(input.focusSpent) * 100n).toString(),
   };
 }
 
 export function planAnomalyEventContestEvents(input: AnomalyEventContestEventsInput): readonly EpochEvent[] {
   const spent = resourceSpentEvent(input.makeEvent, input.agentId, anomalyEventContestFocusSpendPayload({
+    agentId: input.agentId,
     anomalyId: input.anomalyId,
     focusSpent: input.focusSpent,
     focusBalanceBefore: input.focusBalanceBefore,
@@ -814,6 +837,7 @@ export function planAnomalyEventResolutionEvents(input: AnomalyEventResolutionEv
   const reward = resolvedPayload.reward;
   if (winner && reward) {
     nextEvents.push(resourceGrantedEvent(input.makeEvent, winner.agentId, anomalyEventResolutionRewardGrantPayload({
+      agentId: winner.agentId,
       reward,
       winnerRewardBalanceBefore: input.winnerRewardBalanceBefore,
     })));
@@ -872,6 +896,10 @@ export function anomalyEventResolutionRewardGrantPayload(
     amount: input.reward.amount,
     reason: input.reward.reason,
     balanceAfter: input.winnerRewardBalanceBefore + input.reward.amount,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: `resource:${input.reward.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(input.reward.amount) * 100n).toString(),
   };
 }
 

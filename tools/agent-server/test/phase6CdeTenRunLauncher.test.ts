@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { inspectRawLine } from "../phase6-cde-ten-run-launcher.mjs";
+import { inspectRawLine } from "../phase6-cde-ten-run-launcher.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const launcherPath = resolve(repoRoot, "tools/agent-server/phase6-cde-ten-run-launcher.mjs");
+const launcherPath = resolve(repoRoot, "tools/agent-server/phase6-cde-ten-run-launcher.ts");
 const secret = "sk-zhipuSecret123456";
 const authSecret = "zhipu-auth-token-secret-123456";
 const toolResultSecret = "sk-toolResultSecret987654";
@@ -86,7 +86,7 @@ process.on("SIGTERM", () => server.close(() => process.exit(0)));
 function makeFixtureRoot() {
   const root = mkdtempSync(join(tmpdir(), "phase6-cde-launcher-test-"));
   const promptPath = join(root, "prompt.md");
-  const adapterPath = join(root, "mcp-adapter.mjs");
+  const adapterPath = join(root, "mcp-adapter.ts");
   const recoveryCodePath = join(root, "recovery-code");
   writeFileSync(promptPath, promptText, "utf8");
   writeFileSync(adapterPath, "process.exit(0);\n", "utf8");
@@ -95,7 +95,7 @@ function makeFixtureRoot() {
 }
 
 function makeFakeClaude(root) {
-  const fakeClaudePath = join(root, "fake-claude.mjs");
+  const fakeClaudePath = join(root, "fake-claude.ts");
   writeFileSync(fakeClaudePath, `#!/usr/bin/env node
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 const capturePath = process.env.PHASE6_FAKE_CAPTURE;
@@ -566,7 +566,7 @@ test("Phase 6 CDE launcher rejects a relative MCP adapter module path before lau
       const statePath = join(fixture.root, "state.json");
       const result = runLauncher({
         ...fixture,
-        adapterPath: "relative-adapter.mjs",
+        adapterPath: "relative-adapter.ts",
         fakeClaudePath,
         serverBase,
         rawPath: join(fixture.root, "raw.jsonl"),

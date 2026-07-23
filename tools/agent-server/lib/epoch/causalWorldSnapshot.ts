@@ -30,6 +30,7 @@ import type { EpochKnowledgeRecord, EpochKnowledgeState } from "./knowledgeState
 import type { EpochWorldPressure } from "./worldPressureRules.ts";
 import type { ResourceProductionAssignment, ResourceProductionNode } from "./resourceProductionRules.ts";
 import { validateLifeProfile, type LifeProfileState } from "./lifeProfileRules.ts";
+import type { GovernanceState } from "./governanceEcologyRules.ts";
 
 export const CAUSAL_WORLD_SNAPSHOT_SCHEMA_VERSION = 1 as const;
 
@@ -119,6 +120,7 @@ export interface CausalWorldDomainsV1 {
   readonly resourceProductionNodes: readonly ResourceProductionNode[];
   readonly resourceProductionAssignments: readonly ResourceProductionAssignment[];
   readonly lifeProfiles: readonly CausalLifeProfileSnapshotV1[];
+  readonly governanceState?: GovernanceState;
 }
 
 export interface CausalDomainExtensionSlotV1 {
@@ -423,6 +425,7 @@ export function applyCausalEventToSnapshot(
     eventHashes,
     balances: applyBalanceEffects(snapshot.balances, event.effects),
     ownership: applyOwnershipEffects(snapshot.ownership, event.effects, event.occurredAtWorldMinute),
+    actorMind: applyActorMindEvents(snapshot.actorMind, event),
     domains: applyDomainEvents(snapshot.domains, event),
     checkpoint: undefined,
   });
@@ -638,6 +641,7 @@ function normalizeDomains(input: Partial<CausalWorldDomainsV1> | undefined): Cau
       .map((assignment) => stripUndefined(assignment) as ResourceProductionAssignment),
     lifeProfiles: uniqueSorted(input?.lifeProfiles || [], (profile) => profile.profileId)
       .map((profile) => stripUndefined(profile) as CausalLifeProfileSnapshotV1),
+    ...(input?.governanceState ? { governanceState: input.governanceState } : {}),
   };
   assertValidDomains(domains);
   return domains;
@@ -790,6 +794,28 @@ function requiredNonNegativeSafeInteger(value: unknown, field: string): number {
   return Number(value);
 }
 
+function applyActorMindEvents(actorMind: CausalActorMindSnapshotV1, event: CausalWorldEventV1): CausalActorMindSnapshotV1 {
+  const payload = event.payload as Readonly<Record<string, unknown>>;
+  if (
+    event.eventType !== "actor_mind_updated"
+    && event.eventType !== "actor_goal_committed"
+    && event.eventType !== "actor_commitment_updated"
+  ) {
+    return actorMind;
+  }
+  const actorRef = typeof payload.actorRef === "string" ? payload.actorRef : undefined;
+  const mind = payload.mind;
+  if (!actorRef || !isActorMind(mind)) return actorMind;
+  return {
+    ...actorMind,
+    mindsByActor: sortRecord({ ...actorMind.mindsByActor, [actorRef]: mind }),
+  };
+}
+
+function isActorMind(value: unknown): value is ActorMind {
+  return Boolean(value && typeof value === "object" && typeof (value as { readonly actorRef?: unknown }).actorRef === "string");
+}
+
 function applyDomainEvents(domains: CausalWorldDomainsV1, event: CausalWorldEventV1): CausalWorldDomainsV1 {
   const payload = event.payload as Readonly<Record<string, unknown>>;
   if (event.eventType === "resource_node_registered" || event.eventType === "resource_node_replenished") {
@@ -826,6 +852,12 @@ function applyDomainEvents(domains: CausalWorldDomainsV1, event: CausalWorldEven
     }, domains.lifeProfiles);
     return normalizeDomains({ ...domains, lifeProfiles });
   }
+  if (event.eventType === "governance_action_resolved") {
+    const state = payload.state;
+    if (isGovernanceState(state)) {
+      return normalizeDomains({ ...domains, governanceState: state });
+    }
+  }
   return domains;
 }
 
@@ -844,6 +876,19 @@ function isResourceProductionAssignment(value: unknown): value is ResourceProduc
 
 function isLifeProfileState(value: unknown): value is LifeProfileState {
   return Boolean(value && typeof value === "object" && typeof (value as { readonly worldMinute?: unknown }).worldMinute === "number");
+}
+
+function isGovernanceState(value: unknown): value is GovernanceState {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Readonly<Record<string, unknown>>;
+  return Array.isArray(record.factions)
+    && Array.isArray(record.institutions)
+    && Array.isArray(record.jurisdictions)
+    && Array.isArray(record.laws)
+    && Array.isArray(record.policies)
+    && Array.isArray(record.offices)
+    && Array.isArray(record.claims)
+    && Array.isArray(record.obligations);
 }
 
 function stripUndefined(value: unknown): unknown {

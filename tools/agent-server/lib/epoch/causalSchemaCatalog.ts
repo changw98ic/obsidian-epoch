@@ -183,10 +183,16 @@ export const INFINITE_WORLD_RUNTIME_COMMAND_TYPES = [
   "progression_talent",
   "progression_skill",
   "progression_carry",
+  "progression_attribute_evidence",
+  "progression_respec",
   "governance_action",
   "supernatural_cast",
   "legacy_transition",
   "project_tick",
+  "narrative_settle",
+  "actor_mind_tick",
+  "actor_goal_select",
+  "actor_commitment_update",
 ] as const;
 
 export const INFINITE_WORLD_RUNTIME_EVENT_TYPES = [
@@ -205,6 +211,10 @@ export const INFINITE_WORLD_RUNTIME_EVENT_TYPES = [
   "supernatural_action_resolved",
   "legacy_cycle_changed",
   "enterprise_tick_resolved",
+  "narrative_settlement_committed",
+  "actor_mind_updated",
+  "actor_goal_committed",
+  "actor_commitment_updated",
 ] as const;
 
 export const CAUSAL_ACTIVE_DOMAIN_EVENT_TYPES = [

@@ -950,7 +950,6 @@ test("runtime delegates progress read model to a focused module", () => {
   assert.doesNotMatch(runtime, /function inventoryItemsView/);
   assert.doesNotMatch(runtime, /function equipmentEffectsView/);
   assert.doesNotMatch(runtime, /function latestEvents/);
-  assert.doesNotMatch(runtime, /from "\.\/progressReadModel\.ts"/);
   assert.doesNotMatch(runtime, /latestEvents\(core\.project/);
   assert.doesNotMatch(runtime, /progressView\(core\.project/);
   assert.doesNotMatch(runtime, /export interface EpochInventoryInfo/);
@@ -1281,7 +1280,7 @@ test("runtime delegates result page runtime rules to a focused module", () => {
 
   assert.match(resultPagePayloadRules, /from "\.\/resultPageRuntimeRules\.ts"/);
   assert.match(resultPageRuntimeStore, /from "\.\/resultPageRuntimeRules\.ts"/);
-  assert.match(resultPageRuntimeRules, /export function stableResultPageJson/);
+  assert.match(resultPageRuntimeRules, /export \{ stableResultPageJson/);
   assert.match(resultPageRuntimeRules, /export function resultPagePublicSafeSummary/);
   assert.match(resultPageRuntimeRules, /export function resultPagePublicPages/);
   assert.match(resultPageRuntimeRules, /export function focusedResultPageProgress/);

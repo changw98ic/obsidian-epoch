@@ -313,7 +313,9 @@ export class AgentCompanionRuntime {
     const { explorerId } = this.#authorizeAgent(input, agentId);
     return this.#idempotently("prepare", explorerId, input, () => {
       const destinationRegionId = resolveEpochCanonicalRegionId(
-        requiredString(input.destinationRegionId ?? input.regionId, "destination_region_id"),
+        typeof (input.destinationRegionId ?? input.regionId) === "string" && String(input.destinationRegionId ?? input.regionId).trim()
+          ? String(input.destinationRegionId ?? input.regionId).trim()
+          : "region_gray_harbor",
       );
       const originRegionId = typeof input.originRegionId === "string" && input.originRegionId.trim()
         ? resolveEpochCanonicalRegionId(input.originRegionId.trim())
@@ -411,7 +413,7 @@ export class AgentCompanionRuntime {
     const journeyId = requiredString(input.journeyId, "id");
     const current = this.#journey.status(journeyId);
     this.#authorizeExplorer(input, current.journey.explorerId);
-    if (current.journey.version !== Number(input.expectedVersion)) throw new Error("journey_version_conflict");
+    if (input.expectedVersion !== undefined && current.journey.version !== Number(input.expectedVersion)) throw new Error("journey_version_conflict");
     if (!["traveling", "awaiting_agent", "returning"].includes(current.journey.status)) {
       throw new Error("journey_step_not_proposable");
     }

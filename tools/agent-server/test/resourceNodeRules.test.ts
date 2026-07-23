@@ -211,6 +211,7 @@ test("resource node rules plan spawn event sequences", () => {
 
 test("resource node rules plan contest payload scoring", () => {
   assert.deepEqual(resourceNodeContestStaminaSpendPayload({
+    agentId: "agent_scout",
     nodeId: "node_1",
     staminaSpent: 2,
     staminaBalanceBefore: 9,
@@ -219,6 +220,10 @@ test("resource node rules plan contest payload scoring", () => {
     amount: 2,
     reason: "resource_node_contest:node_1",
     balanceAfter: 7,
+    accountRef: "agent:agent_scout",
+    assetKey: "resource:stamina",
+    unit: "unit",
+    quantityMinor: "200",
   });
 
   assert.deepEqual(resourceNodeContestPayload({
@@ -284,6 +289,10 @@ test("resource node rules plan contest event sequences", () => {
     amount: 2,
     reason: "resource_node_contest:node_1",
     balanceAfter: 7,
+    accountRef: "agent:agent_scout",
+    assetKey: "resource:stamina",
+    unit: "unit",
+    quantityMinor: "200",
   });
 
   const contested = events[1];
@@ -344,6 +353,7 @@ test("resource node rules plan settled payload with or without a winner", () => 
   };
 
   assert.deepEqual(resourceNodeSettlementRewardGrantPayload({
+    agentId: "agent_scout",
     reward,
     winnerRewardBalanceBefore: 4,
   }), {
@@ -351,6 +361,10 @@ test("resource node rules plan settled payload with or without a winner", () => 
     amount: 2,
     reason: "resource_node_settlement",
     balanceAfter: 6,
+    accountRef: "agent:agent_scout",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "200",
   });
 
   assert.deepEqual(resourceNodeSettlementPayload({
@@ -452,6 +466,10 @@ test("resource node rules plan settlement event sequences", () => {
     amount: 2,
     reason: "resource_node_settlement",
     balanceAfter: 6,
+    accountRef: "agent:agent_scout",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "200",
   });
 
   const influence = events[2];

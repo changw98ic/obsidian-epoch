@@ -18,7 +18,6 @@ import type { Phase6ProjectionForDelta } from "./phase6ProjectionDeltaRules.ts";
 import type {
   Phase6JourneySettlementAuthoritativeInputs,
   Phase6JourneySettlementMetadata,
-  Phase6JourneySettlementResultPageContext,
 } from "./phase6JourneySettlementAdapter.ts";
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
@@ -102,7 +101,7 @@ export interface Phase6McpJourneyCompletionContextInput {
     readonly snapshots: Phase6JourneySettlementAuthoritativeInputs["receipt"]["snapshots"];
     readonly outcome: Phase6JourneySettlementAuthoritativeInputs["receipt"]["outcome"];
   };
-  readonly resultPage: Phase6JourneySettlementResultPageContext;
+  readonly resultPage: UnknownRecord;
   readonly now?: string;
   readonly journeyRuntime?: Phase6JourneySettlementAuthoritativeInputs["journeyRuntime"];
   readonly actionResolutions?: Phase6JourneySettlementAuthoritativeInputs["actionResolutions"];
@@ -362,5 +361,5 @@ export function finalizePhase6JourneyContext(
       ? { actionResolutions: authoritativeCompletion.actionResolutions }
       : {}),
     ...(authoritativeCompletion.storyReport !== undefined ? { storyReport: authoritativeCompletion.storyReport } : {}),
-  });
+  } as unknown as Phase6JourneySettlementAuthoritativeInputs);
 }

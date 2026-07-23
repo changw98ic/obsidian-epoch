@@ -177,11 +177,15 @@ test("direct trade rules plan created and escrow lock payloads", () => {
     createdAt: acceptedAt,
   });
 
-  assert.deepEqual(directTradeOfferedResourceLockSpendPayload("trade_created", "aether", 4, 6), {
+  assert.deepEqual(directTradeOfferedResourceLockSpendPayload("trade_created", "aether", 4, 6, "agent_seller"), {
     resourceId: "aether",
     amount: 4,
     reason: "direct_trade_lock:trade_created",
     balanceAfter: 6,
+    accountRef: "agent:agent_seller",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "400",
   });
 });
 
@@ -223,6 +227,10 @@ test("direct trade rules plan creation event sequences", () => {
     amount: 4,
     reason: "direct_trade_lock:trade_created",
     balanceAfter: 5,
+    accountRef: "agent:agent_seller",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "400",
   });
   assert.equal(created.payload.proposerAgentId, "agent_seller");
 
@@ -340,6 +348,8 @@ test("direct trade rules plan acceptance ledger and item transfer payloads", () 
   })), undefined);
   assert.deepEqual(directTradeRequestedResourcePaymentPayloads({
     trade,
+    counterpartyAgentId: "agent_buyer",
+    proposerAgentId: "agent_seller",
     counterpartyBalanceAfter: 8,
     proposerBalanceAfter: 20,
   }), {
@@ -348,31 +358,51 @@ test("direct trade rules plan acceptance ledger and item transfer payloads", () 
       amount: 12,
       reason: "direct_trade_payment:trade_accepted",
       balanceAfter: 8,
+      accountRef: "agent:agent_buyer",
+      assetKey: "resource:coin",
+      unit: "unit",
+      quantityMinor: "1200",
     },
     grant: {
       resourceId: "coin",
       amount: 12,
       reason: "direct_trade_payment:trade_accepted",
       balanceAfter: 20,
+      accountRef: "agent:agent_seller",
+      assetKey: "resource:coin",
+      unit: "unit",
+      quantityMinor: "1200",
     },
   });
-  assert.deepEqual(directTradeRequestedResourcePaymentSpendPayload(trade, 8), {
+  assert.deepEqual(directTradeRequestedResourcePaymentSpendPayload(trade, 8, "agent_buyer"), {
     resourceId: "coin",
     amount: 12,
     reason: "direct_trade_payment:trade_accepted",
     balanceAfter: 8,
+    accountRef: "agent:agent_buyer",
+    assetKey: "resource:coin",
+    unit: "unit",
+    quantityMinor: "1200",
   });
-  assert.deepEqual(directTradeRequestedResourcePaymentGrantPayload(trade, 20), {
+  assert.deepEqual(directTradeRequestedResourcePaymentGrantPayload(trade, 20, "agent_seller"), {
     resourceId: "coin",
     amount: 12,
     reason: "direct_trade_payment:trade_accepted",
     balanceAfter: 20,
+    accountRef: "agent:agent_seller",
+    assetKey: "resource:coin",
+    unit: "unit",
+    quantityMinor: "1200",
   });
-  assert.deepEqual(directTradeOfferedResourceGoodsGrantPayload(trade, 7), {
+  assert.deepEqual(directTradeOfferedResourceGoodsGrantPayload(trade, 7, "agent_buyer"), {
     resourceId: "aether",
     amount: 4,
     reason: "direct_trade_goods:trade_accepted",
     balanceAfter: 7,
+    accountRef: "agent:agent_buyer",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "400",
   });
   assert.equal(directTradeOfferedResourceGoodsGrantPayload(directTrade({
     offeredAsset: {
@@ -567,11 +597,15 @@ test("direct trade rules plan cancel expiry and refund payloads", () => {
     resourceId: "aether",
     amount: 4,
   });
-  assert.deepEqual(directTradeOfferedResourceRefundPayload(trade, "expired", 9), {
+  assert.deepEqual(directTradeOfferedResourceRefundPayload(trade, "expired", 9, "agent_seller"), {
     resourceId: "aether",
     amount: 4,
     reason: "direct_trade_expired:trade_terminal",
     balanceAfter: 9,
+    accountRef: "agent:agent_seller",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "400",
   });
   assert.equal(directTradeOfferedResourceRefundPayload(directTrade({
     offeredAsset: {

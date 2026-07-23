@@ -88,6 +88,10 @@ export function legendAwardGrantPayload(input: {
     amount: input.award.amount,
     reason: input.award.reason,
     balanceAfter: input.currentLegend + input.award.amount,
+    accountRef: `agent:${input.award.agentId}`,
+    assetKey: "resource:legend",
+    unit: "unit",
+    quantityMinor: (BigInt(input.award.amount) * 100n).toString(),
   };
 }
 

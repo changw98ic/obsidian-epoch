@@ -186,6 +186,7 @@ test("encounter rules calculate contested objective contribution payloads", () =
   assert.equal(OBJECTIVE_SCORE_WEIGHT.aether, 4);
   assert.equal(objectiveScoreDelta("aether", 3), 12);
   assert.deepEqual(contestedObjectiveContributionSpendPayload({
+    agentId: "agent_alpha",
     objectiveId: "objective_1",
     resourceId: "aether",
     amount: 3,
@@ -195,6 +196,10 @@ test("encounter rules calculate contested objective contribution payloads", () =
     amount: 3,
     reason: "objective_contribution:objective_1",
     balanceAfter: 5,
+    accountRef: "agent:agent_alpha",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "300",
   });
 
   assert.deepEqual(contestedObjectiveContributionPayload({
@@ -253,6 +258,10 @@ test("encounter rules plan contested objective contribution event sequences", ()
     amount: 3,
     reason: "objective_contribution:objective_1",
     balanceAfter: 5,
+    accountRef: "agent:agent_alpha",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "300",
   });
 
   const contributed = events[1];
@@ -326,6 +335,7 @@ test("encounter rules plan contested objective settlement payloads", () => {
   };
 
   assert.deepEqual(contestedObjectiveSettlementRewardGrantPayload({
+    agentId: "agent_alpha",
     reward,
     winnerRewardBalanceBefore: 6,
   }), {
@@ -333,6 +343,10 @@ test("encounter rules plan contested objective settlement payloads", () => {
     amount: 1,
     reason: "objective_complete",
     balanceAfter: 7,
+    accountRef: "agent:agent_alpha",
+    assetKey: "resource:legend",
+    unit: "unit",
+    quantityMinor: "100",
   });
 
   assert.deepEqual(contestedObjectiveSettlementPayload({
@@ -495,6 +509,10 @@ test("encounter rules plan contested objective settlement event sequences", () =
     amount: 1,
     reason: "objective_complete",
     balanceAfter: 7,
+    accountRef: "agent:agent_alpha",
+    assetKey: "resource:legend",
+    unit: "unit",
+    quantityMinor: "100",
   });
 
   const influence = events[2];
@@ -745,6 +763,7 @@ test("encounter rules plan anomaly spawn event sequences", () => {
 
 test("encounter rules plan anomaly contest payloads", () => {
   assert.deepEqual(anomalyEventContestFocusSpendPayload({
+    agentId: "agent_seer",
     anomalyId: "anomaly_1",
     focusSpent: 2,
     focusBalanceBefore: 7,
@@ -753,6 +772,10 @@ test("encounter rules plan anomaly contest payloads", () => {
     amount: 2,
     reason: "anomaly_event_contest:anomaly_1",
     balanceAfter: 5,
+    accountRef: "agent:agent_seer",
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: "200",
   });
 
   assert.deepEqual(anomalyEventContestPayload({
@@ -811,6 +834,10 @@ test("encounter rules plan anomaly contest event sequences", () => {
     amount: 2,
     reason: "anomaly_event_contest:anomaly_1",
     balanceAfter: 5,
+    accountRef: "agent:agent_seer",
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: "200",
   });
 
   const contested = events[1];
@@ -875,6 +902,7 @@ test("encounter rules plan anomaly resolution payloads", () => {
   };
 
   assert.deepEqual(anomalyEventResolutionRewardGrantPayload({
+    agentId: "agent_seer",
     reward,
     winnerRewardBalanceBefore: 4,
   }), {
@@ -882,6 +910,10 @@ test("encounter rules plan anomaly resolution payloads", () => {
     amount: 2,
     reason: "anomaly_contained",
     balanceAfter: 6,
+    accountRef: "agent:agent_seer",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "200",
   });
 
   assert.equal(anomalyEventResolutionOutcome({
@@ -1076,6 +1108,10 @@ test("encounter rules plan anomaly resolution event sequences", () => {
     amount: 2,
     reason: "anomaly_contained",
     balanceAfter: 6,
+    accountRef: "agent:agent_seer",
+    assetKey: "resource:aether",
+    unit: "unit",
+    quantityMinor: "200",
   });
 
   const influence = events[2];

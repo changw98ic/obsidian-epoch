@@ -178,9 +178,9 @@ test("runtime verifies server-issued explorer auth and recovery authorizes owner
   assert.match(JSON.stringify(epochEventsForPersistence(rotated)), /explorerSecretHash|sha256:/);
 });
 
-test("runtime registration and auth verification are not exposed as MCP tools", () => {
+test("runtime auth verification is not exposed as MCP tools", () => {
   const mcp = createAgentWorldMcpRuntime();
   const toolNames = mcp.listTools().map((tool) => tool.name);
-  assert.equal(toolNames.includes("obsidian_epoch.register_explorer"), false);
+  assert.equal(toolNames.includes("obsidian_epoch.register_explorer"), true);
   assert.equal(toolNames.includes("obsidian_epoch.verify_explorer_auth"), false);
 });

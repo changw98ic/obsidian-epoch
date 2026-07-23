@@ -249,7 +249,7 @@ function withServerResolutionEvidence(result: JsonRecord): JsonRecord {
         ...event.payload,
         journeyResolution,
       },
-    } as typeof event;
+    } as unknown as typeof event;
   });
   return enriched ? attachEpochEventsForPersistence(result, evidenceEvents) : result;
 }

@@ -377,7 +377,7 @@ function validateScores(input: Phase6ResultPageInput, findings: Phase6ResultPage
   const byDimension = new Map<string, Phase6ResultPageScoreDetail[]>();
   input.scores.forEach((score, index) => {
     const path = `scores.${index}`;
-    if (!isRecord(score)) {
+    if (!isRecord(score as unknown)) {
       findings.push(finding("PHASE6_RESULT_PAGE_SCORE_INVALID", "score entry must be an object", path));
       return;
     }

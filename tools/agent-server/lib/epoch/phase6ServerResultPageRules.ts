@@ -389,7 +389,7 @@ function strictFinalizedReceipt(
     }
     return undefined;
   }
-  return value as JourneyRunReceipt;
+  return value as unknown as JourneyRunReceipt;
 }
 
 function isUnfinalizedReceipt(value: unknown): value is AnyRecord {
@@ -621,7 +621,7 @@ function validateInitialResultArtifact(
   return {
     page,
     artifactHash: `sha256:${sha256Hex(stableResultPageJson(value))}`,
-    economyConservation: settlement.economyConservation as Phase6ResultPageRunSettlement["economyConservation"],
+    economyConservation: settlement.economyConservation as unknown as Phase6ResultPageRunSettlement["economyConservation"],
   };
 }
 

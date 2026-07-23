@@ -252,6 +252,7 @@ export interface OrganizationTreasuryContributionPayloadInput {
 }
 
 export interface OrganizationTreasuryContributionSpendPayloadInput {
+  readonly agentId: string;
   readonly organizationId: string;
   readonly resourceId: EpochResourceId;
   readonly amount: number;
@@ -882,6 +883,10 @@ export function organizationTreasuryContributionSpendPayload(
     amount: input.amount,
     reason: `organization_treasury_contribution:${input.organizationId}`,
     balanceAfter: input.memberBalanceBefore - input.amount,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: `resource:${input.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(input.amount) * 100n).toString(),
   };
 }
 
@@ -889,6 +894,7 @@ export function planOrganizationTreasuryContributionEvents(
   input: OrganizationTreasuryContributionEventsInput,
 ): readonly EpochEvent[] {
   const spent = resourceSpentEvent(input.makeEvent, input.contributingAgentId, organizationTreasuryContributionSpendPayload({
+    agentId: input.contributingAgentId,
     organizationId: input.organizationId,
     resourceId: input.resourceId,
     amount: input.amount,

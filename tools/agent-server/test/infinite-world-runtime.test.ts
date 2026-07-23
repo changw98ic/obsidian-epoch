@@ -481,6 +481,10 @@ function validCommand(commandType: InfiniteWorldCommandType, idempotencyKey = `i
       return baseCommand(commandType, { state: progressionState(), input: { node: { nodeId: "breath_edge", tier: "tier2", kind: "method_unlock", prerequisiteNodeIds: ["root_breath"], materialCost: [{ materialId: "primary", quantity: 2 }] }, sourceEventIds, availableMaterials: [{ materialId: "primary", quantity: 2 }] } }, idempotencyKey);
     case "progression_carry":
       return baseCommand(commandType, { state: progressionState(), input: { targetCarrySlots: 4, targetDeploymentCapacity: 8, targetQuickUseSlots: 3, targetEchoSlots: 2, targetInsuranceLayers: 1, sourceEventIds } }, idempotencyKey);
+    case "progression_attribute_evidence":
+      return baseCommand(commandType, { state: progressionState(), input: { attributeId: "strength", relevanceBps: 8000, challengeBand: "matched", executionQualityBps: 7000, recoveryStateBps: 9000, repeatIndex: 0, sourceEventIds, actionTags: ["combat"] } }, idempotencyKey);
+    case "progression_respec":
+      return baseCommand(commandType, { state: progressionState({ resources: { functionalXp: 360, insightPoints: 4, skillPointsSpent: 0, lineageMarks: 1, attributeEvidenceXp: { strength: 250 }, methodProficiency: { breath: 250 }, domainInsight: { dream_mind: 30 }, materials: [] } }), input: { scope: "sameNode", spentExperience: 100, nodeIds: ["root_breath"], sourceEventIds } }, idempotencyKey);
     case "governance_action":
       return baseCommand(commandType, { state: governanceState(), action: { actionId: "action_enact", kind: "enact_law", actorRef: "faction:faction_alpha", targetRef: "law:law_charter", sourceRef: "event:hearing", worldMinute: 100, sourceEventIds, authorizationRefs: ["authority:council"], requiredAuthorityRefs: ["authority:council"], oppositionRefs: ["faction:opposition"], cost: {} } }, idempotencyKey);
     case "supernatural_cast":
@@ -489,6 +493,8 @@ function validCommand(commandType: InfiniteWorldCommandType, idempotencyKey = `i
       return baseCommand(commandType, { snapshot: mortalitySnapshot(), intent: { commandId: "cmd_legacy", causeEventIds: sourceEventIds, occurredAtWorldMinute: 110, advanceWorldMinutes: 10, requestedTransition: "settle_legacy", heirRef: "identity:heir", authorizationRefs: ["inheritance:lineage:alpha:identity:heir"] } }, idempotencyKey);
     case "project_tick":
       return baseCommand(commandType, { input: { commandId: "cmd_project", worldId: WORLD_ID, project: projectSnapshot(), toWorldMinute: 1540, sourceEventIds } }, idempotencyKey);
+    case "narrative_settle":
+      return baseCommand(commandType, { input: { worldId: WORLD_ID, worldMinute: 100, candidate: { kind: "thread", value: { threadId: "thread_runtime", state: "active", titleRef: "title:runtime", rootPressureIds: ["pressure_runtime"], originEventIds: sourceEventIds, actorRefs: ["actor:runtime"], regionRefs: ["region_harbor"], knownFactRefs: [], secretRefs: [], falseBeliefRefs: [], conflictingGoalRefs: [], promiseRefs: [], debtRefs: [], relationshipBeatRefs: [], arcs: [], tensions: [], currentStage: "setup", openedAtWorldMinute: 50, updatedAtWorldMinute: 100, reviewAtWorldMinute: 200, explanation: "runtime test thread" } }, sourceEventIds, authorizationRefs: ["auth:runtime:test"] } }, idempotencyKey);
   }
 }
 
@@ -518,10 +524,13 @@ test("commits every known infinite world command type through the runtime", asyn
     "progression_talent",
     "progression_skill",
     "progression_carry",
+    "progression_attribute_evidence",
+    "progression_respec",
     "governance_action",
     "supernatural_cast",
     "legacy_transition",
     "project_tick",
+    "narrative_settle",
   ];
 
   for (const commandType of commandTypes) {

@@ -47,11 +47,15 @@ test("bounty rules read bounty projection state", () => {
 });
 
 test("bounty rules plan escrow and created payloads", () => {
-  assert.deepEqual(bountyEscrowSpendPayload("coin", 7, "bounty_1", 3), {
+  assert.deepEqual(bountyEscrowSpendPayload("coin", 7, "bounty_1", 3, "agent_sponsor"), {
     resourceId: "coin",
     amount: 7,
     reason: "bounty_lock:bounty_1",
     balanceAfter: 3,
+    accountRef: "agent:agent_sponsor",
+    assetKey: "resource:coin",
+    unit: "unit",
+    quantityMinor: "700",
   });
   assert.deepEqual(bountyCreatedPayload({
     bountyId: "bounty_1",
@@ -147,11 +151,15 @@ test("bounty rules plan creation event sequences", () => {
 });
 
 test("bounty rules plan claimed reward and event payloads", () => {
-  assert.deepEqual(bountyClaimRewardPayload(bounty, 12), {
+  assert.deepEqual(bountyClaimRewardPayload(bounty, 12, "agent_hunter"), {
     resourceId: "coin",
     amount: 7,
     reason: "bounty_claim:bounty_1",
     balanceAfter: 12,
+    accountRef: "agent:agent_hunter",
+    assetKey: "resource:coin",
+    unit: "unit",
+    quantityMinor: "700",
   });
   assert.deepEqual(bountyClaimedPayload({
     bountyId: "bounty_1",

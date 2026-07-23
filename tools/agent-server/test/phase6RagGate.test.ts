@@ -9,7 +9,7 @@ import { causalCanonicalJsonHash } from "../lib/epoch/causalCanonicalJson.ts";
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(testDirectory, "../../..");
-const gatePath = resolve(repoRoot, "tools/agent-server/phase6-rag-gate.mjs");
+const gatePath = resolve(repoRoot, "tools/agent-server/phase6-rag-gate.ts");
 
 function traceInput(runIndex: number) {
   const expectedRecentKeyFacts = Array.from({ length: 20 }, (_, index) => ({

@@ -405,7 +405,7 @@ export function epochTenRunJourneyAudit(projection: EpochProjection): EpochTenRu
   }
 
   const completed = [...byRun.values()]
-    .map((entry) => {
+    .map((entry): EpochTenRunJourneyAuditEntry | undefined => {
       if (!entry.settledEvent && !entry.receipt) {
         entry.excluded.push({
           sourceType: entry.sourceTypes.has("canonical_event") ? "canonical_event" : "unknown",

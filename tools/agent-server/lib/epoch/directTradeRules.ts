@@ -70,6 +70,8 @@ export interface DirectTradeResourceRefundAsset extends DirectTradeResourceSettl
 
 export interface DirectTradeRequestedResourcePaymentPayloadsInput {
   readonly trade: DirectTradeForRules;
+  readonly counterpartyAgentId: string;
+  readonly proposerAgentId: string;
   readonly counterpartyBalanceAfter: number;
   readonly proposerBalanceAfter: number;
 }
@@ -306,6 +308,7 @@ export function planDirectTradeCreationEvents(input: DirectTradeCreationEventsIn
       offeredAsset.resourceId,
       offeredAsset.amount,
       input.proposerOfferBalanceBefore - offeredAsset.amount,
+      input.proposerAgentId,
     )),
     created,
   ];
@@ -345,6 +348,8 @@ export function planDirectTradeAcceptanceEvents(input: DirectTradeAcceptanceEven
   if (requestedPaymentAsset) {
     const paymentPayloads = directTradeRequestedResourcePaymentPayloads({
       trade: input.trade,
+      counterpartyAgentId: input.counterpartyAgentId,
+      proposerAgentId: input.trade.proposerAgentId,
       counterpartyBalanceAfter: input.counterpartyRequestedBalanceBefore(requestedPaymentAsset.resourceId)
         - requestedPaymentAsset.amount,
       proposerBalanceAfter: input.proposerRequestedBalanceBefore(requestedPaymentAsset.resourceId)
@@ -360,6 +365,7 @@ export function planDirectTradeAcceptanceEvents(input: DirectTradeAcceptanceEven
     const goodsPayload = directTradeOfferedResourceGoodsGrantPayload(
       input.trade,
       input.counterpartyOfferedBalanceBefore(offeredGoodsAsset.resourceId) + offeredGoodsAsset.amount,
+      input.counterpartyAgentId,
     );
     if (goodsPayload) nextEvents.push(resourceGrantedEvent(input.makeEvent, input.counterpartyAgentId, goodsPayload));
   }
@@ -437,18 +443,24 @@ export function directTradeOfferedResourceLockSpendPayload(
   resourceId: EpochResourceId,
   amount: number,
   balanceAfter: number,
+  agentId: string,
 ): ResourceSpentPayload {
   return {
     resourceId,
     amount,
     reason: `direct_trade_lock:${tradeId}`,
     balanceAfter,
+    accountRef: `agent:${agentId}`,
+    assetKey: `resource:${resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(amount) * 100n).toString(),
   };
 }
 
 export function directTradeRequestedResourcePaymentSpendPayload(
   trade: DirectTradeForRules,
   balanceAfter: number,
+  agentId: string,
 ): ResourceSpentPayload {
   const requestedAsset = requireDirectTradeResourceAsset(trade.requestedAsset);
   return {
@@ -456,12 +468,17 @@ export function directTradeRequestedResourcePaymentSpendPayload(
     amount: requestedAsset.amount,
     reason: `direct_trade_payment:${trade.tradeId}`,
     balanceAfter,
+    accountRef: `agent:${agentId}`,
+    assetKey: `resource:${requestedAsset.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(requestedAsset.amount) * 100n).toString(),
   };
 }
 
 export function directTradeRequestedResourcePaymentGrantPayload(
   trade: DirectTradeForRules,
   balanceAfter: number,
+  agentId: string,
 ): ResourceGrantedPayload {
   const requestedAsset = requireDirectTradeResourceAsset(trade.requestedAsset);
   return {
@@ -469,12 +486,17 @@ export function directTradeRequestedResourcePaymentGrantPayload(
     amount: requestedAsset.amount,
     reason: `direct_trade_payment:${trade.tradeId}`,
     balanceAfter,
+    accountRef: `agent:${agentId}`,
+    assetKey: `resource:${requestedAsset.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(requestedAsset.amount) * 100n).toString(),
   };
 }
 
 export function directTradeOfferedResourceGoodsGrantPayload(
   trade: DirectTradeForRules,
   balanceAfter: number,
+  agentId: string,
 ): ResourceGrantedPayload | undefined {
   const offeredAsset = directTradeOfferedResourceGoodsAsset(trade);
   if (!offeredAsset) return undefined;
@@ -483,6 +505,10 @@ export function directTradeOfferedResourceGoodsGrantPayload(
     amount: offeredAsset.amount,
     reason: `direct_trade_goods:${trade.tradeId}`,
     balanceAfter,
+    accountRef: `agent:${agentId}`,
+    assetKey: `resource:${offeredAsset.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(offeredAsset.amount) * 100n).toString(),
   };
 }
 
@@ -505,8 +531,8 @@ export function directTradeRequestedResourcePaymentPayloads(
 ): DirectTradeRequestedResourcePaymentPayloads | undefined {
   if (!directTradeRequestedResourcePaymentAsset(input.trade)) return undefined;
   return {
-    spend: directTradeRequestedResourcePaymentSpendPayload(input.trade, input.counterpartyBalanceAfter),
-    grant: directTradeRequestedResourcePaymentGrantPayload(input.trade, input.proposerBalanceAfter),
+    spend: directTradeRequestedResourcePaymentSpendPayload(input.trade, input.counterpartyBalanceAfter, input.counterpartyAgentId),
+    grant: directTradeRequestedResourcePaymentGrantPayload(input.trade, input.proposerBalanceAfter, input.proposerAgentId),
   };
 }
 
@@ -554,6 +580,7 @@ export function planDirectTradeCancellationEvents(input: DirectTradeCancellation
       input.trade,
       "cancel",
       input.proposerRefundBalanceBefore(refundAsset.resourceId) + refundAsset.amount,
+      input.trade.proposerAgentId,
     )
     : undefined;
   const refund = refundPayload
@@ -604,6 +631,7 @@ export function planDirectTradeExpiryEvents(input: DirectTradeExpiryEventsInput)
       input.trade,
       "expired",
       input.proposerRefundBalanceBefore(refundAsset.resourceId) + refundAsset.amount,
+      input.trade.proposerAgentId,
     )
     : undefined;
   const refund = refundPayload
@@ -643,6 +671,7 @@ export function directTradeOfferedResourceRefundPayload(
   trade: DirectTradeForRules,
   refundReason: DirectTradeOfferedResourceRefundReason,
   balanceAfter: number,
+  agentId: string,
 ): ResourceGrantedPayload | undefined {
   const refundAsset = directTradeOfferedResourceRefundAsset(trade);
   if (!refundAsset) return undefined;
@@ -651,6 +680,10 @@ export function directTradeOfferedResourceRefundPayload(
     amount: refundAsset.amount,
     reason: `direct_trade_${refundReason}:${trade.tradeId}`,
     balanceAfter,
+    accountRef: `agent:${agentId}`,
+    assetKey: `resource:${refundAsset.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(refundAsset.amount) * 100n).toString(),
   };
 }
 

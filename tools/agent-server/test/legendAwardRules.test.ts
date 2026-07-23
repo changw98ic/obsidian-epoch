@@ -92,6 +92,10 @@ test("legend award rules build resource grant payloads", () => {
     amount: 3,
     reason: "region_news:news_1",
     balanceAfter: 7,
+    accountRef: "agent:agent_1",
+    assetKey: "resource:legend",
+    unit: "unit",
+    quantityMinor: "300",
   });
 });
 

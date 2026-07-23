@@ -16,6 +16,7 @@ import { unavailableRecoveryManifest } from "../lib/recovery.ts";
 import { appendSqliteJsonl, loadAgentRuntimeOptionsFromSqlite } from "../lib/sqliteStore.ts";
 import { hydrateAgentRuntimeOptions } from "../lib/store.ts";
 import { EPOCH_CONTEXT_PACK_VERSION } from "../lib/worldContextVersions.ts";
+import { createPhase6InMemoryStores } from "./phase6InMemoryStores.ts";
 
 function visibleHtmlText(html: string) {
   return html
@@ -463,6 +464,7 @@ async function withHttpServer<T>(
     readonly consoleAssetBaseUrl?: string;
     readonly canonicalPublicServerBase?: string;
     readonly mcpBearerToken?: string;
+    readonly health?: { readonly store?: { readonly kind: "memory" | "jsonl" | "sqlite"; readonly sqlitePath?: string } };
   } = {},
 ) {
   const server = createAgentHttpServer({
@@ -472,6 +474,7 @@ async function withHttpServer<T>(
     consoleAssetBaseUrl: options.consoleAssetBaseUrl,
     canonicalPublicServerBase: options.canonicalPublicServerBase,
     mcpBearerToken: options.mcpBearerToken,
+    health: options.health,
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -9228,8 +9231,15 @@ test("HTTP MCP persists Agent-native three-phase Journey events and final verifi
   const writes: { fileName: string; record: Record<string, any> }[] = [];
   let realNow = "2026-07-12T00:00:00.000Z";
   let worldNow = "2026-01-01T08:00:00.000Z";
+  const phase6Stores = createPhase6InMemoryStores();
   const runtime = createAgentWorldRuntime({
-    epoch: { idFactory: createSequentialEpochIdFactory("http_mcp_journey_persist") },
+    epoch: {
+      idFactory: createSequentialEpochIdFactory("http_mcp_journey_persist"),
+      phase6RunAssemblyRepository: phase6Stores.phase6RunAssemblyRepository,
+      phase6JourneyContextStore: phase6Stores.phase6JourneyContextStore,
+      phase6ExperimentStore: phase6Stores.phase6ExperimentStore,
+      phase6RagTraceStore: phase6Stores.phase6RagTraceStore,
+    },
     journey: {
       now: () => realNow,
       worldNow: () => worldNow,
@@ -9373,6 +9383,7 @@ test("HTTP MCP persists Agent-native three-phase Journey events and final verifi
     assert.doesNotMatch(publicPage.text, /该身份将无法保留/);
     assert.match(publicPage.text, /核对中出现一处差额/);
   }, {
+    health: { store: { kind: "sqlite", sqlitePath: ":memory:" } },
     persistJsonl: async (fileName, record) => {
       writes.push({ fileName, record: record as Record<string, any> });
       if (fileName === "journey-events.jsonl" || fileName === "result-pages.jsonl") {

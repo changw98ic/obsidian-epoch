@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 // @ts-ignore: phase6-ten-run is a CLI .mjs module with a focused test export.
-import { validate } from "../phase6-ten-run.mjs";
+import { validate } from "../phase6-ten-run.ts";
 
 const experimentId = "phase6-exp-synthetic";
 const identityId = "identity-synthetic";
@@ -18,6 +18,19 @@ const versions = {
 type JsonRecord = Record<string, unknown>;
 
 const launcherSourceToolName = (toolName: string) => `mcp__obsidian_epoch__obsidian_epoch_${toolName}`;
+
+const EXPECTED_SCENARIO_TAGS = [
+  "low-prepared-resource",
+  "low-underprepared-information",
+  "medium-prepared-structured",
+  "medium-borderline-companion",
+  "medium-mismatched-preserve",
+  "high-prepared-priority",
+  "high-underprepared-crisis",
+  "medium-prepared-cultivation",
+  "medium-specialist-crafting",
+  "dynamic-mixed-repeat",
+] as const;
 
 function receipt(runIndex: number): JsonRecord {
   return {
@@ -93,6 +106,7 @@ function goldenRecords(): JsonRecord[] {
 
   for (let runIndex = 1; runIndex <= 10; runIndex += 1) {
     const binding = { receiptId: `begin-receipt-${runIndex}`, runIndex, experimentId };
+    const scenarioTag = EXPECTED_SCENARIO_TAGS[runIndex - 1];
     records.push(
       record(runIndex, 1, {
         toolName: "obsidian_epoch.begin_phase6_run",
@@ -101,8 +115,14 @@ function goldenRecords(): JsonRecord[] {
         seed: `seed-${runIndex}`,
         versions,
         binding,
+        scenarioTag,
       }),
       record(runIndex, 2, {
+        toolName: "obsidian_epoch.player_panel",
+        sourceToolName: launcherSourceToolName("player_panel"),
+        panel: panel(runIndex, "before"),
+      }),
+      record(runIndex, 3, {
         toolName: "obsidian_epoch.start_journey",
         sourceToolName: launcherSourceToolName("start_journey_compact"),
         seed: `seed-${runIndex}`,
@@ -111,12 +131,17 @@ function goldenRecords(): JsonRecord[] {
         formalJourney: true,
         playerPanelBefore: panel(runIndex, "before"),
       }),
-      record(runIndex, 3, {
+      record(runIndex, 4, {
         eventType: "player_panel_snapshot_after",
         playerPanelAfter: panel(runIndex, "after"),
         eventIds: [`event-${runIndex}-panel`],
       }),
-      record(runIndex, 4, {
+      record(runIndex, 5, {
+        toolName: "obsidian_epoch.player_panel",
+        sourceToolName: launcherSourceToolName("player_panel"),
+        panel: panel(runIndex, "after"),
+      }),
+      record(runIndex, 6, {
         toolName: "obsidian_epoch.journey_status",
         sourceToolName: launcherSourceToolName("journey_status_compact"),
         phase6Settlement: {
@@ -126,7 +151,7 @@ function goldenRecords(): JsonRecord[] {
           receiptId: `receipt-${runIndex}`,
         },
       }),
-      record(runIndex, 5, {
+      record(runIndex, 7, {
         toolName: "obsidian_epoch.run_receipt",
         sourceToolName: launcherSourceToolName("run_receipt_compact"),
         receipt: receipt(runIndex),
@@ -136,11 +161,11 @@ function goldenRecords(): JsonRecord[] {
         scoreBreakdown: { execution: runIndex, risk: runIndex % 3 },
         eventIds: [`event-${runIndex}-receipt-record`],
       }),
-      record(runIndex, 6, {
+      record(runIndex, 8, {
         eventType: "formal_result_page_published",
         resultPage: { pageId: `page-${runIndex}`, receiptId: `receipt-${runIndex}` },
       }),
-      record(runIndex, 7, {
+      record(runIndex, 9, {
         toolName: "obsidian_epoch.phase6_result",
         sourceToolName: launcherSourceToolName("phase6_result_compact"),
         verified: true,
@@ -149,7 +174,7 @@ function goldenRecords(): JsonRecord[] {
         resultPage: { pageId: `page-${runIndex}`, receiptId: `receipt-${runIndex}` },
         result: { receipt: { receiptId: `receipt-${runIndex}`, runIndex } },
       }),
-      record(runIndex, 8, {
+      record(runIndex, 10, {
         toolName: "obsidian_epoch.phase6_experiment_status",
         sourceToolName: launcherSourceToolName("phase6_experiment_status"),
         runs: [{ runIndex, status: "complete", receipt: binding }],
@@ -233,7 +258,6 @@ test("Phase 6 ten-run validator accepts real launcher mixed compact and noncompa
   const legalNonCompactTools = [
     "register_explorer",
     "prepare_journey",
-    "player_panel",
     "progress",
     "world_overview",
     "world_content",
@@ -289,7 +313,7 @@ test("Phase 6 ten-run validator fails on any malformed nonempty JSONL line witho
 
 test("Phase 6 ten-run validator fails closed on any error marker", () => {
   const records = goldenRecords();
-  records.splice(10, 0, record(1, 9, { isError: true, ok: true, eventType: "temporary_tool_recovery" }));
+  records.splice(11, 0, record(1, 9, { isError: true, ok: true, eventType: "temporary_tool_recovery" }));
   assertFailure(records, "phase6_fail_closed_error_markers");
 });
 
@@ -301,30 +325,30 @@ test("Phase 6 ten-run validator requires one explorer binding", () => {
 
 test("Phase 6 ten-run validator requires previous run proof before next begin", () => {
   const records = goldenRecords();
-  const moved = records.splice(4, 1)[0];
+  const moved = records.splice(6, 1)[0];
   records.splice(11, 0, moved);
   assertFailure(records, "phase6_previous_run_settled_before_next_begin");
 });
 
 test("Phase 6 ten-run validator requires strict journey_status settlement ids", () => {
   const records = goldenRecords();
-  const settlement = records[4].phase6Settlement as JsonRecord;
+  const settlement = records[6].phase6Settlement as JsonRecord;
   settlement.status = "completed";
   assertFailure(records, "phase6_journey_status_settlement_strict");
 });
 
 test("Phase 6 ten-run validator binds verified result to same-run status and receipt", () => {
   const records = goldenRecords();
-  records[7].receiptId = "receipt-from-other-run";
+  records[9].receiptId = "receipt-from-other-run";
   assertFailure(records, "phase6_result_verified_binding_match");
 });
 
 test("Phase 6 ten-run validator rejects non-compact sources for all six compact-only normalized tools", () => {
   const compactOnlyTools = [
-    ["start_journey", 2],
-    ["journey_status", 4],
-    ["run_receipt", 5],
-    ["phase6_result", 7],
+    ["start_journey", 3],
+    ["journey_status", 6],
+    ["run_receipt", 7],
+    ["phase6_result", 9],
   ] as const;
   for (const [tool, recordIndex] of compactOnlyTools) {
     const records = goldenRecords();
@@ -349,31 +373,31 @@ test("Phase 6 ten-run validator rejects non-compact sources for all six compact-
   }
 
   const records = goldenRecords();
-  records[2].originalToolName = launcherSourceToolName("start_journey");
+  records[3].originalToolName = launcherSourceToolName("start_journey");
   assertFailure(records, "phase6_compact_only_source_tools");
 
   const missingSourceRecords = goldenRecords();
-  delete missingSourceRecords[2].sourceToolName;
-  delete missingSourceRecords[2].originalToolName;
+  delete missingSourceRecords[3].sourceToolName;
+  delete missingSourceRecords[3].originalToolName;
   assertFailure(missingSourceRecords, "phase6_compact_only_source_tools");
 });
 
 test("Phase 6 ten-run validator requires real before/after panel changes", () => {
   const records = goldenRecords();
-  records[3].playerPanelAfter = records[2].playerPanelBefore;
-  assertFailure(records, "phase6_player_panel_real_changes");
+  records[4].playerPanelAfter = records[3].playerPanelBefore;
+  assertFailure(records, "phase6_player_panel_delta_or_no_change_reason");
 });
 
 test("Phase 6 ten-run validator keeps existing economy, RAG, and scoring gates", () => {
   const noEconomy = goldenRecords();
-  delete noEconomy[5].resourceConservation;
+  delete noEconomy[7].resourceConservation;
   assertFailure(noEconomy, "resource_conservation");
 
   const noRag = goldenRecords();
-  delete noRag[5].ragDelta;
+  delete noRag[7].ragDelta;
   assertFailure(noRag, "rag_world_delta_or_no_change_reason");
 
   const noScoring = goldenRecords();
-  delete noScoring[5].scoreBreakdown;
+  delete noScoring[7].scoreBreakdown;
   assertFailure(noScoring, "score_breakdown_present");
 });

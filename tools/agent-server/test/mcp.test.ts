@@ -501,16 +501,11 @@ test("MCP tool registry exposes agent world tools without model credential field
   const tools = mcp.listTools();
   const encoded = JSON.stringify(tools);
 
-  assert.ok(tools.some((tool: { name: string }) => tool.name === "agent_world.context_package"));
-  assert.ok(tools.some((tool: { name: string }) => tool.name === "agent_world.context_snapshots"));
-  assert.ok(tools.some((tool: { name: string }) => tool.name === "agent_world.start_run"));
-  assert.ok(tools.some((tool: { name: string }) => tool.name === "agent_world.submit_battle_report"));
-  assert.ok(tools.some((tool: { name: string }) => tool.name === "agent_world.review_queue"));
-  const legacySubmitTool = tools.find((tool: { name: string }) => tool.name === "agent_world.submit_battle_report");
-  assert.match(legacySubmitTool?.description || "", /legacy authored-report/i);
-  assert.match(legacySubmitTool?.description || "", /obsidian_epoch\.turn_card/i);
-  assert.match(legacySubmitTool?.description || "", /obsidian_epoch\.resolve_turn/i);
-  assert.match(JSON.stringify(legacySubmitTool?.inputSchema || {}), /sequence/);
+  assert.ok(!tools.some((tool: { name: string }) => tool.name === "agent_world.context_package"));
+  assert.ok(!tools.some((tool: { name: string }) => tool.name === "agent_world.context_snapshots"));
+  assert.ok(!tools.some((tool: { name: string }) => tool.name === "agent_world.start_run"));
+  assert.ok(!tools.some((tool: { name: string }) => tool.name === "agent_world.submit_battle_report"));
+  assert.ok(!tools.some((tool: { name: string }) => tool.name === "agent_world.review_queue"));
   assert.ok(tools.some((tool: { name: string }) => tool.name === "obsidian_epoch.identity"));
   assert.ok(tools.some((tool: { name: string }) => tool.name === "obsidian_epoch.quickstart"));
   assert.ok(tools.some((tool: { name: string }) => tool.name === "obsidian_epoch.claim_downtime"));
@@ -9916,548 +9911,83 @@ test("MCP run_maintenance rejects idempotency replay with changed payload", asyn
 });
 
 test("MCP tools run the world loop for an external agent", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_000000000000000001" },
-  });
-
-  const context = textPayload(await mcp.callTool("agent_world.context_package", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    mandate: "调查腐林西缘的会回信树洞",
-    partyRunId: "party_future_001",
-    participantRole: "scout",
-    anchors: [{ type: "place", id: "region:腐林" }],
-  }));
-  assert.equal(context.loopMode, "legacy_authored_report");
-  assert.equal(context.channelClass, "external_agent_hosted");
-  assert.equal(context.deliveryTrust, "untrusted_client");
-  assert.match(context.worldVersion, /^obsidian-epoch-/);
-  assert.match(context.sharedLoreSnapshotVersion, /^shared-lore:0:/);
-  assert.match(context.adjudicatorVersion, /^obsidian-epoch-adjudicator-/);
-  assert.match(context.contextPackVersion, /^obsidian-epoch-context-pack-/);
-  assert.equal(context.contextVersion, context.contextPackVersion);
-  assert.equal(context.versions.sharedLoreSnapshotVersion, context.sharedLoreSnapshotVersion);
-  assertLegacySignedEnvelope(
-    context.signedEnvelope,
-    "obsidian-epoch.context-package-envelope.v1",
-    null,
+  const mcp = createAgentWorldMcpRuntime();
+  await assert.rejects(
+    () => mcp.callTool("agent_world.start_run", {}),
+    /legacy_agent_world_tool_removed/,
   );
-  assert.match(context.contextSnapshot.snapshotId, /^ctxsnap_[a-f0-9]{24}$/);
-  assert.equal(context.contextSnapshot.contextVersion, context.contextVersion);
-  assert.equal(context.contextSnapshot.retrievalParams.resolvedAgentId, "agent_grayfile_07");
-  assert.equal(context.contextSnapshot.retrievalParams.partyRunId, "party_future_001");
-  assert.equal(context.contextSnapshot.retrievalParams.participantRole, "scout");
-  assert.equal(context.multiAgentReservation.status, "reserved_only");
-  assert.equal(context.multiAgentReservation.legacyPlayEnabled, false);
-  assert.ok(context.contextSnapshot.filteringReasons.includes("core_secrets_excluded"));
-  assert.ok(context.contextSnapshot.filteringReasons.includes("non_public_truth_excluded"));
-  assert.ok(context.contextSnapshot.settingCards.some((card: { cardId: string; publicSummary: string }) => (
-    card.cardId === "agent:agent_grayfile_07" && card.publicSummary.includes("灰档-07")
-  )));
-  const contextSnapshots = textPayload(await mcp.callTool("agent_world.context_snapshots", {
-    limit: 10,
-  }));
-  assert.equal(contextSnapshots.summary.total, 1);
-  assert.equal(contextSnapshots.entries[0].snapshotId, context.contextSnapshot.snapshotId);
-  assert.equal(contextSnapshots.entries[0].retrievalParams.explorerId, "explorer_agent_001");
-  assert.deepEqual(context.canonicalProgress.preferredTools, [
-    "obsidian_epoch.identity",
-    "obsidian_epoch.turn_card",
-    "obsidian_epoch.resolve_turn",
-    "obsidian_epoch.create_result_page",
-  ]);
-  assert.equal(context.publicRules.modelAccess, "external_agent_hosted");
-  assert.equal(context.publicRules.credentialHandling, "not_collected_by_world_server");
-
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    partyRunId: "party_future_001",
-    participantRole: "scout",
-    risk: "C",
-  }));
-  assert.equal(ticket.runTicket, "rt_mcp_000000000000000001");
-  assert.equal(ticket.contextVersion, context.contextVersion);
-  assert.equal(ticket.sequence, 1);
-  assert.equal(ticket.sequenceWindow.first, 1);
-  assert.equal(ticket.sequenceWindow.last, 1);
-  assert.equal(ticket.loopMode, "legacy_authored_report");
-  assert.equal(ticket.channelClass, "external_agent_hosted");
-  assert.equal(ticket.deliveryTrust, "untrusted_client");
-  assert.equal(ticket.partyRunId, "party_future_001");
-  assert.equal(ticket.participantRole, "scout");
-  assert.equal(ticket.multiAgentReservation.status, "reserved_only");
-  assert.equal(ticket.multiAgentReservation.legacyPlayEnabled, false);
-  assertLegacySignedEnvelope(
-    ticket.signedEnvelope,
-    "obsidian-epoch.run-capability-envelope.v1",
-    ticket.runTicket,
-  );
-
-  const settlement = textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-    runTicket: ticket.runTicket,
-    sequence: ticket.sequence,
-    signedEnvelope: legacySignedEnvelopeReference(ticket),
-    run: publicRun(),
-  }));
-  assert.equal(settlement.loopMode, "legacy_authored_report");
-  assert.equal(settlement.channelClass, "external_agent_hosted");
-  assert.equal(settlement.deliveryTrust, "untrusted_client");
-  assert.equal(settlement.canonicalProgress.warning.includes("obsidian_epoch.turn_card"), true);
-  assert.equal(settlement.adjudication.trustedClientScore, false);
-  assert.equal(settlement.adjudication.worldImpact, "review_candidate");
-  assert.ok(settlement.adjudication.score >= 60);
-  assert.ok(settlement.feedback.summary.length > 0);
-  assert.equal(settlement.transparency.ok, true);
-  assert.equal(settlement.transparencyEntry.record.channelClass, "external_agent_hosted");
-  assert.equal(settlement.transparencyEntry.record.deliveryTrust, "untrusted_client");
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 1);
-  assert.equal(world.archive[0].channelClass, "external_agent_hosted");
-  assert.equal(world.archive[0].deliveryTrust, "untrusted_client");
-  assert.ok(world.summary.canonicalClaims >= 1);
 });
 
 test("MCP failed battle reports honor publication granularity", async () => {
-  const ticketIds = [
-    "rt_mcp_failure_sealed_000000000001",
-    "rt_mcp_failure_anon_000000000001",
-    "rt_mcp_failure_claim_000000000001",
-  ];
-  let nextTicketIndex = 0;
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => ticketIds[nextTicketIndex++] || `rt_mcp_failure_extra_${nextTicketIndex}` },
-  });
-
-  async function submitFailure({
-    explorerId,
-    agentId,
-    failurePublicationMode,
-  }: {
-    readonly explorerId: string;
-    readonly agentId: string;
-    readonly failurePublicationMode?: string;
-  }) {
-    const ticket = textPayload(await mcp.callTool("agent_world.start_run", { explorerId, agentId }));
-    return textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      signedEnvelope: legacySignedEnvelopeReference(ticket),
-      run: failedBattleReportRun({
-        explorerId,
-        agentId,
-        sequence: ticket.sequence,
-        failurePublicationMode,
-      }),
-    }));
-  }
-
-  const sealed = await submitFailure({
-    explorerId: "explorer_failure_sealed",
-    agentId: "agent_failure_sealed",
-  });
-  const anonymous = await submitFailure({
-    explorerId: "explorer_failure_anon",
-    agentId: "agent_failure_anon",
-    failurePublicationMode: "anonymous_public",
-  });
-  const claimOnly = await submitFailure({
-    explorerId: "explorer_failure_claim",
-    agentId: "agent_failure_claim",
-    failurePublicationMode: "claim_only",
-  });
-
-  assert.equal(sealed.adjudication.rating, "repair");
-  assert.equal(sealed.adjudication.failurePublication.selectedMode, "personal_sealed");
-  assert.equal(sealed.adjudication.failurePublication.publicArchive, false);
-  assert.equal(sealed.feedback.failurePublication.reward.repairCredit, 0);
-  assert.equal(anonymous.adjudication.failurePublication.selectedMode, "anonymous_public");
-  assert.equal(anonymous.feedback.rewards.includes("失败回流信用 +2"), true);
-  assert.equal(claimOnly.adjudication.failurePublication.selectedMode, "claim_only");
-  assert.equal(claimOnly.feedback.rewards.includes("失败回流信用 +1"), true);
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 2);
-  assert.equal(world.archive.some((run: { runTicket: string }) => run.runTicket === sealed.runTicket), false);
-
-  const anonymousEntry = world.archive.find((run: { runTicket: string }) => run.runTicket === anonymous.runTicket);
-  assert.equal(anonymousEntry.failurePublication.selectedMode, "anonymous_public");
-  assert.equal(anonymousEntry.anonymous, true);
-  assert.equal("explorerId" in anonymousEntry, false);
-  assert.equal("agentId" in anonymousEntry, false);
-
-  const claimOnlyEntry = world.archive.find((run: { runTicket: string }) => run.runTicket === claimOnly.runTicket);
-  assert.equal(claimOnlyEntry.failurePublication.selectedMode, "claim_only");
-  assert.equal("explorerId" in claimOnlyEntry, false);
-  assert.equal("agentId" in claimOnlyEntry, false);
-  assert.deepEqual(claimOnlyEntry.claimPreview, [
-    { subject: "失败树洞", predicate: "claim", object: "explorer_failure_claim" },
-  ]);
-  assert.equal(world.sourceGraph.nodes.some((node: { id: string }) => node.id === sealed.runTicket), false);
+  const mcp = createAgentWorldMcpRuntime();
+  await assert.rejects(
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
+  );
 });
 
 test("MCP withholds shared claims until public adjudication is confirmed", async () => {
-  const ticketIds = [
-    "rt_mcp_unconfirmed_public_claim_000000000001",
-    "rt_mcp_private_public_claim_000000000001",
-    "rt_mcp_confirmed_public_claim_000000000001",
-  ];
-  let nextTicketIndex = 0;
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => ticketIds[nextTicketIndex++] || `rt_mcp_claim_gate_extra_${nextTicketIndex}` },
-  });
-
-  async function submitRun(run: ReturnType<typeof publicRun>) {
-    const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-      explorerId: run.explorerId,
-      agentId: run.agentId,
-    }));
-    return textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      signedEnvelope: legacySignedEnvelopeReference(ticket),
-      run: {
-        ...run,
-        sequence: ticket.sequence,
-      },
-    }));
-  }
-
-  const unconfirmed = await submitRun(publicRun({
-    explorerId: "explorer_unconfirmed_public_claim",
-    agentId: "agent_unconfirmed_public_claim",
-    publicAdjudicationConfirmed: false,
-  }));
-  const privateConfirmed = await submitRun({
-    ...publicRun({
-      explorerId: "explorer_private_public_claim",
-      agentId: "agent_private_public_claim",
-    }),
-    visibility: "private",
-    publicAdjudicationConfirmed: true,
-  });
-  const confirmed = await submitRun(publicRun({
-    explorerId: "explorer_confirmed_public_claim",
-    agentId: "agent_confirmed_public_claim",
-  }));
-
-  assert.ok(unconfirmed.adjudication.claimSlots > 0);
-  assert.equal(unconfirmed.publicClaimGate.status, "withheld_pending_public_adjudication_confirmation");
-  assert.deepEqual(unconfirmed.lore.accepted, []);
-  assert.equal(privateConfirmed.adjudication.worldImpact, "private_demo");
-  assert.deepEqual(privateConfirmed.lore.accepted, []);
-  assert.equal(confirmed.publicClaimGate.status, "confirmed_public_adjudication");
-  assert.ok(confirmed.lore.accepted.length > 0);
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  const hasSharedClaimSource = (runTicket: string) => Object
-    .values(world.claimDetails as Record<string, { readonly sources?: readonly { readonly runTicket?: string }[] }>)
-    .some((claim) => Array.isArray(claim.sources)
-      && claim.sources.some((source) => source.runTicket === runTicket));
-  assert.equal(world.summary.archiveRuns, 2);
-  assert.equal(world.archive.some((run: { runTicket: string }) => run.runTicket === privateConfirmed.runTicket), false);
-  assert.equal(hasSharedClaimSource(unconfirmed.runTicket), false);
-  assert.equal(hasSharedClaimSource(privateConfirmed.runTicket), false);
-  assert.equal(hasSharedClaimSource(confirmed.runTicket), true);
+  const mcp = createAgentWorldMcpRuntime();
+  await assert.rejects(
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
+  );
 });
 
 test("MCP exposes legacy outbox status, dead letters and manual replay", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_outbox_000000000001" },
-    outbox: {
-      maxRetries: 1,
-      dispatchFailures: {
-        lore_admission: 1,
-      },
-    },
-  });
-
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    risk: "C",
-  }));
-  const settlement = textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-    runTicket: ticket.runTicket,
-    sequence: ticket.sequence,
-    signedEnvelope: legacySignedEnvelopeReference(ticket),
-    run: publicRun(),
-  }));
-
-  assert.equal(settlement.graphSync.status, "pending_sync");
-  assert.equal(settlement.graphSync.label, "待同步");
-  assert.equal(settlement.graphSync.outboxKind, "world_index");
-  assert.equal(settlement.outbox.graphSync.status, "synced");
-  assert.equal(settlement.outbox.graphSync.label, "已同步");
-  assert.equal(settlement.outbox.summary.deadLetters, 1);
-  assert.ok(settlement.outbox.entries.some((entry: Record<string, unknown>) => entry.status === "dispatched"));
-  const outbox = textPayload(await mcp.callTool("agent_world.outbox"));
-  assert.equal(outbox.graphSync.status, "synced");
-  assert.equal(outbox.graphSync.label, "已同步");
-  assert.equal(outbox.summary.deadLetters, 1);
-  const deadLetter = outbox.deadLetters.find((entry: Record<string, unknown>) => entry.kind === "lore_admission");
-  assert.ok(deadLetter);
-  assert.equal(deadLetter.status, "dead_letter");
-  assert.equal(deadLetter.retryCount, 1);
-  assert.equal(deadLetter.deadLetter, true);
-  assert.match(String(deadLetter.lastError), /outbox_dispatch_failed:lore_admission/);
-
-  const replay = textPayload(await mcp.callTool("agent_world.replay_outbox", {
-    outboxId: deadLetter.outboxId,
-    operatorKey: "operator-outbox-replay",
-  }));
-  assert.equal(replay.entry.status, "dispatched");
-  assert.equal(replay.entry.deadLetter, false);
-  assert.equal(replay.entry.manualReplayCount, 1);
-  assert.equal(replay.entry.replayedByOperator, true);
-
-  const afterReplay = textPayload(await mcp.callTool("agent_world.outbox"));
-  assert.equal(afterReplay.summary.deadLetters, 0);
-  assert.equal(afterReplay.deadLetters.length, 0);
-  assert.equal(afterReplay.entries.find((entry: Record<string, unknown>) => entry.outboxId === deadLetter.outboxId).status, "dispatched");
+  const mcp = createAgentWorldMcpRuntime();
+  await assert.rejects(
+    () => mcp.callTool("agent_world.outbox", {}),
+    /legacy_agent_world_tool_removed/,
+  );
 });
 
 test("MCP archives local reports without runTicket as private non-settlement", async () => {
   const mcp = createAgentWorldMcpRuntime();
-
-  const archived = textPayload(await mcp.callTool("agent_world.archive_local_report", {
-    run: publicRun({ explorerId: "explorer_local_archive", agentId: "agent_grayfile_07" }),
-  }));
-  assert.equal(archived.state, "archived");
-  assert.match(archived.archiveId, /^local_archive_/);
-  assert.equal(archived.runTicket, null);
-  assert.equal(archived.adjudication.worldImpact, "private_demo");
-  assert.equal(archived.progression.pointsAwarded, 0);
-  assert.equal(archived.progression.reason, "local_archive_only");
-  assert.deepEqual(archived.lore.decisions, []);
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
-  assert.equal(world.summary.canonicalClaims, 0);
+  await assert.rejects(
+    () => mcp.callTool("agent_world.archive_local_report", {}),
+    /legacy_agent_world_tool_removed/,
+  );
 });
 
 test("MCP exposes frontstage circuit-breaker announcements while allowing local trial archive", async () => {
-  const previousFrontstageStatusJson = process.env.AGENT_WORLD_FRONTSTAGE_STATUS_JSON;
-  process.env.AGENT_WORLD_FRONTSTAGE_STATUS_JSON = JSON.stringify({
-    mode: "read_only_maintenance",
-    worldAnnouncement: {
-      title: "档案馆审档暂停/只读维护",
-      body: "共享设定暂时只读；本地试玩和封存仍可用，数据没有丢失。",
-    },
-  });
   const mcp = createAgentWorldMcpRuntime();
-
-  try {
-    const quickstart = textPayload(await mcp.callTool("obsidian_epoch.quickstart", { host: "Codex" }));
-    assert.equal(quickstart.frontstageStatus.mode, "read_only_maintenance");
-    assert.equal(quickstart.frontstageStatus.configurationSource, "AGENT_WORLD_FRONTSTAGE_STATUS_JSON");
-    assert.equal(quickstart.frontstageStatus.worldAnnouncement.visible, true);
-    assert.equal(quickstart.frontstageStatus.worldAnnouncement.title, "档案馆审档暂停/只读维护");
-    assert.match(quickstart.frontstageStatus.worldAnnouncement.body, /本地试玩/);
-    assert.match(quickstart.frontstageStatus.worldAnnouncement.body, /封存/);
-    assert.match(quickstart.frontstageStatus.worldAnnouncement.body, /数据没有丢失/);
-    assert.equal(quickstart.frontstageStatus.allowedActions.localTrial, true);
-    assert.equal(quickstart.frontstageStatus.allowedActions.archiveLocalReport, true);
-    assert.equal(quickstart.frontstageStatus.allowedActions.readPublicWorld, true);
-    assert.ok(quickstart.frontstageStatus.blockedActions.includes("shared_setting_writes"));
-
-    const operationCheck = textPayload(await mcp.callTool("agent_world.operation_check", {
-      explorerId: "explorer_frontstage_circuit",
-      action: "settlement",
-    }));
-    assert.equal(operationCheck.frontstageStatus.mode, "read_only_maintenance");
-    assert.equal(operationCheck.frontstageStatus.worldAnnouncement.title, "档案馆审档暂停/只读维护");
-
-    const archived = textPayload(await mcp.callTool("agent_world.archive_local_report", {
-      run: publicRun({ explorerId: "explorer_frontstage_circuit", agentId: "agent_grayfile_07" }),
-    }));
-    assert.equal(archived.state, "archived");
-    assert.equal(archived.mode, "local_trial_archive");
-    assert.equal(archived.adjudication.worldImpact, "private_demo");
-  } finally {
-    if (typeof previousFrontstageStatusJson === "string") {
-      process.env.AGENT_WORLD_FRONTSTAGE_STATUS_JSON = previousFrontstageStatusJson;
-    } else {
-      delete process.env.AGENT_WORLD_FRONTSTAGE_STATUS_JSON;
-    }
-  }
+  await assert.rejects(
+    () => mcp.callTool("agent_world.archive_local_report", {}),
+    /legacy_agent_world_tool_removed/,
+  );
 });
 
 test("MCP delays legacy source rewards until a second independent claim reuse", async () => {
-  let ticketIndex = 0;
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => `rt_mcp_source_delay_${String(++ticketIndex).padStart(12, "0")}` },
-  });
-  async function submitRunFor(explorerId: string) {
-    const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-      explorerId,
-      agentId: "agent_grayfile_07",
-      regionId: "region_gray_harbor",
-      risk: "C",
-    }));
-    return textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      signedEnvelope: legacySignedEnvelopeReference(ticket),
-      run: publicRun({ explorerId, agentId: "agent_grayfile_07", regionId: "region_gray_harbor" }),
-    }));
-  }
-
-  const original = await submitRunFor("explorer_source_delay_original");
-  assert.ok(original.lore.accepted.every((decision: { status: string }) => decision.status === "canonical"));
-
-  const firstReuse = await submitRunFor("explorer_source_delay_reuser_1");
-  const pendingRewards = firstReuse.lore.decisions
-    .filter((decision: { status: string }) => decision.status === "duplicate")
-    .map((decision: { reward?: { status?: string; points?: number; pendingPoints?: number } }) => decision.reward);
-  assert.ok(pendingRewards.length >= 1);
-  assert.ok(pendingRewards.every((reward: { status?: string; points?: number; pendingPoints?: number }) =>
-    reward?.status === "pending" && reward.points === 0 && reward.pendingPoints === 1));
-
-  const secondReuse = await submitRunFor("explorer_source_delay_reuser_2");
-  const releasedRewards = secondReuse.lore.decisions
-    .filter((decision: { status: string }) => decision.status === "duplicate")
-    .map((decision: { reward?: { status?: string; points?: number; releaseReason?: string } }) => decision.reward);
-  assert.ok(releasedRewards.length >= 1);
-  assert.ok(releasedRewards.every((reward: { status?: string; points?: number; releaseReason?: string }) =>
-    reward?.status === "released" && reward.points === 1 && reward.releaseReason === "second_independent_reuse"));
+  const mcp = createAgentWorldMcpRuntime();
+  await assert.rejects(
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
+  );
 });
 
 test("MCP delays mutual legacy source-reward loops for review", async () => {
-  let ticketIndex = 0;
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => `rt_mcp_source_loop_${String(++ticketIndex).padStart(12, "0")}` },
-  });
-  async function submitRunFor(
-    explorerId: string,
-    candidateClaims?: readonly { readonly subject: string; readonly predicate: string; readonly object: string }[],
-  ) {
-    const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-      explorerId,
-      agentId: "agent_grayfile_07",
-      regionId: "region_gray_harbor",
-      risk: "C",
-    }));
-    const run = publicRun({ explorerId, agentId: "agent_grayfile_07", regionId: "region_gray_harbor" });
-    return textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      signedEnvelope: legacySignedEnvelopeReference(ticket),
-      run: candidateClaims ? { ...run, candidateClaims } : run,
-    }));
-  }
-  const reciprocalClaim = [
-    { subject: "互引灯塔", predicate: "limit", object: "只能由第二份独立证据补证" },
-  ];
-
-  await submitRunFor("explorer_source_loop_a");
-  await submitRunFor("explorer_source_loop_b");
-  await submitRunFor("explorer_source_loop_b", reciprocalClaim);
-  const reciprocal = await submitRunFor("explorer_source_loop_a", reciprocalClaim);
-  const delayedRewards = reciprocal.lore.decisions
-    .filter((decision: { status: string }) => decision.status === "duplicate")
-    .map((decision: { reward?: { status?: string; delayReason?: string; points?: number } }) => decision.reward);
-  const stateRewards = mcp.runtime.loreState().sourceRewards;
-  const mutualRewards = stateRewards.filter((reward: Record<string, unknown>) => {
-    const supportingExplorerIds = Array.isArray(reward.supportingExplorerIds)
-      ? reward.supportingExplorerIds.map(String)
-      : [];
-    return (
-      reward.rewardedExplorerId === "explorer_source_loop_a"
-      && supportingExplorerIds.includes("explorer_source_loop_b")
-    ) || (
-      reward.rewardedExplorerId === "explorer_source_loop_b"
-      && supportingExplorerIds.includes("explorer_source_loop_a")
-    );
-  });
-
-  assert.ok(delayedRewards.length >= 1);
-  assert.ok(delayedRewards.every((reward: { status?: string; delayReason?: string; points?: number }) =>
-    reward?.status === "delayed_review" && reward.delayReason === "mutual_source_reward_loop" && reward.points === 0));
-  assert.ok(mutualRewards.length >= 2);
-  assert.ok(mutualRewards.every((reward: Record<string, unknown>) =>
-    reward.status === "delayed_review" && reward.delayReason === "mutual_source_reward_loop" && reward.points === 0));
+  const mcp = createAgentWorldMcpRuntime();
+  await assert.rejects(
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
+  );
 });
 
 test("MCP operation switches pause only the selected source reward type", async () => {
-  let ticketIndex = 0;
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => `rt_mcp_ops_source_${String(++ticketIndex).padStart(12, "0")}` },
-    operationSwitches: {
-      switches: [
-        {
-          action: "source_reward",
-          rewardType: "claim_reuse",
-          paused: true,
-          reason: "ops_source_reward_claim_reuse_paused",
-        },
-      ],
-    },
-  });
-  async function submitRunFor(explorerId: string) {
-    const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-      explorerId,
-      agentId: "agent_grayfile_07",
-      regionId: "region_gray_harbor",
-      risk: "C",
-    }));
-    return textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      signedEnvelope: legacySignedEnvelopeReference(ticket),
-      run: publicRun({ explorerId, agentId: "agent_grayfile_07", regionId: "region_gray_harbor" }),
-    }));
-  }
-
-  await submitRunFor("explorer_ops_source_original");
-  await submitRunFor("explorer_ops_source_reuser_1");
-  const secondReuse = await submitRunFor("explorer_ops_source_reuser_2");
-  const duplicateDecisions = secondReuse.lore.decisions
-    .filter((decision: { status: string }) => decision.status === "duplicate");
-
-  assert.ok(duplicateDecisions.length >= 1);
-  assert.ok(duplicateDecisions.every((decision: { reward?: unknown }) => !decision.reward));
-  assert.equal(mcp.runtime.loreState().sourceRewards.length, 0);
+  const mcp = createAgentWorldMcpRuntime();
+  await assert.rejects(
+    () => mcp.callTool("agent_world.operation_check", {}),
+    /legacy_agent_world_tool_removed/,
+  );
 });
 
 test("MCP operation switches can pause legacy settlement without disabling reads", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_ops_settlement_000000000001" },
-    operationSwitches: {
-      switches: [
-        {
-          action: "settlement",
-          paused: true,
-          reason: "ops_settlement_paused",
-        },
-      ],
-    },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_ops_settlement",
-    agentId: "agent_grayfile_07",
-    regionId: "region_gray_harbor",
-    risk: "C",
-  }));
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      signedEnvelope: legacySignedEnvelopeReference(ticket),
-      run: publicRun({ explorerId: "explorer_ops_settlement", agentId: "agent_grayfile_07", regionId: "region_gray_harbor" }),
-    }),
-    /operation_settlement_paused/,
+    () => mcp.callTool("agent_world.operation_check", {}),
+    /legacy_agent_world_tool_removed/,
   );
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
-  const operationCheck = textPayload(await mcp.callTool("agent_world.operation_check", {
-    explorerId: "explorer_ops_settlement",
-    action: "settlement",
-  }));
-  assert.equal(operationCheck.operationSwitch.paused, true);
-  assert.equal(operationCheck.operationSwitch.reason, "ops_settlement_paused");
 });
 
 test("MCP operation switches can pause public result-page creation", async () => {
@@ -10483,839 +10013,155 @@ test("MCP operation switches can pause public result-page creation", async () =>
 });
 
 test("MCP submit requires the legacy context version", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_context_000000000001" },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    risk: "C",
-  }));
-  assert.equal(ticket.contextVersion, EPOCH_CONTEXT_PACK_VERSION);
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run: publicRun({ contextVersion: null }),
-    }),
-    /ticket_context_version_required/,
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
   );
-  await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run: publicRun({ contextVersion: "client-forged-context" }),
-    }),
-    /ticket_context_version_mismatch/,
-  );
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
-  assert.equal(world.summary.canonicalClaims, 0);
 });
 
 test("MCP submit requires the signed legacy run envelope", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_context_envelope_000000000001" },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    risk: "C",
-  }));
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run: publicRun(),
-    }),
-    /ticket_context_envelope_required/,
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
   );
-  await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      signedEnvelope: {
-        ...legacySignedEnvelopeReference(ticket),
-        contentHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-      },
-      run: publicRun(),
-    }),
-    /ticket_context_envelope_mismatch/,
-  );
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
-  assert.equal(world.summary.canonicalClaims, 0);
 });
 
 test("MCP submit requires the run-ticket sequence window", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_sequence_000000000001" },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    risk: "C",
-  }));
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      run: publicRun(),
-    }),
-    /ticket_sequence_required/,
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
   );
-  await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence + 1,
-      run: publicRun(),
-    }),
-    /ticket_sequence_mismatch/,
-  );
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
-  assert.equal(world.summary.canonicalClaims, 0);
 });
 
 test("MCP submit enforces legacy run ticket region and action budget", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_budget_000000000001" },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    regionId: "region_gray_harbor",
-    risk: "C",
-  }));
-  assert.equal(ticket.regionId, "region_gray_harbor");
-  assert.deepEqual(ticket.actionBudget, {
-    maxEvents: 6,
-    maxHighRiskActions: 1,
-  });
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run: {
-        ...publicRun(),
-        regionId: "region_salt_gate",
-      },
-    }),
-    /ticket_region_mismatch/,
+    () => mcp.callTool("agent_world.start_run", {}),
+    /legacy_agent_world_tool_removed/,
   );
-
-  const overBudgetRun = {
-    ...publicRun(),
-    regionId: "region_gray_harbor",
-  };
-  overBudgetRun.events = [
-    ...overBudgetRun.events,
-    {
-      id: "event_05",
-      sequence: 5,
-      actionType: "extra_survey",
-      risk: "low",
-      regionId: "region_gray_harbor",
-      inputs: { evidence: "extra survey" },
-      claimedOutcome: "extra step",
-      evidenceText: "额外搜证。",
-      visibleText: "额外搜证。",
-      outcome: "extra step",
-    },
-    {
-      id: "event_06",
-      sequence: 6,
-      actionType: "continue_survey",
-      risk: "low",
-      regionId: "region_gray_harbor",
-      inputs: { evidence: "continued survey" },
-      claimedOutcome: "extra step",
-      evidenceText: "继续搜证。",
-      visibleText: "继续搜证。",
-      outcome: "extra step",
-    },
-    {
-      id: "event_07",
-      sequence: 7,
-      actionType: "repeat_survey",
-      risk: "low",
-      regionId: "region_gray_harbor",
-      inputs: { evidence: "repeat survey" },
-      claimedOutcome: "extra step",
-      evidenceText: "再次搜证。",
-      visibleText: "再次搜证。",
-      outcome: "extra step",
-    },
-  ];
-
-  await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run: overBudgetRun,
-    }),
-    /ticket_action_budget_exceeded/,
-  );
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
 });
 
 test("MCP submit rejects unconfirmed legacy high-risk events", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_high_risk_000000000001" },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    regionId: "region_gray_harbor",
-    risk: "C",
-  }));
-  const unconfirmedRun = {
-    ...publicRun(),
-    regionId: "region_gray_harbor",
-    events: publicRun().events.map((event) => (
-      event.risk === "high"
-        ? { ...event, authorized: false, userConfirmed: false, userConfirmationId: "" }
-        : event
-    )),
-  };
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run: unconfirmedRun,
-    }),
-    /ticket_high_risk_confirmation_required/,
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
   );
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
-  assert.equal(world.summary.canonicalClaims, 0);
 });
 
 test("MCP submit repairs structurally incomplete legacy high-risk events", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_high_risk_structure_001" },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    regionId: "region_gray_harbor",
-    risk: "C",
-  }));
-  const baseRun = publicRun({ regionId: "region_gray_harbor" });
-  const incompleteHighRiskRun = {
-    ...baseRun,
-    events: baseRun.events.map((event) => event.risk === "high"
-      ? {
-        ...event,
-        cost: undefined,
-        evidenceChain: undefined,
-        limitations: undefined,
-      }
-      : event),
-  };
-
-  const settlement = textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-    runTicket: ticket.runTicket,
-    sequence: ticket.sequence,
-    signedEnvelope: legacySignedEnvelopeReference(ticket),
-    run: incompleteHighRiskRun,
-  }));
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-
-  assert.equal(settlement.adjudication.nextAction, "repair");
-  assert.equal(settlement.adjudication.worldImpact, "none");
-  assert.equal(settlement.adjudication.claimSlots, 0);
-  assert.match(settlement.adjudication.reasons.join(","), /high_risk_structure_missing:cost_paid/);
-  assert.match(settlement.adjudication.reasons.join(","), /high_risk_structure_missing:evidence_chain/);
-  assert.match(settlement.adjudication.reasons.join(","), /high_risk_structure_missing:limitations/);
-  assert.deepEqual(settlement.lore.accepted, []);
-  assert.equal(settlement.progression.pointsAwarded, 0);
-  assert.equal(world.summary.canonicalClaims, 0);
+  const mcp = createAgentWorldMcpRuntime();
+  await assert.rejects(
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
+  );
 });
 
 test("MCP submit rejects malformed legacy event logs", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_event_schema_000000000001" },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    regionId: "region_gray_harbor",
-    risk: "C",
-  }));
-  const baseRun = publicRun({ regionId: "region_gray_harbor" });
-  const malformedRun = {
-    ...baseRun,
-    events: baseRun.events.map((event, index) => (
-      index === 0
-        ? Object.fromEntries(Object.entries(event).filter(([key]) => key !== "actionType"))
-        : event
-    )),
-  };
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run: malformedRun,
-    }),
-    /ticket_event_schema_invalid/,
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
   );
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
-  assert.equal(world.summary.canonicalClaims, 0);
 });
 
 test("MCP submit rejects non-increasing legacy event sequences", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_event_sequence_000000000001" },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    regionId: "region_gray_harbor",
-    risk: "C",
-  }));
-  const baseRun = publicRun({ regionId: "region_gray_harbor" });
-  const duplicateSequenceRun = {
-    ...baseRun,
-    events: baseRun.events.map((event, index) => (
-      index === 1 ? { ...event, sequence: 1 } : event
-    )),
-  };
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run: duplicateSequenceRun,
-    }),
-    /ticket_event_sequence_invalid/,
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
   );
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
-  assert.equal(world.summary.canonicalClaims, 0);
 });
 
 test("MCP submit rejects cooldown-governed legacy action types", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_cooldown_rule_000000000001" },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    regionId: "region_gray_harbor",
-    risk: "C",
-  }));
-  const baseRun = publicRun({ regionId: "region_gray_harbor" });
-  const forgedCooldownRun = {
-    ...baseRun,
-    events: baseRun.events.map((event, index) => (
-      index === 0
-        ? {
-          ...event,
-          actionType: "resolve_raid",
-          inputs: {
-            attackerAgentId: "agent_grayfile_07",
-            defenderAgentId: "agent_mirror_09",
-          },
-          claimedOutcome: "raid settled without server cooldown",
-          evidenceText: "Claims a cooldown-governed canonical raid action locally.",
-        }
-        : event
-    )),
-  };
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run: forgedCooldownRun,
-    }),
-    /ticket_cooldown_rule_unverified/,
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
   );
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
-  assert.equal(world.summary.canonicalClaims, 0);
 });
 
 test("MCP submit rejects canonical legacy action types", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_canonical_action_000000000001" },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    regionId: "region_gray_harbor",
-    risk: "C",
-  }));
-  const baseRun = publicRun({ regionId: "region_gray_harbor" });
-  const forgedCanonicalActionRun = {
-    ...baseRun,
-    events: baseRun.events.map((event, index) => (
-      index === 0
-        ? {
-          ...event,
-          actionType: "obsidian_epoch.create_market_order",
-          inputs: {
-            sellResourceId: "aether",
-            sellAmount: 1,
-            buyResourceId: "coin",
-            buyAmount: 10,
-          },
-          claimedOutcome: "market order narrated locally",
-          evidenceText: "Claims a canonical market write happened inside a legacy report.",
-        }
-        : event
-    )),
-  };
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      signedEnvelope: legacySignedEnvelopeReference(ticket),
-      run: forgedCanonicalActionRun,
-    }),
-    /ticket_canonical_action_unverified/,
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
   );
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
-  assert.equal(world.summary.canonicalClaims, 0);
 });
 
 test("MCP submit rejects archived legacy identities", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    epoch: { idFactory: createSequentialEpochIdFactory("mcp_legacy_archived_identity") },
-    tickets: { idFactory: () => "rt_mcp_archived_identity_000000000001" },
-  });
-  const explorerId = "explorer_mcp_legacy_archived_identity";
-  const explorerRecoveryCode = recoveryCode(explorerId, "local_mcp_legacy_archived_identity_secret");
-  const identity = textPayload(await mcp.callTool("obsidian_epoch.identity", {
-    explorerId,
-    recoveryCode: explorerRecoveryCode,
-    identityName: "旧报告归档身份",
-    idempotencyKey: "identity-mcp-legacy-archived-1",
-  }));
-  const archived = textPayload(await mcp.callTool("obsidian_epoch.archive_identity", {
-    agentId: identity.value.agentId,
-    archiveReason: "legacy report identity lifetime guard",
-    recoveryCode: explorerRecoveryCode,
-    idempotencyKey: "archive-mcp-legacy-archived-1",
-  }));
-  assert.equal(archived.value.status, "archived");
-
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId,
-    agentId: identity.value.agentId,
-    regionId: "region_gray_harbor",
-    risk: "C",
-  }));
-  const run = publicRun({
-    explorerId,
-    agentId: identity.value.agentId,
-    regionId: "region_gray_harbor",
-  });
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run,
-    }),
-    /ticket_identity_archived/,
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
   );
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
-  assert.equal(world.summary.canonicalClaims, 0);
 });
 
 test("MCP submit rejects unverified legacy outcome state claims", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_outcome_state_000000000001" },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    regionId: "region_gray_harbor",
-    risk: "C",
-  }));
-  const baseRun = publicRun({ regionId: "region_gray_harbor" });
-  const forgedOutcomeRun = {
-    ...baseRun,
-    events: baseRun.events.map((event, index) => (
-      index === 0
-        ? {
-          ...event,
-          claimedOutcome: "server granted coin+999, legend+5, lifetimeDelta -10 and published this as news",
-          evidenceText: "Claims official server state changes that were never produced by canonical events.",
-        }
-        : event
-    )),
-  };
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run: forgedOutcomeRun,
-    }),
-    /ticket_outcome_state_unverified/,
+    () => mcp.callTool("agent_world.start_run", {}),
+    /legacy_agent_world_tool_removed/,
   );
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
-  assert.equal(world.summary.canonicalClaims, 0);
 });
 
 test("MCP submit rejects unverified legacy item-use claims", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_item_use_000000000001" },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    regionId: "region_gray_harbor",
-    risk: "C",
-  }));
-  const baseRun = publicRun({ regionId: "region_gray_harbor" });
-  const forgedItemRun = {
-    ...baseRun,
-    events: baseRun.events.map((event, index) => (
-      index === 0
-        ? {
-          ...event,
-          actionType: "use_forged_equipment",
-          inputs: { itemId: "forged_item_001", itemKey: "crafted:field-kit" },
-          claimedOutcome: "forged equipment effect applied",
-          evidenceText: "Claims a local item effect that the server has not verified.",
-        }
-        : event
-    )),
-  };
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run: forgedItemRun,
-    }),
-    /ticket_item_use_unverified/,
+    () => mcp.callTool("agent_world.start_run", {}),
+    /legacy_agent_world_tool_removed/,
   );
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
-  assert.equal(world.summary.canonicalClaims, 0);
 });
 
 test("MCP run heartbeat refreshes legacy ticket sequence and expiry", async () => {
-  const time = mutableClock("2026-06-24T00:00:00.000Z");
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: {
-      now: time.clock,
-      ttlMs: 60_000,
-      idFactory: () => "rt_mcp_heartbeat_000000000001",
-    },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    risk: "C",
-  }));
-  assert.equal(ticket.sequence, 1);
-  assert.equal(ticket.expiresAt, "2026-06-24T00:01:00.000Z");
-
-  time.set("2026-06-24T00:00:30.000Z");
-
-  const heartbeat = textPayload(await mcp.callTool("agent_world.run_heartbeat", {
-    runTicket: ticket.runTicket,
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-  }));
-
-  assert.equal(heartbeat.runTicket, ticket.runTicket);
-  assert.equal(heartbeat.state, "active");
-  assert.equal(heartbeat.sequence, 2);
-  assert.equal(heartbeat.sequenceWindow.first, 2);
-  assert.equal(heartbeat.sequenceWindow.last, 2);
-  assert.equal(heartbeat.heartbeatAt, "2026-06-24T00:00:30.000Z");
-  assert.equal(heartbeat.expiresAt, "2026-06-24T00:01:30.000Z");
-  assert.equal(heartbeat.loopMode, "legacy_authored_report");
-  assert.equal(heartbeat.channelClass, "external_agent_hosted");
-  assert.equal(heartbeat.deliveryTrust, "untrusted_client");
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run: publicRun(),
-    }),
-    /ticket_sequence_mismatch/,
+    () => mcp.callTool("agent_world.run_heartbeat", {}),
+    /legacy_agent_world_tool_removed/,
   );
-
-  const settlement = textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-    runTicket: ticket.runTicket,
-    sequence: heartbeat.sequence,
-    signedEnvelope: legacySignedEnvelopeReference(heartbeat),
-    run: publicRun(),
-  }));
-  assert.equal(settlement.state, "settled");
-  assert.equal(settlement.settledAt, "2026-06-24T00:00:30.000Z");
-  assert.equal(settlement.sequence, 2);
 });
 
 test("MCP submit rate-limits legacy authored reports per explorer", async () => {
-  const time = mutableClock("2026-06-24T00:00:00.000Z");
-  let ticketIndex = 0;
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: {
-      now: time.clock,
-      idFactory: () => `rt_mcp_legacy_quota_${String(++ticketIndex).padStart(12, "0")}`,
-    },
-    legacyRunSubmissionQuota: {
-      now: time.clock,
-      maxSubmissions: 1,
-      windowMs: 60_000,
-    },
-  });
-  const firstTicket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    risk: "C",
-  }));
-  const firstSettlement = textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-    runTicket: firstTicket.runTicket,
-    sequence: firstTicket.sequence,
-    signedEnvelope: legacySignedEnvelopeReference(firstTicket),
-    run: publicRun(),
-  }));
-  assert.equal(firstSettlement.state, "settled");
-
-  const secondTicket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    risk: "C",
-  }));
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: secondTicket.runTicket,
-      sequence: secondTicket.sequence,
-      signedEnvelope: legacySignedEnvelopeReference(secondTicket),
-      run: publicRun(),
-    }),
-    /legacy_run_submission_rate_limited/,
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
   );
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 1);
 });
 
 test("MCP delays legacy review over rank length budget and keeps runTicket idempotent", async () => {
-  let ticketSeq = 0;
-  let queueSeq = 0;
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => `rt_mcp_review_budget_${String(++ticketSeq).padStart(12, "0")}` },
-    progression: {
-      initialExplorers: [{
-        explorerId: "explorer_veteran",
-        factions: {
-          "腐林档案会": {
-            factionId: "腐林档案会",
-            reputation: 60,
-            rank: "high_clearance",
-            title: "高密级代理",
-            traits: [],
-            informationStage: "restricted",
-            externalItemLimit: 5,
-          },
-        },
-      }],
-    },
-    legacyReviewBudget: {
-      idFactory: () => `review_delay_${String(++queueSeq).padStart(6, "0")}`,
-      maxReportCharsByRank: {
-        outsider: 220,
-        high_clearance: 10_000,
-      },
-      maxPendingReviews: 10,
-    },
-  });
-  const longReportText = "灰港树洞回声报告".repeat(80);
-  const longRun = (explorerId: string, agentId: string) => {
-    const run = publicRun({ explorerId, agentId });
-    return {
-      ...run,
-      ending: { ...run.ending, summary: longReportText },
-      events: run.events.map((event) => ({
-        ...event,
-        evidenceText: longReportText,
-        visibleText: longReportText,
-      })),
-    };
-  };
-
-  const outsiderTicket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    risk: "C",
-  }));
-  const delayed = textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-    runTicket: outsiderTicket.runTicket,
-    sequence: outsiderTicket.sequence,
-    signedEnvelope: legacySignedEnvelopeReference(outsiderTicket),
-    run: longRun("explorer_agent_001", "agent_grayfile_07"),
-  }));
-  assert.equal(delayed.state, "review_delayed");
-  assert.equal(delayed.reviewQueue.queueId, "review_delay_000001");
-  assert.equal(delayed.reviewQueue.runTicket, outsiderTicket.runTicket);
-  assert.equal(delayed.reviewQueue.budget.identityRank, "outsider");
-  assert.ok(delayed.reviewQueue.reasons.includes("report_length_budget_exceeded"));
-  assert.equal(delayed.reviewQueue.reviewStatus.currentStage, "queued");
-  assert.equal(delayed.reviewQueue.reviewStatus.currentStageLabel, "排队中");
-  assert.deepEqual(
-    delayed.reviewQueue.reviewStatus.stages.map((stage: { label: string }) => stage.label),
-    ["排队中", "规则校验", "轻审", "重审", "人工", "完成"],
+  const mcp = createAgentWorldMcpRuntime();
+  await assert.rejects(
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
   );
-  assert.equal(delayed.reviewQueue.reviewStatus.estimatedWait.minMinutes, 5);
-  assert.equal(delayed.reviewQueue.reviewStatus.estimatedWait.maxMinutes, 15);
-
-  const replay = textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-    runTicket: outsiderTicket.runTicket,
-    sequence: outsiderTicket.sequence,
-    signedEnvelope: legacySignedEnvelopeReference(outsiderTicket),
-    run: longRun("explorer_agent_001", "agent_grayfile_07"),
-  }));
-  assert.equal(replay.state, "review_delayed");
-  assert.equal(replay.reviewQueue.queueId, delayed.reviewQueue.queueId);
-
-  const queue = textPayload(await mcp.callTool("agent_world.review_queue"));
-  assert.equal(queue.summary.delayed, 1);
-  assert.equal(queue.summary.visibleStages.length, 6);
-  assert.equal(queue.delayed[0].queueId, delayed.reviewQueue.queueId);
-  assert.equal(queue.delayed[0].reviewStatus.currentStage, "queued");
-
-  const veteranTicket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_veteran",
-    agentId: "agent_veteran_01",
-    risk: "C",
-  }));
-  const settled = textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-    runTicket: veteranTicket.runTicket,
-    sequence: veteranTicket.sequence,
-    signedEnvelope: legacySignedEnvelopeReference(veteranTicket),
-    run: longRun("explorer_veteran", "agent_veteran_01"),
-  }));
-  assert.equal(settled.state, "settled");
 });
 
 test("MCP delays legacy review for system load and similar pending reports", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    legacyReviewBudget: {
-      maxPendingReviews: 0,
-      maxSimilarPendingPerExplorer: 0,
-      maxReportCharsByRank: { outsider: 10_000 },
-    },
-  });
-
-  const firstTicket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    risk: "C",
-  }));
-  const firstDelayed = textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-    runTicket: firstTicket.runTicket,
-    sequence: firstTicket.sequence,
-    signedEnvelope: legacySignedEnvelopeReference(firstTicket),
-    run: publicRun(),
-  }));
-  assert.equal(firstDelayed.state, "review_delayed");
-  assert.ok(firstDelayed.reviewQueue.reasons.includes("system_load_budget_exceeded"));
-
-  const secondTicket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    risk: "C",
-  }));
-  const secondDelayed = textPayload(await mcp.callTool("agent_world.submit_battle_report", {
-    runTicket: secondTicket.runTicket,
-    sequence: secondTicket.sequence,
-    signedEnvelope: legacySignedEnvelopeReference(secondTicket),
-    run: publicRun(),
-  }));
-  assert.equal(secondDelayed.state, "review_delayed");
-  assert.ok(secondDelayed.reviewQueue.reasons.includes("system_load_budget_exceeded"));
-  assert.ok(secondDelayed.reviewQueue.reasons.includes("similar_pending_review_budget_exceeded"));
-  assert.equal(secondDelayed.reviewQueue.budget.similarPendingReviews, 1);
+  const mcp = createAgentWorldMcpRuntime();
+  await assert.rejects(
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
+  );
 });
 
 test("MCP submit rejects secret-shaped text before adjudication", async () => {
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: { idFactory: () => "rt_mcp_secret_000000000001" },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    risk: "C",
-  }));
-  const leakedRun = publicRun();
-  leakedRun.events[0].visibleText = "never submit sk-proj-abcdefghijklmnopqrstuvwxyz1234567890";
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run: leakedRun,
-    }),
-    /api_key_detected/,
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
   );
 });
 
 test("MCP submit rejects expired run tickets before adjudication", async () => {
-  const time = mutableClock("2026-06-24T00:00:00.000Z");
-  const mcp = createAgentWorldMcpRuntime({
-    tickets: {
-      now: time.clock,
-      ttlMs: 60_000,
-      idFactory: () => "rt_mcp_expired_000000000001",
-    },
-  });
-  const ticket = textPayload(await mcp.callTool("agent_world.start_run", {
-    explorerId: "explorer_agent_001",
-    agentId: "agent_grayfile_07",
-    risk: "C",
-  }));
-  assert.equal(ticket.expiresAt, "2026-06-24T00:01:00.000Z");
-
-  time.set("2026-06-24T00:01:01.000Z");
-
+  const mcp = createAgentWorldMcpRuntime();
   await assert.rejects(
-    () => mcp.callTool("agent_world.submit_battle_report", {
-      runTicket: ticket.runTicket,
-      sequence: ticket.sequence,
-      run: publicRun(),
-    }),
-    /ticket_expired/,
+    () => mcp.callTool("agent_world.submit_battle_report", {}),
+    /legacy_agent_world_tool_removed/,
   );
-
-  const world = textPayload(await mcp.callTool("agent_world.public_world"));
-  assert.equal(world.summary.archiveRuns, 0);
-  assert.equal(world.summary.canonicalClaims, 0);
 });
 
 test("MCP stdio reports Epoch validation failures as parameter errors", async () => {
@@ -11361,21 +10207,17 @@ test("stdio MCP server handles initialize, tools/list, and tools/call", async ()
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
 
     const listed = await request(2, "tools/list");
-    assert.ok(listed.result.tools.some((tool: { name: string }) => tool.name === "agent_world.context_package"));
-    assert.ok(listed.result.tools.some((tool: { name: string }) => tool.name === "agent_world.context_snapshots"));
+    assert.ok(!listed.result.tools.some((tool: { name: string }) => tool.name === "agent_world.context_package"));
+    assert.ok(!listed.result.tools.some((tool: { name: string }) => tool.name === "agent_world.context_snapshots"));
+    assert.ok(listed.result.tools.some((tool: { name: string }) => tool.name === "obsidian_epoch.identity"));
 
     const called = await request(3, "tools/call", {
-      name: "agent_world.context_package",
+      name: "obsidian_epoch.quickstart",
       arguments: {
-        explorerId: "explorer_agent_001",
-        agentId: "agent_grayfile_07",
-        mandate: "调查腐林西缘的会回信树洞",
+        host: "Codex",
       },
     });
-    const payload = JSON.parse(called.result.content[0].text);
-    assert.equal(payload.explorerId, "explorer_agent_001");
-    assert.equal(payload.publicRules.credentialHandling, "not_collected_by_world_server");
-    assert.equal(payload.contextSnapshot.retrievalParams.explorerId, "explorer_agent_001");
+    assert.ok(called.result.content[0].text);
   } finally {
     child.kill();
   }

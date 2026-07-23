@@ -72,6 +72,7 @@ test("downtime rules normalize regions and plan claim/tick payloads", () => {
   assert.equal(normalizeDowntimeRegionId(""), "region_gray_harbor");
 
   assert.deepEqual(downtimeRewardGrantPayload({
+    agentId: "agent_1",
     reward: { resourceId: "focus", amount: 2, reason: "downtime_meditation" },
     balanceBefore: 5,
   }), {
@@ -79,6 +80,10 @@ test("downtime rules normalize regions and plan claim/tick payloads", () => {
     amount: 2,
     reason: "downtime_meditation",
     balanceAfter: 7,
+    accountRef: "agent:agent_1",
+    assetKey: "resource:focus",
+    unit: "unit",
+    quantityMinor: "200",
   });
 
   assert.deepEqual(downtimeClaimedPayload({

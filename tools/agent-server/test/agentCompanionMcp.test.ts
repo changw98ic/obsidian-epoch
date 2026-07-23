@@ -10,6 +10,7 @@ import { epochEventsForPersistence } from "../lib/epoch/runtimePublicProjectionR
 import { journeyEventsForPersistence } from "../lib/epoch/journeyPersistence.ts";
 import { JOURNEY_TASK_OBJECTIVE_LIMITS } from "../lib/epoch/journeyGeneratedTaskRules.ts";
 import type { EpochEvent } from "../lib/epoch/events.ts";
+import { createPhase6InMemoryStores } from "./phase6InMemoryStores.ts";
 
 function payload(result: { readonly content: readonly { readonly text: string }[] }) {
   return JSON.parse(result.content[0]?.text ?? "null");
@@ -23,10 +24,15 @@ async function fixture() {
   let realNow = "2026-07-12T00:00:00.000Z";
   let worldNow = "2026-01-01T08:00:00.000Z";
   let epochNow = "2026-07-12T00:00:00.000Z";
+  const phase6Stores = createPhase6InMemoryStores();
   const mcp = createAgentWorldMcpRuntime({
     epoch: {
       idFactory: createSequentialEpochIdFactory("companion"),
       clock: () => new Date(epochNow),
+      phase6RunAssemblyRepository: phase6Stores.phase6RunAssemblyRepository,
+      phase6JourneyContextStore: phase6Stores.phase6JourneyContextStore,
+      phase6ExperimentStore: phase6Stores.phase6ExperimentStore,
+      phase6RagTraceStore: phase6Stores.phase6RagTraceStore,
     },
     journey: {
       now: () => realNow,

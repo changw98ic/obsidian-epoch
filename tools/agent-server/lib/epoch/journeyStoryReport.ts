@@ -364,7 +364,17 @@ function rewardEvaluation(
     ...attributes.map((reward) => `${ATTRIBUTE_NAMES[reward.attributeId] ?? reward.attributeId} +${reward.amount}`),
     ...items.map((item) => `道具“${item.displayName}”（${ITEM_RARITY_NAMES[item.rarity] ?? item.rarity}）`),
   ];
-  return { resources, items, attributes, summary: parts.length ? parts.join("；") : "未获得独立奖励" };
+  return {
+    resources,
+    items,
+    attributeProgression: bundle?.attributeProgression ?? {
+      mode: "no-direct-gain",
+      evidenceSystem: "progressionRules.attributeEvidenceXp",
+      summary: "story_report_no_direct_attribute_gain",
+    },
+    attributes,
+    summary: parts.length ? parts.join("；") : "未获得独立奖励",
+  };
 }
 
 function playerImpactEvaluation(

@@ -54,6 +54,7 @@ import type {
   Phase6ResultPageScoreSummary,
 } from "./phase6ResultPageRules.ts";
 import { buildPhase6ProgressionChangeSet } from "./phase6ResultPageChangeSetAdapter.ts";
+import type { CausalCanonicalJsonValue } from "./causalCanonicalJson.ts";
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
 
@@ -277,7 +278,7 @@ function receiptEventRefs(receipt: JourneyRunReceipt): readonly Phase6ResultPage
     ...receipt.eventIds.source.map((eventId) => ({ eventId, kind: "source" })),
     ...receipt.eventIds.settlement.map((eventId) => ({ eventId, kind: "settlement" })),
     ...receipt.eventIds.derived.map((eventId) => ({ eventId, kind: "derived" })),
-  ] as readonly Phase6ResultPageReceiptEventRef[];
+  ] as unknown as readonly Phase6ResultPageReceiptEventRef[];
 }
 
 function deriveResultPageSectionsFromFinalizedReceipt(
@@ -466,15 +467,15 @@ function snapshotDiff(
   const added = [...afterPaths]
     .filter((path) => !beforePaths.has(path))
     .sort()
-    .map((path) => ({ path, after: afterValues.get(path) }));
+    .map((path) => ({ path, after: afterValues.get(path) as CausalCanonicalJsonValue }));
   const removed = [...beforePaths]
     .filter((path) => !afterPaths.has(path))
     .sort()
-    .map((path) => ({ path, before: beforeValues.get(path) }));
+    .map((path) => ({ path, before: beforeValues.get(path) as CausalCanonicalJsonValue }));
   const changedValues = [...beforePaths]
     .filter((path) => afterPaths.has(path) && stableJson(beforeValues.get(path)) !== stableJson(afterValues.get(path)))
     .sort()
-    .map((path) => ({ path, before: beforeValues.get(path), after: afterValues.get(path) }));
+    .map((path) => ({ path, before: beforeValues.get(path) as CausalCanonicalJsonValue, after: afterValues.get(path) as CausalCanonicalJsonValue }));
 
   return {
     beforeHash: before.hash,

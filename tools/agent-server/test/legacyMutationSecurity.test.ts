@@ -9,6 +9,7 @@ import {
 } from "../lib/mcpTools.ts";
 
 const LEGACY_MUTATION_DISABLED_ERROR = "legacy_mutation_disabled_in_production";
+const LEGACY_TOOL_REMOVED_ERROR = "legacy_agent_world_tool_removed";
 
 async function withNodeEnv<T>(nodeEnv: string, run: () => Promise<T>): Promise<T> {
   const previous = process.env.NODE_ENV;
@@ -70,7 +71,7 @@ test("production MCP closes legacy start and submit with the same stable error c
         explorerId: "explorer_forged",
         agentId: "agent_forged",
       }),
-      (error: unknown) => error instanceof Error && error.message === LEGACY_MUTATION_DISABLED_ERROR,
+      (error: unknown) => error instanceof Error && error.message === LEGACY_TOOL_REMOVED_ERROR,
     );
     await assert.rejects(
       () => mcp.callTool("agent_world.submit_battle_report", {
@@ -78,21 +79,22 @@ test("production MCP closes legacy start and submit with the same stable error c
         agentId: "agent_forged",
         runTicket: "rt_forged",
       }),
-      (error: unknown) => error instanceof Error && error.message === LEGACY_MUTATION_DISABLED_ERROR,
+      (error: unknown) => error instanceof Error && error.message === LEGACY_TOOL_REMOVED_ERROR,
     );
   });
 });
 
-test("development keeps legacy start available for compatibility", async () => {
+test("development also rejects removed legacy tools unconditionally", async () => {
   await withNodeEnv("development", async () => {
     const mcp = createAgentWorldMcpRuntime({
       tickets: { idFactory: () => "rt_legacy_development_00000001" },
     });
-    const result = await mcp.callTool("agent_world.start_run", {
-      explorerId: "explorer_development",
-      agentId: "agent_development",
-    });
-    const payload = JSON.parse(result.content[0]?.text || "{}") as Record<string, unknown>;
-    assert.equal(payload.runTicket, "rt_legacy_development_00000001");
+    await assert.rejects(
+      () => mcp.callTool("agent_world.start_run", {
+        explorerId: "explorer_development",
+        agentId: "agent_development",
+      }),
+      (error: unknown) => error instanceof Error && error.message === LEGACY_TOOL_REMOVED_ERROR,
+    );
   });
 });

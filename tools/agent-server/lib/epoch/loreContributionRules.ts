@@ -250,6 +250,7 @@ export function loreContributionCost(input: {
 }
 
 export function loreContributionCostSpendPayload(input: {
+  readonly agentId: string;
   readonly category: EpochLoreContributionCategory;
   readonly currentFocus: number;
 }): ResourceSpentPayload | undefined {
@@ -260,6 +261,10 @@ export function loreContributionCostSpendPayload(input: {
     amount: cost.amount,
     reason: cost.reason,
     balanceAfter: input.currentFocus - cost.amount,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: `resource:${cost.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(cost.amount) * 100n).toString(),
   };
 }
 

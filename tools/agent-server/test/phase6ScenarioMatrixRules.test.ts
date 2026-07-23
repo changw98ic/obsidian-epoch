@@ -20,8 +20,8 @@ test("Phase 6 scenario matrix binds ten unique server scenarios", () => {
 });
 
 test("Phase 6 scenario binding rejects client-selected tags and task types", () => {
-  assert.throws(() => assertPhase6ScenarioBinding(1, "high-prepared-high-value"), /phase6_scenario_tag_mismatch/);
-  assert.throws(() => assertPhase6ScenarioBinding(1, "low-prepared-resource", "survival_evacuation"), /phase6_scenario_task_type_mismatch/);
+  assert.throws(() => assertPhase6ScenarioBinding(1, "high-prepared-priority"), /phase6_scenario_tag_mismatch/);
+  assert.throws(() => assertPhase6ScenarioBinding(1, "low-prepared-resource", "crisis_retreat"), /phase6_scenario_task_type_mismatch/);
   assert.throws(() => phase6ScenarioForRun(11), /phase6_scenario_run_index_invalid/);
 });
 

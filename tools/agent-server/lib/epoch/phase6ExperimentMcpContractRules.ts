@@ -66,11 +66,11 @@ export interface Phase6BeginExperimentOutput {
 }
 
 export interface Phase6BeginRunInput {
-  readonly commandId: string;
+  readonly commandId?: string;
   readonly experimentId: string;
-  readonly runIndex: Phase6RunIndex;
-  readonly scenarioTag: string;
-  readonly journeyId: string;
+  readonly runIndex?: Phase6RunIndex;
+  readonly scenarioTag?: string;
+  readonly journeyId?: string;
 }
 
 export interface Phase6BeginRunOutput {
@@ -220,7 +220,7 @@ export const PHASE6_EXPERIMENT_MCP_TOOL_SCHEMAS = [
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      required: ["commandId", "experimentId", "runIndex", "scenarioTag", "journeyId"],
+      required: ["experimentId"],
       forbiddenProperties: FORBIDDEN_CLIENT_OVERRIDE_FIELDS.filter((field) => field !== "experimentId"),
       properties: {
         commandId: { type: "string", minLength: 1 },
@@ -228,6 +228,7 @@ export const PHASE6_EXPERIMENT_MCP_TOOL_SCHEMAS = [
         runIndex: { type: "integer", enum: PHASE6_RUN_INDEXES },
         scenarioTag: { type: "string", minLength: 1 },
         journeyId: { type: "string", minLength: 1 },
+        recoveryCode: { type: "string" },
       },
     },
     outputSchema: {
@@ -355,28 +356,31 @@ export function validatePhase6BeginRunInput(
     "runIndex",
     "scenarioTag",
     "journeyId",
+    "recoveryCode",
   ]);
   if (forbidden) {
     return forbiddenOverride(forbidden);
   }
 
-  const commandId = requiredNonEmptyString(base.value.commandId, "commandId");
-  if (!commandId.ok) {
-    return commandId;
-  }
   const experimentId = requiredNonEmptyString(base.value.experimentId, "experimentId");
   if (!experimentId.ok) {
     return experimentId;
   }
-  const runIndex = requiredRunIndex(base.value.runIndex, "runIndex");
+  const commandId = optionalNonEmptyString(base.value.commandId, "commandId");
+  if (!commandId.ok) {
+    return commandId;
+  }
+  const runIndex = base.value.runIndex === undefined
+    ? { ok: true as const, value: undefined }
+    : requiredRunIndex(base.value.runIndex, "runIndex");
   if (!runIndex.ok) {
     return runIndex;
   }
-  const scenarioTag = requiredNonEmptyString(base.value.scenarioTag, "scenarioTag");
+  const scenarioTag = optionalNonEmptyString(base.value.scenarioTag, "scenarioTag");
   if (!scenarioTag.ok) {
     return scenarioTag;
   }
-  const journeyId = requiredNonEmptyString(base.value.journeyId, "journeyId");
+  const journeyId = optionalNonEmptyString(base.value.journeyId, "journeyId");
   if (!journeyId.ok) {
     return journeyId;
   }
@@ -527,7 +531,6 @@ function firstForbiddenClientOverride(
     if (FORBIDDEN_CLIENT_OVERRIDE_FIELDS.includes(key as typeof FORBIDDEN_CLIENT_OVERRIDE_FIELDS[number])) {
       return key;
     }
-    return key;
   }
   return undefined;
 }

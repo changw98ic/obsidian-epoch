@@ -11,6 +11,7 @@ import {
 import {
   PHASE6_RESULT_PAGE_SCORE_DIMENSIONS,
   buildPhase6MachineReadableResultPage,
+  phase6ResultPageScoreSummary,
   type Phase6MachineReadableResultPage,
   type Phase6ResultPageInput,
   type Phase6ResultPageChange,
@@ -54,7 +55,7 @@ function resultPagePhase6Finding(
   path?: string,
   details?: Readonly<Record<string, unknown>>,
 ): Phase6ResultPageFinding {
-  return { code, severity: "error", message, path, details };
+  return { code, severity: "error", message, path, ...(details === undefined ? {} : { details }) };
 }
 
 function uniqueNonEmpty(values: readonly unknown[]): readonly string[] {
@@ -86,12 +87,12 @@ function validateJourneyRunReceiptForResultPage(
     ));
     return findings;
   }
-  if (isLegacyJourneyRunReceiptV1(receipt)) {
+  if (isLegacyJourneyRunReceiptV1(receipt as unknown)) {
     findings.push(resultPagePhase6Finding(
       "PHASE6_RESULT_PAGE_SECTION_INVALID",
       "JourneyRunReceipt v1 is legacy read-only and is not strict enough for a verified Phase 6 result page",
       "journeyRunReceipt.version",
-      { receiptType: receipt.receiptType, version: receipt.version },
+      { receiptType: (receipt as unknown as { receiptType: string }).receiptType, version: (receipt as unknown as { version: string }).version },
     ));
     return findings;
   }
@@ -176,23 +177,27 @@ function phase6ChangesFromDeltas(
 }
 
 function phase6ScoreDetails(receipt: JourneyRunReceipt): readonly Phase6ResultPageScoreDetail[] {
-  const scoreByDimension = {
-    world_impact: receipt.score.world_impact,
-    identity_continuity: receipt.score.integrity,
-    progression_delta: receipt.score.objective,
-    economy_integrity: receipt.score.integrity,
-    settlement_quality: receipt.score.efficiency,
-    rag_grounding: receipt.score.discovery,
-    auditability: receipt.score.integrity,
-    integrity: receipt.score.integrity,
-  } satisfies Record<typeof PHASE6_RESULT_PAGE_SCORE_DIMENSIONS[number], JourneyRunReceipt["score"][keyof JourneyRunReceipt["score"]]>;
-  return PHASE6_RESULT_PAGE_SCORE_DIMENSIONS.map((dimension) => ({
-    dimension,
-    score: scoreByDimension[dimension].value,
-    basis: scoreByDimension[dimension].evidence.join("; ") || "server-settled JourneyRunReceipt metric",
-    source: dimension === "rag_grounding" ? "rag" : dimension.includes("integrity") || dimension === "auditability" ? "integrity" : "settlement",
-    eventIds: journeyRunReceiptCanonicalEventIds(receipt),
-  }));
+  const canonicalEventIds = journeyRunReceiptCanonicalEventIds(receipt);
+  const canonical = new Set(canonicalEventIds);
+  return PHASE6_RESULT_PAGE_SCORE_DIMENSIONS.map((dimension) => {
+    const metric = receipt.score.dimensions[dimension];
+    const matched = metric.events.filter((eventId) => canonical.has(eventId));
+    const eventIds = matched.length > 0 ? [...new Set(matched)] : [...new Set(canonicalEventIds)];
+    return {
+      dimension,
+      score: metric.value,
+      value: metric.value,
+      weightBps: metric.weightBps,
+      contribution: metric.contribution,
+      reasonCode: metric.reasonCode,
+      formula: metric.formula,
+      inputs: metric.inputs,
+      inputContributions: metric.inputContributions,
+      basis: metric.evidence.join("; ") || "server-settled JourneyRunReceipt metric",
+      source: "server_authoritative" as const,
+      eventIds,
+    };
+  });
 }
 
 function buildPhase6ResultPageSidecar(
@@ -249,6 +254,7 @@ function buildPhase6ResultPageSidecar(
         auditFindingIds: [],
       },
     },
+    scoreSummary: phase6ResultPageScoreSummary(receipt.score),
     scores: phase6ScoreDetails(receipt),
     rag: {
       ...phase6ChangeSet("RAG", ragChanges, canonicalEventIds),

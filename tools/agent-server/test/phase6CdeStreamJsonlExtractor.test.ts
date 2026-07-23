@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const extractorPath = resolve(repoRoot, "tools/agent-server/phase6-cde-stream-to-jsonl.mjs");
+const extractorPath = resolve(repoRoot, "tools/agent-server/phase6-cde-stream-to-jsonl.ts");
 const currentMcpPrefix = "mcp__obsidian_epoch__";
 const legacyMcpPrefix = "mcp__obsidian-epoch-agent-world__";
 

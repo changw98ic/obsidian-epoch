@@ -173,6 +173,7 @@ export interface SeasonCampaignContributionProjectionInput<TCampaign extends Sea
 }
 
 export interface SeasonContributionSpendPayloadInput {
+  readonly agentId: string;
   readonly seasonId: string;
   readonly factionId: string;
   readonly resourceId: EpochResourceId;
@@ -273,11 +274,13 @@ export interface SeasonCampaignSettlementProjectionInput<TCampaign extends Seaso
 }
 
 export interface SeasonCampaignRewardGrantPayloadInput {
+  readonly agentId: string;
   readonly reward: EpochServerReward;
   readonly winnerRewardBalanceBefore: number;
 }
 
 export interface SeasonOrganizationDividendGrantPayloadInput {
+  readonly agentId: string;
   readonly seasonId: string;
   readonly organizationId: string;
   readonly resourceId: EpochResourceId;
@@ -414,6 +417,7 @@ export interface RegionRevoltSettlement {
 }
 
 export interface RegionRevoltStaminaSpendPayloadInput {
+  readonly agentId: string;
   readonly revoltId: string;
   readonly staminaSpent: number;
   readonly staminaBalanceBefore: number;
@@ -746,6 +750,10 @@ export function seasonContributionSpendPayload(input: SeasonContributionSpendPay
     amount: input.amount,
     reason: `season_contribution:${input.seasonId}:${input.factionId}`,
     balanceAfter: input.balanceBefore - input.amount,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: `resource:${input.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(input.amount) * 100n).toString(),
   };
 }
 
@@ -753,6 +761,7 @@ export function planSeasonCampaignContributionEvents(
   input: SeasonCampaignContributionEventsInput,
 ): readonly EpochEvent[] {
   const spent = resourceSpentEvent(input.makeEvent, input.agentId, seasonContributionSpendPayload({
+    agentId: input.agentId,
     seasonId: input.seasonId,
     factionId: input.factionId,
     resourceId: input.resourceId,
@@ -871,6 +880,7 @@ export function planSeasonCampaignSettlementEvents(
   const nextEvents: EpochEvent[] = [resolved];
   if (winner && reward) {
     nextEvents.push(resourceGrantedEvent(input.makeEvent, winner.agentId, seasonCampaignRewardGrantPayload({
+      agentId: winner.agentId,
       reward,
       winnerRewardBalanceBefore: input.resourceBalanceBefore(nextEvents, winner.agentId, reward.resourceId),
     })));
@@ -881,6 +891,7 @@ export function planSeasonCampaignSettlementEvents(
     for (const organization of input.organizations) {
       for (const memberAgentId of organization.activeAgentIds) {
         nextEvents.push(resourceGrantedEvent(input.makeEvent, memberAgentId, seasonOrganizationDividendGrantPayload({
+          agentId: memberAgentId,
           seasonId: input.seasonId,
           organizationId: organization.organizationId,
           resourceId: reward.resourceId,
@@ -1006,6 +1017,10 @@ export function seasonCampaignRewardGrantPayload(input: SeasonCampaignRewardGran
     amount: input.reward.amount,
     reason: input.reward.reason,
     balanceAfter: input.winnerRewardBalanceBefore + input.reward.amount,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: `resource:${input.reward.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(input.reward.amount) * 100n).toString(),
   };
 }
 
@@ -1025,6 +1040,10 @@ export function seasonOrganizationDividendGrantPayload(
     amount: input.amount,
     reason: `organization_season_dividend:${input.seasonId}:${input.organizationId}`,
     balanceAfter: input.memberBalanceBefore + input.amount,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: `resource:${input.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(input.amount) * 100n).toString(),
   };
 }
 
@@ -1256,6 +1275,10 @@ export function regionRevoltStaminaSpendPayload(input: RegionRevoltStaminaSpendP
     amount: input.staminaSpent,
     reason: `region_revolt:${input.revoltId}`,
     balanceAfter: input.staminaBalanceBefore - input.staminaSpent,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: "resource:stamina",
+    unit: "unit",
+    quantityMinor: (BigInt(input.staminaSpent) * 100n).toString(),
   };
 }
 
@@ -1339,6 +1362,7 @@ export function regionRevoltControlPayload(input: RegionRevoltControlPayloadInpu
 
 export function planRegionRevoltResolutionEvents(input: RegionRevoltResolutionEventsInput): readonly EpochEvent[] {
   const staminaSpentEvent = resourceSpentEvent(input.makeEvent, input.rebelAgentId, regionRevoltStaminaSpendPayload({
+    agentId: input.rebelAgentId,
     revoltId: input.revoltId,
     staminaSpent: input.staminaSpent,
     staminaBalanceBefore: input.staminaBalanceBefore,

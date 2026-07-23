@@ -136,12 +136,17 @@ export function bountyEscrowSpendPayload(
   rewardAmount: number,
   bountyId: string,
   balanceAfter: number,
+  agentId: string,
 ): ResourceSpentPayload {
   return {
     resourceId: rewardResourceId,
     amount: rewardAmount,
     reason: `bounty_lock:${bountyId}`,
     balanceAfter,
+    accountRef: `agent:${agentId}`,
+    assetKey: `resource:${rewardResourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(rewardAmount) * 100n).toString(),
   };
 }
 
@@ -169,6 +174,7 @@ export function planBountyCreationEvents(input: BountyCreationEventsInput): read
       input.rewardAmount,
       input.bountyId,
       input.sponsorBalanceBefore - input.rewardAmount,
+      input.sponsorAgentId,
     ),
   );
   const created = input.makeEvent("bounty_created", input.bountyId, bountyCreatedPayload({
@@ -199,12 +205,16 @@ export function projectBountyCreation<TBounty extends BountyStatusForRules>(
   return bounty;
 }
 
-export function bountyClaimRewardPayload(bounty: BountyForRules, balanceAfter: number): ResourceGrantedPayload {
+export function bountyClaimRewardPayload(bounty: BountyForRules, balanceAfter: number, agentId: string): ResourceGrantedPayload {
   return {
     resourceId: bounty.rewardResourceId,
     amount: bounty.rewardAmount,
     reason: `bounty_claim:${bounty.bountyId}`,
     balanceAfter,
+    accountRef: `agent:${agentId}`,
+    assetKey: `resource:${bounty.rewardResourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(bounty.rewardAmount) * 100n).toString(),
   };
 }
 
@@ -226,6 +236,7 @@ export function planBountyClaimEvents(input: BountyClaimEventsInput): readonly E
     bountyClaimRewardPayload(
       input.bounty,
       input.claimantRewardBalanceBefore + input.bounty.rewardAmount,
+      input.claimantAgentId,
     ),
   );
   const itemTransferred = input.transferredItemId

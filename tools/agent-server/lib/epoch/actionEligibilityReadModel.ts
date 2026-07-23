@@ -63,8 +63,13 @@ export const EPOCH_ACTIVE_IDENTITY_TOOL_NAMES = [
   "obsidian_epoch.submit_attested_action",
   "obsidian_epoch.prepare_journey",
   "obsidian_epoch.start_journey",
+  "obsidian_epoch.start_journey_compact",
   "obsidian_epoch.propose_journey_step",
+  "obsidian_epoch.propose_journey_step_compact",
   "obsidian_epoch.commit_journey_action",
+  "obsidian_epoch.commit_journey_action_compact",
+  "obsidian_epoch.journey_status_compact",
+  "obsidian_epoch.run_receipt_compact",
   "obsidian_epoch.recall_journey",
 ] as const;
 

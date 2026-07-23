@@ -6483,7 +6483,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     if (cost) {
       const currentFocus = currentBalance(current, agentId, cost.resourceId);
       if (currentFocus < cost.amount) throw new Error("resource_insufficient");
-      costSpendPayload = loreContributionCostSpendPayload({ category, currentFocus });
+      costSpendPayload = loreContributionCostSpendPayload({ agentId, category, currentFocus });
     }
     const record = loreContributionRecordPayload({
       contributionId,
@@ -9328,6 +9328,10 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
           amount: planned.amount,
           reason: planned.reason,
           balanceAfter: planned.balanceAfter,
+          accountRef: `agent:${agentId}`,
+          assetKey: `resource:${planned.resourceId}`,
+          unit: "unit",
+          quantityMinor: (BigInt(planned.amount) * 100n).toString(),
         }, {
           eventId: planned.eventId,
         });

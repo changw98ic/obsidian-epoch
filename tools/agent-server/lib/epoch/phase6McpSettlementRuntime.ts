@@ -209,6 +209,7 @@ export function createPhase6McpSettlementRuntime(
         commandId: input.commandId,
         experimentId,
         identity: input.identity,
+        explorer: input.explorer,
         scenarioMatrix: options.scenarioMatrix,
         versions: options.serverVersions,
       });
@@ -233,30 +234,40 @@ export function createPhase6McpSettlementRuntime(
   async function beginRun(
     input: Phase6BeginRunInput,
   ): Promise<Phase6McpSettlementResult<Phase6McpSettlementBeginRunOutput>> {
-    return command(input.commandId, "beginRun", input, async () => {
-      assertText(input.commandId, "commandId");
+    if (!input.commandId) throw settlementError("invalid_input", "Phase 6 commandId is required", "commandId");
+    if (input.runIndex === undefined) throw settlementError("invalid_input", "Phase 6 runIndex is required", "runIndex");
+    if (!input.scenarioTag) throw settlementError("invalid_input", "Phase 6 scenarioTag is required", "scenarioTag");
+    const commandId: string = input.commandId;
+    const runIndex: number = input.runIndex;
+    const scenarioTag: string = input.scenarioTag;
+    return command(commandId, "beginRun", input, async () => {
+      assertText(commandId, "commandId");
       assertText(input.experimentId, "experimentId");
-      assertRunIndex(input.runIndex);
-      assertText(input.scenarioTag, "scenarioTag");
+      assertRunIndex(runIndex);
+      assertText(scenarioTag, "scenarioTag");
 
       const experiment = await requireExperiment(input.experimentId);
       const experimentBinding = requireExperimentBinding(experiment);
       const seed = normalizeSeed(
         await options.issueSeed({
           ...input,
+          commandId,
+          runIndex: runIndex as Phase6RunIndex,
+          scenarioTag,
           identity: experiment.identity,
           versions: experiment.versions,
           scenarioMatrix: experiment.scenarioMatrix,
         }),
       );
-      const runId = stableRunId(input.experimentId, input.runIndex);
-      const runReceipt = stableRunReceipt(input.experimentId, input.runIndex);
+      const runId = stableRunId(input.experimentId, runIndex);
+      const runReceipt = stableRunReceipt(input.experimentId, runIndex);
       const run = await options.experimentRuntime.startRun({
-        commandId: input.commandId,
+        commandId,
         experimentId: input.experimentId,
         run: {
-          runIndex: input.runIndex,
+          runIndex: runIndex as Phase6RunIndex,
           identity: experiment.identity,
+          explorer: experimentBinding.explorer,
           scenarioMatrix: experiment.scenarioMatrix,
           versions: experiment.versions,
           seed,
@@ -269,8 +280,8 @@ export function createPhase6McpSettlementRuntime(
         experimentId: input.experimentId,
         runId,
         journeyId: runId,
-        runIndex: input.runIndex,
-        scenarioTag: input.scenarioTag,
+        runIndex: runIndex as Phase6RunIndex,
+        scenarioTag,
         identity: run.identity,
         explorer: experimentBinding.explorer,
         scenarioMatrix: run.scenarioMatrix,
@@ -282,8 +293,8 @@ export function createPhase6McpSettlementRuntime(
 
       return {
         experimentId: input.experimentId,
-        runIndex: input.runIndex,
-        scenarioTag: input.scenarioTag,
+        runIndex: runIndex as Phase6RunIndex,
+        scenarioTag,
         state: "running",
         identity: run.identity,
         explorer: experimentBinding.explorer,
@@ -291,6 +302,10 @@ export function createPhase6McpSettlementRuntime(
         versions: run.versions,
         seed: run.seed,
         runReceipt: run.runReceipt,
+        journeyId: runId,
+        runId,
+        expectedVersion: 1,
+        startJourneyBinding: binding as unknown as Readonly<Record<string, unknown>>,
         binding,
       };
     });
@@ -521,6 +536,7 @@ function resultReceiptFromFinalize(
     experimentId: binding.experimentId,
     runIndex: binding.runIndex,
     identity: binding.identity,
+    explorer: binding.explorer,
     versions: binding.versions,
     seed: binding.seed,
   };

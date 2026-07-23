@@ -16,7 +16,7 @@ import {
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const graphAppRoot = resolve(repoRoot, "tools/graph-react-app");
 const cliPath = resolve(repoRoot, "tools/agent-server/phase6-balance-simulate.ts");
-const gatePath = resolve(repoRoot, "tools/agent-server/phase6-balance-gate.mjs");
+const gatePath = resolve(repoRoot, "tools/agent-server/phase6-balance-gate.ts");
 
 function runCli(args: readonly string[]) {
   return spawnSync(process.execPath, ["--import", "tsx", cliPath, ...args], {

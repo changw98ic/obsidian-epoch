@@ -110,6 +110,7 @@ export interface DowntimeTickResolvedPayloadInput {
 }
 
 export interface DowntimeRewardGrantPayloadInput {
+  readonly agentId: string;
   readonly reward: EpochServerReward;
   readonly balanceBefore: number;
 }
@@ -294,6 +295,10 @@ export function downtimeRewardGrantPayload(input: DowntimeRewardGrantPayloadInpu
     amount: input.reward.amount,
     reason: input.reward.reason,
     balanceAfter: input.balanceBefore + input.reward.amount,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: `resource:${input.reward.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(input.reward.amount) * 100n).toString(),
   };
 }
 
@@ -328,6 +333,7 @@ export function planDowntimeClaimEvents(input: PlanDowntimeClaimEventsInput): re
   const grantEvents: EpochEvent[] = [];
   for (const reward of claimedPayload.rewards) {
     const granted = resourceGrantedEvent(input.makeEvent, input.agentId, downtimeRewardGrantPayload({
+      agentId: input.agentId,
       reward,
       balanceBefore: input.balanceBefore(grantEvents, input.agentId, reward.resourceId),
     }));
@@ -354,6 +360,7 @@ export function planDowntimeTickEvents(input: PlanDowntimeTickEventsInput): read
     }));
     for (const reward of payload.rewards) {
       const granted = resourceGrantedEvent(input.makeEvent, target.agentId, downtimeRewardGrantPayload({
+        agentId: target.agentId,
         reward,
         balanceBefore: input.balanceBefore(grantEvents, target.agentId, reward.resourceId),
       }));

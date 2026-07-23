@@ -64,7 +64,7 @@ function forbidden(): Phase6McpValidationResult<never> {
 function normalizeReceiptLookup(result: Phase6McpReceiptLoadResult): Phase6McpStoredReceiptLookup {
   if (!result) return {};
   if ("receipt" in result) return result;
-  return { receipt: result };
+  return { receipt: result as JourneyRunReceipt };
 }
 
 function sameJourneyId(receipt: JourneyRunReceipt, journeyId: string | undefined) {
@@ -85,7 +85,7 @@ function assertPhase6ResultJourney(
   lookup: Phase6McpStoredResultSidecarLookup,
   output: Phase6McpPhase6ResultOutput,
 ): Phase6McpValidationResult<Phase6McpPhase6ResultOutput> {
-  if (lookup.receipt && lookup.result && lookup.receipt.journeyId !== lookup.result.receipt.journeyId) {
+  if (lookup.receipt && lookup.result && lookup.receipt.runId !== lookup.result.receipt.runId) {
     return invalidReceipt("verified result sidecar does not match persisted receipt journeyId", "result.receipt.journeyId");
   }
   return { ok: true, value: output };

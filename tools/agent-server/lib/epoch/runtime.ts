@@ -1139,7 +1139,7 @@ function runtimeCanonicalCursor(projection: EpochProjection): Phase6CanonicalCur
 
 function runtimeWorldTime(projection: EpochProjection, snapshot?: CausalWorldSnapshotV1): string | undefined {
   const latestEvent = projection.events[projection.events.length - 1];
-  const payload = latestEvent?.payload as Readonly<Record<string, unknown>> | undefined;
+  const payload = latestEvent?.payload as unknown as Readonly<Record<string, unknown>> | undefined;
   return snapshot?.replayCursor.lastRecordedAt
     || (typeof payload?.worldTime === "string" ? payload.worldTime : undefined)
     || latestEvent?.createdAt;
@@ -1353,7 +1353,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     ownerVerifiedContext: ownerVerifiedContextFromInput,
     startHostedSession: (input, context) => commandResult(core.startHostedSession(input, context)),
     submitHostedAction: (input, context) => commandResult(core.submitHostedAction(input, context)),
-    grantAttributeProgression: (input: AttributeInput, context) => commandResult(core.grantAttribute(input, context)),
+    grantAttributeProgression: (input, context) => commandResult(core.grantAttribute(input as unknown as AttributeInput, context)),
     createResultPageFromPayload: resultPageRuntime.createFromPayload,
   });
 
@@ -1747,7 +1747,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
       if (taskPlan) deriveJourneyHiddenTask(taskPlan, hiddenTaskSeal);
       const rewardBundle: JourneyRewardBundle = taskPlan
         ? journeyRewardBundleForPlan(taskPlan, tier as Exclude<JourneyCompletionTier, "未及格">)
-        : { resources: [reward], items: [], attributes: [] };
+        : { resources: [reward], items: [], attributes: [], attributeProgression: { mode: "no-direct-gain", evidenceSystem: "progressionRules.attributeEvidenceXp", summary: "journey_completion_no_task_plan" } };
       const reason = `journey_grade:${journeyId}:${tier}`;
       const existing = core.project().events.find((event) => event.eventType === "resource_granted"
         && event.agentId === agentId
@@ -1777,7 +1777,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         rarity: item.rarity,
         sourceEventIds,
       }, maintenanceContext(input, `${reason}:item:${item.itemKey}`))));
-      const attributeGrants: readonly [] = [];
+      const attributeGrants: EpochRuntimeResult<unknown>[] = [];
       const persistenceEvents = [
         ...epochEventsForPersistence(resourceGrant),
         ...itemGrants.flatMap((grant) => epochEventsForPersistence(grant)),

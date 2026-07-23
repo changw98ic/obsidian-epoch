@@ -244,7 +244,7 @@ export function progressView(
     limit: input.limit,
   });
   const latestEvent = latest[0];
-  const latestPayload = latestEvent?.payload as Readonly<Record<string, unknown>> | undefined;
+  const latestPayload = latestEvent?.payload as unknown as Readonly<Record<string, unknown>> | undefined;
   const worldTime = input.worldTime
     || (typeof latestPayload?.worldTime === "string" ? latestPayload.worldTime : undefined);
   const regionId = input.regionId || downtime?.regionId;

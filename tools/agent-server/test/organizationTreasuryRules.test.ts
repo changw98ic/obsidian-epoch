@@ -239,6 +239,10 @@ test("organization treasury rules plan treasury contribution event sequences", (
     amount: 5,
     reason: "organization_treasury_contribution:org_1",
     balanceAfter: 7,
+    accountRef: "agent:agent_1",
+    assetKey: "resource:coin",
+    unit: "unit",
+    quantityMinor: "500",
   });
   assert.equal(events[1].aggregateType, "organization");
   assert.equal(events[1].aggregateId, "treasury_contribution_1");
@@ -428,6 +432,7 @@ test("organization treasury rules plan budget proposal event sequences", () => {
 
 test("organization treasury rules plan contribution and upgrade payloads", () => {
   assert.deepEqual(organizationTreasuryContributionSpendPayload({
+    agentId: "agent_1",
     organizationId: "org_1",
     resourceId: "coin",
     amount: 5,
@@ -437,6 +442,10 @@ test("organization treasury rules plan contribution and upgrade payloads", () =>
     amount: 5,
     reason: "organization_treasury_contribution:org_1",
     balanceAfter: 4,
+    accountRef: "agent:agent_1",
+    assetKey: "resource:coin",
+    unit: "unit",
+    quantityMinor: "500",
   });
 
   assert.deepEqual(organizationTreasuryContributionPayload({

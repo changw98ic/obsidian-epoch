@@ -340,6 +340,7 @@ test("season campaign rules normalize contribution trust breakdowns", () => {
 
 test("season campaign rules plan contribution payloads", () => {
   assert.deepEqual(seasonContributionSpendPayload({
+    agentId: "agent_alpha",
     seasonId: "season_1",
     factionId: "gray_watch",
     resourceId: "coin",
@@ -350,6 +351,10 @@ test("season campaign rules plan contribution payloads", () => {
     amount: 2,
     reason: "season_contribution:season_1:gray_watch",
     balanceAfter: 6,
+    accountRef: "agent:agent_alpha",
+    assetKey: "resource:coin",
+    unit: "unit",
+    quantityMinor: "200",
   });
 
   assert.deepEqual(seasonContributionPayload({
@@ -465,6 +470,10 @@ test("season campaign rules plan contribution event sequences", () => {
     amount: 2,
     reason: "season_contribution:season_1:gray_watch",
     balanceAfter: 6,
+    accountRef: "agent:agent_alpha",
+    assetKey: "resource:coin",
+    unit: "unit",
+    quantityMinor: "200",
   });
   assert.equal(contributed.payload.totalScoreAfter, 14);
   assert.equal(completed.payload.sourceEventId, contributed.eventId);
@@ -535,6 +544,7 @@ test("season campaign rules plan resolved season payloads", () => {
   const winner = { agentId: "agent_winner", explorerId: "explorer_winner", factionId: "gray_watch" };
 
   assert.deepEqual(seasonCampaignRewardGrantPayload({
+    agentId: "agent_winner",
     reward,
     winnerRewardBalanceBefore: 3,
   }), {
@@ -542,6 +552,10 @@ test("season campaign rules plan resolved season payloads", () => {
     amount: 4,
     reason: "season_reward",
     balanceAfter: 7,
+    accountRef: "agent:agent_winner",
+    assetKey: "resource:legend",
+    unit: "unit",
+    quantityMinor: "400",
   });
 
   assert.deepEqual(seasonCampaignResolvedPayload({
@@ -587,6 +601,7 @@ test("season campaign rules plan organization dividend and prestige payloads", (
   assert.equal(seasonOrganizationPrestigeDelta(7), 7);
 
   assert.deepEqual(seasonOrganizationDividendGrantPayload({
+    agentId: "agent_member",
     seasonId: "season_1",
     organizationId: "org_1",
     resourceId: "legend",
@@ -597,6 +612,10 @@ test("season campaign rules plan organization dividend and prestige payloads", (
     amount: 2,
     reason: "organization_season_dividend:season_1:org_1",
     balanceAfter: 7,
+    accountRef: "agent:agent_member",
+    assetKey: "resource:legend",
+    unit: "unit",
+    quantityMinor: "200",
   });
 
   assert.deepEqual(seasonOrganizationTreasuryPayload({
@@ -1054,6 +1073,7 @@ test("season campaign rules plan region revolt settlement and payloads", () => {
   assert.equal(regionRevoltInfluenceDelta("revolt_defended"), 2);
 
   assert.deepEqual(regionRevoltStaminaSpendPayload({
+    agentId: "agent_rebel",
     revoltId: "revolt_1",
     staminaSpent: 3,
     staminaBalanceBefore: 8,
@@ -1062,6 +1082,10 @@ test("season campaign rules plan region revolt settlement and payloads", () => {
     amount: 3,
     reason: "region_revolt:revolt_1",
     balanceAfter: 5,
+    accountRef: "agent:agent_rebel",
+    assetKey: "resource:stamina",
+    unit: "unit",
+    quantityMinor: "300",
   });
 
   assert.deepEqual(regionRevoltResolvedPayload({

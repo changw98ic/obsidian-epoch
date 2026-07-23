@@ -78,6 +78,7 @@ export interface ResourceNodeContestPayloadInput {
 }
 
 export interface ResourceNodeContestStaminaSpendPayloadInput {
+  readonly agentId: string;
   readonly nodeId: string;
   readonly staminaSpent: number;
   readonly staminaBalanceBefore: number;
@@ -129,6 +130,7 @@ export interface ResourceNodeSettlementProjectionInput<TNode extends ResourceNod
 }
 
 export interface ResourceNodeSettlementRewardGrantPayloadInput {
+  readonly agentId: string;
   readonly reward: EpochServerReward;
   readonly winnerRewardBalanceBefore: number;
 }
@@ -286,11 +288,16 @@ export function resourceNodeContestStaminaSpendPayload(
     amount: input.staminaSpent,
     reason: `resource_node_contest:${input.nodeId}`,
     balanceAfter: input.staminaBalanceBefore - input.staminaSpent,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: "resource:stamina",
+    unit: "unit",
+    quantityMinor: (BigInt(input.staminaSpent) * 100n).toString(),
   };
 }
 
 export function planResourceNodeContestEvents(input: ResourceNodeContestEventsInput): readonly EpochEvent[] {
   const spent = resourceSpentEvent(input.makeEvent, input.agentId, resourceNodeContestStaminaSpendPayload({
+    agentId: input.agentId,
     nodeId: input.nodeId,
     staminaSpent: input.staminaSpent,
     staminaBalanceBefore: input.staminaBalanceBefore,
@@ -353,6 +360,7 @@ export function planResourceNodeSettlementEvents(input: ResourceNodeSettlementEv
   const reward = settledPayload.reward;
   if (winner && reward) {
     nextEvents.push(resourceGrantedEvent(input.makeEvent, winner.agentId, resourceNodeSettlementRewardGrantPayload({
+      agentId: winner.agentId,
       reward,
       winnerRewardBalanceBefore: input.winnerRewardBalanceBefore,
     })));
@@ -407,6 +415,10 @@ export function resourceNodeSettlementRewardGrantPayload(
     amount: input.reward.amount,
     reason: input.reward.reason,
     balanceAfter: input.winnerRewardBalanceBefore + input.reward.amount,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: `resource:${input.reward.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(input.reward.amount) * 100n).toString(),
   };
 }
 

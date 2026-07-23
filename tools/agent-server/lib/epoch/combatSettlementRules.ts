@@ -226,6 +226,7 @@ export interface PartyRunMemberInfluencePayloadInput {
 }
 
 export interface PartyRunMemberRewardGrantPayloadInput {
+  readonly agentId: string;
   readonly member: PartyMemberSettlementPayload;
   readonly balanceBefore: number;
 }
@@ -270,12 +271,14 @@ export interface RaidBattleSettlement {
 }
 
 export interface RaidAttackStaminaSpendPayloadInput {
+  readonly agentId: string;
   readonly raidId: string;
   readonly staminaSpent: number;
   readonly attackerStaminaBefore: number;
 }
 
 export interface RaidRewardGrantPayloadInput {
+  readonly agentId: string;
   readonly reward: EpochServerReward;
   readonly winnerRewardBalanceBefore: number;
 }
@@ -295,12 +298,14 @@ export interface RetaliationBattleSettlement {
 }
 
 export interface RetaliationStaminaSpendPayloadInput {
+  readonly agentId: string;
   readonly retaliationId: string;
   readonly staminaSpent: number;
   readonly retaliatorStaminaBefore: number;
 }
 
 export interface RetaliationRewardGrantPayloadInput {
+  readonly agentId: string;
   readonly reward: EpochServerReward;
   readonly winnerRewardBalanceBefore: number;
 }
@@ -811,6 +816,10 @@ export function partyRunMemberRewardGrantPayload(
     amount: input.member.reward.amount,
     reason: input.member.reward.reason,
     balanceAfter: input.balanceBefore + input.member.reward.amount,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: `resource:${input.member.reward.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(input.member.reward.amount) * 100n).toString(),
   };
 }
 
@@ -850,6 +859,7 @@ export function planPartyRunSettlementEvents(input: PartyRunSettlementEventsInpu
   });
   const rewardEvents = input.memberResults.map((member) =>
     resourceGrantedEvent(input.makeEvent, member.agentId, partyRunMemberRewardGrantPayload({
+      agentId: member.agentId,
       member,
       balanceBefore: input.rewardBalanceBefore(member.agentId, member.reward.resourceId),
     })));
@@ -984,6 +994,10 @@ export function raidAttackStaminaSpendPayload(input: RaidAttackStaminaSpendPaylo
     amount: input.staminaSpent,
     reason: `raid_attack:${input.raidId}`,
     balanceAfter: input.attackerStaminaBefore - input.staminaSpent,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: "resource:stamina",
+    unit: "unit",
+    quantityMinor: (BigInt(input.staminaSpent) * 100n).toString(),
   };
 }
 
@@ -993,6 +1007,10 @@ export function raidRewardGrantPayload(input: RaidRewardGrantPayloadInput): Reso
     amount: input.reward.amount,
     reason: input.reward.reason,
     balanceAfter: input.winnerRewardBalanceBefore + input.reward.amount,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: `resource:${input.reward.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(input.reward.amount) * 100n).toString(),
   };
 }
 
@@ -1090,6 +1108,10 @@ export function retaliationStaminaSpendPayload(input: RetaliationStaminaSpendPay
     amount: input.staminaSpent,
     reason: `retaliation:${input.retaliationId}`,
     balanceAfter: input.retaliatorStaminaBefore - input.staminaSpent,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: "resource:stamina",
+    unit: "unit",
+    quantityMinor: (BigInt(input.staminaSpent) * 100n).toString(),
   };
 }
 
@@ -1099,6 +1121,10 @@ export function retaliationRewardGrantPayload(input: RetaliationRewardGrantPaylo
     amount: input.reward.amount,
     reason: input.reward.reason,
     balanceAfter: input.winnerRewardBalanceBefore + input.reward.amount,
+    accountRef: `agent:${input.agentId}`,
+    assetKey: `resource:${input.reward.resourceId}`,
+    unit: "unit",
+    quantityMinor: (BigInt(input.reward.amount) * 100n).toString(),
   };
 }
 
@@ -1165,6 +1191,7 @@ export function planRaidResolutionEvents(input: RaidResolutionEventsInput): read
   const loserAgentId = input.outcome === "attacker_won" ? input.defenderAgentId : input.attackerAgentId;
   const loserExplorerId = input.outcome === "attacker_won" ? input.defenderExplorerId : input.attackerExplorerId;
   const staminaSpentEvent = resourceSpentEvent(input.makeEvent, input.attackerAgentId, raidAttackStaminaSpendPayload({
+    agentId: input.attackerAgentId,
     raidId: input.raidId,
     staminaSpent: input.staminaSpent,
     attackerStaminaBefore: input.attackerStaminaBefore,
@@ -1175,6 +1202,7 @@ export function planRaidResolutionEvents(input: RaidResolutionEventsInput): read
       throw new Error("raid_reward_balance_before_missing");
     }
     rewardEvents.push(resourceGrantedEvent(input.makeEvent, winnerAgentId, raidRewardGrantPayload({
+      agentId: winnerAgentId,
       reward: input.reward,
       winnerRewardBalanceBefore: input.winnerRewardBalanceBefore,
     })));
@@ -1259,11 +1287,13 @@ export function projectRaidResolution<TRaidResult extends RaidResultForRules>(
 
 export function planRetaliationResolutionEvents(input: RetaliationResolutionEventsInput): readonly EpochEvent[] {
   const staminaSpentEvent = resourceSpentEvent(input.makeEvent, input.opportunityAgentId, retaliationStaminaSpendPayload({
+    agentId: input.opportunityAgentId,
     retaliationId: input.retaliationId,
     staminaSpent: input.staminaSpent,
     retaliatorStaminaBefore: input.retaliatorStaminaBefore,
   }));
   const rewardEvent = resourceGrantedEvent(input.makeEvent, input.winnerAgentId, retaliationRewardGrantPayload({
+    agentId: input.winnerAgentId,
     reward: input.reward,
     winnerRewardBalanceBefore: input.winnerRewardBalanceBefore,
   }));

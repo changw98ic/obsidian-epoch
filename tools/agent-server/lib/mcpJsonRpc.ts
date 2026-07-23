@@ -1,6 +1,7 @@
 import { McpSessionError, type McpSession } from "./mcpSession.ts";
 import { runWithMcpRequestContext } from "./mcpRequestContext.ts";
 import type { McpSamplingClient } from "./mcpSampling.ts";
+import { getMcpPrompt, listMcpPrompts } from "./mcpPrompts.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -120,6 +121,16 @@ export async function handleMcpJsonRpcMessage(
       }, () => mcp.callTool(params.name as string, isRecord(params.arguments) ? params.arguments : {}));
       return mcpJsonRpcResponse(id, result);
     }
+    if (method === "prompts/list") {
+      return mcpJsonRpcResponse(id, { prompts: listMcpPrompts() });
+    }
+    if (method === "prompts/get") {
+      if (!isRecord(params) || typeof params.name !== "string") {
+        return mcpJsonRpcErrorResponse(id, -32602, "prompts/get requires params.name");
+      }
+      const prompt = getMcpPrompt(params.name);
+      return mcpJsonRpcResponse(id, prompt);
+    }
     return mcpJsonRpcErrorResponse(id, -32601, `Method not found: ${method}`);
   } catch (error: unknown) {
     if (error instanceof McpSessionError) {
@@ -131,6 +142,7 @@ export async function handleMcpJsonRpcMessage(
     }
     const messageText = errorMessage(error);
     if (messageText.startsWith("unknown_tool:")) return mcpJsonRpcErrorResponse(id, -32602, messageText);
+    if (messageText.startsWith("prompt_not_found:")) return mcpJsonRpcErrorResponse(id, -32602, messageText);
     if (messageText === "community_auth_player_required") {
       return mcpJsonRpcErrorResponse(id, -32001, messageText);
     }

@@ -394,8 +394,8 @@ function combatInput(build: typeof BUILDS[number], weights: readonly number[], g
     preparationVector: vector(build.prep),
     stateMultiplierBps: clampBps(8_200 + prng.int(0, 3_600)),
     environmentMultiplierBps: clampBps(8_500 + prng.int(0, 3_200)),
-    matchupMultiplierByDimension: Object.fromEntries(dimensions.map((dimension) => [dimension, clampBps(8_000 + prng.int(0, 4_000))])),
-    encounterWeights: Object.fromEntries(dimensions.map((dimension, index) => [dimension, normalizedWeights[index]])),
+    matchupMultiplierByDimension: Object.fromEntries(dimensions.map((dimension) => [dimension, clampBps(8_000 + prng.int(0, 4_000))])) as EncounterSuitabilityInput["matchupMultiplierByDimension"],
+    encounterWeights: Object.fromEntries(dimensions.map((dimension, index) => [dimension, normalizedWeights[index]])) as unknown as EncounterSuitabilityInput["encounterWeights"],
     threatPoints: 35 + prng.int(0, 185),
   };
 }
@@ -627,7 +627,7 @@ function main() {
       process.stdout.write(`${JSON.stringify({ ok: true, usage: usage().split("\n") }, null, 2)}\n`);
       return;
     }
-    const resolvedOutputPath = resolveWritableOutputPath(options.outputPath);
+    const resolvedOutputPath = resolveWritableOutputPath(options.outputPath ?? "phase6-balance-samples.json");
     const samples = generatePhase6BalanceSamples(options);
     writeSamples(resolvedOutputPath, samples);
     process.stdout.write(`${JSON.stringify({

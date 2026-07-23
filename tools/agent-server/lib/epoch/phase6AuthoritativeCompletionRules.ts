@@ -1,3 +1,4 @@
+import type { CausalCanonicalJsonValue } from "./causalCanonicalJson.ts";
 import type { EpochEvent } from "./events.ts";
 import type { JourneyActionResolution } from "./journeyActionResolutionRules.ts";
 import type { GroundedJourneyStoryReport } from "./journeyStoryReport.ts";
@@ -718,14 +719,14 @@ export function buildPhase6AuthoritativeCompletion(
     ));
   }
 
-  const storedContext = hasStoredContext ? explicitInput.storedContext : {};
-  const settlement = hasSettlement ? explicitInput.settlement : {};
-  const afterPanel = hasAfterPanel ? explicitInput.afterPanel : {};
-  const afterProjection = hasAfterProjection ? explicitInput.afterProjection : {};
-  const economy = hasEconomy ? explicitInput.economy : {};
-  const serverScoring = hasServerScoring ? explicitInput.serverScoring : {};
-  const serverRag = hasServerRag ? explicitInput.serverRag : {};
-  const stateDelta = hasStateDelta ? explicitInput.stateDelta : {};
+  const storedContext: UnknownRecord = hasStoredContext ? explicitInput.storedContext as UnknownRecord : {};
+  const settlement: UnknownRecord = hasSettlement ? explicitInput.settlement as UnknownRecord : {};
+  const afterPanel: UnknownRecord = hasAfterPanel ? explicitInput.afterPanel as UnknownRecord : {};
+  const afterProjection: UnknownRecord = hasAfterProjection ? explicitInput.afterProjection as UnknownRecord : {};
+  const economy: UnknownRecord = hasEconomy ? explicitInput.economy as UnknownRecord : {};
+  const serverScoring: UnknownRecord = hasServerScoring ? explicitInput.serverScoring as UnknownRecord : {};
+  const serverRag: UnknownRecord = hasServerRag ? explicitInput.serverRag as UnknownRecord : {};
+  const stateDelta: UnknownRecord = hasStateDelta ? explicitInput.stateDelta as UnknownRecord : {};
 
   const receiptId = requireText(settlement.receiptId, "$.settlement.receiptId", findings);
   const agentId = requireText(settlement.agentId, "$.settlement.agentId", findings);
@@ -957,11 +958,11 @@ export function buildPhase6AuthoritativeCompletion(
       eventIds: classifiedEventIds,
       snapshots: {
         before: {
-          body: beforeSnapshot.value.snapshot,
+          body: beforeSnapshot.value.snapshot as unknown as CausalCanonicalJsonValue,
           hash: beforeSnapshot.value.hash,
         },
         after: {
-          body: afterSnapshot.value.snapshot,
+          body: afterSnapshot.value.snapshot as unknown as CausalCanonicalJsonValue,
           hash: afterSnapshot.value.hash,
         },
       },
