@@ -63,6 +63,12 @@ export interface Phase6ServerPreSettlementRuntimeInput {
   readonly afterPanel: Phase6McpJourneyCompletionContextInput["afterPanel"];
   readonly afterProjection: Phase6McpJourneyCompletionContextInput["afterProjection"];
   readonly canonicalEvents: readonly EpochEvent[];
+  // RAG retrieval legally happens before the run's first canonical event
+  // (cursor rules allow retrievalCursor <= beforeCursor). These are event ids
+  // the persisted RAG trace cites that exist in the global event stream at
+  // run-start; they extend the binding id set without polluting canonicalEvents
+  // (which scoring/cursor-chain consume).
+  readonly bindingAnchorEventIds?: readonly string[];
   readonly economy: Phase6McpJourneyCompletionContextInput["economy"];
   readonly worldCursor: Phase6ServerScoringWorldCursor;
   readonly now?: string;
@@ -590,7 +596,10 @@ function validateBindings(input: Phase6ServerPreSettlementInput): readonly Phase
   bindingMismatch(findings, "runtime.worldCursor.worldTime", world?.worldTimeAfter, cursor?.worldTime, "world time cursor");
   findings.push(...validateWorldCursorBindings(input));
 
-  const canonicalEventIds = unique(input.runtime.canonicalEvents.map((event) => eventId(event) ?? ""));
+  const canonicalEventIds = unique([
+    ...input.runtime.canonicalEvents.map((event) => eventId(event) ?? ""),
+    ...(input.runtime.bindingAnchorEventIds ?? []),
+  ]);
   findings.push(...validateEventBindings(input, canonicalEventIds));
   return findings;
 }

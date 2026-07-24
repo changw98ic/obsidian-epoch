@@ -1422,11 +1422,13 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     return { regions };
   }
 
-  function advanceCanonicalWorld(input: Parameters<typeof worldClockRuntime.sync>[0]) {
+  function advanceCanonicalWorld(input: Parameters<typeof worldClockRuntime.sync>[0] & { readonly elapsedWorldMinutes?: number }) {
     const clockCheckpoint = worldClockRuntime.checkpoint();
     const simulationCheckpoint = worldSimulationRuntime.checkpoint();
     try {
-      const clockAdvance = worldClockRuntime.sync(input);
+      const clockAdvance = input.elapsedWorldMinutes !== undefined
+        ? worldClockRuntime.advance({ ...input, elapsedWorldMinutes: input.elapsedWorldMinutes })
+        : worldClockRuntime.sync(input);
       const simulationIdempotencyKey = `${input.idempotencyKey}:simulation`;
       const clockEvent = clockAdvance.events.find((event) => event.eventType === "world_clock_advanced");
       const simulationAdvance = clockEvent?.eventType === "world_clock_advanced"
@@ -3171,6 +3173,24 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         id: optionalString(input.id),
         query: optionalString(input.query),
         limit: typeof input.limit === "number" ? input.limit : undefined,
+      });
+    },
+    epochAdvanceWorldClockInternal: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return advanceCanonicalWorld({
+        reason: optionalString(input.reason) || "server_world_tick",
+        processedDomains: Array.isArray(input.processedDomains)
+          ? input.processedDomains.filter((value): value is string => typeof value === "string")
+          : ["world_simulation"],
+        sourceEventIds: Array.isArray(input.sourceEventIds)
+          ? input.sourceEventIds.filter((value): value is string => typeof value === "string")
+          : [],
+        idempotencyKey: stringValue(input.idempotencyKey),
+        causationId: optionalString(input.causationId),
+        correlationId: optionalString(input.correlationId),
+        ...(typeof input.elapsedWorldMinutes === "number" && Number.isFinite(input.elapsedWorldMinutes)
+          ? { elapsedWorldMinutes: input.elapsedWorldMinutes }
+          : {}),
       });
     },
     epochAdvanceWorldClock: (input: AnyRecord = {}) => {
@@ -7807,6 +7827,29 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
         }
         const sourceEventIds = phase6CanonicalEventIds(canonicalEvents);
         const settlementEventIds = phase6SettlementEventIds(committedResults as Parameters<typeof phase6SettlementEventIds>[0]);
+        // RAG retrieval cites run-start anchor events (e.g. identity_issued) that fall
+        // before the run cursor and are therefore absent from canonicalEvents. Accept
+        // them as binding anchors only when they really exist in the persisted event
+        // stream, so the trace still cannot fabricate ids.
+        const ragTraceRecord = recordValue(persistedRagTrace);
+        const readStringArray = (value: unknown): readonly string[] => {
+          if (!Array.isArray(value)) return [];
+          return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+        };
+        const ragReferencedEventIds = new Set<string>();
+        for (const id of readStringArray(ragTraceRecord.sourceEventIds)) {
+          ragReferencedEventIds.add(id);
+        }
+        const groundingHits: readonly unknown[] = Array.isArray(ragTraceRecord.groundingHits)
+          ? ragTraceRecord.groundingHits
+          : [];
+        for (const hit of groundingHits) {
+          for (const id of readStringArray(recordValue(hit).eventIds)) {
+            ragReferencedEventIds.add(id);
+          }
+        }
+        const persistedEventIds = new Set(afterEvents.map((event) => event.eventId));
+        const bindingAnchorEventIds = [...ragReferencedEventIds].filter((id) => persistedEventIds.has(id));
         const now = new Date().toISOString();
         const preSettlementStores = {
           beforePanel: beforeSnapshot,
@@ -7850,6 +7893,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
             afterPanel: after.panel as unknown as Parameters<typeof buildPhase6ServerPreSettlement>[0]["runtime"]["afterPanel"],
             afterProjection: after.projection,
             canonicalEvents,
+            bindingAnchorEventIds,
             economy: {
               next: requirePhase6AuthoritativeRecord(after.panel.economy.snapshot, "after.economy.snapshot") as unknown as Parameters<typeof buildPhase6ServerPreSettlement>[0]["runtime"]["economy"]["next"],
               sourceEvents: canonicalEvents,
