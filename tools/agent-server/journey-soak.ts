@@ -46,23 +46,23 @@ interface PolicyDecision {
 
 const SCENARIOS: readonly SoakScenario[] = [
   {
-    key: "phase_experiment",
+    key: "resource_acquisition",
     destinationRegionId: "region_quantum_laboratory",
-    taskType: "辅助完成一次相位样本实验",
+    taskType: "resource_acquisition",
     objective: "在权限与自身能力范围内协助实验组取得可复核结果",
     priorities: ["experiment", "accuracy", "safe_return"],
   },
   {
-    key: "cathedral_entry_trial",
+    key: "information_acquisition",
     destinationRegionId: "region_orbital_cathedral",
-    taskType: "参加圣堂入门试炼",
+    taskType: "information_acquisition",
     objective: "完成适合当前身份的入门试炼并取得正式记录",
     priorities: ["trial", "learning", "identity_consistency"],
   },
   {
-    key: "forest_mutant_bounty",
+    key: "structured_challenge",
     destinationRegionId: "region_forest",
-    taskType: "为了赚钱前往城外猎杀变异兽",
+    taskType: "structured_challenge",
     objective: "在能够承担风险时取得猎团认可的悬赏凭证",
     priorities: ["wealth", "bounty", "survival"],
   },
@@ -418,9 +418,19 @@ async function runScenario(
 ) {
   const registration = await client.register(`${runId}:register:${index}`);
   const agentId = stringValue(registration.agentId, "registration.agentId");
+  const explorerId = stringValue(registration.explorerId, "registration.explorerId");
   const recoveryCode = stringValue(registration.recoveryCode, "registration.recoveryCode");
   const progressBefore = await client.callTool("obsidian_epoch.progress", { agentId });
   const identityBeforeJourney = identityProfile(progressBefore);
+
+  // Phase6: create experiment binding
+  const experiment = await client.callTool("obsidian_epoch.begin_phase6_experiment", {
+    commandId: `${runId}:experiment:${index}`,
+    identity: { identityId: agentId },
+    explorer: { explorerId, displayName: identityBeforeJourney.identityName },
+  });
+  const experimentId = stringValue(experiment.experimentId, "experiment.experimentId");
+
   const prepared = await client.callTool("obsidian_epoch.prepare_journey", {
     agentId,
     destinationRegionId: scenario.destinationRegionId,
@@ -431,13 +441,38 @@ async function runScenario(
   });
   const preparedJourney = objectValue(prepared.journey, "prepared.journey");
   const journeyId = stringValue(preparedJourney.journeyId, "prepared.journey.journeyId");
+
+  // Phase6: bind journey to experiment run
+  const phase6Run = await client.callTool("obsidian_epoch.begin_phase6_run", {
+    experimentId,
+    runIndex: index + 1,
+    journeyId,
+    recoveryCode,
+  });
+  const startJourneyBinding = objectValue(phase6Run.startJourneyBinding, "phase6Run.startJourneyBinding");
+
+  // RAG: retrieve world knowledge before starting journey
+  await client.callTool("obsidian_epoch.world_knowledge", {
+    query: scenario.objective,
+    regionId: scenario.destinationRegionId,
+    journeyId,
+    agentId,
+    startJourneyBinding,
+  });
+
   let current = await client.callTool("obsidian_epoch.start_journey", {
     journeyId,
     expectedVersion: numberValue(preparedJourney.version),
     taskGenerationMode: "server_fallback",
     recoveryCode,
     idempotencyKey: `${runId}:start:${index}`,
+    startJourneyBinding: {
+      ...startJourneyBinding,
+      retrievalExpected: true,
+      retrievalExpectedSource: "server_policy",
+    },
   });
+
   const progressAtJourneyEntry = await client.callTool("obsidian_epoch.progress", { agentId });
   let profile = identityProfile(progressAtJourneyEntry);
   const decisions: JsonObject[] = [];
@@ -496,6 +531,7 @@ async function runScenario(
     index: index + 1,
     scenario,
     agentId,
+    experimentId,
     recoveryCode,
     journeyId,
     identity: profile,

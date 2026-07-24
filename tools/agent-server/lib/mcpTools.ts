@@ -3928,11 +3928,8 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
           throw new Error("phase6_experiment_journey_identity_lineage_mismatch");
         }
         const identity = { identityId: preparedIdentityId };
-        assertPhase6ScenarioBinding(
-          runIndex,
-          scenarioTag,
-          optionalString(recordValue(preparedJourney.taskRequest).taskType),
-        );
+        const journeyTaskType = optionalString(recordValue(preparedJourney.taskRequest).taskType);
+        assertPhase6ScenarioBinding(runIndex, scenarioTag, journeyTaskType);
         const expectedVersion = Number(preparedJourney.version);
         if (!Number.isInteger(expectedVersion) || expectedVersion < 0) {
           throw new Error("phase6_experiment_journey_version_invalid");
