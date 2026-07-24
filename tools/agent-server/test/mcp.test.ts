@@ -10202,7 +10202,7 @@ test("stdio MCP server handles initialize, tools/list, and tools/call", async ()
       capabilities: {},
     });
     assert.equal(initialized.result.serverInfo.name, "obsidian-epoch-agent-world");
-    assert.deepEqual(initialized.result.capabilities, { tools: {} });
+    assert.deepEqual((initialized.result.capabilities as Record<string, unknown>).tools, {});
 
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
 

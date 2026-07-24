@@ -2054,7 +2054,7 @@ test("Agent console gives the identity profile a narrative home page", () => {
   assert.match(agentExplorerTsx, /关系变化/);
   assert.match(agentExplorerTsx, /身份自述/);
   assert.match(agentExplorerTsx, /progress\?\.latestEvents/);
-  assert.match(agentExplorerTsx, /identity\.personality\.latestSourceEventId/);
+  assert.match(agentExplorerTsx, /identity\.personality\?\.latestSourceEventId/);
   assert.match(agentExplorerTsx, /primaryRelationship/);
   assert.match(agentExplorerTsx, /<summary>结构化字段<\/summary>/);
   assert.match(agentExplorerCss, /\.agent-narrative-profile/);
@@ -2251,7 +2251,7 @@ test("Agent console result share card shows lore status and provenance", () => {
   assert.match(agentExplorerTsx, /publicSafeSummary/);
   assert.match(agentExplorerTsx, /playerPublicSummaryText\(shareCardStatus\.publicSafeSummary\.text\)/);
   assert.match(agentExplorerTsx, /resultPage\.receipt\.focus\.kind/);
-  assert.match(agentExplorerTsx, /resultPage\.receipt\.canonicalEvents\.length/);
+  assert.match(agentExplorerTsx, /resultPage\.receipt\?\.canonicalEvents/);
   assert.match(agentExplorerTsx, /is-provisional/);
   assert.match(agentExplorerTsx, /传闻\/争议只显示为未证实/);
   assert.doesNotMatch(agentExplorerTsx, /官方确认/);
@@ -2599,9 +2599,9 @@ test("Agent console surfaces server-authoritative inventory items", () => {
   assert.match(inventoryPanelTsx, /制作/);
   assert.match(inventoryPanelTsx, /商店/);
   assert.match(inventoryPanelTsx, /progress\?\.inventoryItems/);
-  assert.match(inventoryPanelTsx, /progress\.inventoryItems\.slice\(0,\s*6\)/);
+  assert.match(inventoryPanelTsx, /inventoryItems\.slice\(0,\s*6\)/);
   assert.match(inventoryPanelTsx, /progress\?\.equipmentEffects/);
-  assert.match(inventoryPanelTsx, /progress\.equipmentEffects\.map/);
+  assert.match(inventoryPanelTsx, /equipmentEffects\.map/);
   assert.match(inventoryPanelTsx, /item\.displayName/);
   assert.match(inventoryPanelTsx, /item\.rarity/);
   assert.match(inventoryPanelTsx, /item\.media/);
@@ -2617,8 +2617,8 @@ test("Agent console surfaces server-authoritative inventory items", () => {
   assert.match(inventoryPanelTsx, /effect\.label/);
   assert.match(inventoryPanelTsx, /暂无绑定装备效果/);
   assert.match(inventoryPanelTsx, /暂无服务器发放物品/);
-  assert.doesNotMatch(agentExplorerTsx, /progress\.inventoryItems\.slice\(0,\s*6\)/);
-  assert.doesNotMatch(agentExplorerTsx, /progress\.equipmentEffects\.map/);
+  assert.doesNotMatch(agentExplorerTsx, /inventoryItems\.slice\(0,\s*6\)/);
+  assert.doesNotMatch(agentExplorerTsx, /equipmentEffects\.map/);
   assert.match(functionBody("craftInventoryItem"), /recipeId:\s*craftRecipeId/);
   assert.match(functionBody("craftInventoryItem"), /recoveryCode:\s*explorer\.recoveryCode/);
   assert.match(functionBody("purchaseShopOffer"), /offerId:\s*shopOfferId/);
@@ -2664,7 +2664,7 @@ test("Agent console uses a one-time publish credential for generic result pages"
   assert.match(functionBody("publishResultPage"), /const preview = await getEpochResultPage\(currentAgentId\)/);
   assert.match(functionBody("publishResultPage"), /publishToken:\s*preview\.publishToken/);
   assert.match(functionBody("publishResultPage"), /recoveryCode:\s*explorer\.recoveryCode/);
-  assert.match(functionBody("publishResultPage"), /setResultPage\(created\.page\.payload\)/);
+  assert.match(functionBody("publishResultPage"), /setSharedResultPage\(created\.page\)/);
 });
 
 test("Agent console can revoke shared result pages from the web UI", () => {

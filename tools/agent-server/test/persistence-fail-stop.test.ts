@@ -178,5 +178,5 @@ test("production server wires the shared batch writer and handles early persiste
   assert.match(source, /mutationCoordinator,/);
   assert.match(source, /shutdown\("PERSISTENCE_FAILURE", 1\)/);
   assert.match(source, /if \(persistenceGuard\.failed\)/);
-  assert.match(source, /maintenance\.stop\(\);\s+return;/);
+  assert.match(source, /if \(persistenceGuard\.failed\) \{\s+worldMemory\?\.stop\(\);\s+maintenance\.stop\(\);\s+closePersistence\(\);\s+return;/);
 });

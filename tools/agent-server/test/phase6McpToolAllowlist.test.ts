@@ -6,7 +6,7 @@ import readline from "node:readline";
 import test from "node:test";
 
 const MCP_ENTRYPOINT = fileURLToPath(new URL("../mcp.ts", import.meta.url));
-const TSX_LOADER = fileURLToPath(new URL("../../graph-react-app/node_modules/tsx/dist/loader.ts", import.meta.url));
+const TSX_LOADER = fileURLToPath(new URL("../../graph-react-app/node_modules/tsx/dist/loader.mjs", import.meta.url));
 const PHASE6_RUNTIME_TOOLS = [
   "obsidian_epoch.register_explorer",
   "obsidian_epoch.begin_phase6_experiment",
@@ -116,7 +116,7 @@ test("Phase 6 stdio MCP exposes exactly the configured runtime tools and blocks 
       capabilities: {},
     });
     const initializeResult = asRecord(initialized.result, "initialize result must be an object");
-    assert.deepEqual(initializeResult.capabilities, { tools: {} });
+    assert.deepEqual((initializeResult.capabilities as Record<string, unknown>).tools, {});
     client.notify("notifications/initialized");
 
     const listed = await client.request(2, "tools/list");

@@ -351,7 +351,7 @@ function sourceHash(
   const sources = [
     ...documents.map((document) => ({ sourcePath: document.sourcePath, content: document.content })),
     ...supplementalSources,
-  ].sort((left, right) => left.sourcePath.localeCompare(right.sourcePath));
+  ].sort((left, right) => (left.sourcePath < right.sourcePath ? -1 : left.sourcePath > right.sourcePath ? 1 : 0));
   const hash = createHash("sha256");
   for (const source of sources) hash.update(source.sourcePath).update("\0").update(source.content).update("\0");
   return `sha256:${hash.digest("hex")}`;

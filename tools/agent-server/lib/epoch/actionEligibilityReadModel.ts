@@ -71,6 +71,7 @@ export const EPOCH_ACTIVE_IDENTITY_TOOL_NAMES = [
   "obsidian_epoch.journey_status_compact",
   "obsidian_epoch.run_receipt_compact",
   "obsidian_epoch.recall_journey",
+  "obsidian_epoch.begin_phase6_run",
 ] as const;
 
 export const EPOCH_ACTIVE_IDENTITY_RECOMMENDED_TOOLS = [
