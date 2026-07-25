@@ -12,7 +12,7 @@ import {
   type McpServerRequestManager,
 } from "./mcpServerRequestManager.ts";
 import { McpSessionError, type McpSession } from "./mcpSession.ts";
-import { createMcpSamplingLimiter, type McpSamplingLimiter } from "./mcpSamplingLimiter.ts";
+import { createMcpSamplingLimiter, type McpSamplingLimiter, type McpSamplingLimitReason } from "./mcpSamplingLimiter.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -41,6 +41,7 @@ export type McpSamplingOutcome = {
   readonly source: "sampling_advice";
   readonly trust: "untrusted_client";
   readonly fallback: McpSamplingFallback;
+  readonly limitReason?: McpSamplingLimitReason;
 };
 
 export type McpTaskSamplingOutcome = {
@@ -54,6 +55,7 @@ export type McpTaskSamplingOutcome = {
   readonly source: "task_plan_sampling";
   readonly trust: "untrusted_client";
   readonly fallback: McpSamplingFallback;
+  readonly limitReason?: McpSamplingLimitReason;
 };
 
 export interface McpSamplingCallContext {
@@ -68,10 +70,12 @@ export interface McpSamplingClientOptions {
   readonly requestManager: McpServerRequestManager;
   readonly audit?: (event: string, details: JsonRecord) => void;
   readonly limiter?: McpSamplingLimiter;
+  readonly taskPlanLimiter?: McpSamplingLimiter;
+  readonly episodeLimiter?: McpSamplingLimiter;
 }
 
-function failure(fallback: McpSamplingFallback): McpSamplingOutcome {
-  return Object.freeze({ ok: false, source: "sampling_advice", trust: "untrusted_client", fallback });
+function failure(fallback: McpSamplingFallback, limitReason?: McpSamplingLimitReason): McpSamplingOutcome {
+  return Object.freeze({ ok: false, source: "sampling_advice", trust: "untrusted_client", fallback, ...(limitReason ? { limitReason } : {}) });
 }
 
 function remoteFallback(error: McpServerRequestError): McpSamplingFallback {
@@ -91,13 +95,15 @@ export class McpSamplingClient {
   readonly #session: McpSession;
   readonly #requestManager: McpServerRequestManager;
   readonly #audit: NonNullable<McpSamplingClientOptions["audit"]>;
-  readonly #limiter: McpSamplingLimiter;
+  readonly #taskPlanLimiter: McpSamplingLimiter;
+  readonly #episodeLimiter: McpSamplingLimiter;
 
   constructor(options: McpSamplingClientOptions) {
     this.#session = options.session;
     this.#requestManager = options.requestManager;
     this.#audit = options.audit ?? (() => undefined);
-    this.#limiter = options.limiter ?? createMcpSamplingLimiter();
+    this.#episodeLimiter = options.episodeLimiter ?? options.limiter ?? createMcpSamplingLimiter({ maxTokensPerMinute: 60_000, maxRequestsPerMinute: 60 });
+    this.#taskPlanLimiter = options.taskPlanLimiter ?? options.limiter ?? createMcpSamplingLimiter({ maxTokensPerMinute: 30_000, maxRequestsPerMinute: 20 });
   }
 
   async createMessage(
@@ -113,10 +119,10 @@ export class McpSamplingClient {
     }
     if (!this.#session.supportsClientCapability("sampling")) return failure("capability_absent");
 
-    const permit = this.#limiter.acquire(input.maxTokens);
+    const permit = this.#episodeLimiter.acquire(input.maxTokens);
     if ("denied" in permit) {
       this.#audit("sampling_terminal", { fallback: "rate_limited", limitReason: permit.denied });
-      return failure("rate_limited");
+      return failure("rate_limited", permit.denied);
     }
 
     try {
@@ -163,11 +169,12 @@ export class McpSamplingClient {
     input: McpSamplingCreateMessageInput,
     context: McpSamplingCallContext,
   ): Promise<McpTaskSamplingOutcome> {
-    const failed = (fallback: McpSamplingFallback): McpTaskSamplingOutcome => Object.freeze({
+    const failed = (fallback: McpSamplingFallback, limitReason?: McpSamplingLimitReason): McpTaskSamplingOutcome => Object.freeze({
       ok: false,
       source: "task_plan_sampling",
       trust: "untrusted_client",
       fallback,
+      ...(limitReason ? { limitReason } : {}),
     });
     if (!context.activeClientRequest) return failed("not_active_client_request");
     try {
@@ -177,8 +184,11 @@ export class McpSamplingClient {
       throw error;
     }
     if (!this.#session.supportsClientCapability("sampling")) return failed("capability_absent");
-    const permit = this.#limiter.acquire(input.maxTokens);
-    if ("denied" in permit) return failed("rate_limited");
+    const permit = this.#taskPlanLimiter.acquire(input.maxTokens);
+    if ("denied" in permit) {
+      this.#audit("task_plan_sampling_terminal", { fallback: "rate_limited", limitReason: permit.denied });
+      return failed("rate_limited", permit.denied);
+    }
     try {
       let wireResult: unknown;
       try {

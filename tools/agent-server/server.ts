@@ -75,6 +75,31 @@ async function main() {
     },
   });
   reportStartupStage("runtime_ready");
+  // Journey mirror windows need materialized world history (worldMinute >= 45).
+  // A fresh world starts below that, deadlocking the first journey, so bootstrap
+  // enough history at startup. Uses the configured operator key when present;
+  // otherwise the runtime treats an unconfigured operator as permissive. Best-effort:
+  // a failure must not block server startup.
+  try {
+    const runtimeWithClock = runtime as {
+      epochWorldClock(input: Record<string, unknown>): { readonly worldMinute?: number; readonly persistedWorldMinute?: number; readonly time?: { readonly minute?: number } };
+      epochAdvanceWorldClockInternal(input: Record<string, unknown>): Promise<{ readonly events?: readonly EpochEvent[] }> | { readonly events?: readonly EpochEvent[] };
+    };
+    for (let i = 0; i < 12; i += 1) {
+      const clock = runtimeWithClock.epochWorldClock({});
+      const persisted = Number(clock.persistedWorldMinute ?? 0);
+      if (Number.isFinite(persisted) && persisted >= 45) break;
+      const advanced = await runtimeWithClock.epochAdvanceWorldClockInternal({
+        idempotencyKey: `server-bootstrap-world-${i}`,
+        reason: "server_startup_materialization",
+        elapsedWorldMinutes: Math.max(1, 45 - persisted),
+      });
+      const advanceEvents = advanced.events ?? [];
+      if (advanceEvents.length > 0) persistence.persistEpochEventBatch(advanceEvents);
+    }
+  } catch (bootstrapError) {
+    console.error(`agent-server world history bootstrap skipped: ${bootstrapError instanceof Error ? bootstrapError.message : String(bootstrapError)}`);
+  }
   const worldContentRegistry = loadDefaultWorldContentRegistry();
   reportStartupStage("content_ready");
   const worldMemory = persistence.sqlitePath

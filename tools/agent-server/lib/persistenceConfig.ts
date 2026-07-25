@@ -56,7 +56,7 @@ export async function createAgentPersistenceFromEnv(
   env: EnvLike = process.env,
   sourceDataDir = dataDir,
 ): Promise<AgentPersistenceConfig> {
-  const storeKind = env.AGENT_SERVER_STORE?.trim() || "jsonl";
+  const storeKind = env.AGENT_SERVER_STORE?.trim() || "sqlite";
   if (storeKind !== "jsonl" && storeKind !== "sqlite") {
     throw new Error("AGENT_SERVER_STORE must be jsonl or sqlite");
   }
