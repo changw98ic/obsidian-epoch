@@ -678,7 +678,8 @@ export class JourneyRuntime {
     let journey = this.#record(journeyId).journey;
     if (journey.version !== expectedVersion) throw new Error("journey_version_conflict");
     const events: JourneyRuntimeEvent[] = [];
-    for (const episode of episodes) {
+    for (let episodeIndex = 0; episodeIndex < episodes.length; episodeIndex += 1) {
+      const episode = episodes[episodeIndex];
       if (!episode.episodeId.startsWith(`${journey.journeyId}:`)) throw new Error("journey_episode_id_invalid");
       if (episode.phase) {
         const recordedEpisodes = journey.episodeIds
@@ -706,6 +707,8 @@ export class JourneyRuntime {
         episodeId: episode.episodeId,
         sourceEventIds: episode.sourceFactIds,
       });
+      const nextPhase = episodes[episodeIndex + 1]?.phase;
+      journey = { ...journey, status: episode.phase === "return" || nextPhase === "return" ? "returning" : "awaiting_agent" } as typeof journey;
       events.push(this.#snapshotEvent("journey_episode_recorded", journey, undefined, undefined, episode));
     }
     this.#append(events);

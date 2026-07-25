@@ -2620,8 +2620,8 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
 
   function commitJourneyActionRuntime(input: AnyRecord = {}) {
     const session = epochRuntime.journeyHostedSession(input);
-    if (!session.sceneContract || !["main", "side"].includes(session.sceneContract.phase)) {
-      throw new Error("journey_task_scene_required");
+    if (!session.sceneContract) {
+      throw new Error("journey_scene_contract_not_found");
     }
     const main = commitSingleJourneyStepRuntime(input);
     const current = companionRuntime.status(input);
@@ -8123,63 +8123,76 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
           ? "server_fallback_requested"
           : "capability_absent",
     };
-    if (generatedPlanRequested && args.taskGenerationMode !== "server_fallback" && requestContext?.sampling
-      && typeof requestContext.sampling.createTaskPlanMessage === "function") {
-      await requestContext.notifyProgress?.(0, "正在根据任务类型与场景地图生成完整任务路线。");
-      const sampledTask = await requestContext.sampling.createTaskPlanMessage({
-        systemPrompt: [
-          "Generate one coherent playable quest route from the supplied task type and exact server map.",
-          "The supplied mirrorWindow and worldSlice are signed historical constraints. Keep the route inside that region and interval, and do not contradict its controller, conflict phase, shortages, prices, security, unrest, or macro direction.",
-          "Treat identityName as the protagonist's server-issued identity. Make the route plausible for that identity without renaming or replacing it.",
-          "Use identityTraits, identityNeeds, lifeGoal, resources, attributes, and carriedInventoryItems to create genuine tradeoffs rather than two equivalent success buttons. A cautious, exhausted, hungry, poor, ambitious, vengeful, strong, clever, spiritual, equipped, or curious identity should face different sensible choices.",
-          "Return strict JSON only. Use only supplied object ids. Create a task graph with 4-9 main objectives, 2-4 side objectives, and one route-choice objective.",
-          "Include two mutually exclusive choice routes. Each choice route must contain at least two main objectives and be selected by exactly one distinct action on the route-choice objective. If map organizations or factions are available, ground each route with factionObjectId and target that object in its selecting action.",
-          "Include at least one unlock route whose unlockedByObjectiveIds names a side objective; completing that side objective must open one additional main objective. Locked and unselected route objectives are not executed or counted as required by the server.",
-          "Give every objective a global integer stage and prerequisiteObjectiveIds. Every prerequisite, route selection, and side unlock must point from a lower stage to a higher stage.",
-          "Every objective must contain exactly two distinct executable actions grounded in its worldObjectIds.",
-          "Use at least one supplied npc, and vary which supplied cast members appear according to the objective instead of repeating one npc mechanically.",
-          "Describe the achieved result with completionResult.kind (item,knowledge,world_state,service,relationship) and completionResult.returnMode (carry,report,none). Only physical items may use carry; reports, experiments, repairs, trials and relationships normally remain on site or are reported.",
-          "If a supplied object has type agent, it may be involved only through an explicit action target; describe the observable cooperative or competitive effect without inventing consent, resource loss or identity changes.",
-          "Risk labels are non-authoritative hints; the server recomputes risk from task semantics, scene type, action wording, and targeted map objects. Never include completion state, grade/tier, reward, hidden task, hidden condition, or claims that an action already happened.",
-          "When phase6Scenario is present, its taskType and intensity are server policy. Keep the route on that objective and make the two action options express materially different costs at the requested low, medium, high, or dynamic intensity.",
-          "Top-level fields: title,premise,primaryObjective,successResult,completionResult,objectives,routes.",
-          "CompletionResult fields: kind,returnMode,summary.",
-          "Route fields: routeId,kind,title,factionObjectId(optional),objectiveIds,unlockedByObjectiveIds. Route kind is choice or unlock.",
-          "Objective fields: objectiveId,kind,sequence,stage,prerequisiteObjectiveIds,title,objective,completionCriteria,sceneType,locationId,worldObjectIds,actions. Objective kind is main,side,choice.",
-          "Action fields: optionKey,label,intent,risk,allowedEffectKinds,targetObjectIds,outcomeSummary,selectsRouteId(optional and allowed only on choice objectives).",
-          "Allowed sceneType: livelihood,commission,world_event,discovery,health,conflict.",
-          "Allowed risk: low,medium,high. Allowed effects: commission_offer,journey_progress,resource_delta,clue_created,relationship_signal,world_reference.",
-        ].join(" "),
-        messages: [{
-          role: "user",
-          text: JSON.stringify({
-            taskType: taskContext.taskType,
-            identityName: taskContext.identityName,
-            identityTraits: taskContext.identityTraits,
-            identityNeeds: taskContext.identityNeeds,
-            lifeGoal: taskContext.lifeGoal,
-            resources: taskContext.resources,
-            attributes: taskContext.attributes,
-            carriedInventoryItems: taskContext.carriedInventoryItems,
-            ...(phase6Binding ? { phase6Scenario: phase6Binding.scenario } : {}),
-            scenarioMapId: taskContext.scenarioMapId,
-            mirrorWindow: taskContext.mirrorWindow,
-            worldSlice: taskContext.worldSlice,
-            availableWorldObjects: taskContext.availableWorldObjects.map((object) => ({
-              id: object.id,
-              type: object.type,
-              label: object.label,
-              tags: object.tags,
-            })),
-          }),
-        }],
-        maxTokens: 6_000,
-        temperature: 0.7,
-      }, {
-        activeClientRequest: true,
-        absoluteTimeoutMs: 90_000,
-        softTimeoutMs: 60_000,
-      });
+    const allowedObjectIds = (taskContext.availableWorldObjects || [])
+      .map((object) => object.id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+    const samplingClient = requestContext?.sampling;
+    const taskSamplingCapable = generatedPlanRequested
+      && args.taskGenerationMode !== "server_fallback"
+      && Boolean(samplingClient)
+      && typeof samplingClient?.createTaskPlanMessage === "function";
+    const sampleTaskPlan = taskSamplingCapable && samplingClient
+      ? (feedback?: string) => samplingClient.createTaskPlanMessage({
+          systemPrompt: [
+            "Generate one coherent playable quest route from the supplied task type and exact server map.",
+            "The supplied mirrorWindow and worldSlice are signed historical constraints. Keep the route inside that region and interval, and do not contradict its controller, conflict phase, shortages, prices, security, unrest, or macro direction.",
+            "Treat identityName as the protagonist's server-issued identity. Make the route plausible for that identity without renaming or replacing it.",
+            "Use identityTraits, identityNeeds, lifeGoal, resources, attributes, and carriedInventoryItems to create genuine tradeoffs rather than two equivalent success buttons. A cautious, exhausted, hungry, poor, ambitious, vengeful, strong, clever, spiritual, equipped, or curious identity should face different sensible choices.",
+            "Return strict JSON only. Use only supplied object ids. Create a task graph with 4-9 main objectives, 2-4 side objectives, and one route-choice objective.",
+            "Include two mutually exclusive choice routes. Each choice route must contain at least two main objectives and be selected by exactly one distinct action on the route-choice objective. If map organizations or factions are available, ground each route with factionObjectId and target that object in its selecting action.",
+            "Include at least one unlock route whose unlockedByObjectiveIds names a side objective; completing that side objective must open one additional main objective. Locked and unselected route objectives are not executed or counted as required by the server.",
+            "Give every objective a global integer stage and prerequisiteObjectiveIds. Every prerequisite, route selection, and side unlock must point from a lower stage to a higher stage.",
+            "Every objective must contain exactly two distinct executable actions grounded in its worldObjectIds.",
+            "Use at least one supplied npc, and vary which supplied cast members appear according to the objective instead of repeating one npc mechanically.",
+            "Describe the achieved result with completionResult.kind (item,knowledge,world_state,service,relationship) and completionResult.returnMode (carry,report,none). Only physical items may use carry; reports, experiments, repairs, trials and relationships normally remain on site or are reported.",
+            "If a supplied object has type agent, it may be involved only through an explicit action target; describe the observable cooperative or competitive effect without inventing consent, resource loss or identity changes.",
+            "Risk labels are non-authoritative hints; the server recomputes risk from task semantics, scene type, action wording, and targeted map objects. Never include completion state, grade/tier, reward, hidden task, hidden condition, or claims that an action already happened.",
+            "When phase6Scenario is present, its taskType and intensity are server policy. Keep the route on that objective and make the two action options express materially different costs at the requested low, medium, high, or dynamic intensity.",
+            "Top-level fields: title,premise,primaryObjective,successResult,completionResult,objectives,routes.",
+            "CompletionResult fields: kind,returnMode,summary.",
+            "Route fields: routeId,kind,title,factionObjectId(optional),objectiveIds,unlockedByObjectiveIds. Route kind is choice or unlock.",
+            "Objective fields: objectiveId,kind,sequence,stage,prerequisiteObjectiveIds,title,objective,completionCriteria,sceneType,locationId,worldObjectIds,actions. Objective kind is main,side,choice.",
+            "Action fields: optionKey,label,intent,risk,allowedEffectKinds,targetObjectIds,outcomeSummary,selectsRouteId(optional and allowed only on choice objectives).",
+            "Allowed sceneType: livelihood,commission,world_event,discovery,health,conflict.",
+            "Allowed risk: low,medium,high. Allowed effects: commission_offer,journey_progress,resource_delta,clue_created,relationship_signal,world_reference.",
+            "GROUNDING (critical): every locationId, worldObjectIds entry, targetObjectIds entry, and factionObjectId MUST be verbatim from the allowedObjectIds flat list in the user message. Do not invent, abbreviate, paraphrase, or reuse ids from anywhere else. Invalid ids cause rejection and a forced regeneration.",
+          ].join(" "),
+          messages: [{
+            role: "user",
+            text: JSON.stringify({
+              taskType: taskContext.taskType,
+              identityName: taskContext.identityName,
+              identityTraits: taskContext.identityTraits,
+              identityNeeds: taskContext.identityNeeds,
+              lifeGoal: taskContext.lifeGoal,
+              resources: taskContext.resources,
+              attributes: taskContext.attributes,
+              carriedInventoryItems: taskContext.carriedInventoryItems,
+              ...(phase6Binding ? { phase6Scenario: phase6Binding.scenario } : {}),
+              scenarioMapId: taskContext.scenarioMapId,
+              mirrorWindow: taskContext.mirrorWindow,
+              worldSlice: taskContext.worldSlice,
+              availableWorldObjects: taskContext.availableWorldObjects.map((object) => ({
+                id: object.id,
+                type: object.type,
+                label: object.label,
+                tags: object.tags,
+              })),
+              allowedObjectIds,
+              ...(feedback ? { groundingFeedback: feedback } : {}),
+            }),
+          }],
+          maxTokens: 6_000,
+          temperature: feedback ? 0.5 : 0.7,
+        }, {
+          activeClientRequest: true,
+          absoluteTimeoutMs: 90_000,
+          softTimeoutMs: 60_000,
+        })
+      : undefined;
+    if (sampleTaskPlan) {
+      await requestContext?.notifyProgress?.(0, "正在根据任务类型与场景地图生成完整任务路线。");
+      const sampledTask = await sampleTaskPlan();
       taskGeneration = sampledTask;
       if (sampledTask.ok) taskProposal = sampledTask.proposal;
     }
@@ -8190,23 +8203,38 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       await partialPersistence?.("obsidian_epoch.start_journey", result);
       return result;
     });
-    let started;
-    try {
-      started = await startOnce({
-        ...boundArgs,
-        ...(taskProposal === undefined ? {} : { taskProposal }),
-      });
-    } catch (error: unknown) {
-      const code = errorCodeForRejectedCommand(error);
-      if (taskProposal === undefined || !code.startsWith("journey_task_")) throw error;
-      taskGeneration = {
-        ok: false,
-        source: "task_plan_sampling",
-        trust: "untrusted_client",
-        fallback: "invalid_result",
-        validationError: code,
-      };
+    let started: Awaited<ReturnType<typeof startOnce>> | undefined;
+    if (taskProposal === undefined) {
       started = await startOnce(boundArgs);
+    } else {
+      let lastValidationError: string | undefined;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          started = await startOnce({ ...boundArgs, taskProposal });
+          break;
+        } catch (error: unknown) {
+          const code = errorCodeForRejectedCommand(error);
+          if (!code.startsWith("journey_task_")) throw error;
+          lastValidationError = code;
+          if (attempt === 2 || !sampleTaskPlan) break;
+          const invalidIds = code.includes(":") ? code.slice(code.indexOf(":") + 1) : "";
+          const feedback = `Previous task plan was rejected (${code}). These ids are NOT in the allowlist: ${invalidIds || "(unspecified)"}. Regenerate the route using ONLY ids from allowedObjectIds: ${allowedObjectIds.join(", ")}.`;
+          const retry = await sampleTaskPlan(feedback);
+          taskGeneration = retry;
+          taskProposal = retry.ok ? retry.proposal : undefined;
+          if (taskProposal === undefined) break;
+        }
+      }
+      if (started === undefined) {
+        taskGeneration = {
+          ok: false,
+          source: "task_plan_sampling",
+          trust: "untrusted_client",
+          fallback: "invalid_result",
+          ...(lastValidationError ? { validationError: lastValidationError } : {}),
+        };
+        started = await startOnce(boundArgs);
+      }
     }
     let phase6Capture: unknown;
     if (phase6Binding) {

@@ -650,10 +650,15 @@ export function validateJourneyTaskProposal(input: {
       throw new Error("journey_task_scene_type_invalid");
     }
     const locationId = text(rawObjective.locationId, `location_id_${index}`, 128);
-    if (!knownObjects.has(locationId)) throw new Error("journey_task_location_not_grounded");
+    if (!knownObjects.has(locationId)) throw new Error(`journey_task_location_not_grounded:${locationId}`);
     const worldObjectIds = uniqueTexts(rawObjective.worldObjectIds, `world_object_ids_${index}`, 1, 8);
-    if (!worldObjectIds.includes(locationId) || worldObjectIds.some((objectId) => !knownObjects.has(objectId))) {
-      throw new Error("journey_task_world_object_not_grounded");
+    const ungroundedObjectIds = worldObjectIds.filter((objectId) => !knownObjects.has(objectId));
+    const locationMissingFromObjects = !worldObjectIds.includes(locationId);
+    if (locationMissingFromObjects || ungroundedObjectIds.length > 0) {
+      const detail: string[] = [];
+      if (locationMissingFromObjects) detail.push(`locationId:${locationId}`);
+      if (ungroundedObjectIds.length > 0) detail.push(`objects:${ungroundedObjectIds.join(",")}`);
+      throw new Error(`journey_task_world_object_not_grounded:${detail.join(";")}`);
     }
     if (!Array.isArray(rawObjective.actions)
       || rawObjective.actions.length !== JOURNEY_TASK_OBJECTIVE_LIMITS.actionsPerObjective) {
