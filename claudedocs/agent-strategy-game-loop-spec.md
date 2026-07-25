@@ -1,5 +1,9 @@
 # Agent Strategy Game Loop Spec
 
+> ⚠️ **已归档(v1,2026-07-25)** —— 设计意图稿。经审阅发现:§6 改动范围表 10/12 行对现状判断失误,§3.2 任务生成方案违背"server 无 LLM"的架构现实,§2.1 与 §5.3 数据矛盾。
+> - 审阅报告:[agent-strategy-game-loop-spec-review.md](agent-strategy-game-loop-spec-review.md)
+> - 可实施版本:[agent-strategy-game-loop-spec-v2.md](agent-strategy-game-loop-spec-v2.md)
+
 ## 1. 设计目标
 
 - agent 根据用户设定的**策略偏好**自主选择任务,不被 server 强制 taskType。
