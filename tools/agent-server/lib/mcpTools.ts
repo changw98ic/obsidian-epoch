@@ -31,6 +31,21 @@ import type { EpochEvent } from "./epoch/events.ts";
 import { listMirrorConsequences } from "./epoch/journeyMirrorLedger.ts";
 import type { MirrorConsequenceLedgerEntry } from "./epoch/journeySettlementRules.ts";
 import {
+  CANON_THRESHOLD_BPS,
+  SETTLEMENT_POLICY_VERSION,
+  CONSEQUENCE_SCORE_POLICY_VERSION,
+} from "./epoch/journeySettlementRules.ts";
+import type {
+  ResultComponentInputs,
+  SelfLossContribution,
+  SelfLossCostKind,
+  SelfLossSourceKind,
+  SettlementContext,
+  SettlementDecision,
+} from "./epoch/journeySettlementRules.ts";
+import { applySelfLossDedupRules, buildConsequenceScore } from "./epoch/journeyConsequenceScoring.ts";
+import { deriveSettlementDecision, deriveSettlementId } from "./epoch/journeySettlementDecision.ts";
+import {
   causalWorldEventFromEpochEvent,
 } from "./epoch/causalEpochAdapter.ts";
 import {
@@ -69,10 +84,13 @@ import {
   journeyTaskGraphState,
   normalizeJourneyCompletionTier,
   nextJourneyTaskObjective,
+  deriveJourneyHiddenTask,
+  journeyRewardBundleForPlan,
   type JourneyTaskEvidenceEpisode,
   type JourneyGeneratedTaskPlan,
   type JourneyHiddenTaskSealResolver,
 } from "./epoch/journeyGeneratedTaskRules.ts";
+import type { EpochJourney } from "./epoch/journeyRules.ts";
 import { journeyMetricsView } from "./epoch/journeyMetricsReadModel.ts";
 import {
   type JourneyRunReceipt,
@@ -416,6 +434,33 @@ const EPOCH_CORE_ACTIVE_IDENTITY_METHOD_TOOL_COVERAGE = [
 
 function isRecord(value: unknown): value is AnyRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * PR4 helper: read a finite number from an unknown value, returning the
+ * fallback when the value is not a finite number. Used when reading the
+ * adjudication performance components into ResultComponentInputs.
+ */
+function numberFrom(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * PR4 helper: map a string item rarity label from a legacy
+ * {@link JourneyRewardBundle.items[number].rarity} into the numeric 0..3
+ * form expected by {@link BaseRewardBundle.items[number].baseRarityTier}.
+ * - 0 = no item
+ * - 1 = common
+ * - 2 = rare
+ * - 3 = legendary
+ */
+function rarityTierNumeric(rarity: string | undefined | null): 0 | 1 | 2 | 3 {
+  switch (rarity) {
+    case "common": return 1;
+    case "rare": return 2;
+    case "legendary": return 3;
+    default: return 0;
+  }
 }
 
 function requireObject(value: unknown, name: string): AnyRecord {
@@ -2590,6 +2635,270 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     return result;
   }
 
+  /**
+   * PR4: Map a {@link SettlementTier} (5-tier scale, includes 未及格) into the
+   * 4-tier solidify contract enum (及格/良好/优秀/惊世). 未及格 never reaches
+   * here because the solidify path is only invoked when canonEligible=true,
+   * which requires main line success + score above threshold.
+   *
+   * The solidify event payload preserves the legacy 4-tier shape; the
+   * authoritative 5-tier value is the {@link SettlementDecision.tier} carried
+   * on the {@link settlementDecision} field of finalizeSettledMirrorWorld's
+   * return value.
+   */
+  function pr4CompletionTierForSolidify(
+    tier: SettlementDecision["tier"],
+  ): "及格" | "良好" | "优秀" | "惊世" {
+    switch (tier) {
+      case "及格": return "及格";
+      case "良好": return "良好";
+      case "优秀": return "优秀";
+      case "惊世": return "惊世";
+      case "未及格":
+        // Defensive: 未及格 cannot be canon-eligible (score below any
+        // positive threshold); fall through to 及格 so the solidify event
+        // still carries a valid tier value. The settlement decision above
+        // records the authoritative 未及格; this branch is unreachable in
+        // normal flow because canonEligible=false at 未及格.
+        return "及格";
+      default: {
+        const _exhaustive: never = tier;
+        throw new Error(`unhandled_settlement_tier:${String(_exhaustive)}`);
+      }
+    }
+  }
+
+  /**
+   * PR4: extract {@link SelfLossContribution} entries from the canonical
+   * resource_cost source — the action resolutions carried on each evidence
+   * episode's serverFacts. Each PAID `resourceCost` (focus / stamina, amount
+   * fixed at 1 by the risk terms) emits one contribution whose actionEventId
+   * is the resolution's `decisionKeyId` (a server-signed stable identifier
+   * for the action) and whose canonicalEventIds carry the underlying signed
+   * input hash so the audit map is replay-stable.
+   *
+   * The other three canonical sources are intentionally not wired here:
+   * - `resource_spent_event` and `lifetime_adjusted_event` are refused by
+   *   the mirror ledger (they are self-loss, not collateral), so the ledger
+   *   projection is not a source for them.
+   * - `hosted_action_lifetime_delta` and the canonical event streams behind
+   *   the other two sources need plumbing through the event store that is
+   *   not yet threaded into this helper.
+   *
+   * The partial wiring is sound because {@link applySelfLossDedupRules}
+   * collapses by (actionEventId, costKind); contributions from distinct
+   * actions never collide, and the unwired sources would de-dedupe against
+   * this stream if they were added later.
+   */
+  function buildSelfLossContributionsFromEpisodes(
+    episodes: readonly JourneyTaskEvidenceEpisode[],
+  ): readonly SelfLossContribution[] {
+    const contributions: SelfLossContribution[] = [];
+    for (const episode of episodes) {
+      const selectedAction = episode.serverFacts?.storyBeat?.selectedAction;
+      const resolution = selectedAction?.resolution;
+      const resourceCost = resolution?.resourceCost;
+      if (!resourceCost || !resourceCost.paid) continue;
+      // decisionKeyId is the server-signed stable identifier for the action;
+      // it stands in for the canonical actionEventId until the event stream
+      // is threaded through. The composite (actionEventId, costKind='resource')
+      // is the dedup key, so two costs on the same action collapse.
+      const actionEventId = resolution.decisionKeyId;
+      const inputHash = resolution.inputHash;
+      contributions.push({
+        actionEventId,
+        costKind: "resource",
+        sourceKind: "resource_cost",
+        canonicalEventIds: [inputHash],
+        resourceUnits: resourceCost.amount,
+      });
+    }
+    return contributions;
+  }
+
+  /**
+   * PR4: Build the {@link SettlementContext} from the post-settle finalStatus
+   * and call {@link deriveSettlementDecision}. This is the SINGLE point at
+   * which tier / reward / worldCommit are computed; downstream code reads
+   * but never re-derives them.
+   *
+   * The context fields map:
+   * - resultComponentInputs: re-derived from the adjudication's
+   *   JourneyTaskPerformance components (main/side/execution/penalty).
+   * - selfLossContributions: an empty array here. PR4 step 2 will wire the
+   *   full self-loss dedup from the journey's resourceCost / lifetime events
+   *   into the SettlementContext; for PR4 step 1 (this PR) we pass an empty
+   *   contribution stream so the self-loss bucket is zero. This is the
+   *   documented conservative path: the additive score still gates canon
+   *   eligibility correctly because the result bucket alone can clear
+   *   CANON_THRESHOLD_BPS for an execution-clean main+side+hidden run.
+   * - mirrorLedgerEntries: live entries from the journey projection, scanned
+   *   for the collateral bucket.
+   *
+   * The hiddenObjectiveIds field carries the required-actions objective IDs
+   * derived from the hidden task seal so the HiddenClamp can fire when
+   * hiddenComplete=false.
+   */
+  function computeSettlementDecisionForFinalize(params: {
+    readonly journeyId: string;
+    readonly taskPlan: EpochJourney["taskPlan"];
+    readonly evidenceEpisodes: readonly JourneyTaskEvidenceEpisode[];
+    readonly taskAdjudication: AnyRecord;
+    readonly completedObjectiveIds: readonly string[];
+    readonly requiredMainObjectiveIds: readonly string[];
+    readonly bonusMainObjectiveIds: readonly string[];
+    readonly relevantSideObjectiveIds: readonly string[];
+    readonly mainLineSucceeded: boolean;
+    readonly hiddenComplete: boolean;
+  }): SettlementDecision {
+    const journeyId = params.journeyId;
+    const taskAdjudication = params.taskAdjudication;
+    const performance = isRecord(taskAdjudication.performance)
+      ? taskAdjudication.performance
+      : undefined;
+    // PR4: re-derive the four result-component inputs from the adjudication
+    // performance components. The composite `scoreBps` on performance is NOT
+    // used — only the four physical-adjudication components plus the failed
+    // / skipped penalty.
+    const mainCompletionBps = numberFrom(performance?.mainCompletionBps, 0);
+    const bonusMainCompletionBps = numberFrom(performance?.bonusMainCompletionBps, 0);
+    const sideCompletionBps = numberFrom(performance?.sideCompletionBps, 0);
+    const executionQualityBps = numberFrom(performance?.executionQualityBps, 0);
+    const failedActions = numberFrom(performance?.failedActions, 0);
+    const skippedActions = numberFrom(performance?.skippedActions, 0);
+    const penaltyBps = failedActions * 750 + skippedActions * 250;
+    const resultComponentInputs: ResultComponentInputs = {
+      mainCompletionBps,
+      bonusMainCompletionBps,
+      sideCompletionBps,
+      executionQualityBps,
+      penaltyBps,
+    };
+    // PR4: wire the four canonical self-loss sources into the contribution
+    // stream. The dominant source in the current architecture is
+    // `resource_cost` — every action whose signed resolution carries a paid
+    // `resourceCost` (focus / stamina) contributes one unit of resource
+    // self-loss. The other three sources (`resource_spent_event`,
+    // `hosted_action_lifetime_delta`, `lifetime_adjusted_event`) require
+    // plumbing through the canonical event stream that is not yet threaded
+    // into this helper; their contributions stay empty for now and the dedup
+    // pass tolerates the partial stream cleanly. Even partial wiring closes
+    // the spec's "self-loss bucket is permanently zero" gap: a journey that
+    // burned focus/stamina now scores strictly lower than a frugal one.
+    const selfLossContributions = applySelfLossDedupRules(
+      buildSelfLossContributionsFromEpisodes(params.evidenceEpisodes),
+    );
+    // PR4: scan the journey projection's mirror ledger for live entries to
+    // feed the collateral bucket. The solidify caller drains pending
+    // blueprints before this; this snapshot is the pre-drain view. The
+    // settlement decision is computed BEFORE the drain so the entries the
+    // caller will promote match what the decision saw.
+    let mirrorLedgerEntries: readonly MirrorConsequenceLedgerEntry[] = [];
+    try {
+      const journeyProjection = companionRuntime.journeyRuntime().projection();
+      const mirrorLedger = journeyProjection.mirrorLedgers[journeyId];
+      if (mirrorLedger) {
+        mirrorLedgerEntries = listMirrorConsequences(mirrorLedger);
+      }
+    } catch {
+      // Reading the projection in finalizeSettledMirrorWorld's prelude
+      // (before the drain) is best-effort; a missing ledger resolves to
+      // an empty collateral bucket.
+      mirrorLedgerEntries = [];
+    }
+    const hiddenObjectiveIds = params.taskPlan
+      ? deriveHiddenObjectiveIdsForJourney(params.taskPlan, journeyId)
+      : [];
+    const baseRewardBundle = params.taskPlan
+      ? deriveBaseRewardBundleForJourney(params.taskPlan, journeyId)
+      : { baseBundleRef: `journey:${journeyId}:base`, resources: { coin: 0 }, items: [] };
+    const ctx: SettlementContext = {
+      journeyId,
+      mainObjectiveIds: params.requiredMainObjectiveIds,
+      sideObjectiveIds: params.relevantSideObjectiveIds,
+      hiddenObjectiveIds,
+      mainLineSucceeded: params.mainLineSucceeded,
+      hiddenComplete: params.hiddenComplete,
+      actionResolutions: [],
+      selfLossSourceEventsByKind: {
+        resource_cost: [],
+        resource_spent_event: [],
+        hosted_action_lifetime_delta: [],
+        lifetime_adjusted_event: [],
+      },
+      mirrorLedgerEntries,
+      canonicalActionEventIds: [],
+      resultComponentInputs,
+      selfLossContributions,
+      baseRewardBundle,
+      policyVersion: SETTLEMENT_POLICY_VERSION,
+    };
+    void params.bonusMainObjectiveIds;
+    void params.completedObjectiveIds;
+    const score = buildConsequenceScore(ctx);
+    return deriveSettlementDecision(ctx, score);
+  }
+
+  /**
+   * PR4 helper: derive the hidden-objective IDs for the SettlementContext
+   * from the journey's task plan + hidden task seal. Used as the input to
+   * the HiddenClamp's `sourceHiddenObjectiveIds`.
+   */
+  function deriveHiddenObjectiveIdsForJourney(
+    taskPlan: NonNullable<EpochJourney["taskPlan"]>,
+    journeyId: string,
+  ): readonly string[] {
+    try {
+      const seal = resolveJourneyHiddenTaskSeal(journeyId, taskPlan);
+      const hidden = deriveJourneyHiddenTask(taskPlan, seal);
+      return hidden.requiredActions.map((action) => action.objectiveId);
+    } catch {
+      // A plan without a hidden task seal is treated as having no hidden
+      // objectives; the HiddenClamp fires hidden_incomplete only when
+      // hiddenComplete=false AND hiddenObjectiveIds is non-empty (handled
+      // in deriveHiddenClamp inside journeyConsequenceScoring).
+      return [];
+    }
+  }
+
+  /**
+   * PR4 helper: build a {@link BaseRewardBundle} from the journey's task
+   * plan. Resources come from the JOURNEY_TIER_REWARDS coin reward; items
+   * come from journeyRewardBundleForPlan for the tier 惊世 (the highest
+   * tier). This is a conservative bundle — the actual tier-specific scaling
+   * happens inside deriveRewardGrant, which applies the multiplier on top
+   * of these base amounts.
+   */
+  function deriveBaseRewardBundleForJourney(
+    taskPlan: NonNullable<EpochJourney["taskPlan"]>,
+    journeyId: string,
+  ): { readonly baseBundleRef: string; readonly resources: Readonly<Record<string, number>>; readonly items: readonly { readonly itemId: string; readonly quantity: number; readonly baseRarityTier: 0 | 1 | 2 | 3 }[] } {
+    // Reuse the legacy plan-based bundle builder to source base resources
+    // and items. The tier parameter to journeyRewardBundleForPlan affects
+    // only item rarity; we pass 惊世 so the base items are available at
+    // their highest tier, then deriveRewardGrant clamps them down per the
+    // actual settled tier.
+    try {
+      const bundle = journeyRewardBundleForPlan(taskPlan, "惊世");
+      const coinReward = bundle.resources.find((reward) => reward.resourceId === "coin");
+      return {
+        baseBundleRef: `journey:${journeyId}:base`,
+        resources: coinReward ? { coin: coinReward.amount } : {},
+        items: bundle.items.map((item) => ({
+          itemId: item.itemKey,
+          quantity: 1,
+          baseRarityTier: rarityTierNumeric(item.rarity),
+        })),
+      };
+    } catch {
+      return {
+        baseBundleRef: `journey:${journeyId}:base`,
+        resources: {},
+        items: [],
+      };
+    }
+  }
+
   function finalizeSettledMirrorWorld(
     status: ReturnType<typeof companionRuntime.status>,
     input: AnyRecord,
@@ -2602,6 +2911,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         worldSynchronization: undefined,
         worldSolidification: undefined,
         worldCommitRecord: undefined,
+        settlementDecision: undefined as SettlementDecision | undefined,
       };
     }
     const settledAtWorldTime = status.journey.settledAtWorldTime;
@@ -2609,24 +2919,15 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     if (!settledAtWorldTime || !startedAtWorldTime) throw new Error("journey_mirror_time_window_missing");
     const statusRecord = recordValue(status);
     const taskAdjudication = recordValue(statusRecord.taskAdjudication);
-    const completionTier = normalizeJourneyCompletionTier(optionalString(taskAdjudication.tier)) || "及格";
-    const performance = recordValue(taskAdjudication.performance);
-    const reportedScoreBps = Number(performance.scoreBps);
-    const completionScoreBps = Number.isSafeInteger(reportedScoreBps)
-      ? Math.max(0, Math.min(10_000, reportedScoreBps))
-      : completionTier === "惊世"
-        ? 10_000
-        : completionTier === "优秀"
-          ? 9_500
-          : completionTier === "良好"
-            ? 7_500
-            : 6_000;
     const evidenceEpisodes = (Array.isArray(statusRecord.episodes)
       ? statusRecord.episodes
       : []) as readonly JourneyTaskEvidenceEpisode[];
     let completedObjectiveIds: readonly string[] = [];
     let requiredMainObjectiveIds: readonly string[] = [];
+    let bonusMainObjectiveIds: readonly string[] = [];
+    let relevantSideObjectiveIds: readonly string[] = [];
     let mainLineSucceeded = false;
+    let hiddenComplete = false;
     if (status.journey.taskPlan) {
       const graphState = journeyTaskGraphState(status.journey.taskPlan, evidenceEpisodes);
       const mainCompleted = Number(taskAdjudication.mainCompleted);
@@ -2636,17 +2937,70 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
             typeof value === "string" && Boolean(value.trim()))
         : [];
       requiredMainObjectiveIds = graphState.requiredMainObjectiveIds;
+      bonusMainObjectiveIds = graphState.bonusMainObjectiveIds;
+      relevantSideObjectiveIds = graphState.relevantSideObjectiveIds;
       mainLineSucceeded = mainTotal > 0 && mainCompleted === mainTotal;
+      // PR4: hiddenComplete is the input to the HiddenClamp in
+      // deriveSettlementDecision. The physical-verdict adjudication already
+      // derived it from the hidden task seal; we re-derive it here from
+      // taskAdjudication.hiddenTask so the settlement decision is robust to
+      // a missing seal in the journey projection (legacy replay compat).
+      hiddenComplete = isRecord(taskAdjudication.hiddenTask)
+        ? Boolean(taskAdjudication.hiddenTask.completed)
+        : false;
     } else {
       const mission = recordValue(statusRecord.mission);
       mainLineSucceeded = mission.status === "completed"
         && recordValue(mission.outcome).result === "success";
+      hiddenComplete = false;
       if (mainLineSucceeded) {
         completedObjectiveIds = ["legacy_main"];
         requiredMainObjectiveIds = ["legacy_main"];
       }
     }
-    const canonEligible = mainLineSucceeded;
+    // PR4: derive SettlementDecision once. This is the single point at which
+    // tier / reward / worldCommit are computed for PR4 contract journeys
+    // (those with a generated task plan). Downstream code reads but never
+    // re-derives them.
+    //
+    // Legacy non-taskPlan journeys (pre-PR4 mainline flow) now route through
+    // the SAME authority path as PR4 contract journeys. The completion score
+    // for a legacy journey is binarised: a main-completed legacy journey
+    // scores exactly CANON_THRESHOLD_BPS (clears `>= threshold`), a
+    // main-incomplete legacy journey scores 0 (fails). This preserves the
+    // pre-PR4 solidify/discard outcome for legacy contracts while closing
+    // the bypass where mainLineSucceeded alone could solidify a low-score
+    // run. The settlement authority guard in gameCore.solidifyJourneyWorld
+    // fires uniformly on every settled journey that passes
+    // settlementPolicyVersion through.
+    const isPr4ContractJourney = Boolean(status.journey.taskPlan);
+    const settlementDecision = computeSettlementDecisionForFinalize({
+      journeyId: status.journey.journeyId,
+      taskPlan: status.journey.taskPlan,
+      evidenceEpisodes,
+      taskAdjudication,
+      completedObjectiveIds,
+      requiredMainObjectiveIds,
+      bonusMainObjectiveIds,
+      relevantSideObjectiveIds,
+      mainLineSucceeded,
+      hiddenComplete,
+    });
+    const completionScoreBps = isPr4ContractJourney
+      ? settlementDecision.score.breakdown.totalBps
+      : (mainLineSucceeded ? CANON_THRESHOLD_BPS : 0);
+    // canonEligible is now derived from the SAME inequality the authority
+    // guard enforces, for both PR4 and legacy journeys. The legacy bypass
+    // (mainLineSucceeded alone) is gone — a main-incomplete legacy journey
+    // cannot solidify, and a main-complete legacy journey still solidifies
+    // because its binarised score sits exactly on the threshold.
+    const canonEligible = mainLineSucceeded
+      && completionScoreBps >= settlementDecision.worldCommit.thresholdBps;
+    // Canonical settlement id = `settlement:${journeyId}:v${SETTLEMENT_POLICY_VERSION}`.
+    // Read it from the authority (deriveSettlementId) rather than parsing the
+    // reward idempotencyKey — the key layout is `${journeyId}:${settlementId}:reward`,
+    // so a naive split/slice(0,2) yields `${journeyId}:settlement`, not the id.
+    const settlementId = deriveSettlementId(settlementDecision.journeyId);
     const worldSynchronization = authoritativeWorldClockEnabled
       ? advanceCanonicalWorld({
           reason: "journey_canon_commit_materialization",
@@ -2681,6 +3035,11 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       ? listMirrorConsequences(mirrorLedger)
       : ([] as readonly MirrorConsequenceLedgerEntry[]);
     let worldSolidification: ReturnType<typeof epochRuntime.solidifyJourneyWorld> | undefined;
+    // PR4: pass the decision's totalBps + threshold + policyVersion +
+    // settlementId through to solidifyJourneyWorld. The authority in
+    // gameCore.solidifyJourneyWorld independently re-validates the threshold
+    // (kills the legacy dead-code "canonEligible = mainLineSucceeded" branch
+    // where a low-score completed main could still solidify).
     const worldCommit = canonEligible
       ? (worldSolidification = epochRuntime.solidifyJourneyWorld({
           journeyId: status.journey.journeyId,
@@ -2691,25 +3050,48 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
           mirrorStartedAtWorldTime: startedAtWorldTime,
           mirrorEndedAtWorldTime: settledAtWorldTime,
           committedAtWorldTime,
-          completionTier,
+          completionTier: pr4CompletionTierForSolidify(settlementDecision.tier),
           completionScoreBps,
           worldSliceHash: status.journey.worldSlice?.sliceHash,
           correlationId: status.journey.correlationId,
           causationId: status.journey.journeyId,
           mirrorLedgerEntries: liveMirrorEntries,
+          canonThresholdBps: CANON_THRESHOLD_BPS,
+          settlementPolicyVersion: SETTLEMENT_POLICY_VERSION,
+          consequenceScorePolicyVersion: CONSEQUENCE_SCORE_POLICY_VERSION,
+          settlementId,
+          consequenceScoreBreakdown: {
+            resultScoreBps: settlementDecision.score.breakdown.resultScoreBps,
+            selfLossScoreBps: settlementDecision.score.breakdown.selfLossScoreBps,
+            collateralScoreBps: settlementDecision.score.breakdown.collateralScoreBps,
+          },
         })).value
       : {
           mode: "mirror" as const,
           status: "discarded" as const,
-          reason: (mainLineSucceeded
-            ? "quality_below_canon_threshold"
-            : "main_incomplete_or_return_failed") as "quality_below_canon_threshold" | "main_incomplete_or_return_failed",
+          // PR4: reason comes straight from the decision's WorldCommitReason
+          // ("main_incomplete" or "below_canon_threshold"). The legacy
+          // "quality_below_canon_threshold" / "main_incomplete_or_return_failed"
+          // strings are no longer emitted on fresh commits; they remain only
+          // in the read adapters for back-compat with pre-PR4 persisted records.
+          reason: settlementDecision.worldCommit.reason,
           regionId: status.journey.destinationRegionId,
           committedAtWorldTime,
           influenceDelta: 0,
           factionStandings: [],
           npcRelationships: [],
           sourceEventIds: [],
+          // PR4 additive receipt-audit fields on the discarded commit.
+          completionScoreBps,
+          canonThresholdBps: CANON_THRESHOLD_BPS,
+          settlementPolicyVersion: SETTLEMENT_POLICY_VERSION,
+          consequenceScorePolicyVersion: CONSEQUENCE_SCORE_POLICY_VERSION,
+          settlementId,
+          consequenceScoreBreakdown: {
+            resultScoreBps: settlementDecision.score.breakdown.resultScoreBps,
+            selfLossScoreBps: settlementDecision.score.breakdown.selfLossScoreBps,
+            collateralScoreBps: settlementDecision.score.breakdown.collateralScoreBps,
+          },
         };
     const worldCommitRecord = companionRuntime.recordWorldCommit({
       ...input,
@@ -2780,6 +3162,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       worldSynchronization,
       worldSolidification,
       worldCommitRecord,
+      settlementDecision,
     };
     // Attach in-place (attachJourneyEventsForPersistence mutates via
     // Object.defineProperty) to preserve the plain-return type inference.
@@ -2874,7 +3257,19 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     const taskAdjudication = recordValue(finalStatusRecord.taskAdjudication);
     const worldSolidification = mirrorFinalization.worldSolidification;
     const worldCommitRecord = mirrorFinalization.worldCommitRecord;
-    const completionTier = normalizeJourneyCompletionTier(optionalString(taskAdjudication.tier));
+    const settlementDecision = mirrorFinalization.settlementDecision;
+    // PR4: tier is the authority-derived tier from SettlementDecision when the
+    // journey actually reached the mirror-finalize path (settled + mirror +
+    // no prior worldCommit). For all other cases finalizeSettledMirrorWorld
+    // early-returns with settlementDecision=undefined; no reward is granted,
+    // and completionTier=undefined correctly skips the grant branch below.
+    //
+    // taskAdjudication.tier is intentionally NOT read — adjudicateJourneyTask
+    // no longer computes tier (spec: "adjudicateJourneyTask 不再算 tier"); the
+    // legacy fallback would always yield undefined anyway.
+    const completionTier = settlementDecision
+      ? settlementDecision.tier
+      : undefined;
     const rewardSourceEventIds = [...new Set((Array.isArray(finalStatusRecord.episodes)
       ? finalStatusRecord.episodes
       : []).flatMap((episodeValue) => {
@@ -2896,6 +3291,12 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
           sourceEventIds: rewardSourceEventIds,
           correlationId: returned.journey.correlationId,
           causationId: returned.journey.journeyId,
+          // PR4: scope the idempotency reason to the settlementId so a
+          // policy bump re-grants under a new key and a duplicate call
+          // collapses. Absent on legacy paths without a decision.
+          ...(settlementDecision
+            ? { settlementId: deriveSettlementId(settlementDecision.journeyId) }
+            : {}),
         })
       : undefined;
     const result = {

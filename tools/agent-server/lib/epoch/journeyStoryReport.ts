@@ -19,7 +19,10 @@ import type {
 } from "./journeyGeneratedTaskRules.ts";
 import {
   adjudicateJourneyTask,
+  deriveLegacyTerminalTierFromAdjudication,
   inferJourneyCompletionResult,
+  JOURNEY_TIER_REWARDS,
+  journeyRewardBundleForPlan,
   nextJourneyTaskObjective,
 } from "./journeyGeneratedTaskRules.ts";
 import { formatEpochWorldTimeRange } from "./worldCalendar.ts";
@@ -1144,6 +1147,22 @@ function buildGeneratedJourneyStoryReport(
     hiddenTaskSeal: input.hiddenTaskSeal,
     revealHidden: true,
   });
+  // PR4: adjudication no longer carries tier/rewardBundle (the authority tier
+  // lives on SettlementDecision.tier). This story report is for terminal
+  // journey narrative; derive the legacy tier from the physical adjudication
+  // via the legacy helper. PR4 callers reading the worldCommit block read
+  // SettlementDecision.tier through the world commit's reason, not this.
+  const legacyTerminalTier = deriveLegacyTerminalTierFromAdjudication(adjudication, true);
+  // PR4: adjudication no longer carries rewardBundle either; rebuild it via
+  // the legacy helper so the story report's reward evaluation stays aligned
+  // with the public taskAdjudication projection (which goes through the same
+  // journeyRewardBundleForPlan in agentCompanionRuntime.withLegacyTierProjection).
+  const legacyRewardBundle = legacyTerminalTier === "未及格"
+    ? undefined
+    : journeyRewardBundleForPlan(taskPlan, legacyTerminalTier);
+  const legacyReward = legacyTerminalTier === "未及格"
+    ? undefined
+    : JOURNEY_TIER_REWARDS[legacyTerminalTier];
   const arrivalBeat = storyBeat(arrival) as JourneyEpisodeStoryBeat;
   const returnBeat = storyBeat(returning) as JourneyEpisodeStoryBeat;
   const time = storyTime(input.startedAtWorldTime, input.dueAtWorldTime);
@@ -1235,9 +1254,9 @@ function buildGeneratedJourneyStoryReport(
       episodes: [returning],
     }),
   ];
-  const rewards = rewardEvaluation(adjudication.rewardBundle, input.episodes);
+  const rewards = rewardEvaluation(legacyRewardBundle, input.episodes);
   const evaluation: GroundedJourneyStoryReport["evaluation"] = {
-    taskCompletionGrade: adjudication.tier,
+    taskCompletionGrade: legacyTerminalTier,
     ...(adjudication.performance ? {
       performanceScorePercent: Math.round(adjudication.performance.scoreBps / 100),
       gradeReason: adjudication.performance.reasons.join("；"),
@@ -1327,7 +1346,7 @@ function buildGeneratedJourneyStoryReport(
       objectiveStatus: mission.status === "completed" ? "progressed" : "unresolved",
       confirmedOutcome: confirmedOutcomes.join(""),
       unresolved: mission.status === "completed"
-        ? `本局已经结算为“${adjudication.tier}”；长期目标仍可在下一世继续。`
+        ? `本局已经结算为“${legacyTerminalTier}”；长期目标仍可在下一世继续。`
         : "本局主线未闭环，未完成部分不会由叙述补写为成功。",
     },
     episodeIds: input.episodes.map((episode) => episode.episodeId),

@@ -1165,8 +1165,14 @@ export interface JourneyWorldSolidifiedPayload {
   readonly solidifiedAt: string;
   /**
    * PR1 additive. Canon threshold in basis points that the completion score
-   * was compared against for the existing "quality_below_canon_threshold"
-   * discard reason. Optional for legacy solidify events.
+   * was compared against. The legacy "quality_below_canon_threshold" discard
+   * reason (pre-PR4) is retained on the type union for back-compat with
+   * persisted records; PR4 emitters write the live "below_canon_threshold"
+   * string instead. Optional for legacy solidify events.
+   *
+   * PR4 rule: on PR4 solidify events (settlementPolicyVersion === 1) this
+   * field is REQUIRED — read adapters MUST treat its absence (combined with
+   * a present settlementPolicyVersion) as a contract violation.
    */
   readonly canonThresholdBps?: number;
   /** PR1 additive. Settlement-policy version under which the journey was adjudicated. */
@@ -1190,6 +1196,21 @@ export interface JourneyWorldSolidifiedPayload {
    * restart-duplicate solidify can detect double-promotion.
    */
   readonly mirrorLedgerPromotedEntryIds?: readonly string[];
+  /**
+   * PR4 additive. Settlement id (idempotency key) linking this solidify to
+   * its SettlementDecision. Required on PR4 events; absent on legacy events.
+   * Read adapters synthesise undefined when reading pre-PR4 events.
+   */
+  readonly settlementId?: string;
+  /**
+   * PR4 additive. Per-bucket breakdown of the completion score, for receipt
+   * audit. Required on PR4 events; absent on legacy events.
+   */
+  readonly consequenceScoreBreakdown?: {
+    readonly resultScoreBps: number;
+    readonly selfLossScoreBps: number;
+    readonly collateralScoreBps: number;
+  };
 }
 
 /**

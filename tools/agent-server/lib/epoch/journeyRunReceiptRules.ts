@@ -184,6 +184,13 @@ export interface JourneyRunReceiptIntegrity {
   readonly outcomeHash: JourneyRunReceiptHash;
   readonly bodyHash: JourneyRunReceiptHash;
   readonly payloadHash: JourneyRunReceiptHash;
+  /**
+   * PR4 additive. Hash over {@link JourneyRunReceipt.settlementDecisionDigest}.
+   * When the digest is absent (legacy v2 receipts), this is the sha256 of
+   * the JSON `null` literal so legacy receipts continue to validate without
+   * invalidating on-disk persistence.
+   */
+  readonly settlementDecisionDigestHash: JourneyRunReceiptHash;
 }
 
 export interface JourneyRunReceipt {
@@ -214,6 +221,46 @@ export interface JourneyRunReceipt {
   readonly eventIds: JourneyRunReceiptEventIds;
   readonly outcome: CausalCanonicalJsonValue;
   readonly integrity: JourneyRunReceiptIntegrity;
+  /**
+   * PR4 additive. Projection of the journey-layer SettlementDecision that
+   * governed this run's worldCommit. Independent of {@link score}
+   * (phase6_score.v2) — see spec §6.4 layering note. Receipt replay
+   * (validateJourneyRunReceipt) asserts that the digest, when present,
+   * matches a re-derivation from eventIds.settlement + persisted policy
+   * version. Legacy v2 receipts (no digest) skip the check.
+   *
+   * The phase6_score.v2 contract on {@link score} stays authoritative for
+   * the run-level 8-dimension score; this digest only mirrors the
+   * settlement-layer decision so a single receipt can audit both layers.
+   */
+  readonly settlementDecisionDigest?: JourneyRunReceiptSettlementDigest;
+}
+
+/**
+ * PR4 additive. Frozen digest of the SettlementDecision that governed one
+ * run. The fields mirror {@link SettlementDecision} but the receipt only
+ * carries the audit subset (tier, score breakdown, worldCommit, reward
+ * modifier, policy versions, settlementId) — not the full reward grant
+ * details, which remain on the journey projection.
+ */
+export interface JourneyRunReceiptSettlementDigest {
+  readonly tier: "未及格" | "及格" | "良好" | "优秀" | "惊世";
+  readonly score: {
+    readonly resultBps: number;
+    readonly selfLossBps: number;
+    readonly collateralBps: number;
+    readonly totalBps: number;
+  };
+  readonly worldCommit: {
+    readonly status: "solidified" | "discarded";
+    readonly canonEligible: boolean;
+    readonly thresholdBps: number;
+    readonly reason: string;
+  };
+  readonly rewardModifierBps: number;
+  readonly settlementPolicyVersion: number;
+  readonly consequenceScorePolicyVersion: number;
+  readonly settlementId: string;
 }
 
 export interface LegacyJourneyRunReceiptV1 {
@@ -265,6 +312,8 @@ export interface BuildJourneyRunReceiptInput {
   readonly rag: JourneyRunRagGrounding;
   readonly eventIds: JourneyRunReceiptEventIds;
   readonly outcome: CausalCanonicalJsonValue;
+  /** PR4 additive. SettlementDecision digest mirroring the journey layer. */
+  readonly settlementDecisionDigest?: JourneyRunReceiptSettlementDigest;
 }
 
 export interface JourneyRunReceiptValidationIssue {
@@ -493,6 +542,11 @@ function receiptBody(receipt: Omit<JourneyRunReceipt, "integrity">) {
     rag: receipt.rag,
     eventIds: receipt.eventIds,
     outcome: receipt.outcome,
+    // PR4 additive: include the settlement digest when present so the body
+    // hash covers it. Absent on legacy v2 receipts (no digest).
+    ...(receipt.settlementDecisionDigest !== undefined
+      ? { settlementDecisionDigest: receipt.settlementDecisionDigest }
+      : {}),
   } satisfies Omit<JourneyRunReceipt, "integrity">;
 }
 
@@ -522,6 +576,10 @@ export function journeyRunReceiptIntegrity(body: Omit<JourneyRunReceipt, "integr
     outcomeHash: causalCanonicalJsonHash(body.outcome),
     bodyHash,
     payloadHash: bodyHash,
+    // PR4: hash the digest when present; hash the JSON null literal when
+    // absent so legacy v2 receipts continue to validate without
+    // invalidating on-disk persistence.
+    settlementDecisionDigestHash: causalCanonicalJsonHash(body.settlementDecisionDigest ?? null),
   };
 }
 
@@ -568,6 +626,11 @@ export function buildJourneyRunReceipt(input: BuildJourneyRunReceiptInput): Jour
       derived: unique(input.eventIds.derived),
     },
     outcome: input.outcome,
+    // PR4 additive: thread the settlement digest through so receiptBody /
+    // journeyRunReceiptIntegrity include it in the body / digest hashes.
+    ...(input.settlementDecisionDigest !== undefined
+      ? { settlementDecisionDigest: input.settlementDecisionDigest }
+      : {}),
   });
   return {
     ...body,

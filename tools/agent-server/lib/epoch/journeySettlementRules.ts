@@ -317,6 +317,94 @@ export interface SettlementDecision {
 }
 
 /**
+ * Cost-kind classification for one self-loss contribution. Mirrors the
+ * two-bucket structure of {@link SelfLossSourceKind}:
+ * - `resource` — `focus` / `stamina` paid via `JourneyActionResolution.resourceCost`
+ *   or the matching `resource_spent` side-effect event.
+ * - `lifetime` — signed lifetime delta paid via the canonical
+ *   `hosted_action_recorded` event or the matching `lifetime_adjusted` event.
+ */
+export type SelfLossCostKind = "resource" | "lifetime";
+
+/**
+ * Server-adjudicated breakdown feeding the {@link ConsequenceBreakdown.resultScoreBps}
+ * additive bucket. PR4 derives this from {@link JourneyTaskPerformance} (in
+ * `journeyGeneratedTaskRules.ts`); the values are the four canonical bps
+ * components plus the failed/skipped action penalty.
+ *
+ * The composite `scoreBps` summary on `JourneyTaskPerformance` is NOT carried
+ * here — only the four physical-adjudication components. This enforces the
+ * "never reads model-supplied score" constraint at the type level.
+ */
+export interface ResultComponentInputs {
+  /** Ratio of completed required-main objectives, in `[0, 10000]`. */
+  readonly mainCompletionBps: number;
+  /** Ratio of completed bonus-main objectives, in `[0, 10000]`. */
+  readonly bonusMainCompletionBps: number;
+  /** Ratio of completed relevant-side objectives, in `[0, 10000]`. */
+  readonly sideCompletionBps: number;
+  /** Average execution quality across completed actions, in `[0, 10000]`. */
+  readonly executionQualityBps: number;
+  /** Failed-action (750 bps) + skipped-action (250 bps) penalty. */
+  readonly penaltyBps: number;
+}
+
+/**
+ * Pre-deduplicated self-loss contribution for one `(actionEventId, costKind)`
+ * tuple. Upstream layers MUST apply {@link selfLossDedupRules} (PR4) before
+ * populating this field so that PR4 sees exactly one source per tuple.
+ *
+ * Rule 5 (single source per cost-kind) is enforced structurally here: the
+ * {@link sourceKind} field records WHICH source won for audit, and
+ * {@link canonicalEventIds} collapses the underlying event ids into a Set.
+ */
+export interface SelfLossContribution {
+  /** Canonical `hosted_action_recorded` event id for the owning action. */
+  readonly actionEventId: string;
+  /** Cost bucket; see {@link SelfLossCostKind}. */
+  readonly costKind: SelfLossCostKind;
+  /** Which canonical source won the dedup; see {@link SelfLossSourceKind}. */
+  readonly sourceKind: SelfLossSourceKind;
+  /** Canonical event ids backing this contribution (for breakdown audit). */
+  readonly canonicalEventIds: readonly string[];
+  /**
+   * Magnitude for `costKind === 'resource'`. Integer count of resource units
+   * paid (focus / stamina). Absent or zero for `lifetime` contributions.
+   */
+  readonly resourceUnits?: number;
+  /**
+   * Signed lifetime delta for `costKind === 'lifetime'`. Negative = lifetime
+   * paid; only the negative magnitude contributes to the score
+   * (`max(0, -lifetimeDelta)`). Absent for `resource` contributions.
+   */
+  readonly lifetimeDelta?: number;
+}
+
+/**
+ * Base reward bundle used by the PR4 reward derivation. Resources are indexed
+ * by `resourceId` so the derivation can apply the score modifier uniformly.
+ *
+ * Items carry a numeric base rarity tier so the modifier-bump rule can be
+ * applied without parsing string labels:
+ * - 0 = none / no item
+ * - 1 = common
+ * - 2 = rare
+ * - 3 = legendary
+ *
+ * The bundle reference is opaque to scoring; it is copied verbatim onto
+ * {@link RewardGrant.baseBundleRef}.
+ */
+export interface BaseRewardBundle {
+  readonly baseBundleRef: string;
+  readonly resources: Readonly<Record<string, number>>;
+  readonly items: readonly {
+    readonly itemId: string;
+    readonly quantity: number;
+    readonly baseRarityTier: 0 | 1 | 2 | 3;
+  }[];
+}
+
+/**
  * Frozen input shape consumed by the single-point settlement entry point
  * (implemented in PR4). The shape is constructed by upstream journey runtime
  * layers and validated before {@link SettlementDecision} derivation.
@@ -329,6 +417,12 @@ export interface SettlementDecision {
  * - {@link roleplayScore}, {@link identityViability} — feed the
  *   AFTER-settlement summaries on {@link ConsequenceScore}, never the
  *   additive breakdown.
+ *
+ * PR4 additive-bucket inputs (required):
+ * - {@link resultComponentInputs} — feeds {@link ConsequenceBreakdown.resultScoreBps}.
+ * - {@link selfLossContributions} — feeds {@link ConsequenceBreakdown.selfLossScoreBps}.
+ *   Pre-deduplicated per `(actionEventId, costKind)` upstream.
+ * - {@link baseRewardBundle} — feeds {@link RewardGrant.resourceGrants} / {@link RewardGrant.itemGrants}.
  */
 export interface SettlementContext {
   readonly journeyId: string;
@@ -349,6 +443,12 @@ export interface SettlementContext {
   readonly mirrorLedgerEntries: readonly MirrorConsequenceLedgerEntry[];
   /** Canonical action event IDs that survived de-duplication. */
   readonly canonicalActionEventIds: readonly string[];
+  /** PR4: server-adjudicated breakdown feeding the result additive bucket. */
+  readonly resultComponentInputs: ResultComponentInputs;
+  /** PR4: pre-deduplicated self-loss contributions feeding the self-loss bucket. */
+  readonly selfLossContributions: readonly SelfLossContribution[];
+  /** PR4: base reward bundle feeding the reward derivation. */
+  readonly baseRewardBundle: BaseRewardBundle;
   /** Optional expected-life-pattern consumed by roleplay projection. */
   readonly expectedLifePattern?: ExpectedLifePattern;
   /** Optional roleplay score; projects the {@link ConsequenceScore.roleplaySummary}. */

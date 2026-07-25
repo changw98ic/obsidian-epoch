@@ -6,6 +6,7 @@ import {
 } from "./journeyTaskCatalog.ts";
 import {
   adjudicateJourneyTask,
+  deriveLegacyTerminalTierFromAdjudication,
   inferJourneyCompletionResult,
   journeyTaskGraphState,
   type JourneyCompletionResult,
@@ -281,6 +282,13 @@ function buildGeneratedJourneyMission(
     hiddenTaskSeal: input.hiddenTaskSeal,
     revealHidden: terminal,
   });
+  // PR4: adjudication no longer carries a tier (the authority tier lives on
+  // SettlementDecision.tier). The mission read model's outcome block needs a
+  // tier label for legacy non-PR4 terminal journeys where no settlement
+  // decision exists; derive it from the physical adjudication via the legacy
+  // helper. PR4 consumers read SettlementDecision.tier directly and never
+  // touch this path.
+  const legacyTerminalTier = deriveLegacyTerminalTierFromAdjudication(adjudication, terminal);
   const graphState = journeyTaskGraphState(taskPlan, input.episodes);
   const requiredMainIds = new Set(graphState.requiredMainObjectiveIds);
   const relevantSideIds = new Set(graphState.relevantSideObjectiveIds);
@@ -357,11 +365,11 @@ function buildGeneratedJourneyMission(
   const outcome: JourneyMissionOutcome | undefined = terminal ? {
     result: success ? "success" : "failure",
     summary: success
-      ? `主线完成并安全返程；服务端依据签名行动判定为“${adjudication.tier}”。`
-      : `主线未全部完成或未安全返程；服务端判定为“${adjudication.tier}”。`,
+      ? `主线完成并安全返程；服务端依据签名行动判定为“${legacyTerminalTier}”。`
+      : `主线未全部完成或未安全返程；服务端判定为“${legacyTerminalTier}”。`,
     completedTaskCount: tasks.filter((task) => task.status === "completed").length,
     totalTaskCount: tasks.length,
-    completionTier: adjudication.tier,
+    completionTier: legacyTerminalTier,
     ...(adjudication.reward ? { reward: adjudication.reward } : {}),
   } : undefined;
   return {

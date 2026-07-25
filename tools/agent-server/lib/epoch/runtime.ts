@@ -165,6 +165,7 @@ import {
   type JourneyHiddenTaskSealResolver,
   type JourneyRewardBundle,
 } from "./journeyGeneratedTaskRules.ts";
+import type { MirrorConsequenceLedgerEntry } from "./journeySettlementRules.ts";
 import {
   anomalyEventInputFromOperatorInput,
   anomalyEventInputFromTemplate,
@@ -1729,6 +1730,31 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
       ...(typeof input.worldSliceHash === "string"
         ? { worldSliceHash: input.worldSliceHash as `sha256:${string}` }
         : {}),
+      ...(Array.isArray(input.mirrorLedgerEntries)
+        ? { mirrorLedgerEntries: input.mirrorLedgerEntries as readonly MirrorConsequenceLedgerEntry[] }
+        : {}),
+      // PR4 additive pass-through. When the caller supplies these, core
+      // validates them as a PR4 contract solidify and the marker carries
+      // the receipt-audit data.
+      ...(typeof input.canonThresholdBps === "number"
+        ? { canonThresholdBps: input.canonThresholdBps }
+        : {}),
+      ...(typeof input.settlementPolicyVersion === "number"
+        ? { settlementPolicyVersion: input.settlementPolicyVersion }
+        : {}),
+      ...(typeof input.consequenceScorePolicyVersion === "number"
+        ? { consequenceScorePolicyVersion: input.consequenceScorePolicyVersion }
+        : {}),
+      ...(typeof input.settlementId === "string" && input.settlementId.trim()
+        ? { settlementId: input.settlementId.trim() }
+        : {}),
+      ...(isRecord(input.consequenceScoreBreakdown)
+        ? { consequenceScoreBreakdown: input.consequenceScoreBreakdown as {
+            readonly resultScoreBps: number;
+            readonly selfLossScoreBps: number;
+            readonly collateralScoreBps: number;
+          } }
+        : {}),
     }, maintenanceContext(input, `journey_world_solidified:${String(input.journeyId || "").trim()}`))),
     grantJourneyReward: (input: AnyRecord = {}) => {
       const journeyId = assertNonEmptyString(input.journeyId, "journey_id");
@@ -1748,7 +1774,16 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
       const rewardBundle: JourneyRewardBundle = taskPlan
         ? journeyRewardBundleForPlan(taskPlan, tier as Exclude<JourneyCompletionTier, "未及格">)
         : { resources: [reward], items: [], attributes: [], attributeProgression: { mode: "no-direct-gain", evidenceSystem: "progressionRules.attributeEvidenceXp", summary: "journey_completion_no_task_plan" } };
-      const reason = `journey_grade:${journeyId}:${tier}`;
+      // PR4: when a pre-computed settlementId is supplied, scope the
+      // idempotency reason to it so a policy bump re-grants under a new key
+      // and a duplicate call collapses. Legacy path keeps the old
+      // `journey_grade:${journeyId}:${tier}` reason.
+      const settlementId = typeof input.settlementId === "string" && input.settlementId.trim()
+        ? input.settlementId.trim()
+        : undefined;
+      const reason = settlementId
+        ? `journey_grade:${journeyId}:${settlementId}:${tier}`
+        : `journey_grade:${journeyId}:${tier}`;
       const existing = core.project().events.find((event) => event.eventType === "resource_granted"
         && event.agentId === agentId
         && event.payload.reason === reason);

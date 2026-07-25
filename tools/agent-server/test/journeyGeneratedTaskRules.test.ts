@@ -4,15 +4,46 @@ import {
   adjudicateJourneyTask,
   buildFallbackJourneyTaskPlan,
   deriveJourneyHiddenTask,
+  deriveLegacyTerminalTierFromAdjudication,
+  journeyRewardBundleForPlan,
   journeyTaskGraphState,
   JOURNEY_TIER_REWARDS,
   nextJourneyTaskObjective,
   normalizeJourneyCompletionTier,
   normalizeJourneyTaskActionRisk,
   validateJourneyTaskProposal,
+  type JourneyCompletionTier,
   type JourneyGeneratedTaskPlan,
 } from "../lib/epoch/journeyGeneratedTaskRules.ts";
 import { journeyTaskRouteForRegion } from "../lib/epoch/journeyTaskCatalog.ts";
+
+// PR4: adjudicateJourneyTask no longer derives tier/reward/rewardBundle (the
+// authority tier now lives on SettlementDecision.tier). The legacy tier
+// derivation was extracted to deriveLegacyTerminalTierFromAdjudication; the
+// reward bundle is still built by journeyRewardBundleForPlan. These helpers
+// reconstruct the legacy (tier, reward, rewardBundle) tuple for tests that
+// exercise the tier-mapping and reward-bundle shape contract.
+function legacyTierFor(
+  adjudication: ReturnType<typeof adjudicateJourneyTask>,
+  revealHidden: boolean,
+): JourneyCompletionTier {
+  return deriveLegacyTerminalTierFromAdjudication(adjudication, revealHidden);
+}
+function legacyRewardBundleFor(
+  plan: JourneyGeneratedTaskPlan,
+  adjudication: ReturnType<typeof adjudicateJourneyTask>,
+  revealHidden: boolean,
+) {
+  const tier = legacyTierFor(adjudication, revealHidden);
+  return tier === "未及格" ? undefined : journeyRewardBundleForPlan(plan, tier);
+}
+function legacyRewardFor(
+  adjudication: ReturnType<typeof adjudicateJourneyTask>,
+  revealHidden: boolean,
+) {
+  const tier = legacyTierFor(adjudication, revealHidden);
+  return tier === "未及格" ? undefined : JOURNEY_TIER_REWARDS[tier];
+}
 import { journeyScopedNpcObjects } from "../lib/epoch/journeyWorldCatalog.ts";
 import {
   JOURNEY_ACTION_RESOLUTION_RULE_VERSION,
@@ -289,7 +320,7 @@ test("failure on a side-unlocked bonus main does not erase a completed core rout
   assert.equal(result.mainCompleted, result.mainTotal);
   assert.equal(result.bonusMainCompleted, 0);
   assert.equal(result.bonusMainTotal, 1);
-  assert.equal(result.tier, "良好");
+  assert.equal(legacyTierFor(result, false), "良好");
   assert.equal(result.performance?.failedActions, 1);
 });
 
@@ -382,18 +413,18 @@ test("server derives all four completion tiers from signed action evidence", () 
       ? choiceAction.optionKey
       : objective?.actions[0].optionKey]));
   const passing = adjudicateJourneyTask({ plan, hiddenTaskSeal, episodes: evidence(plan, mainSelections) });
-  assert.equal(passing.tier, "及格");
-  assert.deepEqual(passing.reward, JOURNEY_TIER_REWARDS.及格);
-  assert.deepEqual(passing.rewardBundle?.attributes, []);
+  assert.equal(legacyTierFor(passing, false), "及格");
+  assert.deepEqual(legacyRewardFor(passing, false), JOURNEY_TIER_REWARDS.及格);
+  assert.deepEqual(legacyRewardBundleFor(plan, passing, false)?.attributes, []);
   const unlockIds = new Set(plan.routes?.filter((route) => route.kind === "unlock")
     .flatMap((route) => route.unlockedByObjectiveIds));
   const ordinarySide = sides.find((side) => !unlockIds.has(side.objectiveId)) ?? sides[0];
   const goodSelections = { ...mainSelections, [ordinarySide.objectiveId]: ordinarySide.actions[0].optionKey };
   const good = adjudicateJourneyTask({ plan, hiddenTaskSeal, episodes: evidence(plan, goodSelections) });
-  assert.equal(good.tier, "良好");
-  assert.equal(good.rewardBundle?.items.length, 1);
-  assert.equal(good.rewardBundle?.items[0]?.rarity, "common");
-  assert.deepEqual(good.rewardBundle?.attributes, []);
+  assert.equal(legacyTierFor(good, false), "良好");
+  assert.equal(legacyRewardBundleFor(plan, good, false)?.items.length, 1);
+  assert.equal(legacyRewardBundleFor(plan, good, false)?.items[0]?.rarity, "common");
+  assert.deepEqual(legacyRewardBundleFor(plan, good, false)?.attributes, []);
 
   const hidden = deriveJourneyHiddenTask(plan, hiddenTaskSeal);
   const activeObjectives = plan.objectives.filter((objective) => {
@@ -413,14 +444,14 @@ test("server derives all four completion tiers from signed action evidence", () 
     hiddenTaskSeal,
     episodes: evidence(plan, perfectSelections),
   });
-  assert.equal(ordinaryFullClear.tier, "良好");
+  assert.equal(legacyTierFor(ordinaryFullClear, false), "良好");
   assert.equal(ordinaryFullClear.performance?.perfectEligible, false);
   const perfect = adjudicateJourneyTask({
     plan,
     hiddenTaskSeal,
     episodes: evidence(plan, perfectSelections, "excellent"),
   });
-  assert.equal(perfect.tier, "优秀");
+  assert.equal(legacyTierFor(perfect, false), "优秀");
   assert.equal(perfect.performance?.perfectEligible, true);
 
   const legendarySelections = Object.fromEntries(activeObjectives.map((objective) => {
@@ -434,12 +465,12 @@ test("server derives all four completion tiers from signed action evidence", () 
     episodes: evidence(plan, legendarySelections, "excellent"),
     revealHidden: true,
   });
-  assert.equal(legendary.tier, "惊世");
-  assert.deepEqual(legendary.reward, JOURNEY_TIER_REWARDS.惊世);
-  assert.deepEqual(legendary.rewardBundle?.resources, [JOURNEY_TIER_REWARDS.惊世]);
-  assert.deepEqual(legendary.rewardBundle?.attributes, []);
-  assert.equal(legendary.rewardBundle?.items.length, 1);
-  assert.match(legendary.rewardBundle?.items[0]?.displayName || "", /信物|纪念|记录器|工具包|装备/u);
+  assert.equal(legacyTierFor(legendary, true), "惊世");
+  assert.deepEqual(legacyRewardFor(legendary, true), JOURNEY_TIER_REWARDS.惊世);
+  assert.deepEqual(legacyRewardBundleFor(plan, legendary, true)?.resources, [JOURNEY_TIER_REWARDS.惊世]);
+  assert.deepEqual(legacyRewardBundleFor(plan, legendary, true)?.attributes, []);
+  assert.equal(legacyRewardBundleFor(plan, legendary, true)?.items.length, 1);
+  assert.match(legacyRewardBundleFor(plan, legendary, true)?.items[0]?.displayName || "", /信物|纪念|记录器|工具包|装备/u);
   assert.equal(legendary.hiddenTask.completed, true);
   assert.equal(legendary.hiddenTask.revealed, true);
 });
@@ -522,13 +553,13 @@ test("hidden completion cannot upgrade public adjudication before terminal revea
     hiddenTaskSeal,
     episodes: evidence(plan, hiddenSuccessSelections, "excellent"),
   });
-  assert.equal(before.tier, "优秀");
+  assert.equal(legacyTierFor(before, false), "优秀");
   assert.deepEqual(before.hiddenTask, {
     commitment: plan.hiddenTaskCommitment,
     revealed: false,
   });
-  assert.notEqual(before.reward?.resourceId, "legend");
-  assert.equal(before.rewardBundle?.items[0]?.rarity, "rare");
+  assert.notEqual(legacyRewardFor(before, false)?.resourceId, "legend");
+  assert.equal(legacyRewardBundleFor(plan, before, false)?.items[0]?.rarity, "rare");
 
   const after = adjudicateJourneyTask({
     plan,
@@ -536,10 +567,10 @@ test("hidden completion cannot upgrade public adjudication before terminal revea
     episodes: evidence(plan, hiddenSuccessSelections, "excellent"),
     revealHidden: true,
   });
-  assert.equal(after.tier, "惊世");
+  assert.equal(legacyTierFor(after, true), "惊世");
   assert.equal(after.hiddenTask.completed, true);
-  assert.equal(after.reward?.resourceId, "legend");
-  assert.equal(after.rewardBundle?.items[0]?.rarity, "legendary");
+  assert.equal(legacyRewardFor(after, true)?.resourceId, "legend");
+  assert.equal(legacyRewardBundleFor(plan, after, true)?.items[0]?.rarity, "legendary");
 });
 
 test("a serialized sealed task plan cannot be adjudicated without its installation seal", () => {

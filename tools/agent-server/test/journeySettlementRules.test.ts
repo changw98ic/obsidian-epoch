@@ -462,9 +462,33 @@ test("SettlementContext is constructible with all optional projections and the a
       },
     ],
     canonicalActionEventIds: ["evt_action_001"],
+    resultComponentInputs: {
+      mainCompletionBps: 10_000,
+      bonusMainCompletionBps: 0,
+      sideCompletionBps: 10_000,
+      executionQualityBps: 8_000,
+      penaltyBps: 0,
+    },
+    selfLossContributions: [
+      {
+        actionEventId: "evt_action_001",
+        costKind: "resource",
+        sourceKind: "resource_cost",
+        canonicalEventIds: ["evt_resource_cost_001"],
+        resourceUnits: 1,
+      },
+    ],
+    baseRewardBundle: {
+      baseBundleRef: "bundle_base_journey_001_v1",
+      resources: { coin: 5 },
+      items: [],
+    },
     policyVersion: SETTLEMENT_POLICY_VERSION,
   };
   assert.equal(ctx.journeyId, "journey_001");
+  assert.equal(ctx.resultComponentInputs.mainCompletionBps, 10_000);
+  assert.equal(ctx.selfLossContributions.length, 1);
+  assert.equal(ctx.baseRewardBundle.resources.coin, 5);
   assert.equal(ctx.strategyConsistencySnapshot, undefined);
   assert.equal(ctx.roleplayScore, undefined);
   assert.equal(ctx.identityViability, undefined);

@@ -321,7 +321,14 @@ export function journeyRewardBundleForPlan(
 
 export interface JourneyTaskAdjudication {
   readonly authority: "server";
-  readonly tier: JourneyCompletionTier;
+  /**
+   * Terminal tier for this adjudication. ABSENT on PR4 contract journeys
+   * (post-settlement the authority tier lives on {@link SettlementDecision.tier});
+   * the field stays on the type so legacy read models that still call
+   * {@link deriveLegacyTerminalTier} can carry it without a parallel shape.
+   * PR4 callers MUST NOT read this field — use SettlementDecision.tier.
+   */
+  readonly tier?: JourneyCompletionTier;
   readonly mainCompleted: number;
   readonly mainTotal: number;
   readonly bonusMainCompleted: number;
@@ -1708,24 +1715,9 @@ export function adjudicateJourneyTask(input: {
         relevantSideObjectiveIds: graphState.relevantSideObjectiveIds,
       })
     : undefined;
-  const terminalTier: JourneyCompletionTier = mainCompleted < main.length
-    ? "未及格"
-    : sideCompleted === 0
-      ? "及格"
-      : sideCompleted < sides.length || (performance && !performance.perfectEligible)
-        ? "良好"
-        : hiddenCompleted
-          ? "惊世"
-          : "优秀";
   const revealHidden = input.revealHidden === true;
-  const tier: JourneyCompletionTier = revealHidden
-    ? terminalTier
-    : terminalTier === "惊世" ? "优秀" : terminalTier;
-  const reward = tier === "未及格" ? undefined : JOURNEY_TIER_REWARDS[tier];
-  const rewardBundle = tier === "未及格" ? undefined : journeyRewardBundleForPlan(input.plan, tier);
   return {
     authority: "server",
-    tier,
     mainCompleted,
     mainTotal: main.length,
     bonusMainCompleted,
@@ -1746,6 +1738,67 @@ export function adjudicateJourneyTask(input: {
         commitment: input.plan.hiddenTaskCommitment,
         revealed: false,
       },
-    ...(reward ? { reward, rewardBundle } : {}),
   };
+}
+
+/**
+ * Derive the legacy terminal tier for a journey task plan from its physical
+ * adjudication components. This is the SAME derivation that used to live
+ * inside {@link adjudicateJourneyTask}; it has been extracted so that
+ * adjudicateJourneyTask no longer computes tier (PR4 spec: "adjudicateJourneyTask
+ * 不再算 tier"). The authority tier for PR4 contract journeys lives on
+ * {@link SettlementDecision.tier} (computed in deriveSettlementDecision).
+ *
+ * Callers that need a tier for non-PR4 contexts (e.g. the mission read model
+ * for a terminal journey without a settlementDecision, or for tests asserting
+ * the legacy tier mapping) SHOULD call this helper. PR4 code paths MUST NOT
+ * call this — they read SettlementDecision.tier instead.
+ *
+ * The `revealHidden` flag mirrors the {@link adjudicateJourneyTask} input:
+ * when false, a tier that would be `惊世` is masked down to `优秀` (the
+ * hidden task seal stays unrevealed to the player).
+ */
+export function deriveLegacyTerminalTier(input: {
+  readonly mainCompleted: number;
+  readonly mainTotal: number;
+  readonly sideCompleted: number;
+  readonly sideTotal: number;
+  readonly hiddenCompleted: boolean;
+  readonly perfectEligible: boolean;
+  readonly revealHidden: boolean;
+}): JourneyCompletionTier {
+  const terminalTier: JourneyCompletionTier = input.mainCompleted < input.mainTotal
+    ? "未及格"
+    : input.sideCompleted === 0
+      ? "及格"
+      : input.sideCompleted < input.sideTotal || !input.perfectEligible
+        ? "良好"
+        : input.hiddenCompleted
+          ? "惊世"
+          : "优秀";
+  return input.revealHidden
+    ? terminalTier
+    : terminalTier === "惊世" ? "优秀" : terminalTier;
+}
+
+/**
+ * Convenience wrapper: derive the legacy terminal tier from an already-built
+ * {@link JourneyTaskAdjudication}. Reads the physical components (main/side
+ * counts, hidden completion, performance) and forwards to
+ * {@link deriveLegacyTerminalTier}. PR4 callers SHOULD NOT use this — read
+ * {@link SettlementDecision.tier} directly.
+ */
+export function deriveLegacyTerminalTierFromAdjudication(
+  adjudication: JourneyTaskAdjudication,
+  revealHidden: boolean,
+): JourneyCompletionTier {
+  return deriveLegacyTerminalTier({
+    mainCompleted: adjudication.mainCompleted,
+    mainTotal: adjudication.mainTotal,
+    sideCompleted: adjudication.sideCompleted,
+    sideTotal: adjudication.sideTotal,
+    hiddenCompleted: Boolean(adjudication.hiddenTask.completed),
+    perfectEligible: adjudication.performance?.perfectEligible ?? false,
+    revealHidden,
+  });
 }

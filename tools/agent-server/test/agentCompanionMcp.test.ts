@@ -513,7 +513,12 @@ test("a safe full clear is graded good instead of becoming an automatic perfect 
     readonly rarity: string;
   }) => item.itemId === current.rewardGrant.grantedItems[0].itemId
     && item.displayName === current.rewardGrant.grantedItems[0].displayName
-    && item.rarity === "common"));
+    // PR4: under the new settlement contract, a safe full clear lands at
+    // tier 优秀 (not 良好) because the additive score (mainCompletion 10000
+    // * 0.6 + side 10000 * 0.2 + execution ~7500 * 0.2 ≈ 9500) clears the
+    // canon threshold. 优秀 → reward rarity "rare" (was "common" under the
+    // pre-PR4 良好 heuristic).
+    && item.rarity === "rare"));
   const replayEvents = mcp.runtime.epochEvents({ limit: 100 }).events.slice().reverse();
   const replayedRuntime = createAgentWorldRuntime({ epochEvents: replayEvents });
   assert.deepEqual(
@@ -636,16 +641,25 @@ test("an optional side objective can be declined without abandoning the required
   assert.equal(current.journey.status, "settled");
   assert.equal(current.taskAdjudication.mainCompleted, current.taskAdjudication.mainTotal);
   assert.equal(current.taskAdjudication.sideCompleted, 0);
-  assert.equal(current.taskAdjudication.tier, "及格");
-  assert.equal(current.worldCommit.status, "solidified");
-  assert.equal(current.worldCommit.reason, "main_completed_and_returned");
-  assert.ok(current.worldCommit.sourceEventIds.length > 0);
-  assert.match(current.storyReport.narrative, /本局已固化/u);
+  // PR4: under the new settlement contract, main completed but score in the
+  // 及格 range (well below CANON_THRESHOLD_BPS=8500) → worldCommit is
+  // discarded with reason "below_canon_threshold". The pre-PR4 expectation
+  // (status="solidified", reason="main_completed_and_returned") moved to a
+  // high-score fixture.
+  assert.equal(current.worldCommit.status, "discarded");
+  assert.equal(current.worldCommit.reason, "below_canon_threshold");
+  assert.equal(
+    (current.worldCommit.completionScoreBps ?? 0) < (current.worldCommit.canonThresholdBps ?? Number.POSITIVE_INFINITY),
+    true,
+  );
+  assert.equal(current.worldCommit.settlementPolicyVersion, 1);
+  assert.equal(current.worldCommit.sourceEventIds.length, 0);
+  // PR4: a discarded mirror must not emit a journey_world_solidified marker.
   assert.equal(mcp.runtime.epochEvents({
     eventType: "journey_world_solidified",
     limit: 100,
   }).events.some((event) => event.eventType === "journey_world_solidified"
-    && event.payload.journeyId === current.journey.journeyId), true);
+    && event.payload.journeyId === current.journey.journeyId), false);
   assert.ok(current.taskAdjudication.performance.skippedActions >= 1);
   assert.ok(current.interactionLog.entries.some((entry: {
     objective?: { objectiveId: string };

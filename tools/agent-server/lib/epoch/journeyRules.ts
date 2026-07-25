@@ -50,7 +50,22 @@ export interface JourneyWorldCommit {
   readonly status: "solidified" | "discarded";
   readonly reason: "main_completed_and_returned"
     | "main_incomplete_or_return_failed"
-    | "quality_below_canon_threshold";
+    /**
+   * @deprecated Pre-PR4 legacy discard reason. Retained on the union so
+   * read adapters can validate persisted records produced before PR4
+   * unified the world-commit reason vocabulary. PR4 emitters MUST NOT
+   * write this string — fresh commits use {@link below_canon_threshold}
+   * instead (produced by deriveWorldCommit in journeySettlementDecision).
+   * Read adapters normalise legacy records at the read boundary; downstream
+   * branches on this string exist only for back-compat.
+   */
+    | "quality_below_canon_threshold"
+    // PR4 additive. New binary reason strings written by the PR4 settlement
+    // derivation (deriveSettlementDecision). Legacy journeys (pre-PR4) keep
+    // the legacy strings above; PR4 only writes the new strings below.
+    | "main_completed_and_above_threshold"
+    | "main_incomplete"
+    | "below_canon_threshold";
   readonly regionId: string;
   readonly committedAtWorldTime: string;
   readonly influenceDelta: number;
@@ -79,6 +94,27 @@ export interface JourneyWorldCommit {
   readonly questOfferId?: string;
   /** PR1 additive. sha256 of the offer bound to this commit, for replay. */
   readonly offerHash?: `sha256:${string}`;
+  /**
+   * PR4 additive. Consequence-score policy version under which the commit
+   * was adjudicated. Required on PR4 commits (settlementPolicyVersion=1);
+   * absent on legacy commits.
+   */
+  readonly consequenceScorePolicyVersion?: number;
+  /**
+   * PR4 additive. Settlement id (idempotency key) linking this commit to
+   * its SettlementDecision. Required on PR4 commits; absent on legacy.
+   */
+  readonly settlementId?: string;
+  /**
+   * PR4 additive. Per-bucket breakdown of the completion score, for receipt
+   * audit. Required on PR4 commits (settlementPolicyVersion=1); absent on
+   * legacy commits.
+   */
+  readonly consequenceScoreBreakdown?: {
+    readonly resultScoreBps: number;
+    readonly selfLossScoreBps: number;
+    readonly collateralScoreBps: number;
+  };
 }
 
 export interface JourneyWorldSliceRegionState {
@@ -284,19 +320,77 @@ export function recordJourneyWorldCommit(input: RecordJourneyWorldCommitInput): 
     || !commitTimeValid) {
     throw new Error("journey_world_commit_invalid");
   }
+  // PR4: when settlementPolicyVersion is present, the commit must carry the
+  // full PR4 field set (score / threshold / settlementId / breakdown).
+  // Legacy commits (no settlementPolicyVersion) skip this check.
+  const isPr4Commit = worldCommit.settlementPolicyVersion !== undefined;
+  if (isPr4Commit) {
+    if (worldCommit.completionScoreBps === undefined
+      || worldCommit.canonThresholdBps === undefined
+      || worldCommit.settlementId === undefined
+      || worldCommit.consequenceScoreBreakdown === undefined
+      || worldCommit.consequenceScorePolicyVersion === undefined) {
+      throw new Error("journey_world_commit_pr4_fields_missing");
+    }
+    if (!Number.isSafeInteger(worldCommit.completionScoreBps)
+      || worldCommit.completionScoreBps < 0
+      || worldCommit.completionScoreBps > 10_000) {
+      throw new Error("journey_world_commit_invalid");
+    }
+    if (!Number.isSafeInteger(worldCommit.canonThresholdBps)
+      || worldCommit.canonThresholdBps < 0
+      || worldCommit.canonThresholdBps > 10_000) {
+      throw new Error("journey_world_commit_invalid");
+    }
+    const breakdown = worldCommit.consequenceScoreBreakdown;
+    const components = [
+      breakdown.resultScoreBps,
+      breakdown.selfLossScoreBps,
+      breakdown.collateralScoreBps,
+    ];
+    if (components.some((value) => !Number.isSafeInteger(value) || value < -10_000 || value > 10_000)) {
+      throw new Error("journey_world_commit_invalid");
+    }
+  }
   if (worldCommit.status === "solidified") {
-    if (worldCommit.reason !== "main_completed_and_returned"
+    // PR4 solidified commits use the new "main_completed_and_above_threshold"
+    // reason; legacy commits keep "main_completed_and_returned". Both are
+    // accepted here so legacy replay still validates.
+    const solidifiedReasonValid = isPr4Commit
+      ? worldCommit.reason === "main_completed_and_above_threshold"
+      : worldCommit.reason === "main_completed_and_returned";
+    if (!solidifiedReasonValid
       || !worldCommit.commitEventId
       || !worldCommit.sourceEventIds.includes(worldCommit.commitEventId)) {
       throw new Error("journey_world_commit_invalid");
     }
-  } else if (!["main_incomplete_or_return_failed", "quality_below_canon_threshold"].includes(worldCommit.reason)
-    || worldCommit.commitEventId
-    || worldCommit.sourceEventIds.length
-    || worldCommit.influenceDelta !== 0
-    || worldCommit.factionStandings.length
-    || worldCommit.npcRelationships.length) {
-    throw new Error("journey_world_commit_invalid");
+    // PR4 invariant: a solidified commit must have score >= threshold.
+    if (isPr4Commit
+      && worldCommit.completionScoreBps! < worldCommit.canonThresholdBps!) {
+      throw new Error("journey_world_commit_threshold_inconsistent");
+    }
+  } else {
+    // Discarded: accept legacy + PR4 reason strings. PR4 reasons are
+    // "below_canon_threshold" / "main_incomplete"; legacy reasons are
+    // "main_incomplete_or_return_failed" / "quality_below_canon_threshold".
+    const discardedReasonValid = isPr4Commit
+      ? worldCommit.reason === "below_canon_threshold" || worldCommit.reason === "main_incomplete"
+      : worldCommit.reason === "main_incomplete_or_return_failed"
+        || worldCommit.reason === "quality_below_canon_threshold";
+    if (!discardedReasonValid
+      || worldCommit.commitEventId
+      || worldCommit.sourceEventIds.length
+      || worldCommit.influenceDelta !== 0
+      || worldCommit.factionStandings.length
+      || worldCommit.npcRelationships.length) {
+      throw new Error("journey_world_commit_invalid");
+    }
+    // PR4 invariant: "below_canon_threshold" must carry score < threshold.
+    if (isPr4Commit
+      && worldCommit.reason === "below_canon_threshold"
+      && worldCommit.completionScoreBps! >= worldCommit.canonThresholdBps!) {
+      throw new Error("journey_world_commit_threshold_inconsistent");
+    }
   }
   return { ...journey, worldCommit, version: journey.version + 1 };
 }

@@ -375,6 +375,11 @@ import type {
   MirrorConsequenceLedgerEntry,
 } from "./journeySettlementRules.ts";
 import {
+  CANON_THRESHOLD_BPS,
+  SETTLEMENT_POLICY_VERSION,
+  CONSEQUENCE_SCORE_POLICY_VERSION,
+} from "./journeySettlementRules.ts";
+import {
   planServerHostedJobCompletedEvents,
   planServerHostedJobQueuedEvents,
   planServerHostedJobSkippedEvents,
@@ -2644,6 +2649,31 @@ export interface SolidifyJourneyWorldInput {
    * before any canonical events are constructed.
    */
   readonly mirrorLedgerEntries?: readonly MirrorConsequenceLedgerEntry[];
+  /**
+   * PR4 additive. Canon threshold the score was compared against. Required
+   * when settlementPolicyVersion is present; legacy callers omit it.
+   * Authority validates this matches CANON_THRESHOLD_BPS_AT(policyVersion).
+   */
+  readonly canonThresholdBps?: number;
+  /** PR4 additive. Settlement-policy version under which the solidify is adjudicated. */
+  readonly settlementPolicyVersion?: number;
+  /** PR4 additive. Consequence-score policy version used at solidify time. */
+  readonly consequenceScorePolicyVersion?: number;
+  /**
+   * PR4 additive. Settlement id (idempotency key) linking this solidify to
+   * its SettlementDecision. Required on PR4 solidifies.
+   */
+  readonly settlementId?: string;
+  /**
+   * PR4 additive. Per-bucket breakdown of the completion score, recorded
+   * verbatim on the solidify marker for receipt audit. Required on PR4
+   * solidifies.
+   */
+  readonly consequenceScoreBreakdown?: {
+    readonly resultScoreBps: number;
+    readonly selfLossScoreBps: number;
+    readonly collateralScoreBps: number;
+  };
 }
 
 export interface QueueServerHostedJobInput {
@@ -2909,17 +2939,34 @@ function rebaseMirrorEntryAgainstProjection(
 function journeyWorldCommitFromMarker(
   event: Extract<EpochEvent, { readonly eventType: "journey_world_solidified" }>,
 ): JourneyWorldCommit {
+  const payload = event.payload as JourneyWorldSolidifiedPayload;
+  // PR4: when the marker carries a settlementPolicyVersion, the commit must
+  // expose the PR4 reason string ("main_completed_and_above_threshold") so
+  // recordJourneyWorldCommit's PR4 invariant check passes. Legacy markers
+  // keep "main_completed_and_returned".
+  const isPr4Marker = payload.settlementPolicyVersion !== undefined;
   return {
     mode: "mirror",
     status: "solidified",
-    reason: "main_completed_and_returned",
-    regionId: event.payload.regionId,
-    committedAtWorldTime: event.payload.committedAtWorldTime ?? event.payload.mirrorEndedAtWorldTime,
-    influenceDelta: event.payload.influenceDelta,
-    factionStandings: event.payload.factionStandings,
-    npcRelationships: event.payload.npcRelationships,
+    reason: isPr4Marker ? "main_completed_and_above_threshold" : "main_completed_and_returned",
+    regionId: payload.regionId,
+    committedAtWorldTime: payload.committedAtWorldTime ?? payload.mirrorEndedAtWorldTime,
+    influenceDelta: payload.influenceDelta,
+    factionStandings: payload.factionStandings,
+    npcRelationships: payload.npcRelationships,
     commitEventId: event.eventId,
-    sourceEventIds: [...event.payload.effectEventIds, event.eventId],
+    sourceEventIds: [...payload.effectEventIds, event.eventId],
+    // PR4 additive fields, passed through verbatim so the persisted commit
+    // carries the same receipt-audit data as the marker.
+    ...(payload.completionScoreBps !== undefined ? { completionScoreBps: payload.completionScoreBps } : {}),
+    ...(payload.canonThresholdBps !== undefined ? { canonThresholdBps: payload.canonThresholdBps } : {}),
+    ...(payload.settlementPolicyVersion !== undefined ? { settlementPolicyVersion: payload.settlementPolicyVersion } : {}),
+    ...(payload.consequenceScorePolicyVersion !== undefined ? { consequenceScorePolicyVersion: payload.consequenceScorePolicyVersion } : {}),
+    ...(payload.strategyPolicyVersion !== undefined ? { strategyPolicyVersion: payload.strategyPolicyVersion } : {}),
+    ...(payload.questOfferId !== undefined ? { questOfferId: payload.questOfferId } : {}),
+    ...(payload.offerHash !== undefined ? { offerHash: payload.offerHash } : {}),
+    ...(payload.settlementId !== undefined ? { settlementId: payload.settlementId } : {}),
+    ...(payload.consequenceScoreBreakdown !== undefined ? { consequenceScoreBreakdown: payload.consequenceScoreBreakdown } : {}),
   };
 }
 
@@ -10068,6 +10115,16 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       && event.payload.journeyId === journeyId
       && event.payload.agentId === agentId);
     if (existingMarker) {
+      // PR4: a duplicate solidify MUST carry the same settlementId as the
+      // existing marker. A mismatch signals a re-derivation under a different
+      // policy or input snapshot and is rejected so the persisted marker
+      // remains the single source of truth.
+      const existingSettlementId = (existingMarker.payload as { readonly settlementId?: string }).settlementId;
+      if (input.settlementId !== undefined
+        && existingSettlementId !== undefined
+        && input.settlementId !== existingSettlementId) {
+        throw new Error("journey_settlement_id_mismatch");
+      }
       return { events: [], value: journeyWorldCommitFromMarker(existingMarker), projection: current };
     }
 
@@ -10105,6 +10162,49 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     }
     if (input.worldSliceHash !== undefined && !/^sha256:[0-9a-f]{64}$/u.test(input.worldSliceHash)) {
       throw new Error("journey_world_slice_hash_invalid");
+    }
+    // PR4 authority guards. When settlementPolicyVersion is present, the
+    // caller is on the PR4 contract; the score MUST clear the canon
+    // threshold (kills the legacy "canonEligible = mainLineSucceeded"
+    // dead-code branch where main-completed but low-score runs could still
+    // solidify). The threshold itself MUST match the versioned placeholder
+    // so a forged value cannot bypass the guard.
+    if (input.settlementPolicyVersion !== undefined) {
+      if (input.settlementPolicyVersion !== SETTLEMENT_POLICY_VERSION) {
+        throw new Error(
+          `journey_settlement_policy_version_mismatch:${input.settlementPolicyVersion}:${SETTLEMENT_POLICY_VERSION}`,
+        );
+      }
+      if (input.canonThresholdBps !== CANON_THRESHOLD_BPS) {
+        throw new Error(
+          `journey_canon_threshold_version_mismatch:${input.canonThresholdBps}:${CANON_THRESHOLD_BPS}`,
+        );
+      }
+      if (input.completionScoreBps < input.canonThresholdBps) {
+        throw new Error(
+          `journey_below_canon_threshold:${input.completionScoreBps}:${input.canonThresholdBps}`,
+        );
+      }
+      if (input.consequenceScorePolicyVersion !== CONSEQUENCE_SCORE_POLICY_VERSION) {
+        throw new Error(
+          `journey_consequence_score_policy_version_mismatch:${input.consequenceScorePolicyVersion}:${CONSEQUENCE_SCORE_POLICY_VERSION}`,
+        );
+      }
+      if (typeof input.settlementId !== "string" || !input.settlementId.trim()) {
+        throw new Error("journey_settlement_id_required");
+      }
+      if (!input.consequenceScoreBreakdown) {
+        throw new Error("journey_consequence_score_breakdown_required");
+      }
+      const breakdown = input.consequenceScoreBreakdown;
+      const components = [
+        breakdown.resultScoreBps,
+        breakdown.selfLossScoreBps,
+        breakdown.collateralScoreBps,
+      ];
+      if (components.some((value) => !Number.isSafeInteger(value) || value < -10_000 || value > 10_000)) {
+        throw new Error("journey_consequence_score_breakdown_invalid");
+      }
     }
 
     const journeySessions = Object.values(current.hostedSessions).filter((session) =>
@@ -10424,6 +10524,18 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
             mirrorLedgerPromotedEntryIds: Object.entries(mirrorLedger.promotedCanonicalEventIds).map(
               ([entryId]) => entryId,
             ),
+          }
+        : {}),
+      // PR4 additive fields. Only attached when the caller passes the PR4
+      // contract; legacy callers (no settlementPolicyVersion) emit the
+      // legacy shape and downstream read adapters synthesise undefined.
+      ...(input.settlementPolicyVersion !== undefined
+        ? {
+            settlementPolicyVersion: input.settlementPolicyVersion,
+            consequenceScorePolicyVersion: input.consequenceScorePolicyVersion,
+            canonThresholdBps: input.canonThresholdBps,
+            settlementId: input.settlementId,
+            consequenceScoreBreakdown: input.consequenceScoreBreakdown,
           }
         : {}),
     };

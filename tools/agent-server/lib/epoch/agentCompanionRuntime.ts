@@ -24,7 +24,10 @@ import type { EpochJourney, JourneyWorldCommit } from "./journeyRules.ts";
 import {
   adjudicateJourneyTask,
   buildFallbackJourneyTaskPlan,
+  deriveLegacyTerminalTierFromAdjudication,
   type JourneyFallbackRiskProfile,
+  JOURNEY_TIER_REWARDS,
+  journeyRewardBundleForPlan,
   nextJourneyTaskObjective,
   validateJourneyTaskProposal,
 } from "./journeyGeneratedTaskRules.ts";
@@ -35,6 +38,30 @@ import {
 import { EPOCH_WORLD_CALENDAR_ORIGIN_YEAR, epochWorldCalendarMoment } from "./worldCalendar.ts";
 
 type UnknownRecord = Record<string, unknown>;
+
+/**
+ * PR4: re-attach the legacy tier / reward / rewardBundle to a public-facing
+ * task adjudication projection. adjudicateJourneyTask itself no longer
+ * derives these (spec: "adjudicateJourneyTask 不再算 tier"); the authority
+ * tier for PR4 contract journeys lives on SettlementDecision.tier. The MCP
+ * API contract still exposes `taskAdjudication.tier / reward / rewardBundle`
+ * to clients, so this helper rebuilds them from the adjudication's physical
+ * components via the legacy derivation. PR4-internal callers MUST read
+ * SettlementDecision.tier directly and never touch this projection.
+ */
+function withLegacyTierProjection(
+  taskPlan: Parameters<typeof journeyRewardBundleForPlan>[0],
+  adjudication: ReturnType<typeof adjudicateJourneyTask>,
+  revealHidden: boolean,
+) {
+  const tier = deriveLegacyTerminalTierFromAdjudication(adjudication, revealHidden);
+  if (tier === "未及格") {
+    return { ...adjudication, tier };
+  }
+  const reward = JOURNEY_TIER_REWARDS[tier];
+  const rewardBundle = journeyRewardBundleForPlan(taskPlan, tier);
+  return { ...adjudication, tier, reward, rewardBundle };
+}
 
 export interface AgentCompanionEpochSurface {
   readonly progress: (input?: UnknownRecord) => unknown;
@@ -708,12 +735,16 @@ export class AgentCompanionRuntime {
         episodes,
       });
       const taskAdjudication = record.journey.taskPlan
-        ? adjudicateJourneyTask({
-            plan: record.journey.taskPlan,
-            episodes,
-            hiddenTaskSeal,
-            revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
-          })
+        ? withLegacyTierProjection(
+            record.journey.taskPlan,
+            adjudicateJourneyTask({
+              plan: record.journey.taskPlan,
+              episodes,
+              hiddenTaskSeal,
+              revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
+            }),
+            ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
+          )
         : undefined;
       return {
         ...scrubJourneyRecordForPublicView(record),
@@ -746,12 +777,16 @@ export class AgentCompanionRuntime {
         episodes,
       }),
       ...(record.journey.taskPlan ? {
-        taskAdjudication: adjudicateJourneyTask({
-          plan: record.journey.taskPlan,
-          episodes,
-          hiddenTaskSeal,
-          revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
-        }),
+        taskAdjudication: withLegacyTierProjection(
+          record.journey.taskPlan,
+          adjudicateJourneyTask({
+            plan: record.journey.taskPlan,
+            episodes,
+            hiddenTaskSeal,
+            revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
+          }),
+          ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
+        ),
       } : {}),
       nextPollAt: record.journey.nextPollAt,
     };

@@ -1,5 +1,5 @@
 import { projectEpochEvents, type EpochProjection } from "./gameCore.ts";
-import type { EpochEvent } from "./events.ts";
+import type { EpochEvent, JourneyWorldSolidifiedPayload } from "./events.ts";
 import { progressView } from "./progressReadModel.ts";
 import {
   resultPageFocusHostedSession,
@@ -41,6 +41,11 @@ import {
 import { sha256Hex } from "./runtimeAuth.ts";
 import { assertAttributeId, assertResourceId, type EpochResourceId } from "./protocol.ts";
 import type { JourneyWorldCommit } from "./journeyRules.ts";
+import {
+  CANON_THRESHOLD_BPS,
+  SETTLEMENT_POLICY_VERSION,
+  CONSEQUENCE_SCORE_POLICY_VERSION,
+} from "./journeySettlementRules.ts";
 import type { JourneyRunReceipt } from "./journeyRunReceiptRules.ts";
 
 type AnyRecord = Readonly<Record<string, unknown>>;
@@ -149,10 +154,15 @@ function resultPageWorldCommit(value: unknown): JourneyWorldCommit | undefined {
   }
   const record = value as Record<string, unknown>;
   const status = record.status === "solidified" || record.status === "discarded" ? record.status : undefined;
+  // PR4: accept both legacy and new binary reason strings. PR4 commits write
+  // only the new strings; legacy commits keep the legacy ones.
   const reason = record.reason === "main_completed_and_returned"
     || record.reason === "main_incomplete_or_return_failed"
     || record.reason === "quality_below_canon_threshold"
-    ? record.reason
+    || record.reason === "main_completed_and_above_threshold"
+    || record.reason === "main_incomplete"
+    || record.reason === "below_canon_threshold"
+    ? record.reason as JourneyWorldCommit["reason"]
     : undefined;
   const regionId = typeof record.regionId === "string" && record.regionId.trim() ? record.regionId.trim() : undefined;
   const committedAtWorldTime = typeof record.committedAtWorldTime === "string"
@@ -215,14 +225,91 @@ function resultPageWorldCommit(value: unknown): JourneyWorldCommit | undefined {
     || influenceDelta === undefined || influenceDelta < 0 || !sourceEventIds || !factionStandings || !npcRelationships) {
     throw new Error("result_page_journey_world_commit_invalid");
   }
-  if (status === "solidified") {
-    if (reason !== "main_completed_and_returned" || !commitEventId || !sourceEventIds.includes(commitEventId)) {
+  // PR4: when settlementPolicyVersion is present, the commit MUST carry the
+  // full PR4 field set; legacy commits (no policy version) skip this check.
+  const isPr4Commit = typeof record.settlementPolicyVersion === "number";
+  let pr4CompletionScoreBps: number | undefined;
+  let pr4CanonThresholdBps: number | undefined;
+  let pr4SettlementId: string | undefined;
+  let pr4Breakdown: {
+    readonly resultScoreBps: number;
+    readonly selfLossScoreBps: number;
+    readonly collateralScoreBps: number;
+  } | undefined;
+  if (isPr4Commit) {
+    if (record.settlementPolicyVersion !== SETTLEMENT_POLICY_VERSION) {
       throw new Error("result_page_journey_world_commit_invalid");
     }
-  } else if (!["main_incomplete_or_return_failed", "quality_below_canon_threshold"].includes(reason)
-    || commitEventId || sourceEventIds.length
-    || influenceDelta !== 0 || factionStandings.length || npcRelationships.length) {
-    throw new Error("result_page_journey_world_commit_invalid");
+    if (typeof record.completionScoreBps !== "number"
+      || !Number.isSafeInteger(record.completionScoreBps)
+      || record.completionScoreBps < 0
+      || record.completionScoreBps > 10_000) {
+      throw new Error("result_page_journey_world_commit_invalid");
+    }
+    if (record.canonThresholdBps !== CANON_THRESHOLD_BPS) {
+      throw new Error("result_page_journey_world_commit_invalid");
+    }
+    if (record.consequenceScorePolicyVersion !== CONSEQUENCE_SCORE_POLICY_VERSION) {
+      throw new Error("result_page_journey_world_commit_invalid");
+    }
+    if (typeof record.settlementId !== "string" || !record.settlementId.trim()) {
+      throw new Error("result_page_journey_world_commit_invalid");
+    }
+    const breakdownValue = record.consequenceScoreBreakdown;
+    if (!breakdownValue || typeof breakdownValue !== "object" || Array.isArray(breakdownValue)) {
+      throw new Error("result_page_journey_world_commit_invalid");
+    }
+    const breakdown = breakdownValue as Record<string, unknown>;
+    const components = [
+      breakdown.resultScoreBps,
+      breakdown.selfLossScoreBps,
+      breakdown.collateralScoreBps,
+    ];
+    if (components.some((entry) => typeof entry !== "number"
+      || !Number.isSafeInteger(entry)
+      || entry < -10_000
+      || entry > 10_000)) {
+      throw new Error("result_page_journey_world_commit_invalid");
+    }
+    pr4CompletionScoreBps = record.completionScoreBps;
+    pr4CanonThresholdBps = record.canonThresholdBps as number;
+    pr4SettlementId = (record.settlementId as string).trim();
+    pr4Breakdown = {
+      resultScoreBps: breakdown.resultScoreBps as number,
+      selfLossScoreBps: breakdown.selfLossScoreBps as number,
+      collateralScoreBps: breakdown.collateralScoreBps as number,
+    };
+  }
+  if (status === "solidified") {
+    // PR4 solidified commits carry "main_completed_and_above_threshold";
+    // legacy commits keep "main_completed_and_returned". Both are accepted
+    // here so legacy replay still validates.
+    const solidifiedReasonValid = isPr4Commit
+      ? reason === "main_completed_and_above_threshold"
+      : reason === "main_completed_and_returned";
+    if (!solidifiedReasonValid || !commitEventId || !sourceEventIds.includes(commitEventId)) {
+      throw new Error("result_page_journey_world_commit_invalid");
+    }
+    // PR4 invariant: a solidified commit must carry score >= threshold.
+    if (isPr4Commit && pr4CompletionScoreBps! < pr4CanonThresholdBps!) {
+      throw new Error("result_page_world_commit_threshold_inconsistent");
+    }
+  } else {
+    // PR4 discarded reasons are "below_canon_threshold" / "main_incomplete";
+    // legacy reasons are "main_incomplete_or_return_failed" /
+    // "quality_below_canon_threshold".
+    const discardedReasonValid = isPr4Commit
+      ? reason === "below_canon_threshold" || reason === "main_incomplete"
+      : reason === "main_incomplete_or_return_failed" || reason === "quality_below_canon_threshold";
+    if (!discardedReasonValid || commitEventId || sourceEventIds.length
+      || influenceDelta !== 0 || factionStandings.length || npcRelationships.length) {
+      throw new Error("result_page_journey_world_commit_invalid");
+    }
+    // PR4 invariant: "below_canon_threshold" must carry score < threshold.
+    if (isPr4Commit && reason === "below_canon_threshold"
+      && pr4CompletionScoreBps! >= pr4CanonThresholdBps!) {
+      throw new Error("result_page_world_commit_threshold_inconsistent");
+    }
   }
   return {
     mode: "mirror",
@@ -235,6 +322,16 @@ function resultPageWorldCommit(value: unknown): JourneyWorldCommit | undefined {
     npcRelationships,
     ...(commitEventId ? { commitEventId } : {}),
     sourceEventIds,
+    ...(isPr4Commit
+      ? {
+          completionScoreBps: pr4CompletionScoreBps,
+          canonThresholdBps: pr4CanonThresholdBps,
+          settlementPolicyVersion: SETTLEMENT_POLICY_VERSION,
+          consequenceScorePolicyVersion: CONSEQUENCE_SCORE_POLICY_VERSION,
+          settlementId: pr4SettlementId,
+          consequenceScoreBreakdown: pr4Breakdown,
+        }
+      : {}),
   };
 }
 
@@ -573,17 +670,32 @@ export function assertEpochResultPagePayload(
         throw new Error("result_page_journey_world_commit_invalid");
       }
       const marker = markers[0];
+      // PR4: when the marker carries settlementPolicyVersion, the expected
+      // commit uses the new reason and the PR4 receipt-audit fields,
+      // matching journeyWorldCommitFromMarker in gameCore.ts. Legacy markers
+      // keep the old reason and shape.
+      const markerPayload = marker.payload as JourneyWorldSolidifiedPayload;
+      const isPr4Marker = markerPayload.settlementPolicyVersion !== undefined;
       const expectedCommit: JourneyWorldCommit = {
         mode: "mirror",
         status: "solidified",
-        reason: "main_completed_and_returned",
-        regionId: marker.payload.regionId,
-        committedAtWorldTime: marker.payload.committedAtWorldTime ?? marker.payload.mirrorEndedAtWorldTime,
-        influenceDelta: marker.payload.influenceDelta,
-        factionStandings: marker.payload.factionStandings,
-        npcRelationships: marker.payload.npcRelationships,
+        reason: isPr4Marker ? "main_completed_and_above_threshold" : "main_completed_and_returned",
+        regionId: markerPayload.regionId,
+        committedAtWorldTime: markerPayload.committedAtWorldTime ?? markerPayload.mirrorEndedAtWorldTime,
+        influenceDelta: markerPayload.influenceDelta,
+        factionStandings: markerPayload.factionStandings,
+        npcRelationships: markerPayload.npcRelationships,
         commitEventId: marker.eventId,
-        sourceEventIds: [...marker.payload.effectEventIds, marker.eventId],
+        sourceEventIds: [...markerPayload.effectEventIds, marker.eventId],
+        ...(markerPayload.completionScoreBps !== undefined ? { completionScoreBps: markerPayload.completionScoreBps } : {}),
+        ...(markerPayload.canonThresholdBps !== undefined ? { canonThresholdBps: markerPayload.canonThresholdBps } : {}),
+        ...(markerPayload.settlementPolicyVersion !== undefined ? { settlementPolicyVersion: markerPayload.settlementPolicyVersion } : {}),
+        ...(markerPayload.consequenceScorePolicyVersion !== undefined ? { consequenceScorePolicyVersion: markerPayload.consequenceScorePolicyVersion } : {}),
+        ...(markerPayload.strategyPolicyVersion !== undefined ? { strategyPolicyVersion: markerPayload.strategyPolicyVersion } : {}),
+        ...(markerPayload.questOfferId !== undefined ? { questOfferId: markerPayload.questOfferId } : {}),
+        ...(markerPayload.offerHash !== undefined ? { offerHash: markerPayload.offerHash } : {}),
+        ...(markerPayload.settlementId !== undefined ? { settlementId: markerPayload.settlementId } : {}),
+        ...(markerPayload.consequenceScoreBreakdown !== undefined ? { consequenceScoreBreakdown: markerPayload.consequenceScoreBreakdown } : {}),
       };
       if (stableResultPageJson(expectedCommit) !== stableResultPageJson(worldCommit)
         || marker.payload.sourceEventIds.some((eventId) => !journey.canonicalEventIds.includes(eventId))) {
