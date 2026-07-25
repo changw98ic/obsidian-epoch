@@ -490,6 +490,7 @@ function phase6ExperimentMcpValue<T>(
 }
 
 function phase6ExperimentRuntimeError(error: unknown): never {
+  if (process.env.EPOCH_DIAG) console.error("[phase6-err]", error instanceof Error ? error.stack : error);
   const message = error instanceof Error ? error.message : "";
   if (/invalid_legacy/i.test(message)) throw new Error("phase6_experiment:invalid_legacy");
   if (/not registered|not_found/i.test(message)) phase6ExperimentMcpError("not_found");
@@ -8109,6 +8110,11 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       ...(phase6Binding ? { phase6Scenario: phase6Binding.scenario } : {}),
     };
     const taskContext = runtime.epochJourneyTaskGenerationContext(boundArgs);
+    if (process.env.EPOCH_DIAG) console.error("[region-taskctx]", JSON.stringify({
+      scenarioMapId: taskContext?.scenarioMapId, regionId: taskContext?.regionId,
+      destinationRegionId: taskContext?.destinationRegionId, availableCount: taskContext?.availableWorldObjects?.length,
+      generationRequested: taskContext?.generationRequested,
+    }));
     const generatedPlanRequested = args.taskGenerationMode === "model_sampling"
       || args.taskGenerationMode === "server_fallback"
       || taskContext.generationRequested === true;

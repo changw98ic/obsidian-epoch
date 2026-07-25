@@ -112,7 +112,7 @@ export class McpHttpSessionRegistry {
     this.#maxSessions = options.maxSessions ?? 10_000;
     this.#maxSessionsPerBinding = options.maxSessionsPerBinding ?? 64;
     this.#maxStreamsPerSession = options.maxStreamsPerSession ?? 4;
-    this.#samplingLimiterOptions = options.samplingLimiterOptions ?? {};
+    this.#samplingLimiterOptions = options.samplingLimiterOptions ?? { maxTokensPerMinute: 200_000, maxRequestsPerMinute: 120, maxConcurrent: 8 };
     this.#clearIntervalFn = options.clearIntervalFn
       ?? ((handle) => clearInterval(handle as ReturnType<typeof setInterval>));
     const setIntervalFn = options.setIntervalFn

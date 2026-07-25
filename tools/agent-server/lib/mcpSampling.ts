@@ -102,8 +102,8 @@ export class McpSamplingClient {
     this.#session = options.session;
     this.#requestManager = options.requestManager;
     this.#audit = options.audit ?? (() => undefined);
-    this.#episodeLimiter = options.episodeLimiter ?? options.limiter ?? createMcpSamplingLimiter({ maxTokensPerMinute: 60_000, maxRequestsPerMinute: 60 });
-    this.#taskPlanLimiter = options.taskPlanLimiter ?? options.limiter ?? createMcpSamplingLimiter({ maxTokensPerMinute: 30_000, maxRequestsPerMinute: 20 });
+    this.#episodeLimiter = options.episodeLimiter ?? options.limiter ?? createMcpSamplingLimiter({ maxTokensPerMinute: 200_000, maxRequestsPerMinute: 120 });
+    this.#taskPlanLimiter = options.taskPlanLimiter ?? options.limiter ?? createMcpSamplingLimiter({ maxTokensPerMinute: 120_000, maxRequestsPerMinute: 60 });
   }
 
   async createMessage(

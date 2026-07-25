@@ -1041,7 +1041,15 @@ export function buildFallbackJourneyTaskPlan(input: {
   readonly availableWorldObjects: readonly JourneyAvailableWorldObject[];
   readonly riskProfile?: JourneyFallbackRiskProfile;
 }): JourneyTaskPlanInstallation {
-  const route = catalogFallbackRoute(input) ?? fallbackRouteFromMap(input);
+  const catalogRoute = catalogFallbackRoute(input);
+  const route = catalogRoute ?? fallbackRouteFromMap(input);
+  if (process.env.EPOCH_DIAG) console.error("[region-fallback]", JSON.stringify({
+    scenarioMapId: input.scenarioMapId, taskType: input.taskType,
+    catalogHit: Boolean(catalogRoute), catalogRouteKey: catalogRoute?.routeKey, catalogRegionId: catalogRoute?.regionId,
+    finalRouteKey: route.routeKey, finalRegionId: route.regionId, locationId: route.locationId,
+    objectsCount: route.worldObjects.length, actionsCount: route.actions.length,
+    worldObjectsIds: route.worldObjects.map((o) => o.id).slice(0, 5),
+  }));
   const primary = route.actions.find((action) => action.completesMission) ?? route.actions[0];
   const alternate = route.actions.find((action) => action.completesMission && action.optionKey !== primary.optionKey)
     ?? route.actions[1]
