@@ -32,6 +32,13 @@ import {
   type TurnCardCreatedPayload,
   type TurnResolvedPayload,
 } from "./events.ts";
+import {
+  type IdentityStrategyDisposition,
+  type StrategyProfile,
+  AFFINITY_MATRIX_VERSION,
+} from "./journeyStrategyRules.ts";
+import type { ExpectedLifePattern } from "./journeyRoleplayRules.ts";
+import type { IdentityViability } from "./journeyViabilityRules.ts";
 import { eventFactory } from "./eventFactory.ts";
 import {
   causalEpochEventCanonicalJson,
@@ -615,6 +622,24 @@ export interface EpochAgentIdentity {
   readonly needs?: EpochActorNeedsState;
   readonly lifeGoal?: EpochActorLifeGoal;
   readonly createdAt: string;
+  /**
+   * PR1 additive (journeyStrategyRules). Strategy disposition frozen onto the
+   * identity so the journey pipeline can ground offers/plans in a stable
+   * primary posture across journeys. AUDIT-ONLY: never an input to any score,
+   * reward, or viability computation (zero-bonus boundary).
+   */
+  readonly strategyDisposition?: IdentityStrategyDisposition;
+  /**
+   * PR1 additive (journeyRoleplayRules). Server-frozen roleplay norm bound to
+   * this identity for its lifetime; read by every roleplay-scoring pass.
+   */
+  readonly expectedLifePattern?: ExpectedLifePattern;
+  /**
+   * PR1 additive (journeyViabilityRules). Server-authoritative snapshot of the
+   * identity's viability (faction standing, exposure, doubt, status bucket).
+   * Projected AFTER settlement completes; never re-feeds the current score.
+   */
+  readonly identityViability?: IdentityViability;
 }
 
 export interface EpochAgentPersonality {
@@ -1841,6 +1866,22 @@ export interface IssueIdentityInput {
   readonly identityName?: string;
   readonly maxLifetime?: number;
   readonly previousAgentId?: string;
+  /**
+   * PR1 additive (journeyStrategyRules). Declared strategy pair persisted with
+   * the issued identity. Persisted alongside {@link strategyDisposition} when
+   * the identity layer freezes the primary posture.
+   */
+  readonly strategyProfile?: StrategyProfile;
+  /**
+   * PR1 additive (journeyStrategyRules). Version of the affinity matrix the
+   * disposition was frozen against, carried for historical replay.
+   */
+  readonly affinityMatrixVersion?: typeof AFFINITY_MATRIX_VERSION;
+  /**
+   * PR1 additive (journeyRoleplayRules). sha256 of the deterministic input
+   * bundle that produced the {@link ExpectedLifePattern} for this identity.
+   */
+  readonly expectedLifePatternInputHash?: `sha256:${string}`;
 }
 
 export interface RotateExplorerRecoveryInput {

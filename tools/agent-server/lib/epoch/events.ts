@@ -50,6 +50,18 @@ import type {
 } from "./traceConflictRules.ts";
 import type { JourneySceneContract } from "./journeySceneContractRules.ts";
 import type { JourneyActionResolution } from "./journeyActionResolutionRules.ts";
+import {
+  type IdentityStrategyDisposition,
+  type ApproachTag,
+  STRATEGY_POLICY_VERSION,
+  AFFINITY_MATRIX_VERSION,
+} from "./journeyStrategyRules.ts";
+import {
+  type ExpectedLifePattern,
+  type DoubtStrength,
+  ROLEPLAY_PATTERN_VERSION,
+} from "./journeyRoleplayRules.ts";
+import { VIABILITY_POLICY_VERSION } from "./journeyViabilityRules.ts";
 import type {
   EpochWorldCommodityLedger,
   EpochWorldSimulationFlowSummary,
@@ -170,6 +182,19 @@ export interface IdentityIssuedPayload {
     readonly remaining: number;
     readonly startedAt: string;
   };
+  /**
+   * PR1 additive (journeyStrategyRules). Strategy disposition frozen onto the
+   * identity at issuance. AUDIT-ONLY: never consumed by score/reward/viability.
+   */
+  readonly strategyDisposition?: IdentityStrategyDisposition;
+  /** PR1 additive. Strategy-policy version the disposition was frozen against. */
+  readonly strategyPolicyVersion?: typeof STRATEGY_POLICY_VERSION;
+  /** PR1 additive. Affinity-matrix version the disposition was frozen against. */
+  readonly affinityMatrixVersion?: typeof AFFINITY_MATRIX_VERSION;
+  /** PR1 additive. Roleplay-pattern version the identity's life pattern was frozen against. */
+  readonly expectedLifePatternVersion?: typeof ROLEPLAY_PATTERN_VERSION;
+  /** PR1 additive. Viability-policy version the identity's projection started under. */
+  readonly viabilityPolicyVersion?: typeof VIABILITY_POLICY_VERSION;
 }
 
 export interface ExplorerRecoveryRotatedPayload {
@@ -1138,6 +1163,53 @@ export interface JourneyWorldSolidifiedPayload {
   readonly sourceEventIds: readonly string[];
   readonly effectEventIds: readonly string[];
   readonly solidifiedAt: string;
+  /**
+   * PR1 additive. Canon threshold in basis points that the completion score
+   * was compared against for the existing "quality_below_canon_threshold"
+   * discard reason. Optional for legacy solidify events.
+   */
+  readonly canonThresholdBps?: number;
+  /** PR1 additive. Settlement-policy version under which the journey was adjudicated. */
+  readonly settlementPolicyVersion?: number;
+  /** PR1 additive. Consequence-score policy version used at solidify time. */
+  readonly consequenceScorePolicyVersion?: number;
+  /** PR1 additive. Strategy-policy version under which the journey was adjudicated. */
+  readonly strategyPolicyVersion?: number;
+  /**
+   * PR1 additive. Quest-offer id bound to this solidify, when the journey was
+   * offer-driven. INTERNAL-only.
+   */
+  readonly questOfferId?: string;
+  /** PR1 additive. sha256 of the offer bound to this solidify, for replay. */
+  readonly offerHash?: `sha256:${string}`;
+}
+
+/**
+ * PR1 additive (journeyRoleplayRules). Canonical-stream payload for an NPC
+ * doubt observation recorded against an identity's expected life pattern
+ * during a mirror journey. Mirrors {@link NpcDoubtEvent} in the roleplay
+ * rules module; promoted to the canonical event stream only when (and if) the
+ * journey solidifies. INTERNAL-only.
+ *
+ * Zero-bonus boundary: this payload is server-authored adjudication data. It
+ * must never carry the public-leak fields `taskFamilyId` / `strategyAffinity`
+ * / `fitBps` / singular `expectedApproach` bonus marker. The plural
+ * `approachTags` below is the server-owned observation record.
+ */
+export interface NpcIdentityDoubtPayload {
+  readonly journeyId: string;
+  readonly agentId: string;
+  readonly identityId: string;
+  readonly npcId: string;
+  readonly factionId?: string;
+  readonly regionId: string;
+  readonly doubtStrength: DoubtStrength;
+  readonly reason: string;
+  readonly sourceActionEventId: string;
+  /** Plural approach-tag observation; distinct from the public singular `expectedApproach` bonus marker. */
+  readonly approachTags: readonly ApproachTag[];
+  readonly mirrorLedgerEntryId: string;
+  readonly recordedAt: string;
 }
 
 export type TraceSourceEventType = RegionInfluenceSourceEventType | "bounty_claimed" | "diplomacy_responded";
@@ -1912,6 +1984,15 @@ export interface EpochEventPayloadMap {
   readonly season_resolved: SeasonResolvedPayload;
   readonly agent_faction_standing_changed: AgentFactionStandingChangedPayload;
   readonly journey_world_solidified: JourneyWorldSolidifiedPayload;
+  /**
+   * PR1 additive. NPC doubt observation promoted to the canonical event stream
+   * on solidify. NOTE: the {@link EpochEventType} union / EPOCH_EVENT_TYPES
+   * registration is intentionally deferred to a later PR; this map entry is
+   * additive and does not require the union to list the key yet (the mapped
+   * type only requires every EpochEventType member to have a payload, not the
+   * reverse).
+   */
+  readonly npc_identity_doubt: NpcIdentityDoubtPayload;
   readonly region_influence_changed: RegionInfluenceChangedPayload;
   readonly trace_created: TraceCreatedPayload;
   readonly trace_conflict_deployed: TraceConflictDeployedPayload;

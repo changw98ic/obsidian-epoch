@@ -12,6 +12,7 @@ import {
   type JourneyTaskRisk,
   type JourneyTaskRoute,
 } from "./journeyTaskCatalog.ts";
+import type { ApproachTag } from "./journeyStrategyRules.ts";
 
 type JsonRecord = Readonly<Record<string, unknown>>;
 
@@ -45,6 +46,28 @@ export interface JourneyTaskRequest {
   readonly taskType: string;
   readonly scenarioMapId: string;
   readonly generationRequested?: boolean;
+  /**
+   * PR1 additive. Server-side task-family binding for the request; absent on
+   * legacy requests. INTERNAL-only — never surfaces on PublicQuestOffer /
+   * PublicActionOption (zero-bonus boundary).
+   */
+  readonly taskFamilyId?: string;
+  /**
+   * PR1 additive. Quest-offer id that produced this request, when the request
+   * was bound to a specific offer. INTERNAL-only.
+   */
+  readonly questOfferId?: string;
+  /** PR1 additive. sha256 of the offer the request was bound to, for replay. */
+  readonly offerHash?: `sha256:${string}`;
+  /**
+   * PR1 additive (journeyStrategyRules). Server-expected approach tag for
+   * strategy auditing. INTERNAL-only; not the public `expectedApproach` bonus
+   * marker — the plural {@link ExpectedLifePattern.expectedApproaches} lives
+   * on the identity payload.
+   */
+  readonly expectedApproach?: ApproachTag;
+  /** PR1 additive. Market-snapshot version the request was grounded against. */
+  readonly marketSnapshotVersion?: number;
 }
 
 export interface JourneyGeneratedTaskAction {
@@ -57,6 +80,24 @@ export interface JourneyGeneratedTaskAction {
   readonly outcomeSummary: string;
   /** Server-validated route selected only when this signed action completes. */
   readonly selectsRouteId?: string;
+  /**
+   * PR1 additive (journeyStrategyRules). Approach tags observed for this
+   * action; recorded into the approach-snapshot log for audit-only strategy
+   * consistency scoring. INTERNAL-only — never surfaces on PublicActionOption.
+   */
+  readonly approachTags?: readonly ApproachTag[];
+  /**
+   * PR1 additive (journeyStrategyRules). Single expected approach tag for
+   * this action, when the server pre-declared one. INTERNAL-only; this is the
+   * singular form distinct from the public plural
+   * {@link ExpectedLifePattern.expectedApproaches}.
+   */
+  readonly expectedApproach?: ApproachTag;
+  /**
+   * PR1 additive. Server-side mechanic id this action instantiates; used for
+   * audit correlation only. INTERNAL-only.
+   */
+  readonly mechanicId?: string;
 }
 
 export interface JourneyGeneratedTaskObjective {
@@ -136,6 +177,29 @@ export interface JourneyHiddenTaskSeal {
 export interface JourneyTaskPlanInstallation {
   readonly plan: JourneyGeneratedTaskPlan;
   readonly hiddenTaskSeal: JourneyHiddenTaskSeal;
+  /**
+   * PR1 additive. Server-side task-family id the installed plan belongs to.
+   * INTERNAL-only — never crosses the public boundary.
+   */
+  readonly taskFamilyId?: string;
+  /**
+   * PR1 additive. Quest-offer id that produced this installation, when bound
+   * to a specific offer. INTERNAL-only.
+   */
+  readonly questOfferId?: string;
+  /** PR1 additive. sha256 of the offer this installation was bound to. */
+  readonly offerHash?: `sha256:${string}`;
+  /** PR1 additive. Market-snapshot version the installation was grounded against. */
+  readonly marketSnapshotVersion?: number;
+  /** PR1 additive. sha256 of the world slice the installation was grounded against. */
+  readonly worldSliceHash?: `sha256:${string}`;
+  /**
+   * PR1 additive. sha256 of the broader source context (world content,
+   * region, narrative) the installation was generated from.
+   */
+  readonly sourceContextHash?: `sha256:${string}`;
+  /** PR1 additive. Server-side generation batch id for audit correlation. */
+  readonly generationBatchId?: string;
 }
 
 export type JourneyFallbackRiskProfile = "low" | "medium" | "high" | "dynamic";

@@ -57,6 +57,27 @@ export interface JourneyWorldCommit {
   readonly npcRelationships: readonly JourneyWorldCommitNpcRelationship[];
   readonly commitEventId?: string;
   readonly sourceEventIds: readonly string[];
+  /**
+   * PR1 additive. Completion score in basis points (0–10000) that produced
+   * this commit's decision. Optional for legacy commits.
+   */
+  readonly completionScoreBps?: number;
+  /**
+   * PR1 additive. Canon threshold in basis points the score was compared
+   * against; carries the existing "quality_below_canon_threshold" reason.
+   */
+  readonly canonThresholdBps?: number;
+  /** PR1 additive. Settlement-policy version under which the commit was adjudicated. */
+  readonly settlementPolicyVersion?: number;
+  /** PR1 additive. Strategy-policy version under which the commit was adjudicated. */
+  readonly strategyPolicyVersion?: number;
+  /**
+   * PR1 additive. Quest-offer id bound to this commit, when the journey was
+   * offer-driven. INTERNAL-only.
+   */
+  readonly questOfferId?: string;
+  /** PR1 additive. sha256 of the offer bound to this commit, for replay. */
+  readonly offerHash?: `sha256:${string}`;
 }
 
 export interface JourneyWorldSliceRegionState {
@@ -159,6 +180,15 @@ export interface EpochJourney {
   readonly synchronousQuestionCount: number;
   /** Optimistic-concurrency revision. Every successful mutation increments it once. */
   readonly version: number;
+  /**
+   * PR1 additive. Quest-offer id bound to this journey, when the journey is
+   * offer-driven. INTERNAL-only — never crosses the public boundary.
+   */
+  readonly questOfferId?: string;
+  /** PR1 additive. sha256 of the offer bound to this journey, for replay. */
+  readonly offerHash?: `sha256:${string}`;
+  /** PR1 additive. Market-snapshot version the journey was grounded against. */
+  readonly marketSnapshotVersion?: number;
 }
 
 export interface JourneyDueTimes {
