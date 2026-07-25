@@ -625,7 +625,7 @@ test("mirror Journey timestamps are randomized inside persisted history and carr
   assert.equal(clock.worldMinute, 1_440);
 });
 
-test("the server freezes the historical macro slice before client task generation", () => {
+test("the server freezes the historical macro slice before client task generation", async () => {
   const serverClock = mutableServerClock();
   const runtime = createAgentWorldRuntime({
     epoch: {
@@ -644,7 +644,7 @@ test("the server freezes the historical macro slice before client task generatio
     identityName: "历史切片校验员",
     idempotencyKey: "generation-slice-identity",
   }) as ReturnType<typeof runtime.epochIdentity> & { readonly value: { readonly agentId: string } };
-  const prepared = runtime.epochPrepareJourney({
+  const prepared = await runtime.epochPrepareJourney({
     agentId: identity.value.agentId,
     destinationRegionId: "region_quantum_laboratory",
     taskType: "辅助完成一次实验",

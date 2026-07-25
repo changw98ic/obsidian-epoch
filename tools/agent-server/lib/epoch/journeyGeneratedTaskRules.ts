@@ -1104,6 +1104,13 @@ export function buildFallbackJourneyTaskPlan(input: {
   readonly scenarioMapId: string;
   readonly availableWorldObjects: readonly JourneyAvailableWorldObject[];
   readonly riskProfile?: JourneyFallbackRiskProfile;
+  /**
+   * PR3. Optional world slice the fallback is grounded against. Used only to
+   * carry `sliceHash` into the installation's `worldSliceHash`; absence
+   * produces a deterministic sentinel hash. NEVER influences the plan content
+   * itself (the plan is grounded on `availableWorldObjects` only).
+   */
+  readonly worldSlice?: { readonly sliceHash: `sha256:${string}` };
 }): JourneyTaskPlanInstallation {
   const catalogRoute = catalogFallbackRoute(input);
   const route = catalogRoute ?? fallbackRouteFromMap(input);
@@ -1325,7 +1332,37 @@ export function buildFallbackJourneyTaskPlan(input: {
         })),
       }
     : proposal;
-  return validateJourneyTaskProposal({ ...input, proposal: calibratedProposal, source: "server_fallback" });
+  const installation = validateJourneyTaskProposal({
+    ...input,
+    proposal: calibratedProposal,
+    source: "server_fallback",
+  });
+  // PR3: the fallback path populates every PR1 additive source-binding field
+  // so the journeyRules.ts source-binding lock treats fallback and
+  // offer-driven plans by the same rule. The distinction is journey.questOfferId
+  // (set for offer-driven; UNDEF for fallback). The fallback's `questOfferId`
+  // is intentionally omitted on the installation: this is a grounded seed,
+  // NOT a market claim. No time salt is mixed into the hashes so restart
+  // replay produces bit-identical installations.
+  const fallbackTaskFamilyId = `catalog:${route.routeKey}`;
+  const fallbackOfferHash = `sha256:${installation.hiddenTaskSeal.planHash.slice("sha256:".length)}:${input.scenarioMapId}` as `sha256:${string}`;
+  const fallbackWorldSliceHash = input.worldSlice?.sliceHash
+    ?? (`sha256:fallback:${input.scenarioMapId}` as `sha256:${string}`);
+  const fallbackSourceContextHash = `sha256:${createHash("sha256")
+    .update(`catalog-fallback:${route.routeKey}:${route.regionId}:${route.locationId}`)
+    .digest("hex")}` as `sha256:${string}`;
+  const fallbackGenerationBatchId = `fallback:${input.scenarioMapId}:${input.taskType}`;
+  // marketSnapshotVersion = 0 is the sentinel meaning "no published snapshot;
+  // fallback seed". Offer-driven journeys always carry a real snapshot version.
+  return {
+    ...installation,
+    taskFamilyId: fallbackTaskFamilyId,
+    offerHash: fallbackOfferHash,
+    worldSliceHash: fallbackWorldSliceHash,
+    marketSnapshotVersion: 0,
+    sourceContextHash: fallbackSourceContextHash,
+    generationBatchId: fallbackGenerationBatchId,
+  };
 }
 
 function fallbackRouteFromMap(input: {

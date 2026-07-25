@@ -231,3 +231,47 @@ export function journeyRecordsForAgent(projection: JourneyProjection, agentId: s
     .map((journeyId) => projection.journeys[journeyId])
     .filter((record): record is JourneyRuntimeRecord => Boolean(record));
 }
+
+/**
+ * PR3 zero-bonus scrubber. Returns a copy of `journey` with every
+ * strategy/bonus marker stripped from both the top-level record and the
+ * embedded `taskRequest`. Internal paths (settlement, persistence, server
+ * logs) keep the full record; this function is applied only at the public
+ * projection edge — when a journey crosses into MCP result pages,
+ * `agent_console`, or the transparency stream.
+ *
+ * Stripped fields:
+ *   - journey.questOfferId, journey.offerHash, journey.marketSnapshotVersion
+ *   - journey.taskRequest.taskFamilyId
+ *   - journey.taskRequest.questOfferId
+ *   - journey.taskRequest.offerHash
+ *   - journey.taskRequest.expectedApproach
+ *   - journey.taskRequest.marketSnapshotVersion
+ *
+ * The full {@link EpochJourney} type is preserved so existing callers can
+ * spread the result; only the internal fields become `undefined`. The
+ * hidden task seal material is server-only and never appears on the journey
+ * record, so it is not touched here.
+ */
+export function scrubJourneyForPublicView<T extends EpochJourney>(journey: T): EpochJourney {
+  const { questOfferId: _q, offerHash: _o, marketSnapshotVersion: _m, taskRequest, ...rest } = journey;
+  if (taskRequest === undefined) return rest;
+  const {
+    taskFamilyId: _tf,
+    questOfferId: _tq,
+    offerHash: _to,
+    expectedApproach: _ea,
+    marketSnapshotVersion: _tmv,
+    ...publicTaskRequest
+  } = taskRequest;
+  return { ...rest, taskRequest: publicTaskRequest };
+}
+
+/**
+ * PR3 zero-bonus scrubber for a {@link JourneyRuntimeRecord}. Returns a copy
+ * with `journey` replaced by its scrubbed projection. `policySelection` and
+ * `preview` are already public-shaped and need no scrubbing.
+ */
+export function scrubJourneyRecordForPublicView(record: JourneyRuntimeRecord): JourneyRuntimeRecord {
+  return { ...record, journey: scrubJourneyForPublicView(record.journey) };
+}

@@ -1297,7 +1297,7 @@ test("journey commit is idempotent and conflicting or concurrent choices settle 
     ["arrival", "main", "return"]);
 });
 
-test("a proposed signed scene survives epoch and journey event replay before commit", () => {
+test("a proposed signed scene survives epoch and journey event replay before commit", async () => {
   const explorerId = "explorer_restart_proposal";
   const ownerRecovery = recoveryCode(explorerId, "restart-secret");
   const options = {
@@ -1318,7 +1318,7 @@ test("a proposed signed scene survives epoch and journey event replay before com
     idempotencyKey: "restart-identity",
   });
   if (!("value" in identity)) throw new Error("expected issued identity");
-  const prepared = runtime.epochPrepareJourney({
+  const prepared = await runtime.epochPrepareJourney({
     agentId: identity.value.agentId,
     destinationRegionId: "灰港",
     mandate: { objective: "找稳定工作", priorities: ["work"] },

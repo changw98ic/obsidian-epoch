@@ -1,5 +1,6 @@
 import type {
   JourneyGeneratedTaskPlan,
+  JourneyTaskPlanInstallation,
   JourneyTaskRequest,
 } from "./journeyGeneratedTaskRules.ts";
 
@@ -248,7 +249,17 @@ export interface RecordJourneyWorldCommitInput {
 export interface InstallJourneyTaskPlanInput {
   readonly journey: EpochJourney;
   readonly expectedVersion: number;
-  readonly taskPlan: JourneyGeneratedTaskPlan;
+  /**
+   * PR3. Full installation carrying the source-binding tuple. Mutually
+   * exclusive with {@link taskPlan}. When both are absent the call throws.
+   */
+  readonly installation?: JourneyTaskPlanInstallation;
+  /**
+   * Legacy shorthand for non-offer journeys; required when
+   * {@link installation} is absent. Mutually exclusive with
+   * {@link installation}.
+   */
+  readonly taskPlan?: JourneyGeneratedTaskPlan;
 }
 
 export function recordJourneyWorldCommit(input: RecordJourneyWorldCommitInput): EpochJourney {
@@ -540,20 +551,139 @@ export function installJourneyTaskPlan(input: InstallJourneyTaskPlanInput): Epoc
   assertJourneyForTransition(input.journey);
   assertExpectedVersion(input.journey, input.expectedVersion);
   if (input.journey.status !== "prepared") throw new Error("journey_task_plan_install_status_invalid");
-  if (input.journey.taskPlan) {
-    if (JSON.stringify(input.journey.taskPlan) === JSON.stringify(input.taskPlan)) return input.journey;
-    throw new Error("journey_task_plan_conflict");
+  if (input.installation === undefined && input.taskPlan === undefined) {
+    throw new Error("journey_task_plan_input_required");
   }
-  if (input.journey.taskRequest
-    && (input.journey.taskRequest.taskType !== input.taskPlan.taskType
-      || input.journey.taskRequest.scenarioMapId !== input.taskPlan.scenarioMapId)) {
+  if (input.installation !== undefined && input.taskPlan !== undefined) {
+    throw new Error("journey_task_plan_input_conflict");
+  }
+  const installation: JourneyTaskPlanInstallation | undefined = input.installation;
+  const plan: JourneyGeneratedTaskPlan = installation?.plan ?? input.taskPlan!;
+  const journey = input.journey;
+  const offerDriven = journey.questOfferId !== undefined;
+
+  // Idempotent re-install: identical plan (and, for offer-driven, identical
+  // source-binding tuple) returns the journey untouched. Drift throws.
+  if (journey.taskPlan) {
+    if (JSON.stringify(journey.taskPlan) !== JSON.stringify(plan)) {
+      throw new Error("journey_task_plan_conflict");
+    }
+    if (offerDriven && installation !== undefined) {
+      assertSourceBindingTupleEquals(journey, installation);
+    }
+    return journey;
+  }
+
+  if (offerDriven) {
+    // Offer-driven plans are validated by the source-binding tuple
+    // {questOfferId, offerHash, taskFamilyId, marketSnapshotVersion,
+    // worldSliceHash}. taskTypeText no longer needs to equal the raw client
+    // taskType because the offer's taskTypeText is the authoritative label.
+    if (installation === undefined) {
+      throw new Error("journey_task_plan_installation_required_for_offer");
+    }
+    assertSourceBindingTupleMatches(journey, installation);
+  } else if (journey.taskRequest
+    && (journey.taskRequest.taskType !== plan.taskType
+      || journey.taskRequest.scenarioMapId !== plan.scenarioMapId)) {
+    // Legacy / non-offer fallback: keep the existing taskType/scenarioMapId
+    // strict equality as a backstop. Existing journeyRuntime/journeyRules
+    // tests rely on this branch.
     throw new Error("journey_task_plan_request_mismatch");
   }
+
+  // PR3: stamp source-binding fields onto the journey IFF absent. If they
+  // are present and unequal to the installation, the tuple is incoherent.
+  const stampedSourceBinding = stampSourceBinding(journey, installation);
   return {
-    ...input.journey,
-    taskPlan: input.taskPlan,
-    version: input.journey.version + 1,
+    ...journey,
+    taskPlan: plan,
+    ...stampedSourceBinding,
+    version: journey.version + 1,
   };
+}
+
+/**
+ * PR3. Assert the source-binding tuple on the journey matches the freshly
+ * installed tuple. Used on first install for offer-driven journeys. Mismatch
+ * throws `journey_task_plan_source_binding_mismatch`.
+ */
+function assertSourceBindingTupleMatches(
+  journey: EpochJourney,
+  installation: JourneyTaskPlanInstallation,
+): void {
+  const expectedWorldSliceHash = journey.worldSlice?.sliceHash ?? installation.worldSliceHash;
+  if (journey.questOfferId !== installation.questOfferId
+    || journey.offerHash !== installation.offerHash
+    || journey.taskRequest?.taskFamilyId !== installation.taskFamilyId
+    || journey.marketSnapshotVersion !== installation.marketSnapshotVersion
+    || (expectedWorldSliceHash !== undefined && installation.worldSliceHash !== undefined
+      && expectedWorldSliceHash !== installation.worldSliceHash)) {
+    throw new Error("journey_task_plan_source_binding_mismatch");
+  }
+}
+
+/**
+ * PR3. Used on idempotent re-install for offer-driven journeys. Drift between
+ * the previously-installed tuple and the new tuple throws
+ * `journey_task_plan_source_binding_conflict`.
+ */
+function assertSourceBindingTupleEquals(
+  journey: EpochJourney,
+  installation: JourneyTaskPlanInstallation,
+): void {
+  if (journey.questOfferId !== installation.questOfferId
+    || journey.offerHash !== installation.offerHash
+    || journey.taskRequest?.taskFamilyId !== installation.taskFamilyId
+    || journey.marketSnapshotVersion !== installation.marketSnapshotVersion) {
+    throw new Error("journey_task_plan_source_binding_conflict");
+  }
+}
+
+/**
+ * PR3. Write source-binding fields onto the journey IFF absent. If they are
+ * present and unequal, throw `journey_task_plan_source_binding_conflict`.
+ * Returns the patch to spread onto the journey; absent fields are omitted so
+ * the existing record's optionality is preserved.
+ */
+type SourceBindingPatch = {
+  readonly questOfferId?: string;
+  readonly offerHash?: `sha256:${string}`;
+  readonly marketSnapshotVersion?: number;
+};
+
+function stampSourceBinding(
+  journey: EpochJourney,
+  installation: JourneyTaskPlanInstallation | undefined,
+): SourceBindingPatch {
+  if (installation === undefined) return {};
+  const patch: {
+    questOfferId?: string;
+    offerHash?: `sha256:${string}`;
+    marketSnapshotVersion?: number;
+  } = {};
+  if (installation.questOfferId !== undefined) {
+    if (journey.questOfferId !== undefined && journey.questOfferId !== installation.questOfferId) {
+      throw new Error("journey_task_plan_source_binding_conflict");
+    }
+    if (journey.questOfferId === undefined) patch.questOfferId = installation.questOfferId;
+  }
+  if (installation.offerHash !== undefined) {
+    if (journey.offerHash !== undefined && journey.offerHash !== installation.offerHash) {
+      throw new Error("journey_task_plan_source_binding_conflict");
+    }
+    if (journey.offerHash === undefined) patch.offerHash = installation.offerHash;
+  }
+  if (installation.marketSnapshotVersion !== undefined) {
+    if (journey.marketSnapshotVersion !== undefined
+      && journey.marketSnapshotVersion !== installation.marketSnapshotVersion) {
+      throw new Error("journey_task_plan_source_binding_conflict");
+    }
+    if (journey.marketSnapshotVersion === undefined) {
+      patch.marketSnapshotVersion = installation.marketSnapshotVersion;
+    }
+  }
+  return patch;
 }
 
 export function startJourney(input: StartJourneyInput): EpochJourney {

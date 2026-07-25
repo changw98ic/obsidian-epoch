@@ -37,7 +37,9 @@ import {
   normalizeJourneyHiddenTaskSeal,
   type JourneyGeneratedTaskPlan,
   type JourneyHiddenTaskSeal,
+  type JourneyTaskPlanInstallation,
 } from "./journeyGeneratedTaskRules.ts";
+import type { InternalQuestOffer } from "./journeyOfferRules.ts";
 import {
   applyJourneyRuntimeEvent,
   journeyRecordsForAgent,
@@ -79,13 +81,46 @@ export interface PrepareJourneyRuntimeInput {
   readonly mandate?: unknown;
   readonly policy?: unknown;
   readonly expectedReturn?: string;
+  /**
+   * PR3. Quest-offer id echoing the public snapshot the client read from.
+   * Presence switches the journey into offer-driven mode. The resolved
+   * {@link InternalQuestOffer} MUST be supplied via {@link questOffer}; the
+   * runtime never performs async IO itself, so the caller is responsible for
+   * running `claimQuestOffer` + `getInternalOffer` upstream and passing the
+   * result in. INTERNAL-only — never crosses the public boundary.
+   */
+  readonly questOfferId?: string;
+  /**
+   * PR3. Pre-resolved internal offer. When present together with
+   * {@link questOfferId}, the runtime derives taskRequest from
+   * `questOffer.publicView` and stamps {@link EpochJourney.questOfferId} /
+   * {@link EpochJourney.offerHash} / {@link EpochJourney.marketSnapshotVersion}
+   * onto the journey. Caller-supplied `destinationRegionId` / `taskType`
+   * MUST equal the offer's `region.regionId` / `taskTypeText` else the
+   * runtime throws `offer_region_mismatch` / `offer_task_type_mismatch`.
+   */
+  readonly questOffer?: InternalQuestOffer;
+  /** PR3. Echo of the offer hash the client read; rejected on mismatch. */
+  readonly offerHash?: `sha256:${string}`;
+  /** PR3. Market snapshot version the offer was read under. */
+  readonly marketSnapshotVersion?: number;
 }
 
 export interface InstallJourneyTaskPlanRuntimeInput {
   readonly journeyId: string;
   readonly expectedVersion: number;
-  readonly taskPlan: JourneyGeneratedTaskPlan;
-  readonly hiddenTaskSeal: JourneyHiddenTaskSeal;
+  /**
+   * PR3. Full source-binding installation. The runtime delegates the
+   * tuple-lock assertion to {@link installJourneyTaskPlan} and writes any
+   * absent source-binding fields onto the journey. The legacy
+   * `taskPlan` + `hiddenTaskSeal` shorthand remains supported for non-offer
+   * journeys via {@link taskPlanLegacy} / {@link hiddenTaskSealLegacy}.
+   */
+  readonly installation?: JourneyTaskPlanInstallation;
+  /** Legacy shorthand for non-offer journeys; mutually exclusive with `installation`. */
+  readonly taskPlan?: JourneyGeneratedTaskPlan;
+  /** Legacy shorthand; required when `taskPlan` is used. */
+  readonly hiddenTaskSeal?: JourneyHiddenTaskSeal;
 }
 
 export interface StartJourneyRuntimeInput {
@@ -392,19 +427,68 @@ export class JourneyRuntime {
     const mandate = normalizeJourneyMandate(input.mandate ?? {});
     const policySelection = normalizeJourneyPolicySelection(input.policy ?? {});
     const journeyId = this.#options.idFactory("journey");
+
+    // PR3: offer-driven mode. The caller (HTTP layer) is responsible for the
+    // async claim against the offer store BEFORE invoking prepare, then
+    // passing in the resolved InternalQuestOffer. The runtime never performs
+    // IO itself — keeping prepare synchronous preserves every existing test.
+    const offerDriven = input.questOfferId !== undefined;
+    if (offerDriven && input.questOffer === undefined) {
+      throw new Error("journey_offer_resolution_required");
+    }
+    const resolvedOffer = input.questOffer;
+    if (resolvedOffer !== undefined && resolvedOffer.questOfferId !== input.questOfferId) {
+      throw new Error("offer_id_mismatch");
+    }
+    if (resolvedOffer !== undefined && input.offerHash !== undefined && resolvedOffer.offerHash !== input.offerHash) {
+      throw new Error("offer_hash_mismatch");
+    }
+    const offerTaskType = resolvedOffer?.publicView.taskTypeText;
+    const offerRegionId = resolvedOffer?.publicView.region.regionId;
+    const offerScenarioMapId = resolvedOffer?.publicView.scenarioMapId;
+
+    const destinationRegionId = requiredText(input.destinationRegionId, "destination_region_id");
+    const originRegionId = requiredText(input.originRegionId, "origin_region_id");
+    const clientTaskType = input.taskType ?? mandate.objective;
+
+    // PR3: client-supplied region/taskType MUST equal the offer binding when
+    // both are present. The offer is authoritative; the client echo is a
+    // safety check.
+    if (offerRegionId !== undefined && offerRegionId !== destinationRegionId) {
+      throw new Error("offer_region_mismatch");
+    }
+    if (offerTaskType !== undefined && offerTaskType !== clientTaskType) {
+      throw new Error("offer_task_type_mismatch");
+    }
+
+    const taskRequest = resolvedOffer !== undefined
+      ? {
+          taskType: offerTaskType ?? clientTaskType,
+          // scenarioMapId is decoupled from destinationRegionId: the offer
+          // pins it from its region.scenarioMapId.
+          scenarioMapId: offerScenarioMapId ?? destinationRegionId,
+          generationRequested: true,
+          taskFamilyId: resolvedOffer.taskFamilyId,
+          questOfferId: resolvedOffer.questOfferId,
+          offerHash: resolvedOffer.offerHash,
+          expectedApproach: resolvedOffer.expectedApproach[0],
+          marketSnapshotVersion: resolvedOffer.marketSnapshotVersion,
+        }
+      : {
+          taskType: requiredText(clientTaskType, "task_type"),
+          scenarioMapId: destinationRegionId,
+          generationRequested: input.taskType !== undefined,
+        };
+
     const draft: EpochJourney = {
       journeyId,
       agentId,
       explorerId,
       correlationId: `journey:${journeyId}`,
       status: "draft",
-      originRegionId: requiredText(input.originRegionId, "origin_region_id"),
-      destinationRegionId: requiredText(input.destinationRegionId, "destination_region_id"),
-      taskRequest: {
-        taskType: requiredText(input.taskType ?? mandate.objective, "task_type"),
-        scenarioMapId: requiredText(input.destinationRegionId, "destination_region_id"),
-        generationRequested: input.taskType !== undefined,
-      },
+      originRegionId,
+      destinationRegionId,
+      taskRequest,
       mandate,
       policyVersion: Number(policySelection.presetVersion),
       worldMode: "mirror",
@@ -414,6 +498,11 @@ export class JourneyRuntime {
       sourceEventIds: [],
       synchronousQuestionCount: 0,
       version: 0,
+      ...(resolvedOffer !== undefined ? {
+        questOfferId: resolvedOffer.questOfferId,
+        offerHash: resolvedOffer.offerHash,
+        marketSnapshotVersion: resolvedOffer.marketSnapshotVersion,
+      } : {}),
     };
     const existingJourneys = Object.values(this.#projection.journeys).map((record) => record.journey);
     const journey = prepareJourney({ journey: draft, expectedVersion: 0, journeys: existingJourneys });
@@ -510,13 +599,25 @@ export class JourneyRuntime {
 
   installTaskPlan(input: InstallJourneyTaskPlanRuntimeInput): JourneyRuntimeRecord {
     const current = this.#record(input.journeyId).journey;
+    const hasInstallation = input.installation !== undefined;
+    const hasLegacy = input.taskPlan !== undefined;
+    if (!hasInstallation && !hasLegacy) {
+      throw new Error("journey_task_plan_input_required");
+    }
+    if (hasInstallation && hasLegacy) {
+      throw new Error("journey_task_plan_input_conflict");
+    }
     const journey = installJourneyTaskPlan({
       journey: current,
       expectedVersion: input.expectedVersion,
-      taskPlan: input.taskPlan,
+      ...(hasInstallation ? { installation: input.installation } : { taskPlan: input.taskPlan }),
     });
     if (journey !== current) {
-      const hiddenTaskSeal = normalizeJourneyHiddenTaskSeal(input.taskPlan, input.hiddenTaskSeal);
+      // PR3: prefer the installation's hiddenTaskSeal when present (carries
+      // the source-binding tuple); fall back to the legacy shorthand.
+      const planForSeal = hasInstallation ? input.installation!.plan : input.taskPlan!;
+      const sealSource = hasInstallation ? input.installation!.hiddenTaskSeal : input.hiddenTaskSeal!;
+      const hiddenTaskSeal = normalizeJourneyHiddenTaskSeal(planForSeal, sealSource);
       this.#append([this.#snapshotEvent(
         "journey_task_plan_installed",
         journey,

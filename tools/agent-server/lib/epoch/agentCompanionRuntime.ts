@@ -5,6 +5,8 @@ import { attachJourneyEventsForPersistence, journeyEventsForPersistence } from "
 import { createDurableAgentInteractionProjection } from "./agentInteractionEnvelopeRules.ts";
 import type { EpochEvent } from "./events.ts";
 import type { EpochAgentIdentity } from "./gameCore.ts";
+import type { InternalQuestOffer } from "./journeyOfferRules.ts";
+import type { JourneyOfferRuntime } from "./journeyOfferRuntime.ts";
 import { buildJourneyAlbum } from "./journeyAlbumReadModel.ts";
 import {
   buildGroundedJourneyStoryReport,
@@ -26,6 +28,10 @@ import {
   nextJourneyTaskObjective,
   validateJourneyTaskProposal,
 } from "./journeyGeneratedTaskRules.ts";
+import {
+  scrubJourneyForPublicView,
+  scrubJourneyRecordForPublicView,
+} from "./journeyReadModel.ts";
 import { EPOCH_WORLD_CALENDAR_ORIGIN_YEAR, epochWorldCalendarMoment } from "./worldCalendar.ts";
 
 type UnknownRecord = Record<string, unknown>;
@@ -47,6 +53,13 @@ export interface AgentCompanionRuntimeOptions {
   readonly epoch: AgentCompanionEpochSurface;
   readonly journey?: JourneyRuntime;
   readonly journeyOptions?: JourneyRuntimeOptions;
+  /**
+   * PR3. Optional quest-offer runtime. When supplied, the companion can
+   * resolve offer-driven prepare requests end-to-end (claim + resolve +
+   * delegate to {@link JourneyRuntime.prepare}). When absent, offer-driven
+   * prepare requests fail with `offer_runtime_unavailable`.
+   */
+  readonly offerRuntime?: JourneyOfferRuntime;
 }
 
 interface IdempotencyRecord {
@@ -291,6 +304,7 @@ function worldObjects(regionInfo: UnknownRecord, regionId: string): readonly Jou
 export class AgentCompanionRuntime {
   readonly #epoch: AgentCompanionEpochSurface;
   readonly #journey: JourneyRuntime;
+  readonly #offer: JourneyOfferRuntime | undefined;
   readonly #idempotency = new Map<string, IdempotencyRecord>();
   readonly #interactionProjection = createDurableAgentInteractionProjection();
   #epochInteractionOffset = 0;
@@ -300,6 +314,7 @@ export class AgentCompanionRuntime {
     this.#epoch = options.epoch;
     if (!options.journey && !options.journeyOptions) throw new Error("journey_runtime_options_required");
     this.#journey = options.journey ?? createJourneyRuntime(options.journeyOptions as JourneyRuntimeOptions);
+    this.#offer = options.offerRuntime;
     this.#hydrateIdempotency();
     this.#refreshInteractionProjection();
   }
@@ -312,28 +327,174 @@ export class AgentCompanionRuntime {
     const agentId = requiredString(input.agentId, "agent_id");
     const { explorerId } = this.#authorizeAgent(input, agentId);
     return this.#idempotently("prepare", explorerId, input, () => {
+      // PR3: offer-driven mode requires a pre-resolved InternalQuestOffer.
+      // The HTTP layer (or prepareWithOffer below) runs claim+getInternalOffer
+      // upstream and passes the result in. The companion runtime never
+      // performs offer IO itself; the inner JourneyRuntime.prepare is sync.
+      const questOfferId = typeof input.questOfferId === "string" && input.questOfferId.trim()
+        ? input.questOfferId.trim()
+        : undefined;
+      const questOffer = input.questOffer as InternalQuestOffer | undefined;
+      if (questOfferId !== undefined && questOffer === undefined) {
+        throw new Error("journey_offer_resolution_required");
+      }
+      if (questOffer !== undefined && questOfferId !== undefined && questOffer.questOfferId !== questOfferId) {
+        throw new Error("offer_id_mismatch");
+      }
+      // PR3 (Fix 3): when the client omits destinationRegionId in offer-driven
+      // mode, derive it from the resolved offer's region. The schema permits
+      // omission for offer-driven journeys; the runtime would otherwise throw
+      // destination_region_id. Falls back to the canonical default otherwise.
+      const offerRegionId = questOffer?.publicView.region.regionId;
       const destinationRegionId = resolveEpochCanonicalRegionId(
         typeof (input.destinationRegionId ?? input.regionId) === "string" && String(input.destinationRegionId ?? input.regionId).trim()
           ? String(input.destinationRegionId ?? input.regionId).trim()
-          : "region_gray_harbor",
+          : offerRegionId ?? "region_gray_harbor",
       );
       const originRegionId = typeof input.originRegionId === "string" && input.originRegionId.trim()
         ? resolveEpochCanonicalRegionId(input.originRegionId.trim())
         : destinationRegionId;
+      // PR3: when the client omits taskType in offer-driven mode, derive it
+      // from the offer's publicView.taskTypeText. The offer is authoritative
+      // for taskType per the prepare_journey schema contract; this avoids
+      // the offer_task_type_mismatch path when both inputs are absent.
+      const offerTaskType = questOffer?.publicView.taskTypeText;
+      const taskType = typeof input.taskType === "string" && input.taskType.trim()
+        ? input.taskType.trim()
+        : offerRegionId !== undefined
+          ? offerTaskType
+          : undefined;
       const prepared = this.#journey.prepare({
         agentId,
         explorerId,
         originRegionId,
         destinationRegionId,
-        taskType: typeof input.taskType === "string" && input.taskType.trim()
-          ? input.taskType.trim()
-          : undefined,
+        taskType,
         mandate: input.mandate,
         policy: input.policy ?? { presetId: input.presetId ?? "cautious" },
         expectedReturn: input.expectedReturn as string | undefined,
+        ...(questOfferId !== undefined ? { questOfferId } : {}),
+        ...(questOffer !== undefined ? { questOffer } : {}),
+        ...(typeof input.offerHash === "string" ? { offerHash: input.offerHash as `sha256:${string}` } : {}),
+        ...(input.marketSnapshotVersion !== undefined
+          ? { marketSnapshotVersion: Number(input.marketSnapshotVersion) }
+          : {}),
       });
-      return { ...prepared, mission: this.#missionForJourney(prepared.journey) };
+      // PR3: zero-bonus boundary — strip internal source-binding fields
+      // (questOfferId/offerHash/marketSnapshotVersion/taskFamilyId/
+      // expectedApproach) before crossing into the untrusted response.
+      return { ...scrubJourneyRecordForPublicView(prepared), mission: this.#missionForJourney(prepared.journey) };
     });
+  }
+
+  /**
+   * PR3. Async offer-driven prepare: claim the offer against the supplied
+   * reservation, resolve the {@link InternalQuestOffer} server-side, then
+   * delegate to the sync {@link prepare} with the resolved offer in input.
+   *
+   * The claim is idempotent on `(questOfferId, idempotencyKey)`, so a
+   * network-retry of the whole prepare request hits the offer claim's
+   * idempotency cache and re-returns the same claim — no double-claim. The
+   * subsequent `prepare` is itself wrapped in the journey prepare idempotency
+   * cache, so the journey-side response is also stable across retries.
+   *
+   * Throws `offer_runtime_unavailable` if no {@link JourneyOfferRuntime} is
+   * wired. Throws `offer_hash_mismatch` if `offerHash` is supplied and does
+   * not match the resolved internal offer.
+   *
+   * PR3 (audit round 2): prepare-failure rollback. Spec §4.2 only mandates
+   * "replenish failure must NOT roll back claim"; prepare-failure rollback
+   * is unspecified and the prior implementation chose leak-over-rollback.
+   * This implementation rolls back a FRESH claim on any downstream throw
+   * (offer_hash_mismatch, offer_region_mismatch, idempotency_key_conflict,
+   * offer_resolution_failed, journey prepare errors, ...). Heuristic:
+   *
+   *   - Snapshot `lifecycle.status === "claimed"` BEFORE claiming.
+   *   - Track whether `claimQuestOffer` itself threw in this call.
+   *   - On any downstream throw, IF claim succeeded AND the lifecycle was
+   *     NOT already `claimed` when this call started, best-effort release
+   *     the offer (transition `claimed` -> `released`) and surface the
+   *     original error.
+   *
+   * We do NOT roll back idempotent-replay claims: a claim that already
+   * existed when this call started may belong to a prior successful
+   * prepare that the caller is retrying past a transient network glitch,
+   * and releasing it would orphan that prior journey. The check is
+   * prior-state based; concurrent same-key retries with divergent inputs
+   * remain a theoretical race — legitimate retries use identical inputs
+   * and are handled correctly.
+   *
+   * Retry contract after a rolled-back failure: the offer is `released`
+   * (terminal-bypass), so the SAME `questOfferId` cannot be reclaimed.
+   * The client must reserve a fresh offer and retry with the new id
+   * (`idempotencyKey` can be reused — it is scoped per questOfferId).
+   */
+  async prepareWithOffer(input: UnknownRecord = {}): Promise<ReturnType<AgentCompanionRuntime["prepare"]>> {
+    if (this.#offer === undefined) throw new Error("offer_runtime_unavailable");
+    const agentId = requiredString(input.agentId, "agent_id");
+    const { explorerId } = this.#authorizeAgent(input, agentId);
+    const questOfferId = requiredString(input.questOfferId, "quest_offer_id");
+    const reservationToken = requiredString(input.reservationToken, "reservation_token");
+    const idempotencyKey = requiredString(input.idempotencyKey, "idempotency_key");
+    if (input.marketSnapshotVersion === undefined || input.marketSnapshotVersion === null) {
+      throw new Error("market_snapshot_version_required");
+    }
+    const marketSnapshotVersion = Number(input.marketSnapshotVersion);
+    if (!Number.isFinite(marketSnapshotVersion)) {
+      throw new Error("market_snapshot_version_required");
+    }
+    // PR3 (audit round 2): snapshot prior lifecycle state so the catch
+    // block can tell a FRESH claim (rollback eligible) from an idempotent
+    // replay (must NOT roll back — would orphan a prior successful prepare
+    // the caller is retrying past).
+    const offerStore = this.#offer.getStore();
+    const lifecycleBefore = offerStore.projection.lifecyclesById[questOfferId];
+    const wasAlreadyClaimed = lifecycleBefore?.status === "claimed";
+    let claimSucceededInThisCall = false;
+    try {
+      // Claim is idempotent on (questOfferId, idempotencyKey); replays return
+      // the same claimId without re-advancing the lifecycle.
+      await this.#offer.claimQuestOffer({
+        questOfferId,
+        reservationToken,
+        explorerId,
+        agentId,
+        idempotencyKey,
+        marketSnapshotVersion,
+      });
+      claimSucceededInThisCall = true;
+      const internal = this.#offer.getInternalOffer(questOfferId);
+      if (internal === undefined) {
+        throw new Error("offer_resolution_failed");
+      }
+      if (typeof input.offerHash === "string" && internal.offerHash !== input.offerHash) {
+        throw new Error("offer_hash_mismatch");
+      }
+      // Hand the resolved offer to the sync prepare path. Strip the raw offer
+      // IO fields from the idempotency subject so the cache key is stable
+      // across retries (the claim is already idempotent on its own key).
+      const { reservationToken: _stripToken, questOffer: _stripPrior, ...rest } = input;
+      void _stripToken;
+      void _stripPrior;
+      return this.prepare({ ...rest, questOffer: internal });
+    } catch (error) {
+      // Roll back a FRESH claim if anything downstream threw. Without this,
+      // any prepare-side error leaks the offer as `claimed` with no
+      // automatic cleanup — the client would have to explicitly invoke
+      // releaseOrExpireQuestOffer. Best-effort: release errors are
+      // swallowed so the original prepare-side error surfaces.
+      if (claimSucceededInThisCall && !wasAlreadyClaimed) {
+        try {
+          await this.#offer.releaseOrExpireQuestOffer({
+            questOfferId,
+            reason: "released",
+          });
+        } catch {
+          // Swallow — the original error is the actionable one.
+        }
+      }
+      throw error;
+    }
   }
 
   start(input: UnknownRecord = {}) {
@@ -378,7 +539,7 @@ export class AgentCompanionRuntime {
       const scenePlan = this.#composeThreePhasePlan(started.journey);
       const record = this.#journey.status(journeyId);
       return {
-        ...record,
+        ...scrubJourneyRecordForPublicView(record),
         mission: this.#missionForJourney(record.journey),
         scenePlan,
         nextPollAt: record.journey.nextPollAt,
@@ -395,7 +556,7 @@ export class AgentCompanionRuntime {
         journeyId,
         expectedVersion: Number(input.expectedVersion),
       });
-      return { ...reserved, mission: this.#missionForJourney(reserved.journey) };
+      return { ...scrubJourneyRecordForPublicView(reserved), mission: this.#missionForJourney(reserved.journey) };
     });
   }
 
@@ -436,7 +597,7 @@ export class AgentCompanionRuntime {
       : scenePlan.episodes[current.journey.episodeIds.length];
     if (!episode) throw new Error("journey_steps_complete");
     return {
-      ...current,
+      ...scrubJourneyRecordForPublicView(current),
       mission: this.#missionForJourney(current.journey),
       episode,
       scenePlan,
@@ -458,7 +619,7 @@ export class AgentCompanionRuntime {
         Number(input.expectedVersion),
         input.episodes as readonly JourneySceneEpisode[],
       );
-      return { ...committed, mission: this.#missionForJourney(committed.journey) };
+      return { ...scrubJourneyRecordForPublicView(committed), mission: this.#missionForJourney(committed.journey) };
     });
   }
 
@@ -468,7 +629,7 @@ export class AgentCompanionRuntime {
     this.#authorizeExplorer(input, current.journey.explorerId);
     return this.#idempotently("await_agent", current.journey.explorerId, input, () => {
       const awaiting = this.#journey.awaitAgent(journeyId, Number(input.expectedVersion));
-      return { ...awaiting, mission: this.#missionForJourney(awaiting.journey) };
+      return { ...scrubJourneyRecordForPublicView(awaiting), mission: this.#missionForJourney(awaiting.journey) };
     });
   }
 
@@ -478,7 +639,7 @@ export class AgentCompanionRuntime {
     this.#authorizeExplorer(input, current.journey.explorerId);
     return this.#idempotently("begin_return", current.journey.explorerId, input, () => {
       const returning = this.#journey.beginReturn(journeyId, Number(input.expectedVersion));
-      return { ...returning, mission: this.#missionForJourney(returning.journey) };
+      return { ...scrubJourneyRecordForPublicView(returning), mission: this.#missionForJourney(returning.journey) };
     });
   }
 
@@ -488,7 +649,7 @@ export class AgentCompanionRuntime {
     this.#authorizeExplorer(input, current.journey.explorerId);
     return this.#idempotently("settle_completed", current.journey.explorerId, input, () => {
       const settled = this.#journey.settleCompleted(journeyId, Number(input.expectedVersion));
-      return { ...settled, mission: this.#missionForJourney(settled.journey) };
+      return { ...scrubJourneyRecordForPublicView(settled), mission: this.#missionForJourney(settled.journey) };
     });
   }
 
@@ -505,7 +666,7 @@ export class AgentCompanionRuntime {
         expectedVersion: Number(input.expectedVersion),
         worldCommit: input.worldCommit as JourneyWorldCommit,
       });
-      return { ...recorded, mission: this.#missionForJourney(recorded.journey) };
+      return { ...scrubJourneyRecordForPublicView(recorded), mission: this.#missionForJourney(recorded.journey) };
     });
   }
 
@@ -555,7 +716,7 @@ export class AgentCompanionRuntime {
           })
         : undefined;
       return {
-        ...record,
+        ...scrubJourneyRecordForPublicView(record),
         episodes,
         mission,
         ...(taskAdjudication ? { taskAdjudication } : {}),
@@ -577,7 +738,7 @@ export class AgentCompanionRuntime {
       ? this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, record.journey.taskPlan)
       : undefined;
     return {
-      ...record,
+      ...scrubJourneyRecordForPublicView(record),
       episodes,
       mission: this.#missionForJourney(record.journey),
       interactionLog: buildJourneyInteractionLog({
@@ -601,7 +762,7 @@ export class AgentCompanionRuntime {
     this.#authorizeExplorer(input, record.journey.explorerId);
     return this.#idempotently("recall", record.journey.explorerId, input, () => {
       const recalled = this.#journey.recall(record.journey.journeyId, Number(input.expectedVersion));
-      return { ...recalled, mission: this.#missionForJourney(recalled.journey) };
+      return { ...scrubJourneyRecordForPublicView(recalled), mission: this.#missionForJourney(recalled.journey) };
     });
   }
 
@@ -1044,7 +1205,7 @@ export class AgentCompanionRuntime {
       const episodes = record.journey.episodeIds.map((episodeId) => this.#journey.projection().episodes[episodeId]).filter(Boolean);
       const value = command.scope === "start"
         ? {
-            ...record,
+            ...scrubJourneyRecordForPublicView(record),
             mission: this.#missionForJourney(record.journey),
             scenePlan: {
               status: episodes.length ? "ready" : "no_verifiable_world_object",
@@ -1054,7 +1215,7 @@ export class AgentCompanionRuntime {
             },
             nextPollAt: record.journey.nextPollAt,
           }
-        : { ...record, mission: this.#missionForJourney(record.journey) };
+        : { ...scrubJourneyRecordForPublicView(record), mission: this.#missionForJourney(record.journey) };
       this.#idempotency.set(cacheKey, { subjectHash: command.subjectHash, value });
     }
   }

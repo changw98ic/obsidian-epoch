@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertPublicSafe,
   containsSecretMaterial,
+  findInternalOfferFields,
   findSecretLeaks,
   redactApiKeys,
 } from "../lib/safety.ts";
@@ -80,4 +82,60 @@ test("secret material matcher finds opaque request credentials without returning
   assert.equal(containsSecretMaterial("visible safe text", {
     nested: { accessToken: opaqueSecret },
   }), false);
+});
+
+// ---------------------------------------------------------------------------
+// PR3: input-boundary rejection of internal offer / strategy fields.
+// ---------------------------------------------------------------------------
+
+test("findInternalOfferFields lists every internal offer/strategy field present at top level", () => {
+  const found = findInternalOfferFields({
+    agentId: "ag_1",
+    taskFamilyId: "tf_secret",
+    expectedApproach: ["combat"],
+    worldSliceHash: "sha256:abc",
+    strategyAffinity: 0.5,
+    fitBps: 100,
+    unrelatedField: "ok",
+  });
+  assert.deepEqual([...found].sort(), [
+    "expectedApproach",
+    "fitBps",
+    "strategyAffinity",
+    "taskFamilyId",
+    "worldSliceHash",
+  ]);
+});
+
+test("findInternalOfferFields returns empty for inputs that carry none of the internal fields", () => {
+  assert.deepEqual(findInternalOfferFields({ agentId: "ag_1", mandate: { objective: "x" } }), []);
+  assert.deepEqual(findInternalOfferFields(undefined), []);
+  assert.deepEqual(findInternalOfferFields(null), []);
+  assert.deepEqual(findInternalOfferFields("string"), []);
+  assert.deepEqual(findInternalOfferFields([1, 2, 3]), []);
+});
+
+test("assertPublicSafe rejects inputs that carry any internal offer/strategy field", () => {
+  for (const field of ["taskFamilyId", "expectedApproach", "worldSliceHash", "strategyAffinity", "fitBps"]) {
+    const input = { agentId: "ag_1", [field]: "leak" };
+    assert.throws(
+      () => assertPublicSafe(input),
+      (error: unknown) => error instanceof Error
+        && error.message === "internal_field_rejected"
+        && Array.isArray((error as { fields?: unknown }).fields)
+        && (error as { fields: readonly string[] }).fields.includes(field),
+    );
+  }
+});
+
+test("assertPublicSafe passes inputs that omit every internal offer/strategy field", () => {
+  assert.doesNotThrow(() => assertPublicSafe({ agentId: "ag_1", destinationRegionId: "r_x", idempotencyKey: "k" }));
+  // questOfferId is a PUBLIC field — it must NOT be rejected by the boundary.
+  assert.doesNotThrow(() => assertPublicSafe({
+    agentId: "ag_1",
+    questOfferId: "qo_1",
+    reservationToken: "rs_1",
+    marketSnapshotVersion: 1,
+    idempotencyKey: "k",
+  }));
 });

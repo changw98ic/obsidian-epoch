@@ -25,6 +25,8 @@ import { createLegacyOutboxLedger, graphSyncFromOutboxEntries, type LegacyOutbox
 import { createEpochRuntime, type EpochSharedResultPage } from "./epoch/runtime.ts";
 import { projectEpochEvents } from "./epoch/gameCore.ts";
 import { createAgentCompanionRuntime } from "./epoch/agentCompanionRuntime.ts";
+import { createJourneyOfferRepository } from "./epoch/journeyOfferStore.ts";
+import { createJourneyOfferRuntime } from "./epoch/journeyOfferRuntime.ts";
 import type { EpochEvent } from "./epoch/events.ts";
 import { listMirrorConsequences } from "./epoch/journeyMirrorLedger.ts";
 import type { MirrorConsequenceLedgerEntry } from "./epoch/journeySettlementRules.ts";
@@ -1556,6 +1558,13 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     const value = clock?.() ?? new Date();
     return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
   };
+  // PR3: wire the quest-offer runtime so prepare_journey can run in
+  // offer-driven mode (claim + resolve + delegate). Backed by the same
+  // append-only JSONL repository as the rest of the epoch engine.
+  const journeyOfferRuntime = createJourneyOfferRuntime({
+    repository: createJourneyOfferRepository(),
+    now: () => clockIso(configuredJourneyClock),
+  });
   const companionRuntime = createAgentCompanionRuntime({
     epoch: {
       progress: epochRuntime.progress,
@@ -1607,6 +1616,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       defaultWorldDurationMs: positiveNumberValue(journeyOptions.defaultWorldDurationMs, 60 * 60 * 1_000),
       pollIntervalMs: positiveNumberValue(journeyOptions.pollIntervalMs, 5 * 60 * 1_000),
     },
+    offerRuntime: journeyOfferRuntime,
   });
   companionRuntimeRef.current = companionRuntime;
   resolveJourneyHiddenTaskSeal = (journeyId, plan) =>
@@ -3230,8 +3240,15 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         readonly nextPollAt?: string;
       };
     },
-    epochPrepareJourney: (input: AnyRecord = {}) => {
+    epochPrepareJourney: async (input: AnyRecord = {}) => {
       assertPublicSafe(input);
+      // PR3: route offer-driven prepares through the async claim+resolve
+      // path. questOfferId presence (and the offer-runtime wiring) is what
+      // flips the journey into offer-driven mode; the sync prepare path
+      // handles the legacy non-offer case.
+      if (typeof input.questOfferId === "string" && input.questOfferId.trim()) {
+        return await companionRuntime.prepareWithOffer(input);
+      }
       return companionRuntime.prepare(input);
     },
     epochJourneyTaskGenerationContext: (input: AnyRecord = {}) => {
@@ -4959,7 +4976,7 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "obsidian_epoch.prepare_journey",
     title: "Prepare journey",
-    description: "Owner-authorized mission preview. Records the requested task type and destination map; the route is generated from that map at start and is not a fixed client-authored script.",
+    description: "Owner-authorized mission preview. Records the requested task type and destination map; the route is generated from that map at start and is not a fixed client-authored script. When `questOfferId` is supplied, the server re-resolves every internal field (taskFamilyId/expectedApproach/worldSliceHash/taskType/scenarioMapId) from the offer store and IGNORES any client-supplied override for those fields; the public schema intentionally does NOT expose taskFamilyId/expectedApproach/worldSliceHash, and any client attempt to pass them is rejected at the input boundary. Client-supplied `destinationRegionId`/`taskType` MUST equal the offer's region/taskTypeText when both are present.",
     inputSchema: objectSchema({
       agentId: { type: "string" },
       originRegionId: { type: "string" },
@@ -4972,7 +4989,11 @@ const MCP_TOOL_DEFINITIONS = [
       recoveryCode: { type: "string" },
       localSecret: { type: "string" },
       idempotencyKey: { type: "string" },
-    }, ["agentId", "destinationRegionId", "idempotencyKey"]),
+      questOfferId: { type: "string", description: "Optional. When set, switches the journey into offer-driven mode and the server re-resolves all internal fields from the offer store." },
+      offerHash: { type: "string", description: "Echo of `sha256:${hex}` offerHash the client read from the public snapshot; the server rejects on mismatch with the live internal offer." },
+      reservationToken: { type: "string", description: "Opaque ownership token returned by `reserve_quest_offer`; the server claims the offer against it before binding the journey." },
+      marketSnapshotVersion: { type: "number", description: "Market snapshot version the offer was read under; the server rejects on stale or forward snapshots." },
+    }, ["agentId", "idempotencyKey"]),
   },
   {
     name: "obsidian_epoch.start_journey",
