@@ -8111,8 +8111,8 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     };
     const taskContext = runtime.epochJourneyTaskGenerationContext(boundArgs);
     if (process.env.EPOCH_DIAG) console.error("[region-taskctx]", JSON.stringify({
-      scenarioMapId: taskContext?.scenarioMapId, regionId: taskContext?.regionId,
-      destinationRegionId: taskContext?.destinationRegionId, availableCount: taskContext?.availableWorldObjects?.length,
+      scenarioMapId: taskContext?.scenarioMapId,
+      availableCount: taskContext?.availableWorldObjects?.length,
       generationRequested: taskContext?.generationRequested,
     }));
     const generatedPlanRequested = args.taskGenerationMode === "model_sampling"
