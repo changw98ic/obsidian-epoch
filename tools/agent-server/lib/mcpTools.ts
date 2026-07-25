@@ -26,6 +26,8 @@ import { createEpochRuntime, type EpochSharedResultPage } from "./epoch/runtime.
 import { projectEpochEvents } from "./epoch/gameCore.ts";
 import { createAgentCompanionRuntime } from "./epoch/agentCompanionRuntime.ts";
 import type { EpochEvent } from "./epoch/events.ts";
+import { listMirrorConsequences } from "./epoch/journeyMirrorLedger.ts";
+import type { MirrorConsequenceLedgerEntry } from "./epoch/journeySettlementRules.ts";
 import {
   causalWorldEventFromEpochEvent,
 } from "./epoch/causalEpochAdapter.ts";
@@ -115,6 +117,7 @@ import {
   publicEpochEvent,
 } from "./epoch/runtimePublicProjectionRules.ts";
 import {
+  attachJourneyEventsForPersistence,
   journeyEventsForPersistence,
   mergeJourneyEventsForPersistence,
 } from "./epoch/journeyPersistence.ts";
@@ -1230,11 +1233,57 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
   // Phase 6 pages share the SQLite result_pages index but have their own public read contract.
   const initialEpochResultPages = initialResultPages.filter((page) =>
     optionalString(recordValue(page).createdBy) !== "obsidian_epoch.phase6");
+  // PR2 mirror-consequence ledger bridge.
+  //
+  // The gameCore `submitHostedAction` emits mirror-world consequence
+  // blueprints through `journeyMirrorLedgerSink` (gameCore.ts:9856). The
+  // integrator must forward those blueprints to the companion runtime so the
+  // journey projection's `mirrorLedgers[journeyId]` fills in at action time.
+  //
+  // Synchronous forwarding inside the sink would bump `journey.version` via
+  // `recordMirrorConsequences`, but `commitSingleJourneyStepRuntime` runs
+  // `submitHostedAction` → `commitEpisodes` in sequence with a single
+  // `expectedVersion` (mcpTools.ts:2478-2484); a version bump between the two
+  // throws `journey_version_conflict`. To preserve that contract the sink
+  // buffers blueprints per journey and `drainPendingMirrorConsequences`
+  // flushes them at safe points (after `commitEpisodes`, before ledger reads,
+  // and before `solidifyJourneyWorld`). Effect matches the plan: by the time
+  // the integrator reads the ledger for solidify, every submitted mirror
+  // action's collateral entries are present and idempotent under replay.
+  const companionRuntimeRef: {
+    current: ReturnType<typeof createAgentCompanionRuntime> | undefined;
+  } = { current: undefined };
+  const pendingMirrorConsequences = new Map<string, MirrorConsequenceLedgerEntry[]>();
+  const drainPendingMirrorConsequences = (journeyId: string): readonly JourneyRuntimeEvent[] => {
+    const pending = pendingMirrorConsequences.get(journeyId);
+    if (!pending || pending.length === 0) return [];
+    pendingMirrorConsequences.delete(journeyId);
+    const companion = companionRuntimeRef.current;
+    if (!companion) return [];
+    const journeyRuntime = companion.journeyRuntime();
+    const before = new Set(journeyRuntime.projection().events.map((event) => event.eventId));
+    const live = journeyRuntime.status(journeyId);
+    journeyRuntime.recordMirrorConsequences({
+      journeyId,
+      expectedVersion: live.journey.version,
+      entries: pending,
+    });
+    return journeyRuntime.projection().events.filter((event) => !before.has(event.eventId));
+  };
   const epochRuntime = createEpochRuntime({
     ...epochOptions,
     initialEvents: initialEpochEvents,
     initialResultPages: initialEpochResultPages,
     resolveJourneyHiddenTaskSeal: (journeyId, plan) => resolveJourneyHiddenTaskSeal(journeyId, plan),
+    journeyMirrorLedgerSink: (input) => {
+      // Buffer per journey. Drain happens after the surrounding
+      // submit→commitEpisodes flow completes, not here. The gameCore passes
+      // `expectedVersion: -1` (gameCore.ts:9859) precisely because it cannot
+      // see the companion runtime's journey version; the drain resolves the
+      // real version from `journeyRuntime.status(journeyId)`.
+      const existing = pendingMirrorConsequences.get(input.journeyId) ?? [];
+      pendingMirrorConsequences.set(input.journeyId, [...existing, ...input.entries]);
+    },
   });
   const phase6ReceiptSqlite = phase6ReceiptSqlitePath(options);
   const phase6ResultPages = createEpochResultPageReadModel(initialResultPages as readonly EpochSharedResultPage[]);
@@ -1559,6 +1608,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       pollIntervalMs: positiveNumberValue(journeyOptions.pollIntervalMs, 5 * 60 * 1_000),
     },
   });
+  companionRuntimeRef.current = companionRuntime;
   resolveJourneyHiddenTaskSeal = (journeyId, plan) =>
     sealFromProjection(companionRuntime.journeyRuntime().projection(), journeyId, plan);
   const transparencyLedger = createTransparencyLedger({
@@ -2482,6 +2532,13 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       episodes: [committedEpisode],
       idempotencyKey: `${String(input.idempotencyKey || "").trim()}:journey:${contract.episodeId}`,
     });
+    // PR2: flush mirror-consequence blueprints buffered by the sink during
+    // `commitJourneyHostedAction`. Must run AFTER `commitEpisodes` so the
+    // journey version consumed above is the propose-time value; the drain
+    // then appends `journey_mirror_consequence_recorded` at the new version.
+    // The drained events are returned so the caller can persist them —
+    // bypassing this would leave a version gap on restart.
+    const drainedMirrorEvents = drainPendingMirrorConsequences(contract.journeyId);
     const worldClockAdvance = authoritativeWorldClockEnabled
       && status.journey.worldMode !== "mirror"
       && actionEpochEvents.some((event) => event.eventType === "hosted_action_recorded")
@@ -2506,7 +2563,21 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       ...actionEpochEvents,
       ...(worldClockAdvance ? epochEventsForPersistence(worldClockAdvance) : []),
     ]);
-    return mergeJourneyEventsForPersistence(result, status, committed);
+    // Merge journey events from status, commitEpisodes result, and the
+    // drain (which bypassed #captureEvents). Attach in-place to preserve
+    // the plain-return type inference — mergeJourneyEventsForPersistence is
+    // generic and would narrow the inferred return type.
+    const baseJourneyEvents = [
+      ...journeyEventsForPersistence(status),
+      ...journeyEventsForPersistence(committed),
+    ];
+    const baseJourneyEventIds = new Set(baseJourneyEvents.map((event) => event.eventId));
+    const allJourneyEvents = [
+      ...baseJourneyEvents,
+      ...drainedMirrorEvents.filter((event) => !baseJourneyEventIds.has(event.eventId)),
+    ];
+    attachJourneyEventsForPersistence(result, allJourneyEvents);
+    return result;
   }
 
   function finalizeSettledMirrorWorld(
@@ -2516,7 +2587,12 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     if (status.journey.status !== "settled"
       || status.journey.worldMode !== "mirror"
       || status.journey.worldCommit) {
-      return { status };
+      return {
+        status,
+        worldSynchronization: undefined,
+        worldSolidification: undefined,
+        worldCommitRecord: undefined,
+      };
     }
     const settledAtWorldTime = status.journey.settledAtWorldTime;
     const startedAtWorldTime = status.journey.startedAtWorldTime;
@@ -2574,6 +2650,26 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     const committedAtWorldTime = status.journey.mirrorTimeRuleVersion === 2
       ? clockIso(configuredWorldClock)
       : settledAtWorldTime;
+    // PR2: flush any blueprints buffered by the sink before reading the
+    // ledger. Direct `submit_hosted_action` callers (not funneled through
+    // `commitSingleJourneyStepRuntime`) may still have entries pending here.
+    // Snapshot the event ids now so the drain + promote/discard events emitted
+    // below (which bypass the companion's #captureEvents wrapper) can be
+    // captured for persistence — without this restart replay would see a
+    // `journey_event_version_gap`.
+    const journeyEventsBeforeFinalize = new Set(
+      companionRuntime.journeyRuntime().projection().events.map((event) => event.eventId),
+    );
+    drainPendingMirrorConsequences(status.journey.journeyId);
+    // Read live mirror-ledger entries from the journey projection. The
+    // companion runtime's `mirrorLedgers[journeyId]` is the single in-memory
+    // truth; `listMirrorConsequences` excludes discarded and promoted entries
+    // by default, returning only the live collateral candidates.
+    const journeyProjection = companionRuntime.journeyRuntime().projection();
+    const mirrorLedger = journeyProjection.mirrorLedgers[status.journey.journeyId];
+    const liveMirrorEntries = mirrorLedger
+      ? listMirrorConsequences(mirrorLedger)
+      : ([] as readonly MirrorConsequenceLedgerEntry[]);
     let worldSolidification: ReturnType<typeof epochRuntime.solidifyJourneyWorld> | undefined;
     const worldCommit = canonEligible
       ? (worldSolidification = epochRuntime.solidifyJourneyWorld({
@@ -2590,6 +2686,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
           worldSliceHash: status.journey.worldSlice?.sliceHash,
           correlationId: status.journey.correlationId,
           causationId: status.journey.journeyId,
+          mirrorLedgerEntries: liveMirrorEntries,
         })).value
       : {
           mode: "mirror" as const,
@@ -2611,12 +2708,81 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       worldCommit,
       idempotencyKey: `${String(input.idempotencyKey || status.journey.journeyId).trim()}:world-commit`,
     });
-    return {
-      status: companionRuntime.status({ ...input, journeyId: status.journey.journeyId }),
+    // PR2: synchronise the runtime projection's mirror ledger with the
+    // solidify/discard decision. gameCore's internal ledger is ephemeral; the
+    // projection's `mirrorLedgers[journeyId]` is the persistent truth read on
+    // restart. Without this sync, a restart would see live entries where the
+    // gameCore had already promoted or discarded them, and replay would
+    // double-count.
+    if (canonEligible && worldSolidification) {
+      const marker = worldSolidification.events.find((event): event is Extract<EpochEvent,
+        { readonly eventType: "journey_world_solidified" }> =>
+        event.eventType === "journey_world_solidified"
+        && (event.payload as { readonly journeyId?: string }).journeyId === status.journey.journeyId) as
+        | Extract<EpochEvent, { readonly eventType: "journey_world_solidified" }>
+        | undefined;
+      const promotedEntryIds = (marker?.payload as { readonly mirrorLedgerPromotedEntryIds?: readonly string[] })
+        ?.mirrorLedgerPromotedEntryIds ?? [];
+      const effectEventIds = (marker?.payload as { readonly effectEventIds?: readonly string[] })
+        ?.effectEventIds ?? [];
+      // gameCore.ts:10081-10098 pushes one canonical event per promoted entry
+      // in entriesToPromote order; NPC canonicalization events follow. The
+      // first `promotedEntryIds.length` effectEventIds pair positionally.
+      const promotions = promotedEntryIds
+        .map((entryId, index) => ({
+          entryId,
+          canonicalEventId: effectEventIds[index] ?? "",
+        }))
+        .filter((promotion) => promotion.canonicalEventId !== "");
+      if (promotions.length > 0) {
+        const postCommit = companionRuntime.status({
+          ...input,
+          journeyId: status.journey.journeyId,
+        });
+        companionRuntime.journeyRuntime().promoteMirrorConsequences({
+          journeyId: status.journey.journeyId,
+          expectedVersion: postCommit.journey.version,
+          promotions,
+        });
+      }
+    } else {
+      // canonEligible=false: discard every non-promoted entry. Reads the
+      // fresh version from the post-recordWorldCommit status.
+      const postCommit = companionRuntime.status({
+        ...input,
+        journeyId: status.journey.journeyId,
+      });
+      companionRuntime.journeyRuntime().discardMirrorConsequences({
+        journeyId: status.journey.journeyId,
+        expectedVersion: postCommit.journey.version,
+      });
+    }
+    const finalizeStatus = companionRuntime.status({ ...input, journeyId: status.journey.journeyId });
+    // Capture journey events emitted by the drain + promote/discard calls
+    // above. recordWorldCommit's events are already attached to
+    // worldCommitRecord; the diff below covers everything else so the
+    // persistence pipeline sees one monotonic event stream on restart.
+    const finalizeMirrorEvents = companionRuntime.journeyRuntime()
+      .projection().events
+      .filter((event) => !journeyEventsBeforeFinalize.has(event.eventId));
+    const finalizeResult = {
+      status: finalizeStatus,
       worldSynchronization,
       worldSolidification,
       worldCommitRecord,
     };
+    // Attach in-place (attachJourneyEventsForPersistence mutates via
+    // Object.defineProperty) to preserve the plain-return type inference.
+    // Merging worldCommitRecord's events + the drain/promote/discard events
+    // ensures the persistence pipeline receives one monotonic event stream.
+    const worldCommitJourneyEvents = journeyEventsForPersistence(worldCommitRecord);
+    const worldCommitEventIds = new Set(worldCommitJourneyEvents.map((event) => event.eventId));
+    const allFinalizeJourneyEvents = [
+      ...worldCommitJourneyEvents,
+      ...finalizeMirrorEvents.filter((event) => !worldCommitEventIds.has(event.eventId)),
+    ];
+    attachJourneyEventsForPersistence(finalizeResult, allFinalizeJourneyEvents);
+    return finalizeResult;
   }
 
   function commitJourneyActionRuntime(input: AnyRecord = {}) {

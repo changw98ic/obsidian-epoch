@@ -1182,6 +1182,14 @@ export interface JourneyWorldSolidifiedPayload {
   readonly questOfferId?: string;
   /** PR1 additive. sha256 of the offer bound to this solidify, for replay. */
   readonly offerHash?: `sha256:${string}`;
+  /**
+   * PR2 additive. Mirror-ledger entry ids promoted into the canonical effect
+   * events listed in {@link effectEventIds}. Present only when the solidify
+   * path consumed a non-empty mirror ledger; absent for the legacy
+   * planJourneyWorldImpactEvents derivation. Carried for replay audit so a
+   * restart-duplicate solidify can detect double-promotion.
+   */
+  readonly mirrorLedgerPromotedEntryIds?: readonly string[];
 }
 
 /**

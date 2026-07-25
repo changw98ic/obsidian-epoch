@@ -6,6 +6,14 @@ import {
   normalizeJourneyHiddenTaskSeal,
   type JourneyHiddenTaskSeal,
 } from "./journeyGeneratedTaskRules.ts";
+import type { MirrorConsequenceLedgerEntry } from "./journeySettlementRules.ts";
+import {
+  appendMirrorConsequence,
+  discardAllMirrorConsequences,
+  emptyMirrorConsequenceLedger,
+  markMirrorConsequencePromoted,
+  type MirrorConsequenceLedgerState,
+} from "./journeyMirrorLedger.ts";
 
 export type JourneyRuntimeEventType =
   | "journey_prepared"
@@ -16,7 +24,10 @@ export type JourneyRuntimeEventType =
   | "journey_world_commit_recorded"
   | "journey_verification_linked"
   | "journey_status_changed"
-  | "journey_return_delivered";
+  | "journey_return_delivered"
+  | "journey_mirror_consequence_recorded"
+  | "journey_mirror_consequence_promoted"
+  | "journey_mirror_consequence_discarded";
 
 interface JourneyRuntimeEventBase {
   readonly eventId: string;
@@ -34,13 +45,20 @@ interface JourneyRuntimeEventBase {
 }
 
 export interface JourneySnapshotEvent extends JourneyRuntimeEventBase {
-  readonly eventType: "journey_prepared" | "journey_world_window_reserved" | "journey_task_plan_installed" | "journey_started" | "journey_episode_recorded" | "journey_world_commit_recorded" | "journey_verification_linked" | "journey_status_changed";
+  readonly eventType: "journey_prepared" | "journey_world_window_reserved" | "journey_task_plan_installed" | "journey_started" | "journey_episode_recorded" | "journey_world_commit_recorded" | "journey_verification_linked" | "journey_status_changed" | "journey_mirror_consequence_recorded" | "journey_mirror_consequence_promoted" | "journey_mirror_consequence_discarded";
   readonly journey: EpochJourney;
   readonly episode?: JourneySceneEpisode;
   readonly policySelection?: JourneyPolicySelection;
   readonly preview?: JourneyPolicyPreview;
   /** Server-only; present only on journey_task_plan_installed. */
   readonly hiddenTaskSeal?: JourneyHiddenTaskSeal;
+  /** Present only on journey_mirror_consequence_recorded. */
+  readonly mirrorConsequenceEntries?: readonly MirrorConsequenceLedgerEntry[];
+  /** Present only on journey_mirror_consequence_promoted. */
+  readonly mirrorConsequencePromotions?: readonly {
+    readonly entryId: string;
+    readonly canonicalEventId: string;
+  }[];
 }
 
 export interface JourneyReturnDeliveredEvent extends JourneyRuntimeEventBase {
@@ -64,6 +82,12 @@ export interface JourneyProjection {
   readonly deliveredReturnIds: ReadonlySet<string>;
   /** Server-only seal material, scoped to the runtime projection and journey. */
   readonly hiddenTaskSeals: Readonly<Record<string, JourneyHiddenTaskSeal>>;
+  /**
+   * PR2 mirror-consequence ledgers, scoped by journeyId. Append/promote/discard
+   * transitions flow through {@link applyJourneyRuntimeEvent} so the projection
+   * is the single in-memory truth for mirror collateral.
+   */
+  readonly mirrorLedgers: Readonly<Record<string, MirrorConsequenceLedgerState>>;
 }
 
 export function emptyJourneyProjection(): JourneyProjection {
@@ -74,6 +98,7 @@ export function emptyJourneyProjection(): JourneyProjection {
     journeyIdsByAgent: {},
     deliveredReturnIds: new Set(),
     hiddenTaskSeals: {},
+    mirrorLedgers: {},
   };
 }
 
@@ -128,7 +153,7 @@ export function applyJourneyRuntimeEvent(
     throw new Error("journey_event_hidden_task_seal_not_allowed");
   }
   const ids = projection.journeyIdsByAgent[event.agentId] ?? [];
-  return {
+  const baseProjection = {
     ...projection,
     events: [...projection.events, event],
     journeys: {
@@ -145,6 +170,56 @@ export function applyJourneyRuntimeEvent(
     },
     hiddenTaskSeals,
   };
+
+  if (event.eventType === "journey_mirror_consequence_recorded") {
+    const entries = event.mirrorConsequenceEntries ?? [];
+    const current = baseProjection.mirrorLedgers[event.journeyId]
+      ?? emptyMirrorConsequenceLedger(event.journeyId);
+    let nextLedger = current;
+    for (const entry of entries) {
+      nextLedger = appendMirrorConsequence(nextLedger, entry);
+    }
+    return {
+      ...baseProjection,
+      mirrorLedgers: {
+        ...baseProjection.mirrorLedgers,
+        [event.journeyId]: nextLedger,
+      },
+    };
+  }
+  if (event.eventType === "journey_mirror_consequence_promoted") {
+    const promotions = event.mirrorConsequencePromotions ?? [];
+    const current = baseProjection.mirrorLedgers[event.journeyId]
+      ?? emptyMirrorConsequenceLedger(event.journeyId);
+    let nextLedger = current;
+    for (const promotion of promotions) {
+      nextLedger = markMirrorConsequencePromoted(
+        nextLedger,
+        promotion.entryId,
+        promotion.canonicalEventId,
+      );
+    }
+    return {
+      ...baseProjection,
+      mirrorLedgers: {
+        ...baseProjection.mirrorLedgers,
+        [event.journeyId]: nextLedger,
+      },
+    };
+  }
+  if (event.eventType === "journey_mirror_consequence_discarded") {
+    const current = baseProjection.mirrorLedgers[event.journeyId]
+      ?? emptyMirrorConsequenceLedger(event.journeyId);
+    const nextLedger = discardAllMirrorConsequences(current);
+    return {
+      ...baseProjection,
+      mirrorLedgers: {
+        ...baseProjection.mirrorLedgers,
+        [event.journeyId]: nextLedger,
+      },
+    };
+  }
+  return baseProjection;
 }
 
 export function projectJourneyRuntimeEvents(events: readonly JourneyRuntimeEvent[]): JourneyProjection {

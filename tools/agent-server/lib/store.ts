@@ -259,6 +259,13 @@ const JOURNEY_SNAPSHOT_EVENT_TYPES = new Set([
   "journey_world_commit_recorded",
   "journey_verification_linked",
   "journey_status_changed",
+  // PR2 mirror-consequence ledger events. Each carries a snapshot of the
+  // journey record (version bump) so the projection reducer can re-apply
+  // ledger mutations on restart. Without these entries in the allowlist,
+  // `assertAgentCommandCommit` rejects the persisted batch.
+  "journey_mirror_consequence_recorded",
+  "journey_mirror_consequence_promoted",
+  "journey_mirror_consequence_discarded",
 ]);
 
 function assertRecordArray(record: JsonRecord, key: string) {

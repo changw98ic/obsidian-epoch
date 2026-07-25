@@ -23,6 +23,7 @@ import {
 } from "./journeyPolicyRules.ts";
 import { revalidatePersistedJourneyNarrative } from "./journeyNarrativeRules.ts";
 import type { EpochEvent } from "./events.ts";
+import type { MirrorConsequenceLedgerEntry } from "./journeySettlementRules.ts";
 import {
   generateJourneySceneEpisodes,
   generateTaskPlanJourneySceneEpisodes,
@@ -609,6 +610,71 @@ export class JourneyRuntime {
     return this.#record(input.journeyId);
   }
 
+  /**
+   * PR2 mirror-consequence ledger integration. Persists `entries` to the
+   * journey-scoped mirror ledger through the runtime-event channel so the
+   * projection remains the single in-memory truth. Replay is idempotent:
+   * re-applying the same entries is a no-op at the ledger layer
+   * ({@link appendMirrorConsequence}).
+   *
+   * `expectedVersion` is the pre-call `journey.version`; the method emits a
+   * snapshot event with `journey.version + 1` to preserve the runtime
+   * projection's version monotonicity, matching the {@link recordWorldCommit}
+   * pattern.
+   */
+  recordMirrorConsequences(input: {
+    readonly journeyId: string;
+    readonly expectedVersion: number;
+    readonly entries: readonly MirrorConsequenceLedgerEntry[];
+  }): JourneyRuntimeRecord {
+    const current = this.#record(input.journeyId).journey;
+    if (current.version !== input.expectedVersion) throw new Error("journey_version_conflict");
+    if (input.entries.length === 0) return this.#record(input.journeyId);
+    const journey: EpochJourney = { ...current, version: current.version + 1 };
+    this.#append([
+      this.#snapshotEvent("journey_mirror_consequence_recorded", journey, undefined, undefined, undefined, undefined, input.entries),
+    ]);
+    return this.#record(input.journeyId);
+  }
+
+  /**
+   * Mark ledger entries as promoted to canonical event ids. Promotions are
+   * atomic per entry; re-marking the same entryId with the same canonical id
+   * is a no-op.
+   */
+  promoteMirrorConsequences(input: {
+    readonly journeyId: string;
+    readonly expectedVersion: number;
+    readonly promotions: readonly { readonly entryId: string; readonly canonicalEventId: string }[];
+  }): JourneyRuntimeRecord {
+    const current = this.#record(input.journeyId).journey;
+    if (current.version !== input.expectedVersion) throw new Error("journey_version_conflict");
+    if (input.promotions.length === 0) return this.#record(input.journeyId);
+    const journey: EpochJourney = { ...current, version: current.version + 1 };
+    this.#append([
+      this.#snapshotEvent("journey_mirror_consequence_promoted", journey, undefined, undefined, undefined, undefined, undefined, input.promotions),
+    ]);
+    return this.#record(input.journeyId);
+  }
+
+  /**
+   * Discard every non-promoted entry on the journey's mirror ledger. Used
+   * when a mirror world is rejected at settlement (below canon threshold or
+   * main-line incomplete). Promoted entries survive discard.
+   */
+  discardMirrorConsequences(input: {
+    readonly journeyId: string;
+    readonly expectedVersion: number;
+  }): JourneyRuntimeRecord {
+    const current = this.#record(input.journeyId).journey;
+    if (current.version !== input.expectedVersion) throw new Error("journey_version_conflict");
+    const journey: EpochJourney = { ...current, version: current.version + 1 };
+    this.#append([
+      this.#snapshotEvent("journey_mirror_consequence_discarded", journey),
+    ]);
+    return this.#record(input.journeyId);
+  }
+
   linkVerification(input: LinkJourneyVerificationRuntimeInput): JourneyRuntimeRecord {
     const current = this.#record(input.journeyId).journey;
     const journey = linkJourneyVerification({
@@ -848,12 +914,14 @@ export class JourneyRuntime {
   }
 
   #snapshotEvent(
-    eventType: "journey_prepared" | "journey_world_window_reserved" | "journey_task_plan_installed" | "journey_started" | "journey_episode_recorded" | "journey_verification_linked" | "journey_status_changed" | "journey_world_commit_recorded",
+    eventType: "journey_prepared" | "journey_world_window_reserved" | "journey_task_plan_installed" | "journey_started" | "journey_episode_recorded" | "journey_verification_linked" | "journey_status_changed" | "journey_world_commit_recorded" | "journey_mirror_consequence_recorded" | "journey_mirror_consequence_promoted" | "journey_mirror_consequence_discarded",
     journey: EpochJourney,
     policySelection?: JourneyPolicySelection,
     preview?: JourneyRuntimeRecord["preview"],
     episode?: JourneySceneEpisode,
     hiddenTaskSeal?: JourneyHiddenTaskSeal,
+    mirrorConsequenceEntries?: readonly MirrorConsequenceLedgerEntry[],
+    mirrorConsequencePromotions?: readonly { readonly entryId: string; readonly canonicalEventId: string }[],
   ): JourneyRuntimeEvent {
     return {
       eventId: this.#options.idFactory("event"),
@@ -867,6 +935,8 @@ export class JourneyRuntime {
       ...(preview ? { preview } : {}),
       ...(episode ? { episode } : {}),
       ...(hiddenTaskSeal ? { hiddenTaskSeal } : {}),
+      ...(mirrorConsequenceEntries ? { mirrorConsequenceEntries } : {}),
+      ...(mirrorConsequencePromotions ? { mirrorConsequencePromotions } : {}),
     };
   }
 

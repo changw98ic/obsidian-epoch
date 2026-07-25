@@ -356,6 +356,25 @@ import {
 import { planJourneyWorldImpactEvents } from "./journeyWorldImpactRules.ts";
 import type { JourneyWorldCommit } from "./journeyRules.ts";
 import {
+  planJourneyMirrorConsequenceBlueprints,
+} from "./journeyMirrorConsequenceBlueprints.ts";
+import {
+  buildCanonicalEventFromMirrorEntry,
+} from "./journeyMirrorConsequenceIntegration.ts";
+import {
+  appendMirrorConsequence,
+  assertNoDuplicatePromotion,
+  deriveMirrorConsequenceEntryId,
+  promoteMirrorConsequences,
+  markMirrorConsequencePromoted,
+  emptyMirrorConsequenceLedger,
+  type MirrorConsequenceLedgerState,
+} from "./journeyMirrorLedger.ts";
+import type {
+  ConsequenceEffectKind,
+  MirrorConsequenceLedgerEntry,
+} from "./journeySettlementRules.ts";
+import {
   planServerHostedJobCompletedEvents,
   planServerHostedJobQueuedEvents,
   planServerHostedJobSkippedEvents,
@@ -1858,6 +1877,37 @@ export interface EpochGameCoreOptions {
   readonly defaultLifetime?: number;
   readonly maxDowntimeSeconds?: number;
   readonly identityNameFactory?: (input: { explorerId: string; generation: number }) => string;
+  /**
+   * PR2 mirror-consequence ledger sink. When supplied, `submitHostedAction`
+   * computes mirror-world consequence blueprints for every completed
+   * objective and forwards them through this callback instead of emitting
+   * canonical world events directly. The integrator (e.g. agent-companion
+   * runtime) is responsible for translating the callback into a
+   * `JourneyRuntime.recordMirrorConsequences` call so the ledger projection
+   * remains the single in-memory truth. When omitted, mirror-mode journeys
+   * produce no canonical collateral at action time (legacy behaviour).
+   *
+   * `expectedVersion` sentinel: gameCore always passes `-1` to signal
+   * "no compare-and-set check". The submit-time caller does not own the
+   * journey runtime's version counter and cannot perform CAS on its
+   * behalf. Integrators MUST treat `-1` as an opt-out: either skip the
+   * version check entirely, or fetch the current `journey.version` from
+   * their own projection and forward the real value into
+   * `JourneyRuntime.recordMirrorConsequences`. Any other negative value
+   * is invalid. Integrations that blindly forward `expectedVersion` into
+   * a CAS-enforcing runtime will throw `journey_version_conflict`.
+   */
+  readonly journeyMirrorLedgerSink?: (input: {
+    readonly journeyId: string;
+    readonly agentId: string;
+    /**
+     * Always `-1` from gameCore. See the sentinel note on
+     * {@link EpochGameCoreOptions.journeyMirrorLedgerSink}.
+     */
+    readonly expectedVersion: number;
+    readonly actionEventId: string;
+    readonly entries: readonly MirrorConsequenceLedgerEntry[];
+  }) => void;
 }
 
 export interface IssueIdentityInput {
@@ -2572,6 +2622,28 @@ export interface SolidifyJourneyWorldInput {
   readonly completionTier: "及格" | "良好" | "优秀" | "惊世";
   readonly completionScoreBps: number;
   readonly worldSliceHash?: `sha256:${string}`;
+  /**
+   * PR2 mirror-consequence ledger entries to promote at solidification. When
+   * supplied (non-empty), the solidify path consumes the entries via
+   * {@link promoteMirrorConsequences} and rebuilds canonical world events
+   * with stable event ids derived from each entryId. When omitted or empty,
+   * the solidify path falls back to the legacy `planJourneyWorldImpactEvents`
+   * derivation so older journeys and tests remain shape-equivalent.
+   *
+   * Per-action `influenceScoreAfter` / `standingAfter` snapshots in the
+   * entries reflect the region/faction score captured at submit time
+   * (non-cumulative). The solidify path rebases these against the running
+   * {@link workingProjection} so the promoted canonical events carry
+   * cumulative baselines matching the legacy path; the submit-time
+   * snapshots are observational only.
+   *
+   * Only `region_influence_delta`, `trace_created`, and
+   * `faction_standing_delta` are supported. Every other effect kind
+   * (including self-loss `resource_spent` / `lifetime_adjusted`) is
+   * rejected up-front with `journey_mirror_ledger_kind_not_supported:*`
+   * before any canonical events are constructed.
+   */
+  readonly mirrorLedgerEntries?: readonly MirrorConsequenceLedgerEntry[];
 }
 
 export interface QueueServerHostedJobInput {
@@ -2750,6 +2822,88 @@ function currentAgentFactionStandingScore(
   return (projection.factionStandingIdsByAgent[agentId] || [])
     .map((standingId) => projection.agentFactionStandings[standingId])
     .find((standing) => standing?.factionId === factionId)?.score ?? 0;
+}
+
+/**
+ * Effect kinds the PR2 solidify mirror path supports. Region influence,
+ * trace creation, and faction standing are the only kinds
+ * {@link buildCanonicalEventFromMirrorEntry} knows how to promote; every
+ * other kind (including self-loss `resource_spent` / `lifetime_adjusted`
+ * and the relationship/object/identity kinds reserved for later PRs) is
+ * rejected up-front in {@link solidifyJourneyWorld} so the error surface
+ * is consistent (all unsupported kinds fail before any canonical event
+ * is constructed).
+ */
+const SUPPORTED_MIRROR_EFFECT_KINDS: ReadonlySet<ConsequenceEffectKind> = new Set<ConsequenceEffectKind>([
+  "region_influence_delta",
+  "trace_created",
+  "faction_standing_delta",
+]);
+
+/**
+ * Read a string field from a mirror-consequence blueprint. The blueprint
+ * shape is contract-guaranteed by
+ * {@link planJourneyMirrorConsequenceBlueprints} but typed as
+ * `Record<string, unknown>` so the ledger stays shape-agnostic; this
+ * helper narrows to `string` for the rebasing maths below.
+ */
+function readBlueprintString(
+  entry: MirrorConsequenceLedgerEntry,
+  key: string,
+): string {
+  const value = entry.effectBlueprint[key];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`journey_mirror_solidify_blueprint_field_invalid:${key}`);
+  }
+  return value;
+}
+
+/**
+ * Rebase a mirror-consequence entry's score snapshots against the running
+ * {@link EpochProjection} so multi-objective journeys produce cumulative
+ * baselines matching the legacy {@link planJourneyWorldImpactEvents} path.
+ *
+ * Mirror-mode `submitHostedAction` captures `influenceScoreAfter` /
+ * `standingAfter` per-action at submit time without visibility into prior
+ * objectives' canonical influence deltas (mirror-mode submit emits no
+ * canonical collateral). Solidify is the single point where the canonical
+ * world events commit, so the projection-derived baseline overrides the
+ * submit-time snapshot here.
+ *
+ * - `region_influence_delta`: `influenceScoreAfter` becomes
+ *   `currentRegionInfluenceScore(projection, regionId, agentId) + delta`.
+ * - `faction_standing_delta`: `standingAfter` is recomputed as
+ *   `min(10_000, clamp(-10_000, 10_000, floor(currentScore)) + delta)`,
+ *   mirroring the cap logic in {@link planJourneyWorldImpactEvents}.
+ * - `trace_created`: no score baseline on this kind; returned unchanged.
+ */
+function rebaseMirrorEntryAgainstProjection(
+  entry: MirrorConsequenceLedgerEntry,
+  projection: EpochProjection,
+): MirrorConsequenceLedgerEntry {
+  if (entry.effectKind === "region_influence_delta") {
+    const regionId = readBlueprintString(entry, "regionId");
+    const agentId = readBlueprintString(entry, "agentId");
+    const influenceScoreAfter = currentRegionInfluenceScore(projection, regionId, agentId) + entry.delta;
+    return {
+      ...entry,
+      effectBlueprint: { ...entry.effectBlueprint, influenceScoreAfter },
+    };
+  }
+  if (entry.effectKind === "faction_standing_delta") {
+    const agentId = readBlueprintString(entry, "agentId");
+    const factionId = readBlueprintString(entry, "factionId");
+    const standingBefore = Math.max(
+      -10_000,
+      Math.min(10_000, Math.floor(currentAgentFactionStandingScore(projection, agentId, factionId))),
+    );
+    const standingAfter = Math.min(10_000, standingBefore + entry.delta);
+    return {
+      ...entry,
+      effectBlueprint: { ...entry.effectBlueprint, standingAfter },
+    };
+  }
+  return entry;
 }
 
 function journeyWorldCommitFromMarker(
@@ -6094,6 +6248,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
   const maxDowntimeSeconds = options.maxDowntimeSeconds || DEFAULT_MAX_DOWNTIME_SECONDS;
   const identityNameFactory = options.identityNameFactory || ((input: { explorerId: string; generation: number }) =>
     `${input.explorerId}-第${input.generation}世`);
+  const journeyMirrorLedgerSink = options.journeyMirrorLedgerSink;
   let events = initialEvents;
   const frozenProjectionObjects = new WeakSet<object>();
   let currentProjection = freezeProjection(projectEpochEvents(events), frozenProjectionObjects);
@@ -9773,36 +9928,86 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
           }));
         }
         if (journeyResolution && signedJourneyAction?.taskObjectiveId
-          && session.sceneContract?.taskObjective
-          && session.sceneContract.worldMode !== "mirror") {
-          sideEffects.push(...planJourneyWorldImpactEvents({
-            makeEvent,
-            idFactory,
-            regionId: session.regionId,
-            agentId: session.agentId,
-            explorerId: session.explorerId,
-            identityName: identity.identityName,
-            journeyId: session.sceneContract.journeyId,
-            episodeId: session.sceneContract.episodeId,
-            objectiveId: signedJourneyAction.taskObjectiveId,
-            objectiveKind: session.sceneContract.taskObjective.kind,
-            objectiveTitle: session.sceneContract.taskObjective.title,
-            actionLabel: signedJourneyAction.label,
-            actionRisk: signedJourneyAction.risk,
-            allowedEffectKinds: signedJourneyAction.allowedEffectKinds,
-            resolution: journeyResolution,
-            previousInfluenceScore: currentRegionInfluenceScore(current, session.regionId, session.agentId),
-            previousFactionStandingScore: currentAgentFactionStandingScore(
-              current,
-              session.agentId,
-              signedJourneyAction.routeSelection?.factionObjectId,
-            ),
-            routeSelection: signedJourneyAction.routeSelection,
-            sourceEventId: actionRecorded.eventId,
-            sourceAggregateId: session.sessionId,
-            recordedAt,
-            worldMinute: currentProjectionWorldMinute(current),
-          }));
+          && session.sceneContract?.taskObjective) {
+          if (session.sceneContract.worldMode === "mirror") {
+            // PR2: mirror-mode collateral does NOT enter the canonical epoch
+            // event stream at action time. When the integrator supplies a
+            // journeyMirrorLedgerSink, compute blueprints here (single physical
+            // planner call per actionEventId) and forward them through the
+            // sink so the integrator can append them to the journey runtime
+            // projection's mirrorLedgers. When no sink is configured, the
+            // blueprints are silently dropped — preserving the legacy
+            // "mirror skips canonical collateral" behaviour.
+            if (journeyMirrorLedgerSink) {
+              const blueprints = planJourneyMirrorConsequenceBlueprints({
+                regionId: session.regionId,
+                agentId: session.agentId,
+                explorerId: session.explorerId,
+                identityName: identity.identityName,
+                journeyId: session.sceneContract.journeyId,
+                episodeId: session.sceneContract.episodeId,
+                objectiveId: signedJourneyAction.taskObjectiveId,
+                objectiveKind: session.sceneContract.taskObjective.kind,
+                objectiveTitle: session.sceneContract.taskObjective.title,
+                actionLabel: signedJourneyAction.label,
+                actionRisk: signedJourneyAction.risk,
+                allowedEffectKinds: signedJourneyAction.allowedEffectKinds,
+                resolution: journeyResolution,
+                previousInfluenceScore: currentRegionInfluenceScore(current, session.regionId, session.agentId),
+                previousFactionStandingScore: currentAgentFactionStandingScore(
+                  current,
+                  session.agentId,
+                  signedJourneyAction.routeSelection?.factionObjectId,
+                ),
+                routeSelection: signedJourneyAction.routeSelection,
+                actionEventId: actionRecorded.eventId,
+                sourceAggregateId: session.sessionId,
+                recordedAt,
+              });
+              if (blueprints.length > 0) {
+                // expectedVersion: -1 is the documented "no CAS check"
+                // sentinel. The integrator owns journey.version and MUST
+                // fetch it from its own projection; see
+                // EpochGameCoreOptions.journeyMirrorLedgerSink JSDoc.
+                journeyMirrorLedgerSink({
+                  journeyId: session.sceneContract.journeyId,
+                  agentId: session.agentId,
+                  expectedVersion: -1,
+                  actionEventId: actionRecorded.eventId,
+                  entries: blueprints,
+                });
+              }
+            }
+          } else {
+            sideEffects.push(...planJourneyWorldImpactEvents({
+              makeEvent,
+              idFactory,
+              regionId: session.regionId,
+              agentId: session.agentId,
+              explorerId: session.explorerId,
+              identityName: identity.identityName,
+              journeyId: session.sceneContract.journeyId,
+              episodeId: session.sceneContract.episodeId,
+              objectiveId: signedJourneyAction.taskObjectiveId,
+              objectiveKind: session.sceneContract.taskObjective.kind,
+              objectiveTitle: session.sceneContract.taskObjective.title,
+              actionLabel: signedJourneyAction.label,
+              actionRisk: signedJourneyAction.risk,
+              allowedEffectKinds: signedJourneyAction.allowedEffectKinds,
+              resolution: journeyResolution,
+              previousInfluenceScore: currentRegionInfluenceScore(current, session.regionId, session.agentId),
+              previousFactionStandingScore: currentAgentFactionStandingScore(
+                current,
+                session.agentId,
+                signedJourneyAction.routeSelection?.factionObjectId,
+              ),
+              routeSelection: signedJourneyAction.routeSelection,
+              sourceEventId: actionRecorded.eventId,
+              sourceAggregateId: session.sessionId,
+              recordedAt,
+              worldMinute: currentProjectionWorldMinute(current),
+            }));
+          }
         }
         if (!option.socialHookId || session.sceneContract?.worldMode === "mirror") return sideEffects;
         const hook = current.socialHooks[option.socialHookId];
@@ -9975,41 +10180,126 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     let workingProjection = current;
     const orderedEvidence = completedObjectiveIds.map((objectiveId) =>
       evidenceByObjectiveId.get(objectiveId) as NonNullable<ReturnType<typeof evidenceByObjectiveId.get>>);
-    for (const evidence of orderedEvidence) {
-      const contract = evidence.session.sceneContract as JourneySceneContract;
-      const objective = contract.taskObjective;
-      const resolution = evidence.action.journeyResolution;
-      if (!objective || !resolution) continue;
-      const planned = planJourneyWorldImpactEvents({
-        makeEvent,
-        idFactory,
-        regionId,
-        agentId,
-        explorerId: identity.explorerId,
-        identityName: identity.identityName,
-        journeyId,
-        episodeId: contract.episodeId,
-        objectiveId: objective.objectiveId,
-        objectiveKind: objective.kind,
-        objectiveTitle: objective.title,
-        actionLabel: evidence.signedAction.label,
-        actionRisk: evidence.signedAction.risk,
-        allowedEffectKinds: evidence.signedAction.allowedEffectKinds,
-        resolution,
-        previousInfluenceScore: currentRegionInfluenceScore(workingProjection, regionId, agentId),
-        previousFactionStandingScore: currentAgentFactionStandingScore(
-          workingProjection,
+
+    // PR2: prefer the mirror-consequence ledger path when the caller supplied
+    // entries to promote. Rebuild canonical events shape-equivalent to the
+    // legacy derivation so downstream region/trace/faction consumers remain
+    // agnostic to the source. Fall back to the legacy derivation when the
+    // ledger is absent so older journeys and replayed fixtures do not break.
+    //
+    // Promotion persistence contract: the local ledger rebuilt here is for
+    // invariant checking ({@link assertNoDuplicatePromotion}) only. This
+    // function does NOT update the caller's persistent ledger projection
+    // with promotion records. The caller (agent-companion runtime) owns the
+    // lifecycle: it MUST have already appended the entries before calling
+    // solidify, and MUST record promotion state for each canonical event id
+    // produced below. The journey_world_solidified marker short-circuits
+    // replays, so a process crash between canonical events being committed
+    // and promotion records being persisted will leave the entries orphaned
+    // on restart (canonical events exist, ledger still shows them pending).
+    //
+    // Crash recovery: the journey_world_solidified marker carries
+    // `mirrorLedgerPromotedEntryIds` (the entryIds this solidify promoted)
+    // and `effectEventIds` (the canonical event ids in promotion order —
+    // one canonical event per promoted entry, followed by any NPC
+    // canonicalization events). The integrator MUST read those two fields
+    // on restart and reconcile its persistent ledger: pair the entryIds
+    // positionally with the leading `mirrorLedgerPromotedEntryIds.length`
+    // effectEventIds, then mark each entry promoted via
+    // {@link markMirrorConsequencePromoted}. mcpTools.ts implements this
+    // reconciliation for the agent-companion runtime; this function does
+    // not perform integrator-level reconciliation itself.
+    const mirrorLedgerEntries = input.mirrorLedgerEntries ?? [];
+    let mirrorLedger: MirrorConsequenceLedgerState | undefined;
+    if (mirrorLedgerEntries.length > 0) {
+      // Fast-fail before any canonical events are constructed: PR2 only
+      // supports region_influence_delta, trace_created, and
+      // faction_standing_delta in the solidify mirror path. Other kinds
+      // (npc_relationship_delta, object_mutation, object_destroy,
+      // hidden_prerequisite_destroyed, identity_doubt) and self-loss kinds
+      // (resource_spent, lifetime_adjusted) would otherwise throw
+      // mid-loop inside buildCanonicalEventFromMirrorEntry after some
+      // canonical events are already in effectEvents. The whitelist keeps
+      // the error surface consistent: every unsupported kind fails up
+      // front with effectEvents empty.
+      for (const entry of mirrorLedgerEntries) {
+        if (!SUPPORTED_MIRROR_EFFECT_KINDS.has(entry.effectKind)) {
+          throw new Error(
+            `journey_mirror_ledger_kind_not_supported:${entry.effectKind}`,
+          );
+        }
+      }
+      mirrorLedger = emptyMirrorConsequenceLedger(journeyId);
+      for (const entry of mirrorLedgerEntries) {
+        mirrorLedger = appendMirrorConsequence(mirrorLedger, entry);
+      }
+      const { entriesToPromote } = promoteMirrorConsequences(mirrorLedger);
+      for (const entry of entriesToPromote) {
+        const entryId = deriveMirrorConsequenceEntryId({
+          journeyId,
+          actionEventId: entry.actionEventId,
+          dedupeKey: entry.dedupeKey,
+        });
+        // Rebase cumulative baselines against the running projection so
+        // multi-objective journeys produce the same influenceScoreAfter /
+        // standingAfter that the legacy planJourneyWorldImpactEvents path
+        // would compute. Mirror-mode submitHostedAction captures these
+        // snapshots per-action at submit time without visibility into
+        // prior objectives' canonical influence deltas; solidify is the
+        // single point where canonical world events commit, so the
+        // projection-derived baseline overrides the submit-time snapshot
+        // here. {@link rebaseMirrorEntryAgainstProjection} is a no-op for
+        // trace_created (no score baseline on that kind).
+        const rebasedEntry = rebaseMirrorEntryAgainstProjection(entry, workingProjection);
+        const canonicalEvent = buildCanonicalEventFromMirrorEntry({
+          entryId,
+          entry: rebasedEntry,
+          makeEvent,
+          idFactory,
+          worldMinute: currentProjectionWorldMinute(workingProjection),
+        });
+        effectEvents.push(canonicalEvent);
+        mirrorLedger = markMirrorConsequencePromoted(mirrorLedger, entryId, canonicalEvent.eventId);
+        workingProjection = applyEvents(workingProjection, [canonicalEvent]);
+      }
+      assertNoDuplicatePromotion(mirrorLedger);
+    } else {
+      for (const evidence of orderedEvidence) {
+        const contract = evidence.session.sceneContract as JourneySceneContract;
+        const objective = contract.taskObjective;
+        const resolution = evidence.action.journeyResolution;
+        if (!objective || !resolution) continue;
+        const planned = planJourneyWorldImpactEvents({
+          makeEvent,
+          idFactory,
+          regionId,
           agentId,
-          evidence.signedAction.routeSelection?.factionObjectId,
-        ),
-        routeSelection: evidence.signedAction.routeSelection,
-        sourceEventId: evidence.actionEvent.eventId,
-        sourceAggregateId: evidence.session.sessionId,
-        recordedAt: solidifiedAt,
-        worldMinute: currentProjectionWorldMinute(workingProjection),
-      });
-      effectEvents.push(...planned);
-      workingProjection = applyEvents(workingProjection, planned);
+          explorerId: identity.explorerId,
+          identityName: identity.identityName,
+          journeyId,
+          episodeId: contract.episodeId,
+          objectiveId: objective.objectiveId,
+          objectiveKind: objective.kind,
+          objectiveTitle: objective.title,
+          actionLabel: evidence.signedAction.label,
+          actionRisk: evidence.signedAction.risk,
+          allowedEffectKinds: evidence.signedAction.allowedEffectKinds,
+          resolution,
+          previousInfluenceScore: currentRegionInfluenceScore(workingProjection, regionId, agentId),
+          previousFactionStandingScore: currentAgentFactionStandingScore(
+            workingProjection,
+            agentId,
+            evidence.signedAction.routeSelection?.factionObjectId,
+          ),
+          routeSelection: evidence.signedAction.routeSelection,
+          sourceEventId: evidence.actionEvent.eventId,
+          sourceAggregateId: evidence.session.sessionId,
+          recordedAt: solidifiedAt,
+          worldMinute: currentProjectionWorldMinute(workingProjection),
+        });
+        effectEvents.push(...planned);
+        workingProjection = applyEvents(workingProjection, planned);
+      }
     }
 
     const contacts = new Map<string, {
@@ -10129,6 +10419,13 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       sourceEventIds,
       effectEventIds: effectEvents.map((event) => event.eventId),
       solidifiedAt,
+      ...(mirrorLedger
+        ? {
+            mirrorLedgerPromotedEntryIds: Object.entries(mirrorLedger.promotedCanonicalEventIds).map(
+              ([entryId]) => entryId,
+            ),
+          }
+        : {}),
     };
     const marker = makeEvent("journey_world_solidified", journeyId, markerPayload, {
       aggregateType: "agent_identity",
