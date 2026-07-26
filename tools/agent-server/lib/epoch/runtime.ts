@@ -945,6 +945,116 @@ export interface EpochResultPageJourney {
     };
     readonly rewardBundle?: import("./journeyGeneratedTaskRules.ts").JourneyRewardBundle;
   };
+
+  // ── PR8: result-page-only settlement payload (settled/completed) ────────
+  /** Settlement decision artifact. Present only when journey.status is 'settled' or 'completed'. */
+  readonly settlement?: {
+    readonly score?: {
+      readonly breakdown?: {
+        readonly resultScoreBps: number;
+        readonly selfLossScoreBps: number;
+        readonly collateralScoreBps: number;
+        readonly totalBps: number;
+      };
+      readonly mainLineSucceeded: boolean;
+      readonly hiddenComplete: boolean;
+      readonly hiddenClamp?: {
+        readonly applied: boolean;
+        readonly reason?: string;
+        readonly tierCap: string;
+        readonly sourceHiddenObjectiveIds?: readonly string[];
+      };
+      readonly roleplaySummary?: {
+        readonly deviationBps: number;
+        readonly doubtEventCount: number;
+        readonly exposed: boolean;
+      };
+      readonly viabilitySummary?: {
+        readonly viabilityScoreBpsBefore: number;
+        readonly viabilityScoreBpsAfter: number;
+        readonly status: string;
+      };
+      readonly policyVersion: number;
+      readonly computedAt: string;
+    };
+    readonly tier?: string;
+    readonly reward?: {
+      readonly tier: string;
+      readonly baseBundleRef: string;
+      readonly modifier?: {
+        readonly modifierBps: number;
+        readonly multiplierBps: number;
+        readonly reason: string;
+      };
+      readonly resourceGrants?: Readonly<Record<string, number>>;
+      readonly itemGrants?: readonly {
+        readonly itemId: string;
+        readonly quantity: number;
+        readonly rarityTier: number;
+      }[];
+      readonly idempotencyKey: string;
+      readonly negativeRewardForbidden: true;
+    };
+    readonly worldCommitDecision?: {
+      readonly status: string;
+      readonly canonEligible: boolean;
+      readonly thresholdBps: number;
+      readonly policyVersion: number;
+      readonly reason: string;
+    };
+    readonly policyVersion?: number;
+  };
+  /** Roleplay score projection. Present only when roleplay scoring ran. */
+  readonly roleplay?: {
+    readonly deviationBps: number;
+    readonly classification: string;
+    readonly npcDoubtEvents?: readonly {
+      readonly npcId: string;
+      readonly factionId?: string;
+      readonly doubtStrength: string;
+      readonly reason: string;
+    }[];
+    readonly exposed: boolean;
+    readonly patternVersion: number;
+  };
+  /** Identity viability projection. Present only when viability projection ran. */
+  readonly viability?: {
+    readonly before?: {
+      readonly viabilityScoreBps: number;
+    };
+    readonly after?: {
+      readonly viabilityScoreBps: number;
+    };
+    readonly deltaBps: number;
+    readonly status: string;
+    readonly lifetimeConsequence?: string;
+  };
+  /** Strategy consistency audit. Present only when audit ran. Never feeds settlement/reward. */
+  readonly strategyConsistency?: {
+    readonly matchBps: number;
+    readonly classification: string;
+    readonly snapshot?: {
+      readonly journeyId: string;
+      readonly entries?: readonly {
+        readonly source: string;
+        readonly sourceId: string;
+        readonly approachTags: readonly string[];
+        readonly recordedAt: string;
+      }[];
+      readonly snapshotVersion: number;
+    };
+    readonly strategyPolicyVersion: number;
+  };
+  /** Hidden prerequisite links. Present only when journey touched hidden prerequisite objects. */
+  readonly hiddenPrerequisites?: readonly {
+    readonly objectiveId: string;
+    readonly prerequisiteObjectId: string;
+    readonly status: "intact" | "destroyed" | "degraded";
+    readonly destroyedAtActionEventId?: string;
+    readonly degradedAtActionEventId?: string;
+    readonly sourceLedgerEntryId?: string;
+    readonly observedAt: string;
+  }[];
 }
 
 export interface EpochResultPageDraft extends EpochResultPagePayload {

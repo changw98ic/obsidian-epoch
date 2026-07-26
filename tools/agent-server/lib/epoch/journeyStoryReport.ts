@@ -122,6 +122,27 @@ export interface GroundedJourneyStoryReport {
       readonly matchBps: number;
       readonly classification: PrimaryViolationClassification["kind"];
     };
+    /**
+     * PR8 additive. Roleplay deviation summary from RoleplayScore.
+     * Independent from identityFidelityPercent — never mixed into the
+     * fidelity calculation or reward pipeline.
+     */
+    readonly roleplaySummary?: {
+      readonly deviationBps: number;
+      readonly doubtEventCount: number;
+      readonly exposed: boolean;
+    };
+    /**
+     * PR8 additive. Viability projection summary.
+     * Independent from identityFidelityPercent — never mixed into the
+     * fidelity calculation or reward pipeline.
+     */
+    readonly viabilitySummary?: {
+      readonly viabilityScoreBpsBefore: number;
+      readonly viabilityScoreBpsAfter: number;
+      readonly deltaBps: number;
+      readonly status: string;
+    };
   };
   readonly narrative: string;
   readonly chapters: readonly GroundedJourneyStoryChapter[];
@@ -176,6 +197,23 @@ export interface BuildGroundedJourneyStoryReportInput {
    * never consumed by identityFidelityPercent or reward calculation.
    */
   readonly strategyConsistencySnapshot?: StrategyConsistencyScore;
+  /**
+   * PR8 additive. Roleplay score projection from SettlementContext.
+   * Read by report builder for evaluation display; never consumed
+   * by identityFidelityPercent or reward pipeline.
+   */
+  readonly roleplayScore?: import("./journeyRoleplayRules.ts").RoleplayScore;
+  /**
+   * PR8 additive. Viability projection from SettlementContext.
+   * Read by report builder for evaluation display; never consumed
+   * by identityFidelityPercent or reward pipeline.
+   */
+  readonly viabilityProjection?: {
+    readonly before?: { readonly viabilityScoreBps: number };
+    readonly after?: { readonly viabilityScoreBps: number };
+    readonly deltaBps: number;
+    readonly status: string;
+  };
 }
 
 function clean(value: string): string {
@@ -1020,6 +1058,23 @@ export function buildGroundedJourneyStoryReport(
         classification: input.strategyConsistencySnapshot.classification.kind,
       },
     } : {}),
+    // PR8: roleplay summary — independent from identityFidelity.
+    ...(input.roleplayScore ? {
+      roleplaySummary: {
+        deviationBps: input.roleplayScore.deviationBps,
+        doubtEventCount: input.roleplayScore.npcDoubtEvents.length,
+        exposed: input.roleplayScore.exposed,
+      },
+    } : {}),
+    // PR8: viability summary — independent from identityFidelity.
+    ...(input.viabilityProjection ? {
+      viabilitySummary: {
+        viabilityScoreBpsBefore: input.viabilityProjection.before?.viabilityScoreBps ?? 0,
+        viabilityScoreBpsAfter: input.viabilityProjection.after?.viabilityScoreBps ?? 0,
+        deltaBps: input.viabilityProjection.deltaBps,
+        status: input.viabilityProjection.status,
+      },
+    } : {}),
   };
   const chapterTitles = mainChapterTitles(mainBeat.selectedAction.optionKey, mainTitle);
   const time = storyTime(input.startedAtWorldTime, input.dueAtWorldTime);
@@ -1310,6 +1365,23 @@ function buildGeneratedJourneyStoryReport(
       strategyConsistencyAudit: {
         matchBps: input.strategyConsistencySnapshot.matchBps,
         classification: input.strategyConsistencySnapshot.classification.kind,
+      },
+    } : {}),
+    // PR8: roleplay summary — independent from identityFidelity.
+    ...(input.roleplayScore ? {
+      roleplaySummary: {
+        deviationBps: input.roleplayScore.deviationBps,
+        doubtEventCount: input.roleplayScore.npcDoubtEvents.length,
+        exposed: input.roleplayScore.exposed,
+      },
+    } : {}),
+    // PR8: viability summary — independent from identityFidelity.
+    ...(input.viabilityProjection ? {
+      viabilitySummary: {
+        viabilityScoreBpsBefore: input.viabilityProjection.before?.viabilityScoreBps ?? 0,
+        viabilityScoreBpsAfter: input.viabilityProjection.after?.viabilityScoreBps ?? 0,
+        deltaBps: input.viabilityProjection.deltaBps,
+        status: input.viabilityProjection.status,
       },
     } : {}),
   };

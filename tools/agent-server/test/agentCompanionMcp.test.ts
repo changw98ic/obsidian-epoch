@@ -111,14 +111,14 @@ test("public journey proposal stays compact and remains directly committable", a
   assert.ok(Buffer.byteLength(JSON.stringify(compactStatus), "utf8") < 24_000);
   assert.equal(compactStatus.transportVersion, "journey_status.compact.v1");
   const selected = context.proposed.proposal.sceneContract.actionOptions[0];
-  assert.ok(selected?.signature);
+  assert.ok(selected?.signed?.signature, "compact action must carry signed envelope with signature");
   const committed = payload(await context.mcp.callTool("obsidian_epoch.commit_journey_action_compact", {
     journeyId: context.started.journey.journeyId,
     sceneId: context.proposed.proposal.sceneContract.sceneId,
     episodeId: context.proposed.proposal.episode.episodeId,
     expectedVersion: context.proposed.proposal.expectedVersion,
     actionOptionId: selected.actionOptionId,
-    signature: selected.signature,
+    signature: selected.signed.signature,
     recoveryCode: context.ownerRecovery,
     idempotencyKey: "commit-compact-public-proposal",
   }));

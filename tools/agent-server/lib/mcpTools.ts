@@ -177,6 +177,12 @@ import { createProgressionLedger } from "./progression.ts";
 import { assertPublicSafe } from "./safety.ts";
 import { createTicketRegistry, hashRunPayload } from "./tickets.ts";
 import { createTransparencyLedger, publicVerificationRecord } from "./transparency.ts";
+import {
+  serializeCompact,
+  deriveDecisionEffect,
+  assertPublicActionZeroBonus,
+  type PublicActionOption,
+} from "./epoch/journeyActionPublicSerializer.ts";
 
 type AnyRecord = Record<string, unknown>;
 type ContextSnapshotRecord = AnyRecord & {
@@ -9116,15 +9122,21 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       lastProposal = proposal;
       const contract = proposal.proposal.sceneContract;
       if (!contract) throw new Error("journey_scene_contract_not_found");
+      // PR8: public-only action options for sampling — no riskTerms leak.
+      const RISK_LABELS: Readonly<Record<string, string>> = {
+        low: "低风险：消耗少量集中力，面临轻度对抗",
+        medium: "中风险：消耗专注力，可能获得额外报酬",
+        high: "高风险：消耗体力，面临较强对抗，携带资源与装备可能改善判定",
+      };
       const actionOptions = contract.actionOptions.map((option) => ({
         actionOptionId: option.actionOptionId,
+        optionKey: option.optionKey,
         label: option.label,
         intent: option.intent,
         risk: option.risk,
-        riskTerms: option.riskTerms,
-        decisionEffect: option.completionKind === "skip"
-          ? contract.taskObjective?.kind === "side" ? "skip_optional_side" : "abandon_required_objective"
-          : "attempt_objective",
+        riskLabel: RISK_LABELS[option.risk] ?? option.risk,
+        available: true,
+        decisionEffect: deriveDecisionEffect(option.completionKind, contract.taskObjective?.kind),
       }));
       const progress = recordValue(runtime.epochProgress({ agentId: started.journey.agentId }));
       const identity = recordValue(progress.identity);
@@ -9167,7 +9179,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       const sampling = await requestContext.sampling.createMessage({
         systemPrompt: [
           "Choose exactly one server-issued actionOptionId as the server-issued identity, not as a quest-grade optimizer.",
-          "Use the identity's traits, strongest needs, life goal, remaining resources, carried inventory, signed riskTerms, mandate, prior route, and current objective.",
+          "Use the identity's traits, strongest needs, life goal, remaining resources, carried inventory, riskLabel (narrative only), mandate, prior route, and current objective.",
           "Optional side objectives may be skipped when survival pressure, fatigue, resources, personality, or long-term priorities make that choice credible.",
           "Do not assume that the highest-risk option is best and do not optimize for a hidden grade.",
           "Return strict JSON with actionOptionId, rationale, confidence, and optional userFacingMessage. Do not invent completion, outcomes, rewards, hidden tasks, people, or world facts.",
@@ -9679,16 +9691,18 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
   ) => {
     const contract = result.proposal.sceneContract;
     const firstSignedAction = contract?.actionOptions[0];
+    // PR8: use public-only serializer — no internal fields leak to compact transport.
     const compactActionOptions = (contract?.actionOptions ?? []).map((action) => {
-      const {
-        signatureAlgorithm: _signatureAlgorithm,
-        signatureVersion: _signatureVersion,
-        signingPurpose: _signingPurpose,
-        signingKeyId: _signingKeyId,
-        serverPublicKey: _serverPublicKey,
-        ...compactAction
-      } = action;
-      return compactAction;
+      const serialized = serializeCompact(
+        action,
+        contract?.journeyId ?? "",
+        contract?.sceneId ?? "",
+        contract?.expectedVersion ?? 0,
+        contract?.taskObjective?.kind,
+        contract?.expiresAt ?? "",
+      );
+      assertPublicActionZeroBonus(serialized);
+      return serialized;
     });
     return preserveCompactTransportEvents({
       authority: "server_signed_scene_contract",
