@@ -39,7 +39,8 @@ import {
   AFFINITY_MATRIX_VERSION,
   APPROACH_TAGS,
 } from "./journeyStrategyRules.ts";
-import type { ExpectedLifePattern } from "./journeyRoleplayRules.ts";
+import type { ExpectedLifePattern, HiddenPrerequisiteLink } from "./journeyRoleplayRules.ts";
+import type { CanonicalWorldObjectState } from "./hiddenPrerequisiteRules.ts";
 import {
   type IdentityViability,
   initialIdentityViability,
@@ -360,7 +361,7 @@ import {
   resolveJourneyAction,
   type JourneyActionResolution,
 } from "./journeyActionResolutionRules.ts";
-import { planJourneyWorldImpactEvents } from "./journeyWorldImpactRules.ts";
+import { planJourneyWorldImpactEvents, planJourneyObjectImpactBlueprints } from "./journeyWorldImpactRules.ts";
 import type { JourneyWorldCommit } from "./journeyRules.ts";
 import {
   planJourneyMirrorConsequenceBlueprints,
@@ -1875,6 +1876,20 @@ export interface EpochProjection {
   readonly serverHostedJobIdsByAgent: Readonly<Record<string, readonly string[]>>;
   readonly attestationRecords: Readonly<Record<string, EpochAttestationRecord>>;
   readonly abuseScores: Readonly<Record<string, EpochAbuseScoreProfile>>;
+  /**
+   * PR5c additive. Canonical world-object lifecycle states. Populated ONLY
+   * by canonical intents (solidify path) via world_object_state_changed
+   * events. Keyed by objectId (no region prefix — the projection is
+   * region-scoped at the caller level).
+   */
+  readonly worldObjectStates: Readonly<Record<string, CanonicalWorldObjectState>>;
+  /**
+   * PR5c additive. Canonical hidden-prerequisite link states. Populated
+   * ONLY by canonical intents (solidify path) via
+   * hidden_prerequisite_link_changed events. Keyed by
+   * `${regionId}:${objectiveId}:${prerequisiteObjectId}`.
+   */
+  readonly hiddenPrerequisiteLinks: Readonly<Record<string, HiddenPrerequisiteLink>>;
 }
 
 export interface EpochCommandResult<TValue> {
@@ -2836,6 +2851,8 @@ function emptyProjection(): EpochProjection {
     serverHostedJobIdsByAgent: {},
     attestationRecords: {},
     abuseScores: {},
+    worldObjectStates: {},
+    hiddenPrerequisiteLinks: {},
   };
 }
 
@@ -2914,6 +2931,14 @@ const SUPPORTED_MIRROR_EFFECT_KINDS: ReadonlySet<ConsequenceEffectKind> = new Se
   "region_influence_delta",
   "trace_created",
   "faction_standing_delta",
+  // PR5c: physical object impact kinds. object_mutation (degree 1-2 → degraded)
+  // and object_destroy (degree 3+ → destroyed) are promoted by
+  // buildCanonicalEventFromMirrorEntry into world_object_state_changed events.
+  // hidden_prerequisite_destroyed is synthesised by the solidify-time cascade
+  // after the canonical object-state transition commits.
+  "object_mutation",
+  "object_destroy",
+  "hidden_prerequisite_destroyed",
 ]);
 
 /**
@@ -3276,6 +3301,8 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
   );
   const attestationRecords = { ...projection.attestationRecords };
   const abuseScores = { ...projection.abuseScores };
+  const worldObjectStates: Record<string, CanonicalWorldObjectState> = { ...projection.worldObjectStates };
+  const hiddenPrerequisiteLinks: Record<string, HiddenPrerequisiteLink> = { ...projection.hiddenPrerequisiteLinks };
 
   switch (event.eventType) {
     case "world_clock_advanced": {
@@ -3483,6 +3510,57 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
       identities[payload.identityId] = {
         ...identity,
         identityViability: payload.after,
+      };
+      break;
+    }
+    case "world_object_state_changed": {
+      // PR5c: canonical world-object lifecycle state transition. Irreversible:
+      // once an object reaches 'destroyed', no later event may relax it.
+      // Degraded → degraded is allowed only if degree is monotonic
+      // non-decreasing.
+      const wosPayload = event.payload;
+      const currentWos = worldObjectStates[wosPayload.objectId];
+      const currentWosStatus = currentWos?.status ?? "intact";
+      const currentWosDegree = currentWos?.degree ?? 0;
+      // Irreversibility guard: destroyed is terminal.
+      if (currentWosStatus === "destroyed" && wosPayload.statusAfter === "degraded") {
+        // Skip — destroyed is terminal, cannot relax to degraded.
+        break;
+      }
+      // Monotonicity guard for degraded → degraded.
+      if (currentWosStatus === "degraded" && wosPayload.statusAfter === "degraded"
+        && wosPayload.degree < currentWosDegree) {
+        // Skip — degree must be non-decreasing.
+        break;
+      }
+      worldObjectStates[wosPayload.objectId] = {
+        status: wosPayload.statusAfter,
+        degree: wosPayload.degree,
+        sourceActionEventId: wosPayload.sourceActionEventId,
+        changedAt: wosPayload.changedAt,
+      };
+      break;
+    }
+    case "hidden_prerequisite_link_changed": {
+      // PR5c: canonical hidden-prerequisite link status change.
+      const hplPayload = event.payload;
+      const linkKey = `${hplPayload.regionId}:${hplPayload.objectiveId}:${hplPayload.prerequisiteObjectId}`;
+      const currentLink = hiddenPrerequisiteLinks[linkKey];
+      // Irreversibility guard: destroyed is terminal.
+      if (currentLink?.status === "destroyed" && hplPayload.statusAfter !== "destroyed") {
+        break;
+      }
+      hiddenPrerequisiteLinks[linkKey] = {
+        objectiveId: hplPayload.objectiveId,
+        prerequisiteObjectId: hplPayload.prerequisiteObjectId,
+        status: hplPayload.statusAfter,
+        ...(hplPayload.statusAfter === "destroyed"
+          ? { destroyedAtActionEventId: hplPayload.sourceActionEventId }
+          : {}),
+        ...(hplPayload.sourceLedgerEntryId
+          ? { sourceLedgerEntryId: hplPayload.sourceLedgerEntryId }
+          : {}),
+        observedAt: hplPayload.changedAt,
       };
       break;
     }
@@ -6273,6 +6351,8 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
     serverHostedJobIdsByAgent,
     attestationRecords,
     abuseScores,
+    worldObjectStates,
+    hiddenPrerequisiteLinks,
   };
 }
 
@@ -10162,9 +10242,27 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
                       : {}),
                   })
                 : [];
+              // PR5c: object-impact planner. When the signed action carries
+              // an internal actionObjectImpact descriptor, emit a mirror-ledger
+              // entry for the physical object mutation/destruction. The entry
+              // flows through the same mirror-ledger append → promote → solidify
+              // path as region/trace/faction blueprints. On solidify,
+              // buildCanonicalEventFromMirrorEntry dispatches it to a canonical
+              // world_object_state_changed event; on discard the entry never
+              // reaches canonical state.
+              const objectImpactEntries = planJourneyObjectImpactBlueprints({
+                actionEventId: actionRecorded.eventId,
+                agentId: session.agentId,
+                regionId: session.regionId,
+                actionObjectImpact: signedJourneyAction.actionObjectImpact,
+                resolution: journeyResolution,
+                recordedAt,
+                sourceAggregateId: session.sessionId,
+              });
               const blueprints: MirrorConsequenceLedgerEntry[] = [
                 ...physicalBlueprints,
                 ...doubtEntries,
+                ...objectImpactEntries,
               ];
               if (blueprints.length > 0) {
                 // expectedVersion: -1 is the documented "no CAS check"
@@ -10518,6 +10616,75 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
         workingProjection = applyEvents(workingProjection, [canonicalEvent]);
       }
       assertNoDuplicatePromotion(mirrorLedger);
+
+      // PR5c cascade: after promoting object_mutation/object_destroy entries,
+      // check if any destroyed object is a hidden prerequisite for an objective
+      // in the current journey's plan. If so, emit hidden_prerequisite_link_changed
+      // canonical events. The cascade is idempotent — the dedupe key
+      // `hidden_prereq:${objectiveId}:${actionEventId}` prevents duplicates.
+      const destroyedObjects = new Set<string>();
+      for (const [objectId, state] of Object.entries(workingProjection.worldObjectStates)) {
+        if (state.status === "destroyed") destroyedObjects.add(objectId);
+      }
+      if (destroyedObjects.size > 0) {
+        for (const evidence of orderedEvidence) {
+          const contract = evidence.session.sceneContract as JourneySceneContract;
+          const taskObjective = contract.taskObjective;
+          if (!taskObjective) continue;
+          const hiddenPrereqObjectIds = taskObjective.hiddenPrerequisiteObjectIds ?? [];
+          for (const prereqObjectId of hiddenPrereqObjectIds) {
+            if (!destroyedObjects.has(prereqObjectId)) continue;
+            const dedupeKey = `hidden_prereq:${taskObjective.objectiveId}:${evidence.actionEvent.eventId}`;
+            const existingEntryId = deriveMirrorConsequenceEntryId({
+              journeyId,
+              actionEventId: evidence.actionEvent.eventId,
+              dedupeKey,
+            });
+            // Check if this cascade entry was already promoted (idempotency).
+            const alreadyPromoted = mirrorLedger
+              ? existingEntryId in mirrorLedger.promotedCanonicalEventIds
+              : false;
+            if (alreadyPromoted) continue;
+            const cascadeEntry: MirrorConsequenceLedgerEntry = {
+              actionEventId: evidence.actionEvent.eventId,
+              effectKind: "hidden_prerequisite_destroyed",
+              targetEntityId: `hidden:${taskObjective.objectiveId}`,
+              delta: 0,
+              consequenceType: "collateral",
+              sourceEventIds: [evidence.actionEvent.eventId],
+              effectBlueprint: {
+                prerequisiteObjectId: prereqObjectId,
+                objectiveId: taskObjective.objectiveId,
+                regionId,
+              },
+              recordedAt: solidifiedAt,
+              dedupeKey,
+            };
+            mirrorLedger = appendMirrorConsequence(mirrorLedger, cascadeEntry);
+          }
+        }
+        // Promote and apply the cascade entries.
+        const { entriesToPromote: cascadeEntries } = promoteMirrorConsequences(mirrorLedger);
+        for (const entry of cascadeEntries) {
+          const entryId = deriveMirrorConsequenceEntryId({
+            journeyId,
+            actionEventId: entry.actionEventId,
+            dedupeKey: entry.dedupeKey,
+          });
+          const rebasedEntry = rebaseMirrorEntryAgainstProjection(entry, workingProjection);
+          const canonicalEvent = buildCanonicalEventFromMirrorEntry({
+            entryId,
+            entry: rebasedEntry,
+            makeEvent,
+            idFactory,
+            worldMinute: currentProjectionWorldMinute(workingProjection),
+          });
+          effectEvents.push(canonicalEvent);
+          mirrorLedger = markMirrorConsequencePromoted(mirrorLedger, entryId, canonicalEvent.eventId);
+          workingProjection = applyEvents(workingProjection, [canonicalEvent]);
+        }
+        assertNoDuplicatePromotion(mirrorLedger);
+      }
     } else {
       for (const evidence of orderedEvidence) {
         const contract = evidence.session.sceneContract as JourneySceneContract;

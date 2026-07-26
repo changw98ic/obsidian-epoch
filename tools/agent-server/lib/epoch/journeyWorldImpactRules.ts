@@ -8,6 +8,18 @@ import {
   regionInfluenceChangedEvent,
   traceCreatedEvent,
 } from "./regionEventLedgerEvents.ts";
+import type {
+  ConsequenceEffectKind,
+  ConsequenceType,
+  MirrorConsequenceLedgerEntry,
+} from "./journeySettlementRules.ts";
+import { deriveMirrorConsequenceDedupeKey } from "./journeyMirrorLedger.ts";
+import {
+  assertValidObjectImpactDegree,
+  HIDDEN_PREREQ_DEGREE_MIN,
+  HIDDEN_PREREQ_DEGREE_MAX,
+  OBJECT_DESTROY_DEGREE_THRESHOLD,
+} from "./hiddenPrerequisiteRules.ts";
 
 export interface PlanJourneyWorldImpactEventsInput {
   readonly makeEvent: EpochEventFactory;
@@ -146,4 +158,171 @@ export function planJourneyWorldImpactEvents(
       agentId: input.agentId,
     }),
   ];
+}
+
+// ---------------------------------------------------------------------------
+// PR5c — object-impact mirror-consequence blueprint planner.
+//
+// Sibling planner to {@link planJourneyWorldImpactEvents} that produces
+// mirror-ledger entries for physical object mutation/destruction. The planner
+// is single-derivation per actionEventId: one completed action produces at
+// most one object-impact entry (matching the single-derivation contract of
+// {@link planJourneyMirrorConsequenceBlueprints}).
+//
+// The entry flows through the same mirror-ledger append → promote → solidify
+// path as region/trace/faction blueprints. On solidify,
+// {@link buildCanonicalEventFromMirrorEntry} dispatches the entry to the
+// canonical `world_object_state_changed` event; on discard the entry never
+// reaches canonical state (the projection's worldObjectStates stays intact).
+//
+// Zero-affinity (零加成): the blueprint carries objectId/degree/regionId only.
+// No public-boundary field (PublicActionOption / PublicQuestOffer) references
+// the object-impact payload; the field is INTERNAL-only and the public
+// serializers strip it.
+// ---------------------------------------------------------------------------
+
+/**
+ * Effect kinds the object-impact planner may emit. Restricted to the two
+ * physical-mutation kinds defined in {@link ConsequenceEffectKind}.
+ * `hidden_prerequisite_destroyed` is NEVER produced here — it is synthesised
+ * by the solidify-time cascade ({@link cascadeObjectDestructionToHiddenPrereqs})
+ * after the canonical object-state transition commits.
+ */
+export type ObjectImpactEffectKind = "object_mutation" | "object_destroy";
+
+/**
+ * Structured object-impact descriptor carried on the internal scene-contract
+ * action (NOT on {@link PublicActionOption}). The field is the single input
+ * to {@link planJourneyObjectImpactBlueprints}.
+ *
+ * - `targetEntityId` follows the ledger convention: `object:${objectId}`.
+ * - `effectKind` is `object_mutation` (degree 1-2 → degraded) or
+ *   `object_destroy` (degree 3+ → destroyed). The caller picks the bucket;
+ *   the planner does not reclassify based on degree.
+ * - `degree` is the integer magnitude in [1, 5]; validated by
+ *   {@link assertValidObjectImpactDegree}.
+ */
+export interface JourneyActionObjectImpact {
+  readonly targetEntityId: string;
+  readonly effectKind: ObjectImpactEffectKind;
+  readonly degree: number;
+}
+
+/**
+ * Input shape for {@link planJourneyObjectImpactBlueprints}. Mirrors the
+ * {@link PlanJourneyMirrorConsequenceBlueprintsInput} contract with the
+ * event-factory surface stripped and `actionObjectImpact` promoted to the
+ * primary driver.
+ */
+export interface PlanJourneyObjectImpactBlueprintsInput {
+  readonly actionEventId: string;
+  readonly agentId: string;
+  readonly regionId: string;
+  readonly actionObjectImpact?: JourneyActionObjectImpact;
+  readonly resolution: JourneyActionResolution;
+  readonly recordedAt: string;
+  readonly sourceAggregateId: string;
+}
+
+/** Collateral bucket constant; the object-impact entry always lands here. */
+const OBJECT_COLLATERAL: ConsequenceType = "collateral";
+
+/**
+ * Strip the `object:` prefix from a targetEntityId and return the bare
+ * objectId. Returns `undefined` when the prefix is absent or the remainder is
+ * empty. Used by the planner to gate on malformed target ids and by the
+ * solidify dispatch arm to recover the canonical objectId.
+ */
+export function stripObjectTargetEntityId(targetEntityId: string): string | undefined {
+  if (!targetEntityId.startsWith("object:")) return undefined;
+  const objectId = targetEntityId.slice("object:".length);
+  return objectId.length > 0 ? objectId : undefined;
+}
+
+/**
+ * Compute the mirror-ledger blueprint for one grounded action's object impact.
+ *
+ * Returns an empty array when ANY of:
+ * (a) `resolution.completionKind !== 'complete'` — failed/skipped actions
+ *     never mutate canonical object state.
+ * (b) `actionObjectImpact` is undefined — the action carries no object impact
+ *     (the common case; most actions do not destroy objects).
+ * (c) `targetEntityId` is malformed (not `object:${nonEmpty}`) — fail-closed
+ *     against a fabricated impact record.
+ *
+ * Otherwise emits exactly one {@link MirrorConsequenceLedgerEntry} with:
+ * - `effectKind` = `actionObjectImpact.effectKind`
+ * - `targetEntityId` = `actionObjectImpact.targetEntityId`
+ * - `delta` = `-degree` (negative — destruction is a penalty)
+ * - `consequenceType` = `'collateral'`
+ * - `effectBlueprint` carrying `{ objectId, degree, regionId, sourceAggregateId, sourceActionEventId }`
+ * - `dedupeKey` via {@link deriveMirrorConsequenceDedupeKey} (replay-idempotent
+ *   on the `actionEventId + targetEntityId` composite)
+ *
+ * Pure: same inputs → same outputs. No IO, no gameCore/eventFactory dependency.
+ */
+export function planJourneyObjectImpactBlueprints(
+  input: PlanJourneyObjectImpactBlueprintsInput,
+): readonly MirrorConsequenceLedgerEntry[] {
+  // (a) only completed actions mutate objects.
+  if (input.resolution.completionKind !== "complete") return [];
+  // (b) no impact descriptor → no entry.
+  const impact = input.actionObjectImpact;
+  if (!impact) return [];
+  // (c) fail-closed on malformed target id.
+  const objectId = stripObjectTargetEntityId(impact.targetEntityId);
+  if (objectId === undefined) return [];
+
+  // Validate degree via the shared helper so the threshold table stays the
+  // single source of truth.
+  assertValidObjectImpactDegree(impact.degree);
+
+  // PR5c ADVERSARIAL-6 fix: cross-check degree against effectKind. If the
+  // degree meets or exceeds the destroy threshold but the caller labeled the
+  // effect as `object_mutation`, reclassify to `object_destroy` so the
+  // collateral weight bucket (-300 bps) applies instead of the lighter
+  // mutation weight (50 bps). This prevents a caller footgun where a
+  // degree-5 destruction labeled as 'object_mutation' would get the wrong
+  // collateral penalty. The canonical status derivation (degreeToStatus) is
+  // degree-driven and unaffected; only the collateral weight bucket changes.
+  const effectKind: ConsequenceEffectKind =
+    impact.effectKind === "object_mutation" && impact.degree >= OBJECT_DESTROY_DEGREE_THRESHOLD
+      ? "object_destroy"
+      : impact.effectKind;
+  const delta = -impact.degree;
+  const dedupeKey = deriveMirrorConsequenceDedupeKey({
+    effectKind,
+    targetEntityId: impact.targetEntityId,
+    actionEventId: input.actionEventId,
+  });
+
+  const entry: MirrorConsequenceLedgerEntry = {
+    actionEventId: input.actionEventId,
+    effectKind,
+    targetEntityId: impact.targetEntityId,
+    delta,
+    consequenceType: OBJECT_COLLATERAL,
+    sourceEventIds: [input.actionEventId],
+    effectBlueprint: {
+      objectId,
+      degree: impact.degree,
+      regionId: input.regionId,
+      sourceAggregateId: input.sourceAggregateId,
+      sourceActionEventId: input.actionEventId,
+    },
+    recordedAt: input.recordedAt,
+    dedupeKey,
+  };
+  return [entry];
+}
+
+/**
+ * Convenience validator exposed for the scene-contract builder: returns
+ * `true` iff `degree` is a valid object-impact magnitude. Wraps
+ * {@link assertValidObjectImpactDegree} in a try/catch so the contract builder
+ * can reject malformed proposals without raising.
+ */
+export function isValidObjectImpactDegree(degree: unknown): boolean {
+  if (typeof degree !== "number" || !Number.isSafeInteger(degree)) return false;
+  return degree >= HIDDEN_PREREQ_DEGREE_MIN && degree <= HIDDEN_PREREQ_DEGREE_MAX;
 }

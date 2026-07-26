@@ -86,6 +86,17 @@ export const EPOCH_AGGREGATE_TYPES = [
   "season_objective",
   "world_clock",
   "world_simulation",
+  /**
+   * PR5c additive. Canonical aggregate for a world object's lifecycle state
+   * (intact / degraded / destroyed). One aggregate per physical object;
+   * aggregateId = `world_object:${objectId}`.
+   */
+  "world_object_state",
+  /**
+   * PR5c additive. Canonical aggregate for the hidden-prerequisite link graph
+   * in one region. AggregateId scoped by region.
+   */
+  "hidden_prerequisite_graph",
 ] as const;
 
 export type EpochAggregateType = typeof EPOCH_AGGREGATE_TYPES[number];
@@ -221,6 +232,21 @@ export const EPOCH_EVENT_TYPES = [
    * to bound memory; the chronicle retains the full before/after pair.
    */
   "identity_viability_projected",
+  /**
+   * PR5c additive. Canonical record of a world object's lifecycle state
+   * transition (intact → degraded, intact → destroyed, degraded → destroyed).
+   * Emitted by the solidify path when a promoted `object_mutation` or
+   * `object_destroy` mirror-ledger entry commits. Irreversible: once an
+   * object reaches `destroyed`, no later event may relax it.
+   */
+  "world_object_state_changed",
+  /**
+   * PR5c additive. Canonical record of a hidden-prerequisite link status
+   * change (intact → destroyed). Emitted by the solidify-time cascade
+   * after a `world_object_state_changed` event destroys an object that
+   * is a hidden prerequisite for some objective.
+   */
+  "hidden_prerequisite_link_changed",
 ] as const;
 
 export type EpochEventType = typeof EPOCH_EVENT_TYPES[number];

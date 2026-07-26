@@ -36,6 +36,7 @@ import {
   scrubJourneyRecordForPublicView,
 } from "./journeyReadModel.ts";
 import { EPOCH_WORLD_CALENDAR_ORIGIN_YEAR, epochWorldCalendarMoment } from "./worldCalendar.ts";
+import type { HiddenPrerequisiteLink } from "./journeyRoleplayRules.ts";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -74,6 +75,19 @@ export interface AgentCompanionEpochSurface {
   readonly getResultPage?: (input?: UnknownRecord) => unknown;
   /** Returns the unfiltered canonical suffix at this absolute offset; providers must never renumber it. */
   readonly interactionEvents?: (offset?: number) => readonly EpochEvent[];
+  /**
+   * PR5c additive. Returns the canonical world-object lifecycle states from the
+   * epoch projection, keyed by objectId. Used to stamp canonicalStatusDigest on
+   * available world objects and to gate hidden-prerequisite reachability.
+   */
+  readonly worldObjectStates?: () => unknown;
+  /**
+   * PR5c additive. Returns the canonical hidden-prerequisite link states from
+   * the epoch projection, keyed by `${regionId}:${objectiveId}:${prerequisiteObjectId}`.
+   * Used to pass into adjudicateJourneyTask so destroyed prerequisites gate
+   * hidden tier reachability.
+   */
+  readonly hiddenPrerequisiteLinks?: () => unknown;
 }
 
 export interface AgentCompanionRuntimeOptions {
@@ -742,6 +756,7 @@ export class AgentCompanionRuntime {
               episodes,
               hiddenTaskSeal,
               revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
+              hiddenPrerequisiteLinks: this.#hiddenPrerequisiteLinksForPlan(record.journey.taskPlan),
             }),
             ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
           )
@@ -784,6 +799,7 @@ export class AgentCompanionRuntime {
             episodes,
             hiddenTaskSeal,
             revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
+            hiddenPrerequisiteLinks: this.#hiddenPrerequisiteLinksForPlan(record.journey.taskPlan),
           }),
           ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
         ),
@@ -1155,8 +1171,30 @@ export class AgentCompanionRuntime {
       regionId: canonicalRegionId,
       taskType,
     });
-    const availableWorldObjects = [region, ...mapObjects, ...taskCast].filter((object, index, values) =>
+    const rawObjects = [region, ...mapObjects, ...taskCast].filter((object, index, values) =>
       values.findIndex((candidate) => candidate.id === object.id) === index);
+    // PR5c: stamp canonicalStatusDigest on each available world object from the
+    // canonical projection's worldObjectStates. Objects whose id has no entry
+    // in the projection are left with digest=undefined (intact by convention).
+    const worldObjectStatesRaw = this.#epoch.worldObjectStates?.();
+    const worldObjectStates = isRecord(worldObjectStatesRaw) ? worldObjectStatesRaw : {};
+    const availableWorldObjects = rawObjects.map((object) => {
+      const state = worldObjectStates[object.id];
+      if (!isRecord(state)) return object;
+      const status = typeof state.status === "string" ? state.status : undefined;
+      const degree = typeof state.degree === "number" ? state.degree : undefined;
+      if (!status || degree === undefined) return object;
+      return {
+        ...object,
+        canonicalStatusDigest: {
+          status: status as "intact" | "degraded" | "destroyed",
+          degree,
+          ...(typeof state.sourceActionEventId === "string"
+            ? { sourceActionEventId: state.sourceActionEventId } : {}),
+          ...(typeof state.changedAt === "string" ? { changedAt: state.changedAt } : {}),
+        },
+      };
+    });
     return {
       taskType,
       identityName,
@@ -1193,6 +1231,42 @@ export class AgentCompanionRuntime {
 
   #authorizeExplorer(input: UnknownRecord, explorerId: string) {
     return this.#epoch.verifyExplorerAuth({ ...input, explorerId });
+  }
+
+  /**
+   * PR5c: extract canonical hidden-prerequisite links from the epoch
+   * projection, filtered to the objectiveIds in the given plan. Returns an
+   * empty array when the surface does not provide the accessor (backward
+   * compat) or when no links match.
+   */
+  #hiddenPrerequisiteLinksForPlan(
+    plan: { readonly objectives: readonly { readonly objectiveId: string }[] },
+  ): readonly HiddenPrerequisiteLink[] {
+    const raw = this.#epoch.hiddenPrerequisiteLinks?.();
+    if (!isRecord(raw)) return [];
+    const objectiveIds = new Set(plan.objectives.map((o) => o.objectiveId));
+    const out: HiddenPrerequisiteLink[] = [];
+    for (const value of Object.values(raw)) {
+      if (!isRecord(value)) continue;
+      const objectiveId = typeof value.objectiveId === "string" ? value.objectiveId : "";
+      const prerequisiteObjectId = typeof value.prerequisiteObjectId === "string" ? value.prerequisiteObjectId : "";
+      const regionId = typeof value.regionId === "string" ? value.regionId : "";
+      const status = typeof value.status === "string" ? value.status : "";
+      if (!objectiveId || !prerequisiteObjectId || !regionId || !status || !objectiveIds.has(objectiveId)) continue;
+      out.push({
+        objectiveId,
+        prerequisiteObjectId,
+        status: status as "intact" | "degraded" | "destroyed",
+        ...(typeof value.destroyedAtActionEventId === "string"
+          ? { destroyedAtActionEventId: value.destroyedAtActionEventId } : {}),
+        ...(typeof value.degradedAtActionEventId === "string"
+          ? { degradedAtActionEventId: value.degradedAtActionEventId } : {}),
+        ...(typeof value.sourceLedgerEntryId === "string"
+          ? { sourceLedgerEntryId: value.sourceLedgerEntryId } : {}),
+        observedAt: typeof value.observedAt === "string" ? value.observedAt : "",
+      });
+    }
+    return out;
   }
 
   #captureEvents<TValue extends object>(run: () => TValue): TValue {

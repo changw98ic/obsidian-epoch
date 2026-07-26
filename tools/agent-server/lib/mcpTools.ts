@@ -1632,6 +1632,8 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       events: epochRuntime.events,
       getResultPage: epochRuntime.getResultPage,
       interactionEvents: epochRuntime.interactionEvents,
+      worldObjectStates: epochRuntime.worldObjectStates,
+      hiddenPrerequisiteLinks: epochRuntime.hiddenPrerequisiteLinks,
     },
     journeyOptions: {
       idFactory: configuredJourneyIdFactory ?? ((kind) => `${kind}_${String(++journeyIdSequence).padStart(8, "0")}`),

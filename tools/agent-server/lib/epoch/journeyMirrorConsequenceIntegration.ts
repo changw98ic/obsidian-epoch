@@ -39,6 +39,8 @@ import {
   regionInfluenceChangedEvent,
   traceCreatedEvent,
 } from "./regionEventLedgerEvents.ts";
+import { degreeToStatus } from "./hiddenPrerequisiteRules.ts";
+import { stripObjectTargetEntityId } from "./journeyWorldImpactRules.ts";
 
 /**
  * Input for {@link buildCanonicalEventFromMirrorEntry}. The `entryId` is the
@@ -74,10 +76,13 @@ function requireField<T>(blueprint: Readonly<Record<string, unknown>>, key: stri
  * - `trace_created` → `trace_created` (trace aggregate)
  * - `faction_standing_delta` → `agent_faction_standing_changed`
  *   (agent_identity aggregate)
+ * - `object_mutation` / `object_destroy` → `world_object_state_changed`
+ *   (world_object_state aggregate). PR5c additive.
+ * - `hidden_prerequisite_destroyed` → `hidden_prerequisite_link_changed`
+ *   (hidden_prerequisite_graph aggregate). PR5c additive.
  *
- * Other effect kinds (`npc_relationship_delta`, `object_mutation`,
- * `object_destroy`, `hidden_prerequisite_destroyed`, `identity_doubt`) are
- * out of PR2 scope and rejected. Self-loss kinds (`resource_spent`,
+ * Other effect kinds (`npc_relationship_delta`, `identity_doubt`) are
+ * out of scope and rejected. Self-loss kinds (`resource_spent`,
  * `lifetime_adjusted`) are unreachable by ledger construction and also
  * rejected here as a defensive guard.
  */
@@ -173,15 +178,69 @@ export function buildCanonicalEventFromMirrorEntry(
         agentId,
       });
     }
+    case "object_mutation":
+    case "object_destroy": {
+      // PR5c: physical object lifecycle transition. The objectId is recovered
+      // from the `object:${objectId}` targetEntityId convention. The status
+      // is derived from degree via the shared threshold table. The
+      // world_object_state_changed event is append-only to the projection;
+      // irreversibility is enforced by applyEvent (destroyed is terminal).
+      const objectId = stripObjectTargetEntityId(entry.targetEntityId);
+      if (!objectId) throw new Error(`journey_mirror_consequence_object_target_invalid:${entry.targetEntityId}`);
+      const regionId = requireField<string>(blueprint, "regionId");
+      const degree = requireField<number>(blueprint, "degree");
+      const sourceAggregateId = requireField<string>(blueprint, "sourceAggregateId");
+      const statusAfter = degreeToStatus(degree);
+      const aggregateId = `world_object:${objectId}`;
+      const worldObjectEventId = idFactory("event", `promote:${entryId}`);
+      return makeEvent("world_object_state_changed", aggregateId, {
+        objectId,
+        regionId,
+        statusAfter,
+        degree,
+        sourceActionEventId: entry.actionEventId,
+        sourceAggregateId,
+        changedAt: entry.recordedAt,
+        worldMinute,
+      }, {
+        aggregateType: "world_object_state",
+        eventId: worldObjectEventId,
+      });
+    }
+    case "hidden_prerequisite_destroyed": {
+      // PR5c: hidden-prerequisite link status change. The objectiveId is
+      // recovered from the `hidden:${objectiveId}` targetEntityId convention.
+      // The prerequisiteObjectId and regionId come from the blueprint.
+      const targetId = entry.targetEntityId;
+      if (!targetId.startsWith("hidden:")) {
+        throw new Error(`journey_mirror_consequence_hidden_target_invalid:${targetId}`);
+      }
+      const objectiveId = targetId.slice("hidden:".length);
+      if (!objectiveId) throw new Error(`journey_mirror_consequence_hidden_objective_empty:${targetId}`);
+      const prerequisiteObjectId = requireField<string>(blueprint, "prerequisiteObjectId");
+      const regionId = requireField<string>(blueprint, "regionId");
+      const changedAt = entry.recordedAt;
+      const aggregateId = `hidden_prereq:${regionId}:${objectiveId}`;
+      const linkEventId = idFactory("event", `promote:${entryId}`);
+      return makeEvent("hidden_prerequisite_link_changed", aggregateId, {
+        regionId,
+        objectiveId,
+        prerequisiteObjectId,
+        statusAfter: "destroyed",
+        sourceActionEventId: entry.actionEventId,
+        sourceLedgerEntryId: entryId,
+        changedAt,
+      }, {
+        aggregateType: "hidden_prerequisite_graph",
+        eventId: linkEventId,
+      });
+    }
     case "resource_spent":
     case "lifetime_adjusted":
       throw new Error(
         `journey_mirror_consequence_promote_self_loss_forbidden:${entry.effectKind}`,
       );
     case "npc_relationship_delta":
-    case "object_mutation":
-    case "object_destroy":
-    case "hidden_prerequisite_destroyed":
     case "identity_doubt":
       throw new Error(
         `journey_mirror_consequence_promote_kind_not_supported:${entry.effectKind}`,

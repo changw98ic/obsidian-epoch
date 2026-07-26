@@ -3218,5 +3218,9 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     getResultPage: ({ pageId }: AnyRecord = {}) => resultPageRuntime.get(String(pageId || "")) || null,
     getPublicResultPage: resultPageRuntime.getPublic,
     resultPages: () => ({ pages: resultPageRuntime.values() }),
+    /** PR5c: canonical world-object lifecycle states from the epoch projection. */
+    worldObjectStates: () => core.project().worldObjectStates,
+    /** PR5c: canonical hidden-prerequisite link states from the epoch projection. */
+    hiddenPrerequisiteLinks: () => core.project().hiddenPrerequisiteLinks,
   };
 }

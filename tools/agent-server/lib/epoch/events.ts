@@ -1371,6 +1371,39 @@ export interface IdentityViabilityProjectedPayload {
 
 export type TraceSourceEventType = RegionInfluenceSourceEventType | "bounty_claimed" | "diplomacy_responded";
 
+/**
+ * PR5c additive. Canonical payload for a world object lifecycle state
+ * transition (intact → degraded, intact → destroyed, degraded → destroyed).
+ * Emitted by the solidify path when a promoted `object_mutation` or
+ * `object_destroy` mirror-ledger entry commits.
+ */
+export interface WorldObjectStateChangedPayload {
+  readonly objectId: string;
+  readonly regionId: string;
+  readonly statusAfter: "intact" | "degraded" | "destroyed";
+  readonly degree: number;
+  readonly sourceActionEventId: string;
+  readonly sourceAggregateId: string;
+  readonly changedAt: string;
+  readonly worldMinute: number;
+}
+
+/**
+ * PR5c additive. Canonical payload for a hidden-prerequisite link status
+ * change. Emitted by the solidify-time cascade after a
+ * `world_object_state_changed` event destroys an object that is a hidden
+ * prerequisite for some objective.
+ */
+export interface HiddenPrerequisiteLinkChangedPayload {
+  readonly regionId: string;
+  readonly objectiveId: string;
+  readonly prerequisiteObjectId: string;
+  readonly statusAfter: "intact" | "degraded" | "destroyed";
+  readonly sourceActionEventId: string;
+  readonly sourceLedgerEntryId?: string;
+  readonly changedAt: string;
+}
+
 export interface TraceCreatedPayload {
   readonly traceId: string;
   readonly regionId: string;
@@ -2213,6 +2246,8 @@ export interface EpochEventPayloadMap {
   readonly abuse_score_changed: AbuseScoreChangedPayload;
   readonly abuse_score_released: AbuseScoreReleasedPayload;
   readonly abuse_score_decayed: AbuseScoreDecayedPayload;
+  readonly world_object_state_changed: WorldObjectStateChangedPayload;
+  readonly hidden_prerequisite_link_changed: HiddenPrerequisiteLinkChangedPayload;
 }
 
 export type EpochEvent = {

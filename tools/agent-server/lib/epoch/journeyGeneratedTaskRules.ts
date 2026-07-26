@@ -5,6 +5,7 @@ import type { JourneySceneType } from "./journeySceneCatalog.ts";
 import type {
   JourneyAvailableWorldObject,
 } from "./journeySceneRules.ts";
+import type { HiddenPrerequisiteLink } from "./journeyRoleplayRules.ts";
 import {
   journeyTaskRouteForRegion,
   type JourneyTaskActionDefinition,
@@ -98,6 +99,17 @@ export interface JourneyGeneratedTaskAction {
    * audit correlation only. INTERNAL-only.
    */
   readonly mechanicId?: string;
+  /**
+   * PR5c additive. Structured object-impact descriptor for this action.
+   * INTERNAL-only — never surfaces on PublicActionOption. When present,
+   * the mirror-mode submit path calls planJourneyObjectImpactBlueprints
+   * to produce a mirror-ledger entry for the physical object mutation.
+   */
+  readonly objectImpact?: {
+    readonly targetEntityId: string;
+    readonly effectKind: "object_mutation" | "object_destroy";
+    readonly degree: number;
+  };
 }
 
 export interface JourneyGeneratedTaskObjective {
@@ -115,6 +127,13 @@ export interface JourneyGeneratedTaskObjective {
   readonly locationId: string;
   readonly worldObjectIds: readonly string[];
   readonly actions: readonly JourneyGeneratedTaskAction[];
+  /**
+   * PR5c additive. World objects whose existence is required for this
+   * objective to remain reachable as a hidden requirement. DISJOINT from
+   * `prerequisiteObjectiveIds` (the existing objective-to-objective DAG).
+   * INTERNAL-only — never surfaces on PublicActionOption.
+   */
+  readonly hiddenPrerequisiteObjectIds?: readonly string[];
 }
 
 export interface JourneyTaskGraphRoute {
@@ -341,6 +360,19 @@ export interface JourneyTaskAdjudication {
     readonly commitment: string;
     readonly revealed: boolean;
     readonly completed?: boolean;
+    /**
+     * PR5c: reachability signal for the hidden tier. `false` when any
+     * prerequisite object for any requiredAction is destroyed in canonical
+     * state. Audit-only; the result page reads this to render WHY the hidden
+     * tier was not awarded. Does not leak to PublicActionOption.
+     */
+    readonly prerequisiteReachable?: boolean;
+    /**
+     * PR5c: objectiveIds whose destroyed prerequisite blocked the hidden
+     * tier. Empty when the hidden tier was awarded or when no prereqs are
+     * destroyed. Audit-only.
+     */
+    readonly destroyedPrerequisiteObjectIds?: readonly string[];
     readonly description?: string;
     readonly requiredActions?: JourneyHiddenTaskSpec["requiredActions"];
   };
@@ -402,6 +434,9 @@ const OBJECTIVE_FIELDS = new Set([
   "locationId",
   "worldObjectIds",
   "actions",
+  // PR5c: hiddenPrerequisiteObjectIds is whitelisted so server-emitted
+  // proposals that carry hidden-prerequisite metadata pass validation.
+  "hiddenPrerequisiteObjectIds",
 ]);
 const ACTION_FIELDS = new Set([
   "optionKey",
@@ -419,6 +454,12 @@ const ACTION_FIELDS = new Set([
   // deriveActionApproachTags below. The whitelist entry only prevents the
   // field-not-allowed guard from firing on server-emitted proposals.
   "approachTags",
+  // PR5c: objectImpact is whitelisted so server-emitted proposals that carry
+  // object-impact metadata pass validation. The parser does NOT trust a
+  // client-supplied value — the server derives objectImpact from the task
+  // generation context. The whitelist entry only prevents the field-not-allowed
+  // guard from firing on server-emitted proposals.
+  "objectImpact",
 ]);
 const ALLOWED_SCENE_TYPES = new Set<JourneyGeneratedTaskObjective["sceneType"]>([
   "livelihood",
@@ -737,6 +778,17 @@ export function validateJourneyTaskProposal(input: {
       if (locationMissingFromObjects) detail.push(`locationId:${locationId}`);
       if (ungroundedObjectIds.length > 0) detail.push(`objects:${ungroundedObjectIds.join(",")}`);
       throw new Error(`journey_task_world_object_not_grounded:${detail.join(";")}`);
+    }
+    // PR5c: reject any proposal whose objective.worldObjectIds references a
+    // destroyed object. A destroyed object is no longer eligible as a
+    // grounding target — the next journey's planner refuses to ground on
+    // destroyed objects (spec §6.10 持久作用域 → grounded context loop).
+    const destroyedObjectIds = worldObjectIds.filter((objectId) => {
+      const candidate = knownObjects.get(objectId);
+      return candidate?.canonicalStatusDigest?.status === "destroyed";
+    });
+    if (destroyedObjectIds.length > 0) {
+      throw new Error(`journey_task_plan_references_destroyed_object:${destroyedObjectIds.join(",")}`);
     }
     if (!Array.isArray(rawObjective.actions)
       || rawObjective.actions.length !== JOURNEY_TASK_OBJECTIVE_LIMITS.actionsPerObjective) {
@@ -1558,11 +1610,17 @@ function fallbackRouteFromMap(input: {
 }): JourneyTaskRoute {
   const region = input.availableWorldObjects.find((object) => object.id === input.scenarioMapId);
   if (!region) throw new Error("journey_task_fallback_map_missing");
-  const location = input.availableWorldObjects.find((object) =>
+  // PR5c: filter OUT destroyed objects from the candidate pool. A destroyed
+  // object is no longer eligible as a targetObjectIds entry — a fallback-
+  // generated action can never again point the agent at an already-destroyed
+  // object. Degraded objects remain eligible (informational; no score impact).
+  const eligibleObjects = input.availableWorldObjects.filter((object) =>
+    object.canonicalStatusDigest?.status !== "destroyed");
+  const location = eligibleObjects.find((object) =>
     object.id !== region.id && ["location", "workplace", "commission", "objective"].includes(object.type)) ?? region;
-  const people = input.availableWorldObjects.filter((object) =>
+  const people = eligibleObjects.filter((object) =>
     object.id !== region.id && object.id !== location.id && ["npc", "agent"].includes(object.type));
-  const otherObjects = input.availableWorldObjects.filter((object) =>
+  const otherObjects = eligibleObjects.filter((object) =>
     object.id !== region.id && object.id !== location.id && !["npc", "agent"].includes(object.type));
   const supporting = [...people.slice(0, 3), ...otherObjects].slice(0, 5);
   const targetObjectIds = [...new Set([location.id, ...supporting.map((object) => object.id)])];
@@ -1866,6 +1924,19 @@ export function adjudicateJourneyTask(input: {
   readonly episodes: readonly JourneyTaskEvidenceEpisode[];
   readonly hiddenTaskSeal?: JourneyHiddenTaskSeal;
   readonly revealHidden?: boolean;
+  /**
+   * PR5c: canonical hidden-prerequisite link snapshot filtered to this plan's
+   * objectiveIds. When provided, the adjudicator consults each link's
+   * `status` to gate `hiddenCompleted` — a destroyed prerequisite makes the
+   * matching required action's hidden tier unreachable even when the action
+   * signature matches.
+   *
+   * Backward-compat: when omitted (or empty), behaviour is bit-identical to
+   * pre-PR5c — the adjudicator falls back to the pure signature match. This
+   * preserves the contract for v1 seal replay, legacy callers, and tests that
+   * do not exercise the canonical projection.
+   */
+  readonly hiddenPrerequisiteLinks?: readonly HiddenPrerequisiteLink[];
 }): JourneyTaskAdjudication {
   const selected = selectedActionByObjective(input.plan, input.episodes);
   const graphState = journeyTaskGraphState(input.plan, input.episodes);
@@ -1881,10 +1952,32 @@ export function adjudicateJourneyTask(input: {
   const bonusMainCompleted = bonusMain.filter((objective) => completed.has(objective.objectiveId)).length;
   const sideCompleted = sides.filter((objective) => completed.has(objective.objectiveId)).length;
   const hidden = deriveJourneyHiddenTask(input.plan, input.hiddenTaskSeal);
+  // PR5c: wrap the existing signature check with reachability. The link
+  // snapshot is the canonical projection's view of which hidden prereqs are
+  // destroyed. When the array is empty/undefined (legacy callers, v1 seal
+  // replay, pre-PR5c tests), the reachability check is a no-op and behaviour
+  // is bit-identical to pre-PR5c.
+  const links = input.hiddenPrerequisiteLinks ?? [];
+  const destroyedObjectiveIds = new Set<string>();
+  for (const link of links) {
+    if (link.status === "destroyed") {
+      destroyedObjectiveIds.add(link.objectiveId);
+    }
+  }
   const hiddenCompleted = hidden.requiredActions.every((required) => {
     const action = selected.get(required.objectiveId);
-    return action?.completionKind === "complete" && action.optionKey === required.optionKey;
+    const prereqDestroyed = destroyedObjectiveIds.has(required.objectiveId);
+    return action?.completionKind === "complete"
+      && action.optionKey === required.optionKey
+      && !prereqDestroyed;
   });
+  // Audit set: which objectiveIds had a destroyed prereq blocking the hidden
+  // tier. Computed across every requiredAction so the result page can render
+  // WHY the hidden tier was not awarded without leaking prereq identity.
+  const destroyedPrerequisiteObjectIds = hidden.requiredActions
+    .filter((required) => destroyedObjectiveIds.has(required.objectiveId))
+    .map((required) => required.objectiveId);
+  const prerequisiteReachable = destroyedPrerequisiteObjectIds.length === 0;
   const performance = input.plan.adjudicationVersion === JOURNEY_TASK_ADJUDICATION_VERSION
     ? journeyTaskPerformance({
         plan: input.plan,
@@ -1910,6 +2003,8 @@ export function adjudicateJourneyTask(input: {
         commitment: input.plan.hiddenTaskCommitment,
         revealed: true,
         completed: hiddenCompleted,
+        prerequisiteReachable,
+        destroyedPrerequisiteObjectIds,
         description: hidden.description,
         requiredActions: hidden.requiredActions,
       }
@@ -1945,6 +2040,16 @@ export function deriveLegacyTerminalTier(input: {
   readonly hiddenCompleted: boolean;
   readonly perfectEligible: boolean;
   readonly revealHidden: boolean;
+  /**
+   * PR5c: when true, the hidden objective's prerequisite object is destroyed
+   * in canonical state, making the hidden objective unreachable. The tier is
+   * clamped to AT MOST '良好' regardless of hiddenCompleted — the agent can
+   * still get 良好 for visible completion but never 惊世.
+   *
+   * Backward-compat: when omitted (or false), behaviour is bit-identical to
+   * pre-PR5c. This preserves the contract for legacy callers and tests.
+   */
+  readonly hiddenObjectiveDestroyed?: boolean;
 }): JourneyCompletionTier {
   const terminalTier: JourneyCompletionTier = input.mainCompleted < input.mainTotal
     ? "未及格"
@@ -1952,9 +2057,18 @@ export function deriveLegacyTerminalTier(input: {
       ? "及格"
       : input.sideCompleted < input.sideTotal || !input.perfectEligible
         ? "良好"
-        : input.hiddenCompleted
+        : input.hiddenCompleted && !input.hiddenObjectiveDestroyed
           ? "惊世"
           : "优秀";
+  // PR5c: when the hidden objective's prereq is destroyed, clamp to AT MOST
+  // '良好'. The agent can still earn 良好 for visible completion; the hidden
+  // tier (惊世/优秀 via hidden) is unreachable because the prereq object is
+  // gone. This is a terminal clamp, not a score recomputation — it mirrors
+  // the PR4 SettlementDecision.tier clamp via `hiddenPrerequisiteDestroyed`
+  // in SettlementContext (no score recompute, just a ceiling).
+  if (input.hiddenObjectiveDestroyed && terminalTier === "优秀") {
+    return input.revealHidden ? "良好" : "良好";
+  }
   return input.revealHidden
     ? terminalTier
     : terminalTier === "惊世" ? "优秀" : terminalTier;
@@ -1979,5 +2093,12 @@ export function deriveLegacyTerminalTierFromAdjudication(
     hiddenCompleted: Boolean(adjudication.hiddenTask.completed),
     perfectEligible: adjudication.performance?.perfectEligible ?? false,
     revealHidden,
+    // PR5c: forward the destroyed-prereq signal so the tier clamp in
+    // deriveLegacyTerminalTier (line 2069) fires when the hidden objective's
+    // prerequisite object is destroyed in canonical state. When the hidden
+    // task is not revealed, prerequisiteReachable is absent → treat as false
+    // (no clamp) since we cannot know the canonical state.
+    hiddenObjectiveDestroyed: adjudication.hiddenTask.revealed
+      && adjudication.hiddenTask.prerequisiteReachable === false,
   });
 }

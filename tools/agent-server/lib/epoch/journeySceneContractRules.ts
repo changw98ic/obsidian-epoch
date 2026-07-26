@@ -27,6 +27,7 @@ import {
   journeyActionRiskTerms,
   type JourneyActionRiskTerms,
 } from "./journeyActionResolutionRules.ts";
+import type { JourneyActionObjectImpact } from "./journeyWorldImpactRules.ts";
 
 export const JOURNEY_SCENE_CONTRACT_RULE_VERSION = "journey-scene-contract.v2";
 const LEGACY_JOURNEY_SCENE_CONTRACT_RULE_VERSION = "journey-scene-contract.v1";
@@ -89,6 +90,13 @@ export interface JourneySceneActionOption {
    * ExpectedLifePattern. Absent on legacy contracts — the hook fail-opens.
    */
   readonly approachTags?: readonly ApproachTag[];
+  /**
+   * PR5c additive. Structured object-impact descriptor for this action.
+   * INTERNAL-only — excluded from the signed content hash (like approachTags)
+   * and from the public HostedActionOptionPayload. The mirror-mode submit
+   * path reads this field to call planJourneyObjectImpactBlueprints.
+   */
+  readonly actionObjectImpact?: JourneyActionObjectImpact;
   readonly contentHash: `sha256:${string}`;
   readonly signatureAlgorithm: typeof RUNTIME_ACTION_SIGNATURE_ALGORITHM;
   readonly signatureVersion: 1;
@@ -122,6 +130,8 @@ export interface JourneySceneContract {
     readonly title: string;
     readonly objective: string;
     readonly completionCriteria: string;
+    /** PR5c additive. Hidden prerequisite object ids for this objective. INTERNAL-only. */
+    readonly hiddenPrerequisiteObjectIds?: readonly string[];
   };
 }
 
@@ -805,6 +815,7 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
     readonly completionKind?: "complete" | "skip";
     readonly routeSelection?: JourneySceneActionOption["routeSelection"];
     readonly approachTags?: readonly ApproachTag[];
+    readonly actionObjectImpact?: JourneyActionObjectImpact;
   }) => {
     const { resolved } = inputAction;
     if (!taskContext && !generatedTaskObjective && !isJourneySceneActionLabelSpecific(resolved.label, knownLabels)) {
@@ -837,6 +848,14 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
       // hook reads it; legacy actions omit it and the hook fail-opens.
       ...(inputAction.approachTags && inputAction.approachTags.length > 0
         ? { approachTags: inputAction.approachTags }
+        : {}),
+      // PR5c: actionObjectImpact is INTERNAL — server-derived at task-action
+      // build time. It is NOT part of the action's signed content (excluded
+      // from JourneySceneActionSignedContentInput.Pick), so changing it does
+      // not invalidate the signature. The mirror-mode submit path reads it
+      // to call planJourneyObjectImpactBlueprints.
+      ...(inputAction.actionObjectImpact
+        ? { actionObjectImpact: inputAction.actionObjectImpact }
         : {}),
     } as const;
     const actionOptionId = `action_${compactHash({ sceneId, ...unsignedAction, actionOptionId: undefined })}`;
@@ -898,6 +917,11 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
               // hook can read them off the signed action.
               ...(action.approachTags && action.approachTags.length > 0
                 ? { approachTags: action.approachTags }
+                : {}),
+              // PR5c: forward object impact metadata so the mirror-mode
+              // submit path can call planJourneyObjectImpactBlueprints.
+              ...(action.objectImpact
+                ? { actionObjectImpact: action.objectImpact }
                 : {}),
               resolved: {
                 label: action.label,
@@ -1025,6 +1049,9 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
       title: generatedTaskObjective.title,
       objective: generatedTaskObjective.objective,
       completionCriteria: generatedTaskObjective.completionCriteria,
+      ...(generatedTaskObjective.hiddenPrerequisiteObjectIds
+        ? { hiddenPrerequisiteObjectIds: generatedTaskObjective.hiddenPrerequisiteObjectIds }
+        : {}),
     } } : {}),
   };
 }
