@@ -3581,6 +3581,26 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
           archivedAt: event.payload.archivedAt,
           finalTitle: event.payload.finalTitle,
         },
+        // PR7: zero viability on archive so stale snapshots do not leak
+        // across the identity boundary. The archived identity carries a
+        // terminal social-death snapshot — all transient fields
+        // (factionStanding, flaggedWanted, doubtedBy, identityExposed) are
+        // reset to empty; viabilityScoreBps drops to 0 and status becomes
+        // 'social_death'. This mirrors what initialIdentityViability does
+        // for fresh identities but with a zero score to reflect terminality.
+        identityViability: identity.identityViability
+          ? {
+              identityId: identity.agentId,
+              factionStanding: {},
+              flaggedWanted: new Set<string>(),
+              identityExposed: false,
+              doubtedBy: {},
+              viabilityScoreBps: 0,
+              status: "social_death",
+              policyVersion: identity.identityViability.policyVersion,
+              projectedAt: event.payload.archivedAt,
+            }
+          : undefined,
       };
       break;
     }
