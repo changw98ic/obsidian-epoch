@@ -25,7 +25,7 @@ import { createLegacyOutboxLedger, graphSyncFromOutboxEntries, type LegacyOutbox
 import { createEpochRuntime, type EpochSharedResultPage } from "./epoch/runtime.ts";
 import { projectEpochEvents } from "./epoch/gameCore.ts";
 import { createAgentCompanionRuntime } from "./epoch/agentCompanionRuntime.ts";
-import { createJourneyOfferRepository } from "./epoch/journeyOfferStore.ts";
+import { createJourneyOfferRepository, type ReplenishStrategy } from "./epoch/journeyOfferStore.ts";
 import { createJourneyOfferRuntime } from "./epoch/journeyOfferRuntime.ts";
 import type { EpochEvent } from "./epoch/events.ts";
 import { listMirrorConsequences } from "./epoch/journeyMirrorLedger.ts";
@@ -1708,8 +1708,13 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
   // PR3: wire the quest-offer runtime so prepare_journey can run in
   // offer-driven mode (claim + resolve + delegate). Backed by the same
   // append-only JSONL repository as the rest of the epoch engine.
+  // PR10: inject AI-backed replenish strategy when provided via journey options.
+  const configuredReplenishStrategy = typeof journeyOptions.replenishStrategy === "function"
+    ? journeyOptions.replenishStrategy as ReplenishStrategy
+    : undefined;
   const journeyOfferRuntime = createJourneyOfferRuntime({
     repository: createJourneyOfferRepository(),
+    replenishStrategy: configuredReplenishStrategy,
     now: () => clockIso(configuredJourneyClock),
   });
   const companionRuntime = createAgentCompanionRuntime({
