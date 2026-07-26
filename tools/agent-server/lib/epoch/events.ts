@@ -212,6 +212,24 @@ export interface IdentityIssuedPayload {
    * projection history is sealed in the archive.
    */
   readonly identityViability?: IdentityViability;
+  /**
+   * PR5b additive (journeyRoleplayRules). Server-frozen expected-life-pattern
+   * bound to this identity, produced deterministically from the issuance
+   * inputs by {@link buildExpectedLifePattern}. The applyEvent path for
+   * `identity_issued` projects this onto `identity.expectedLifePattern`; the
+   * roleplay-doubt hook in `submitHostedAction` reads it to classify observed
+   * approach tags.
+   *
+   * Optional for backwards compatibility: legacy emitters that pre-date PR5b
+   * leave it absent, and the roleplay hook fail-opens (skips) when the
+   * identity has no pattern.
+   *
+   * Reincarnation reset: on `reincarnation_issued`, the new identity carries
+   * a FRESH pattern built from the new (agentId, explorerId, generation,
+   * identityName) tuple. The previous identity's pattern is NOT inherited —
+   * by construction the inputHash differs.
+   */
+  readonly expectedLifePattern?: ExpectedLifePattern;
 }
 
 export interface ExplorerRecoveryRotatedPayload {

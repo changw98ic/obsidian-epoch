@@ -13,6 +13,10 @@ import {
 import type { EpochEventFactory } from "./eventFactory.ts";
 import type { EpochLineageInheritance } from "./protocol.ts";
 import {
+  buildExpectedLifePattern,
+  type ExpectedLifePattern,
+} from "./journeyRoleplayRules.ts";
+import {
   LIFETIME_REASON_IDENTITY_VIABILITY_ACCELERATION,
   LIFETIME_REASON_IDENTITY_VIABILITY_SOCIAL_DEATH,
   VIABILITY_POLICY_VERSION,
@@ -95,6 +99,15 @@ export interface IdentityIssuedPayloadInput {
    * previous identity's viability history is NOT inherited.
    */
   readonly initialViability?: IdentityViability;
+  /**
+   * PR5b additive. Server-frozen {@link ExpectedLifePattern} to carry on the
+   * identity payload. Callers MAY pre-build a pattern and pass it here; when
+   * omitted the planner helpers ({@link planIdentityIssueEvents} /
+   * {@link planIdentityReincarnationEvents}) build one deterministically from
+   * the issuance inputs. The payload helper passes this through verbatim — it
+   * does not build the pattern itself, preserving the pure-function boundary.
+   */
+  readonly expectedLifePattern?: ExpectedLifePattern;
 }
 
 export interface IdentityIssueEventsInput extends IdentityIssuedPayloadInput {
@@ -272,10 +285,35 @@ export function identityIssuedPayload(input: IdentityIssuedPayloadInput): Identi
     },
     viabilityPolicyVersion: VIABILITY_POLICY_VERSION,
     identityViability: initialViability,
+    // PR5b: transparently forward the caller-supplied pattern (if any). The
+    // helper does not build the pattern — that is the planner's responsibility
+    // so the helper stays pure and deterministic on its other inputs.
+    ...(input.expectedLifePattern ? { expectedLifePattern: input.expectedLifePattern } : {}),
   };
 }
 
 export function planIdentityIssueEvents(input: IdentityIssueEventsInput): readonly EpochEvent[] {
+  // PR5b: build the deterministic ExpectedLifePattern at issuance. The
+  // builder is pure (same inputs → same pattern + same inputHash) so the
+  // persisted pattern is replay-stable. We build from the SAME personality
+  // traits the helper computes below so the pattern stays consistent with
+  // the issued identity record. When the caller pre-supplies
+  // `expectedLifePattern` it is forwarded verbatim and the builder is not
+  // invoked — that path exists for tests / migration tools that need to
+  // pin a specific pattern.
+  const traits = initialIdentityTraits({
+    agentId: input.agentId,
+    identityName: input.identityName,
+    generation: input.generation,
+  });
+  const expectedLifePattern = input.expectedLifePattern ?? buildExpectedLifePattern({
+    identityId: input.agentId,
+    identityName: input.identityName,
+    explorerId: input.explorerId,
+    generation: input.generation,
+    personalityTraits: traits,
+    frozenAt: input.startedAt,
+  });
   const payload = identityIssuedPayload({
     agentId: input.agentId,
     explorerId: input.explorerId,
@@ -286,6 +324,7 @@ export function planIdentityIssueEvents(input: IdentityIssueEventsInput): readon
     inheritance: input.inheritance,
     maxLifetime: input.maxLifetime,
     startedAt: input.startedAt,
+    expectedLifePattern,
   });
   return [input.makeEvent("identity_issued", input.agentId, payload, { agentId: input.agentId })];
 }
@@ -424,6 +463,24 @@ export function reincarnationIssuedPayload(
 export function planIdentityReincarnationEvents(
   input: IdentityReincarnationEventsInput,
 ): readonly EpochEvent[] {
+  // PR5b: reincarnation builds a FRESH pattern from nextAgentId + new
+  // explorerId + generation + new identityName. The previous identity's
+  // pattern (and doubtedBy) is NOT inherited — by construction the inputHash
+  // differs and the new identity starts with a clean roleplay norm. This
+  // mirrors the PR5a viability reset in `initialIdentityViability`.
+  const reincarnationTraits = initialIdentityTraits({
+    agentId: input.nextAgentId,
+    identityName: input.identityName,
+    generation: input.generation,
+  });
+  const expectedLifePattern = buildExpectedLifePattern({
+    identityId: input.nextAgentId,
+    identityName: input.identityName,
+    explorerId: input.explorerId,
+    generation: input.generation,
+    personalityTraits: reincarnationTraits,
+    frozenAt: input.startedAt,
+  });
   const issuedPayload = identityIssuedPayload({
     agentId: input.nextAgentId,
     explorerId: input.explorerId,
@@ -433,6 +490,7 @@ export function planIdentityReincarnationEvents(
     inheritance: input.inheritance,
     maxLifetime: input.maxLifetime,
     startedAt: input.startedAt,
+    expectedLifePattern,
   });
   const issued = input.makeEvent("identity_issued", input.nextAgentId, issuedPayload, {
     agentId: input.nextAgentId,

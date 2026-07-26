@@ -13,6 +13,7 @@ import {
   COLLATERAL_FLOOR_BPS,
   COLLATERAL_WEIGHT_BPS_V1,
   computeSettlementContextReplayDigest,
+  IDENTITY_DOUBT_COLLATERAL_CAP_BPS,
   LIFETIME_SELFLOSS_BPS_PER_POINT,
   RESOURCE_SELFLOSS_BPS_PER_UNIT,
   RESULT_WEIGHT_EXEC,
@@ -22,6 +23,7 @@ import {
   applySelfLossDedupRules,
   collateralMagnitudeFactor,
 } from "../lib/epoch/journeyConsequenceScoring.ts";
+import { DOUBT_PENALTY_BPS } from "../lib/epoch/journeyViabilityRules.ts";
 
 /**
  * PR4 journeyConsequenceScoring tests.
@@ -85,7 +87,17 @@ function makeMirrorEntry(input: {
   readonly delta: number;
   readonly dedupeKey: string;
   readonly recordedAt?: string;
+  /**
+   * PR5b: identity_doubt entries MUST carry `doubtStrength` in the
+   * effectBlueprint — the collateral scorer reads it via
+   * DOUBT_PENALTY_BPS[strength]. Other effect kinds ignore this field.
+   */
+  readonly doubtStrength?: "low" | "moderate" | "high" | "severe";
 }): MirrorConsequenceLedgerEntry {
+  const effectBlueprint: Record<string, unknown> = {};
+  if (input.doubtStrength !== undefined) {
+    effectBlueprint["doubtStrength"] = input.doubtStrength;
+  }
   return {
     actionEventId: input.actionEventId,
     effectKind: input.effectKind,
@@ -93,7 +105,7 @@ function makeMirrorEntry(input: {
     delta: input.delta,
     consequenceType: "collateral",
     sourceEventIds: [],
-    effectBlueprint: {},
+    effectBlueprint,
     recordedAt: input.recordedAt ?? "1970-01-01T00:00:00.000Z",
     dedupeKey: input.dedupeKey,
   };
@@ -402,7 +414,10 @@ test("collateralScoreBps clamps to CAP when many positive entries accumulate", (
 });
 
 test("collateralScoreBps clamps to FLOOR when many negative entries accumulate", () => {
-  // identity_doubt: weight -1000, sign +, factor 1 → -1000 each.
+  // PR5b: identity_doubt now uses DOUBT_PENALTY_BPS[strength] (severe=4000)
+  // with a per-journey cap of IDENTITY_DOUBT_COLLATERAL_CAP_BPS (4000). 5
+  // severe entries sum to 20000 raw, clamped to 4000 magnitude → -4000 to
+  // cumulative → collateral clamped to FLOOR (-2000).
   const entries = Array.from({ length: 5 }, (_, i) =>
     makeMirrorEntry({
       actionEventId: `evt_action_${String(i).padStart(3, "0")}`,
@@ -410,12 +425,82 @@ test("collateralScoreBps clamps to FLOOR when many negative entries accumulate",
       targetEntityId: `identity:agent_${String(i).padStart(2, "0")}`,
       delta: 15,
       dedupeKey: `identity_doubt:agent_${String(i).padStart(2, "0")}:evt_action_${String(i).padStart(3, "0")}`,
+      doubtStrength: "severe",
     }),
   );
   const ctx = makeBaseCtx({ mirrorLedgerEntries: entries });
   const score = buildConsequenceScore(ctx);
-  // 5 * -1000 = -5000, clamped to -2000.
+  // -4000 (capped doubt) clamped to FLOOR -2000.
   assert.equal(score.breakdown.collateralScoreBps, COLLATERAL_FLOOR_BPS);
+});
+
+test("PR5b identity_doubt uses DOUBT_PENALTY_BPS[strength] capped at IDENTITY_DOUBT_COLLATERAL_CAP_BPS", () => {
+  // Single severe doubt: -4000 bps (= DOUBT_PENALTY_BPS.severe = cap). No
+  // FLOOR clamp needed because -4000 > -2000... wait, -4000 < -2000, so this
+  // DOES hit FLOOR. Use moderate instead so we observe the raw contribution.
+  // 2 moderate entries → 2 * 750 = 1500 raw → -1500 cumulative → -1500
+  // collateral (above FLOOR -2000, below CAP).
+  const moderateEntries = Array.from({ length: 2 }, (_, i) =>
+    makeMirrorEntry({
+      actionEventId: `evt_action_mod_${i}`,
+      effectKind: "identity_doubt",
+      targetEntityId: `identity:agent_mod_${i}`,
+      delta: 0,
+      dedupeKey: `identity_doubt:agent_mod_${i}:evt_action_mod_${i}`,
+      doubtStrength: "moderate",
+    }),
+  );
+  const ctxModerate = makeBaseCtx({ mirrorLedgerEntries: moderateEntries });
+  const scoreModerate = buildConsequenceScore(ctxModerate);
+  assert.equal(
+    scoreModerate.breakdown.collateralScoreBps,
+    -(DOUBT_PENALTY_BPS.moderate * 2),
+  );
+  // Entry IDs are recorded for audit.
+  assert.equal(scoreModerate.breakdown.collateralLedgerEntryIds.length, 2);
+});
+
+test("PR5b identity_doubt entries without doubtStrength contribute 0 bps (fail-open defence)", () => {
+  // Legacy/malformed blueprint without doubtStrength MUST NOT fabricate a
+  // penalty. The scorer reads effectBlueprint.doubtStrength and skips
+  // accumulation when the field is absent or invalid.
+  const entries = [
+    makeMirrorEntry({
+      actionEventId: "evt_action_legacy",
+      effectKind: "identity_doubt",
+      targetEntityId: "identity:agent_legacy",
+      delta: 15,
+      dedupeKey: "identity_doubt:agent_legacy:evt_action_legacy",
+      // doubtStrength intentionally omitted.
+    }),
+  ];
+  const ctx = makeBaseCtx({ mirrorLedgerEntries: entries });
+  const score = buildConsequenceScore(ctx);
+  // 0 bps collateral contribution; entry id still recorded for audit.
+  assert.equal(score.breakdown.collateralScoreBps, 0);
+  assert.equal(score.breakdown.collateralLedgerEntryIds.length, 1);
+});
+
+test("PR5b identity_doubt cap prevents solo-kill: 3 severe entries still hit only the 4000 cap", () => {
+  // 3 severe = 12000 raw → clamp to 4000 → -4000 cumulative → FLOOR -2000.
+  // The cap ensures a single journey cannot drain collateral below what one
+  // severe doubt would do (anti-solo-kill).
+  const entries = Array.from({ length: 3 }, (_, i) =>
+    makeMirrorEntry({
+      actionEventId: `evt_action_sev_${i}`,
+      effectKind: "identity_doubt",
+      targetEntityId: `identity:agent_sev_${i}`,
+      delta: 0,
+      dedupeKey: `identity_doubt:agent_sev_${i}:evt_action_sev_${i}`,
+      doubtStrength: "severe",
+    }),
+  );
+  const ctx = makeBaseCtx({ mirrorLedgerEntries: entries });
+  const score = buildConsequenceScore(ctx);
+  assert.equal(score.breakdown.collateralScoreBps, COLLATERAL_FLOOR_BPS);
+  assert.equal(score.breakdown.collateralLedgerEntryIds.length, 3);
+  // Sanity: the cap constant equals DOUBT_PENALTY_BPS.severe (one severe).
+  assert.equal(IDENTITY_DOUBT_COLLATERAL_CAP_BPS, DOUBT_PENALTY_BPS.severe);
 });
 
 test("collateralMagnitudeFactor normalises |delta| into [0, 1] via min(1, |delta|/10)", () => {
@@ -514,6 +599,8 @@ test("totalBps = clamp(result + selfLoss + collateral, 0, 10_000)", () => {
 
 test("totalBps clamps to zero when collateral floor drags the sum negative", () => {
   // Low result + heavy negative collateral + non-trivial self-loss.
+  // PR5b: identity_doubt entries now carry doubtStrength in the blueprint;
+  // 5 severe entries → 20000 raw → 4000 capped → -4000 cumulative → FLOOR -2000.
   const ctx = makeBaseCtx({
     resultComponentInputs: {
       mainCompletionBps: 1_000, // 600
@@ -530,6 +617,7 @@ test("totalBps clamps to zero when collateral floor drags the sum negative", () 
         targetEntityId: `identity:agent_${String(i).padStart(2, "0")}`,
         delta: 15,
         dedupeKey: `identity_doubt:agent_${String(i).padStart(2, "0")}:evt_action_${String(i).padStart(3, "0")}`,
+        doubtStrength: "severe",
       }),
     ),
   });

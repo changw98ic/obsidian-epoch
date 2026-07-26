@@ -12,7 +12,7 @@ import {
   type JourneyTaskRisk,
   type JourneyTaskRoute,
 } from "./journeyTaskCatalog.ts";
-import type { ApproachTag } from "./journeyStrategyRules.ts";
+import { type ApproachTag, isApproachTag } from "./journeyStrategyRules.ts";
 
 type JsonRecord = Readonly<Record<string, unknown>>;
 
@@ -412,6 +412,13 @@ const ACTION_FIELDS = new Set([
   "targetObjectIds",
   "outcomeSummary",
   "selectsRouteId",
+  // PR5b: approachTags is whitelisted so the fallback path can re-validate
+  // its own calibrated proposal (which carries server-derived approachTags
+  // from fallbackAction). The parser NEVER trusts a client-supplied value
+  // — it ALWAYS re-derives approachTags from text + structured signals via
+  // deriveActionApproachTags below. The whitelist entry only prevents the
+  // field-not-allowed guard from firing on server-emitted proposals.
+  "approachTags",
 ]);
 const ALLOWED_SCENE_TYPES = new Set<JourneyGeneratedTaskObjective["sceneType"]>([
   "livelihood",
@@ -755,10 +762,25 @@ export function validateJourneyTaskProposal(input: {
       const selectsRouteId = rawAction.selectsRouteId === undefined
         ? undefined
         : slug(rawAction.selectsRouteId, `selects_route_id_${index}_${actionIndex}`);
+      const actionLabel = text(rawAction.label, `action_label_${index}_${actionIndex}`, 220);
+      const actionIntent = text(rawAction.intent, `action_intent_${index}_${actionIndex}`, 500);
+      const actionOutcomeSummary = text(rawAction.outcomeSummary, `outcome_summary_${index}_${actionIndex}`, 900);
+      // PR5b: derive approach tags server-side from text + structured signals.
+      // INTERNAL-only — the field never appears in PublicActionOption and is
+      // never accepted from the raw proposal (ACTION_FIELDS gates it out).
+      const approachTags = deriveActionApproachTags({
+        actionLabel,
+        actionIntent,
+        actionOutcomeSummary,
+        sceneType: rawObjective.sceneType as JourneyGeneratedTaskObjective["sceneType"],
+        objectiveKind,
+        allowedEffectKinds: allowedEffectKinds as readonly JourneyTaskEffectKind[],
+        ...(selectsRouteId ? { selectsRouteId } : {}),
+      });
       return {
         optionKey,
-        label: text(rawAction.label, `action_label_${index}_${actionIndex}`, 220),
-        intent: text(rawAction.intent, `action_intent_${index}_${actionIndex}`, 500),
+        label: actionLabel,
+        intent: actionIntent,
         risk: input.source === "server_fallback"
           ? rawAction.risk
           : normalizeJourneyTaskActionRisk({
@@ -775,8 +797,9 @@ export function validateJourneyTaskProposal(input: {
             }),
         allowedEffectKinds: allowedEffectKinds as readonly JourneyTaskEffectKind[],
         targetObjectIds,
-        outcomeSummary: text(rawAction.outcomeSummary, `outcome_summary_${index}_${actionIndex}`, 900),
+        outcomeSummary: actionOutcomeSummary,
         ...(selectsRouteId ? { selectsRouteId } : {}),
+        ...(approachTags.length > 0 ? { approachTags } : {}),
       };
     });
     return {
@@ -965,13 +988,137 @@ export function validateJourneyTaskProposal(input: {
   return { plan, hiddenTaskSeal };
 }
 
+/**
+ * PR5b additive (journeyRoleplayRules integration). Internal-only approach-tag
+ * derivation for a single journey task action.
+ *
+ * The function is the single server-owned source for the `approachTags`
+ * field written onto {@link JourneyGeneratedTaskAction}. The derivation is
+ * deterministic and LLM-free: it inspects the action's text + structured
+ * signals (allowed effect kinds, scene type, objective kind, selected route)
+ * and emits at most one approach tag for the first signal that fires. The
+ * output is gated through {@link isApproachTag} so any heuristic drift
+ * surfaces as an empty array (fail-closed) rather than an invalid tag.
+ *
+ * Zero-bonus boundary: this field is INTERNAL — it does NOT surface on
+ * `PublicActionOption` / `PublicQuestOffer`. The roleplay-doubt hook in
+ * `submitHostedAction` reads it server-side; legacy actions that omit the
+ * field cause the roleplay hook to fail-open (skip), never block settlement.
+ *
+ * Mapping v1 (PR5b spec §6.9):
+ *  - escort/aid/rescue/protect signal → ['support']
+ *  - stealth/avoid/sneak signal → ['stealth']
+ *  - supply/logistics/deliver signal → ['logistics']
+ *  - scout/recon/investigate signal OR discovery scene → ['scout']
+ *  - faction route selection (factionObjectId present) → ['diplomacy']
+ *  - diplomacy/negotiate/liaison signal → ['diplomacy']
+ *  - combat/fight/strike/hunt signal OR conflict scene → ['combat']
+ *  - no signal → [] (legacy action; roleplay hook fail-opens)
+ *
+ * Bumping the signal regexes / ordering MUST bump
+ * {@link ROLEPLAY_PATTERN_VERSION} in journeyRoleplayRules so existing
+ * identities re-issue their patterns against the new mapping (action tags
+ * feed the comparator).
+ */
+export interface DeriveActionApproachTagsInput {
+  /** Action label and intent — mined for approach-tag signal keywords. */
+  readonly actionLabel?: string;
+  readonly actionIntent?: string;
+  readonly actionOutcomeSummary?: string;
+  readonly sceneType?: JourneyGeneratedTaskObjective["sceneType"];
+  readonly objectiveKind?: JourneyTaskObjectiveKind;
+  readonly allowedEffectKinds: readonly JourneyTaskEffectKind[];
+  /**
+   * Route selection signal. PR5b v1 does NOT auto-derive 'diplomacy' from
+   * route selection alone — only explicit text signals trigger the diplomacy
+   * tag. The spec's "faction route → ['diplomacy'] 或按
+   * routeSelection.factionObjectId" is permissive; v1 picks the
+   * text-only path so generic routing actions (e.g. "接受 faction 提出的
+   * 路线") do not drag the acting identity into a roleplay-doubt penalty
+   * before the text-mining is calibrated against live telemetry. These
+   * fields are accepted for forward compatibility but not consulted here.
+   */
+  readonly selectsRouteId?: string;
+  readonly routeFactionObjectId?: string;
+}
+
+const APPROACH_SIGNAL_COMBAT = /combat|fight|strike|assault|hunt|battle|战斗|猎杀|袭击|刺杀|攻击|交战|剿|突围/iu;
+const APPROACH_SIGNAL_SCOUT = /scout|recon|investigate|survey|勘探|侦察|调查|勘测|测绘|监控/iu;
+const APPROACH_SIGNAL_LOGISTICS = /supply|logistics|deliver|cargo|补给|物流|运送|交付|运输|调度/iu;
+const APPROACH_SIGNAL_SUPPORT = /escort|aid|rescue|assist|protect|护送|救援|协助|援助|保护|照料|治疗/iu;
+const APPROACH_SIGNAL_STEALTH = /stealth|avoid|sneak|hide|evade|潜行|回避|避开|隐匿|悄|无声/iu;
+const APPROACH_SIGNAL_DIPLOMACY = /diplomacy|negotiate|parley|liaison|外交|谈判|联络|斡旋|交涉/iu;
+
+export function deriveActionApproachTags(input: DeriveActionApproachTagsInput): readonly ApproachTag[] {
+  const text = `${input.actionLabel ?? ""} ${input.actionIntent ?? ""} ${input.actionOutcomeSummary ?? ""}`;
+  // Ordered checks: support/stealth/logistics/diplomacy by text first (the
+  // highest-signal action verbs), then scout/combat (text or scene-type
+  // inference), then effect-kind fallbacks. First match wins. The order is
+  // versioned via ROLEPLAY_PATTERN_VERSION.
+  if (APPROACH_SIGNAL_SUPPORT.test(text)) return filterTags(["support"]);
+  if (APPROACH_SIGNAL_STEALTH.test(text)) return filterTags(["stealth"]);
+  if (APPROACH_SIGNAL_LOGISTICS.test(text)) return filterTags(["logistics"]);
+  if (APPROACH_SIGNAL_DIPLOMACY.test(text)) return filterTags(["diplomacy"]);
+  if (APPROACH_SIGNAL_SCOUT.test(text) || input.sceneType === "discovery") {
+    return filterTags(["scout"]);
+  }
+  if (APPROACH_SIGNAL_COMBAT.test(text) || input.sceneType === "conflict") {
+    return filterTags(["combat"]);
+  }
+  // resource_delta effect on a non-combat/non-scout scene defaults to
+  // logistics (procurement / foraging). relationship_signal defaults to
+  // diplomacy. These are weak signals — they only fire when no stronger
+  // text/scene signal matched.
+  if (input.allowedEffectKinds.includes("resource_delta")) return filterTags(["logistics"]);
+  if (input.allowedEffectKinds.includes("relationship_signal")) return filterTags(["diplomacy"]);
+  // No signal: legacy action — roleplay hook fail-opens.
+  return [];
+}
+
+/** Defence-in-depth: drop any tag that is not a member of APPROACH_TAGS. */
+function filterTags(tags: readonly string[]): readonly ApproachTag[] {
+  const out: ApproachTag[] = [];
+  for (const tag of tags) {
+    if (isApproachTag(tag)) out.push(tag);
+  }
+  return out;
+}
+
+/**
+ * Extended context for {@link fallbackAction} so the PR5b approach-tag
+ * derivation has access to scene / objective / route signals. All fields
+ * are optional; when absent the corresponding signal is skipped (the
+ * derivation falls back to text + effect-kind signals).
+ */
+export interface FallbackActionContext {
+  readonly sceneType?: JourneyGeneratedTaskObjective["sceneType"];
+  readonly objectiveKind?: JourneyTaskObjectiveKind;
+  /**
+   * Faction object id of the route this action selects, when the action
+   * carries a `selectsRouteId` that resolves to a faction-bearing route.
+   * Drives the diplomacy signal in {@link deriveActionApproachTags}.
+   */
+  readonly routeFactionObjectId?: string;
+}
+
 function fallbackAction(
   action: JourneyTaskActionDefinition,
   optionKey: string,
   label: string,
   intent: string,
   outcomeSummary: string,
+  context: FallbackActionContext = {},
 ): JourneyGeneratedTaskAction {
+  const approachTags = deriveActionApproachTags({
+    actionLabel: label,
+    actionIntent: intent,
+    actionOutcomeSummary: outcomeSummary,
+    sceneType: context.sceneType,
+    objectiveKind: context.objectiveKind,
+    allowedEffectKinds: action.allowedEffectKinds,
+    ...(action.targetObjectIds ? {} : {}),
+    routeFactionObjectId: context.routeFactionObjectId,
+  });
   return {
     optionKey,
     label,
@@ -980,6 +1127,9 @@ function fallbackAction(
     allowedEffectKinds: action.allowedEffectKinds,
     targetObjectIds: action.targetObjectIds,
     outcomeSummary,
+    // PR5b: server-derived approach tags for the roleplay-doubt hook.
+    // INTERNAL-only — never surfaces on PublicActionOption.
+    ...(approachTags.length > 0 ? { approachTags } : {}),
   };
 }
 
@@ -1153,7 +1303,15 @@ export function buildFallbackJourneyTaskPlan(input: {
     intent: string,
     outcomeSummary: string,
     risk: JourneyTaskRisk = action.risk,
-  ) => fallbackAction({ ...action, risk, targetObjectIds: stageTargets(stage) }, optionKey, label, intent, outcomeSummary);
+    context: FallbackActionContext = {},
+  ) => fallbackAction(
+    { ...action, risk, targetObjectIds: stageTargets(stage) },
+    optionKey,
+    label,
+    intent,
+    outcomeSummary,
+    { sceneType: route.sceneType, ...context },
+  );
   const branchObjects = route.worldObjects.filter((object) =>
     object.id !== route.locationId && ["organization", "faction", "npc", "agent"].includes(object.type));
   const affiliationSponsors = branchObjects.filter((object) =>
@@ -1181,8 +1339,17 @@ export function buildFallbackJourneyTaskPlan(input: {
     routeId: string,
     suffix: string,
     routeLabel: string,
-  ): JourneyGeneratedTaskAction => ({
-    ...stageAction(
+  ): JourneyGeneratedTaskAction => {
+    // PR5b: a choice action selects a route; when the sponsor is a faction /
+    // organization, propagate its id so deriveActionApproachTags emits
+    // 'diplomacy' for the roleplay-doubt comparator. The choice action's
+    // risk stays at "low" (matching the pre-PR5b behaviour: stageAction's
+    // risk parameter defaults to action.risk where action is the already-
+    // merged `{...action, risk: "low"}`).
+    const sponsorFactionId = sponsor && ["organization", "faction"].includes(sponsor.type)
+      ? sponsor.id
+      : undefined;
+    const base = stageAction(
       { ...action, risk: "low" },
       1,
       `${route.routeKey}_choose_${suffix}`,
@@ -1191,10 +1358,22 @@ export function buildFallbackJourneyTaskPlan(input: {
       sponsor
         ? `身份与${sponsor.label}确认了${routeLabel}，后续行动转入对应路线。`
         : `身份确认采用${routeLabel}，后续行动转入对应路线。`,
-    ),
-    targetObjectIds: [...new Set([route.locationId, ...(sponsor ? [sponsor.id] : [])])],
-    selectsRouteId: routeId,
-  });
+      // Explicit risk "low" preserves pre-PR5b behaviour (the merged action
+      // already sets risk: "low"; passing it explicitly here keeps the
+      // stageAction signature's risk parameter unambiguous when we also
+      // pass the new context argument).
+      "low",
+      {
+        objectiveKind: "choice",
+        ...(sponsorFactionId ? { routeFactionObjectId: sponsorFactionId } : {}),
+      },
+    );
+    return {
+      ...base,
+      targetObjectIds: [...new Set([route.locationId, ...(sponsor ? [sponsor.id] : [])])],
+      selectsRouteId: routeId,
+    };
+  };
   const objectives: JourneyGeneratedTaskObjective[] = [
     fallbackObjective({
       route, kind: "main", sequence: 1, stage: 1, suffix: "prepare", title: "确认现场与执行条件",

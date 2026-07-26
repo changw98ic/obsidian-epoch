@@ -42,6 +42,8 @@ import {
   type SelfLossSourceKind,
   type SettlementContext,
 } from "./journeySettlementRules.ts";
+import { DOUBT_PENALTY_BPS } from "./journeyViabilityRules.ts";
+import type { DoubtStrength } from "./journeyRoleplayRules.ts";
 
 // ---------------------------------------------------------------------------
 // Versioned placeholder constants (Step 16 tunes; bumping ships as a policy
@@ -104,6 +106,19 @@ export const COLLATERAL_WEIGHT_BPS_V1: Readonly<Record<Exclude<ConsequenceEffect
 
 /** Lower bound on the collateral bucket; keeps totalBps bounded. */
 export const COLLATERAL_FLOOR_BPS = -2_000 as const;
+/**
+ * PR5b cap on the cumulative identity_doubt contribution to the collateral
+ * bucket. Spec §6.9: a single journey can contribute at most one severe
+ * doubt's worth of collateral penalty (4_000 bps) so a solo-kill via doubt
+ * accumulation is impossible. Doubt beyond this cap still aggregates into
+ * RoleplayScore / viability doubtedBy (uncapped at the score layer) but the
+ * CURRENT settlement's collateral bucket is bounded.
+ *
+ * Bumping this cap MUST bump BOTH {@link CONSEQUENCE_SCORE_POLICY_VERSION}
+ * (the score bytes change) AND {@link VIABILITY_POLICY_VERSION} in
+ * journeyViabilityRules (the doubt aggregation changes).
+ */
+export const IDENTITY_DOUBT_COLLATERAL_CAP_BPS = 4_000 as const;
 
 /** Upper bound on the collateral bucket. */
 export const COLLATERAL_CAP_BPS = 1_500 as const;
@@ -326,6 +341,7 @@ function computeCollateralBucket(
   ctx: SettlementContext,
 ): { readonly bps: number; readonly entryIds: readonly string[] } {
   let cumulative = 0;
+  let doubtCumulative = 0;
   const entryIds: string[] = [];
   for (const entry of ctx.mirrorLedgerEntries) {
     if (entry.consequenceType !== "collateral") continue;
@@ -334,12 +350,36 @@ function computeCollateralBucket(
         `journey_consequence_scoring_collateral_kind_is_self_loss:${entry.effectKind}`,
       );
     }
+    if (entry.effectKind === "identity_doubt") {
+      // PR5b: identity_doubt uses a special doubt-strength-driven path so the
+      // collateral ruler matches viability doubtedBy aggregation exactly.
+      // The blueprint's `effectBlueprint.doubtStrength` carries the
+      // classification output; we sum DOUBT_PENALTY_BPS[strength] across all
+      // promoted doubt entries and cap at IDENTITY_DOUBT_COLLATERAL_CAP_BPS
+      // (single-journey severe cap, anti-solo-kill). The contribution to
+      // cumulative is NEGATIVE (a doubt is a penalty). Anti-loop: doubt only
+      // enters collateral from promoted mirror-ledger entries; it never
+      // round-trips through the current settlement's selfLossContributions
+      // (spec §6.8).
+      const strength = entry.effectBlueprint["doubtStrength"] as DoubtStrength | undefined;
+      if (strength === "low" || strength === "moderate" || strength === "high" || strength === "severe") {
+        doubtCumulative += DOUBT_PENALTY_BPS[strength];
+      }
+      entryIds.push(deriveCollateralLedgerEntryId(ctx.journeyId, entry));
+      continue;
+    }
     const weight = COLLATERAL_WEIGHT_BPS_V1[entry.effectKind];
     const sign = Math.sign(entry.delta);
     const factor = collateralMagnitudeFactor(entry.delta);
     cumulative += weight * sign * factor;
     entryIds.push(deriveCollateralLedgerEntryId(ctx.journeyId, entry));
   }
+  // Apply the per-journey identity_doubt cap BEFORE adding to cumulative so a
+  // solo-kill via accumulated doubt is structurally impossible. The clamp is
+  // on the magnitude; the contribution to cumulative is the negative
+  // magnitude (penalty).
+  const doubtMagnitude = clamp(doubtCumulative, 0, IDENTITY_DOUBT_COLLATERAL_CAP_BPS);
+  cumulative += doubtMagnitude === 0 ? 0 : -doubtMagnitude;
   const bps = clamp(Math.round(cumulative), COLLATERAL_FLOOR_BPS, COLLATERAL_CAP_BPS);
   return { bps, entryIds };
 }

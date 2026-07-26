@@ -13,6 +13,7 @@ import type {
   JourneyGeneratedTaskObjective,
   JourneyTaskGraphRoute,
 } from "./journeyGeneratedTaskRules.ts";
+import type { ApproachTag } from "./journeyStrategyRules.ts";
 import {
   journeyTaskActionForOptionKey,
   journeyTaskRouteForRegion,
@@ -74,6 +75,20 @@ export interface JourneySceneActionOption {
     readonly routeId: string;
     readonly factionObjectId?: string;
   };
+  /**
+   * PR5b additive (journeyStrategyRules). Server-derived approach tags
+   * observed for this signed action; copied verbatim from the originating
+   * {@link JourneyGeneratedTaskAction.approachTags} when the scene contract
+   * is built. The field IS serialised to clients on the public scene
+   * contract (informational metadata; clients cannot mutate it to bypass
+   * the roleplay check), but it is EXCLUDED from the action's signed
+   * content (see {@link JourneySceneActionSignedContentInput.action} Pick
+   * list) so a client cannot tamper with the tags and still produce a
+   * valid signature. The roleplay-doubt hook in `submitHostedAction` reads
+   * this field to classify the action against the identity's frozen
+   * ExpectedLifePattern. Absent on legacy contracts — the hook fail-opens.
+   */
+  readonly approachTags?: readonly ApproachTag[];
   readonly contentHash: `sha256:${string}`;
   readonly signatureAlgorithm: typeof RUNTIME_ACTION_SIGNATURE_ALGORITHM;
   readonly signatureVersion: 1;
@@ -789,6 +804,7 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
     readonly taskObjectiveId?: string;
     readonly completionKind?: "complete" | "skip";
     readonly routeSelection?: JourneySceneActionOption["routeSelection"];
+    readonly approachTags?: readonly ApproachTag[];
   }) => {
     const { resolved } = inputAction;
     if (!taskContext && !generatedTaskObjective && !isJourneySceneActionLabelSpecific(resolved.label, knownLabels)) {
@@ -814,6 +830,14 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
       ...(inputAction.taskObjectiveId ? { taskObjectiveId: inputAction.taskObjectiveId } : {}),
       ...(inputAction.completionKind ? { completionKind: inputAction.completionKind } : {}),
       ...(inputAction.routeSelection ? { routeSelection: inputAction.routeSelection } : {}),
+      // PR5b: approachTags is INTERNAL — server-derived at task-action build
+      // time and copied verbatim into the signed scene action. It is NOT part
+      // of the action's signed content (see JourneySceneActionSignedContentInput.Pick),
+      // so changing it does not invalidate the signature. The roleplay-doubt
+      // hook reads it; legacy actions omit it and the hook fail-opens.
+      ...(inputAction.approachTags && inputAction.approachTags.length > 0
+        ? { approachTags: inputAction.approachTags }
+        : {}),
     } as const;
     const actionOptionId = `action_${compactHash({ sceneId, ...unsignedAction, actionOptionId: undefined })}`;
     return buildSignedAction({
@@ -870,6 +894,11 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
                   ? { factionObjectId: selectedRoute.factionObjectId }
                   : {}),
               } } : {}),
+              // PR5b: forward server-derived approach tags so the roleplay
+              // hook can read them off the signed action.
+              ...(action.approachTags && action.approachTags.length > 0
+                ? { approachTags: action.approachTags }
+                : {}),
               resolved: {
                 label: action.label,
                 intent: action.intent,

@@ -65,7 +65,11 @@ test("runtime server-registers explorers without trusting caller supplied identi
   assert.equal("explorerSecretHash" in identityEvent.payload, false);
   assert.equal(JSON.stringify(result.events).includes(recovery.localSecret), false);
   assert.equal(JSON.stringify(result.events).includes(result.recoveryCode), false);
-  assert.doesNotMatch(JSON.stringify(result.events), /explorerSecretHash|sha256:/);
+  // The explorer secret hash field name MUST NOT leak into events. PR5b adds
+  // legitimate audit-only sha256 hashes (ExpectedLifePattern.inputHash) to
+  // identity_issued payloads, so the regex targets the secret field name
+  // specifically rather than the generic `sha256:` prefix.
+  assert.doesNotMatch(JSON.stringify(result.events), /explorerSecretHash/);
 });
 
 test("runtime explorer registration ignores client profile fields during idempotent replay", () => {
@@ -174,8 +178,15 @@ test("runtime verifies server-issued explorer auth and recovery authorizes owner
     newRecoveryCode: encodeExplorerRecoveryCode(registered.explorerId, "local_rotated_recovery_secret_1234567890"),
     idempotencyKey: "server-issued-recovery-rotate",
   });
-  assert.doesNotMatch(JSON.stringify(rotated), /explorerSecretHash|sha256:/);
-  assert.match(JSON.stringify(epochEventsForPersistence(rotated)), /explorerSecretHash|sha256:/);
+  // PR5b: tighten the leak-detection regex to target the secret field name
+  // (`explorerSecretHash`) rather than the generic `sha256:` prefix, because
+  // legitimate audit-only sha256 hashes (ExpectedLifePattern.inputHash) now
+  // appear on identity_issued events carried in the projection. The rotated
+  // user-facing result MUST still not leak `explorerSecretHash`, and the
+  // persistence layer MUST still carry it (the recovery rotation event
+  // writes the new hash for replay).
+  assert.doesNotMatch(JSON.stringify(rotated), /explorerSecretHash/);
+  assert.match(JSON.stringify(epochEventsForPersistence(rotated)), /explorerSecretHash/);
 });
 
 test("runtime auth verification is not exposed as MCP tools", () => {

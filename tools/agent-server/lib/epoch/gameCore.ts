@@ -35,7 +35,9 @@ import {
 import {
   type IdentityStrategyDisposition,
   type StrategyProfile,
+  type ApproachTag,
   AFFINITY_MATRIX_VERSION,
+  APPROACH_TAGS,
 } from "./journeyStrategyRules.ts";
 import type { ExpectedLifePattern } from "./journeyRoleplayRules.ts";
 import {
@@ -362,6 +364,7 @@ import { planJourneyWorldImpactEvents } from "./journeyWorldImpactRules.ts";
 import type { JourneyWorldCommit } from "./journeyRules.ts";
 import {
   planJourneyMirrorConsequenceBlueprints,
+  planJourneyRoleplayDoubt,
 } from "./journeyMirrorConsequenceBlueprints.ts";
 import {
   buildCanonicalEventFromMirrorEntry,
@@ -2840,6 +2843,44 @@ function uniqueValues(values: readonly string[]): string[] {
   return values.filter((value, index) => value && values.indexOf(value) === index);
 }
 
+/**
+ * PR5b fix: collect the mission-sanctioned approach palette for a scene
+ * contract's actionOptions. Returns the union of every actionOption's
+ * `approachTags`, filtered against the canonical {@link APPROACH_TAGS}
+ * universe (defence-in-depth so a malformed option cannot introduce an
+ * unknown string into the set). The result is passed to
+ * {@link planJourneyRoleplayDoubt} as `missionSanctionedApproaches`, where
+ * it drives the mission-aligned override (spec §6.9): an action whose
+ * observed tags are all sanctioned is classified 'aligned' and emits no
+ * doubt, so a combat-role identity on a support mission is not penalised
+ * for doing exactly what the mission offered.
+ *
+ * The returned array is reordered against APPROACH_TAGS so the set is
+ * canonical and stable across actionOptions iteration order. Empty when
+ * the scene carries no approachTags (legacy contracts).
+ */
+function collectSceneMissionSanctionedApproaches(
+  actionOptions: readonly { readonly approachTags?: readonly ApproachTag[] }[],
+): readonly ApproachTag[] {
+  const sanctioned = new Set<ApproachTag>();
+  for (const option of actionOptions) {
+    if (!option.approachTags) continue;
+    for (const tag of option.approachTags) {
+      // Defence-in-depth: only canonical APPROACH_TAGS members enter the
+      // set. The persisted arrays already only contain valid tags; this
+      // guard exists so a future caller cannot corrupt the override.
+      for (const canonical of APPROACH_TAGS) {
+        if (tag === canonical) {
+          sanctioned.add(tag);
+          break;
+        }
+      }
+    }
+  }
+  if (sanctioned.size === 0) return [];
+  return APPROACH_TAGS.filter((tag) => sanctioned.has(tag));
+}
+
 function currentProjectionWorldMinute(projection: EpochProjection): number {
   for (let index = projection.events.length - 1; index >= 0; index -= 1) {
     const event = projection.events[index];
@@ -3318,6 +3359,12 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
         }),
         createdAt: event.createdAt,
         identityViability: initialViability,
+        // PR5b: persist the roleplay pattern onto the identity. Legacy
+        // events persisted before PR5b leave this absent; the roleplay hook
+        // fail-opens (skips) when reading an undefined pattern.
+        ...(payload.expectedLifePattern
+          ? { expectedLifePattern: payload.expectedLifePattern }
+          : {}),
       };
       lineage[payload.explorerId] = [...(lineage[payload.explorerId] || []), payload.agentId];
       agentCustody[payload.agentId] = {
@@ -10049,7 +10096,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
             // blueprints are silently dropped — preserving the legacy
             // "mirror skips canonical collateral" behaviour.
             if (journeyMirrorLedgerSink) {
-              const blueprints = planJourneyMirrorConsequenceBlueprints({
+              const physicalBlueprints = planJourneyMirrorConsequenceBlueprints({
                 regionId: session.regionId,
                 agentId: session.agentId,
                 explorerId: session.explorerId,
@@ -10074,6 +10121,51 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
                 sourceAggregateId: session.sessionId,
                 recordedAt,
               });
+              // PR5b: roleplay-doubt hook. Server-side rule logic compares the
+              // signed action's approachTags against the identity's frozen
+              // ExpectedLifePattern and emits 0 or 1 identity_doubt mirror
+              // ledger entries. LLM-free; the hook is read-only with respect
+              // to canonical world state. The hook fail-opens (emits nothing)
+              // when the identity has no pattern (legacy identity issued
+              // before PR5b) or when the action carried no approachTags
+              // (legacy action). The entries join the same ledger sink as
+              // the physical-impact blueprints so solidify-time promotion
+              // handles them uniformly.
+              const approachTags = signedJourneyAction.approachTags;
+              // PR5b fix: derive the mission-sanctioned approach palette as
+              // the union of approachTags across every actionOption the
+              // current scene contract offers. By construction, a server-
+              // offered action's tags are a subset of this union. The
+              // roleplay-doubt planner uses this set to apply a mission-
+              // aligned override (spec §6.9): if the agent only used
+              // approaches the mission offered, the action is aligned and
+              // no doubt fires — a combat-role identity on a support mission
+              // is not deviating when the mission demands support/logistics.
+              const missionSanctionedApproaches = approachTags && approachTags.length > 0
+                ? collectSceneMissionSanctionedApproaches(session.sceneContract.actionOptions)
+                : [];
+              const doubtEntries = identity.expectedLifePattern && approachTags && approachTags.length > 0
+                ? planJourneyRoleplayDoubt({
+                    pattern: identity.expectedLifePattern,
+                    observed: approachTags,
+                    agentId: session.agentId,
+                    journeyId: session.sceneContract.journeyId,
+                    episodeId: session.sceneContract.episodeId,
+                    regionId: session.regionId,
+                    ...(signedJourneyAction.routeSelection?.factionObjectId
+                      ? { factionId: signedJourneyAction.routeSelection.factionObjectId }
+                      : {}),
+                    actionEventId: actionRecorded.eventId,
+                    recordedAt,
+                    ...(missionSanctionedApproaches.length > 0
+                      ? { missionSanctionedApproaches }
+                      : {}),
+                  })
+                : [];
+              const blueprints: MirrorConsequenceLedgerEntry[] = [
+                ...physicalBlueprints,
+                ...doubtEntries,
+              ];
               if (blueprints.length > 0) {
                 // expectedVersion: -1 is the documented "no CAS check"
                 // sentinel. The integrator owns journey.version and MUST

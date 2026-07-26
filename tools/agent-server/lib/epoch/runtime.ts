@@ -189,6 +189,7 @@ import { createExplorationRuntime } from "./explorationRuntime.ts";
 import { createDowntimeRuntime } from "./downtimeRuntime.ts";
 import { createNpcCandidateRuntime } from "./npcCandidateRuntime.ts";
 import { createNpcLifecycleRuntime } from "./npcLifecycleRuntime.ts";
+import { extractOriginUnitRole } from "./identityNameTokens.ts";
 import {
   constantTimeTextEqual,
   createServerIssuedExplorerCredential,
@@ -1067,18 +1068,11 @@ export interface EpochResultPageAccessResult {
 const DEFAULT_ATTESTATION_CHALLENGE_TTL_MS = 5 * 60_000;
 const DEFAULT_HIGH_VALUE_CONFIRMATION_TTL_MS = 10 * 60_000;
 const ANOMALY_SKIP_ERRORS = new Set(["anomaly_event_region_open"]);
-const SYSTEM_IDENTITY_ORIGINS = [
-  "雾钟站", "黑石码头", "镜湖工坊", "赤砂哨所", "北墙温室", "星槎坞",
-  "旧渠", "风蚀塔", "浮桥集市", "月井营地", "灰烬观测站", "回声仓城",
-] as const;
-const SYSTEM_IDENTITY_UNITS = [
-  "第七采样组", "夜航班", "边界测绘队", "临时实验组", "外勤救援队", "遗迹勘探组",
-  "生态观察班", "城外猎行队", "补给调度组", "设备检修班", "入门试炼营", "数据校准所",
-] as const;
-const SYSTEM_IDENTITY_ROLES = [
-  "见习记录员", "样本护送员", "设备检修员", "外勤助理", "试炼候补", "变异兽猎手",
-  "数据校准员", "药圃照料员", "补给联络员", "遗迹勘探员", "安全观察员", "生态采样员",
-] as const;
+// System identity-name token tables (ORIGINS / UNITS / ROLES) and the
+// sha256(explorerId:generation) slice algorithm live in identityNameTokens
+// so journeyRoleplayRules' pattern generator can re-derive the same tokens
+// without duplicating the data. Changing any of those constants MUST bump
+// ROLEPLAY_PATTERN_VERSION in journeyRoleplayRules.
 
 function phase6EventRefFromEpochEvent(event: EpochEvent): Phase6CanonicalEventRef {
   return {
@@ -1235,10 +1229,11 @@ function phase6InjuriesAdapterFailure(): Phase6JourneyContextRuntimeCaptureStart
 }
 
 function systemAssignedIdentityName(input: { readonly explorerId: string; readonly generation: number }) {
-  const digest = sha256Hex(`${input.explorerId}:${input.generation}`);
-  const origin = SYSTEM_IDENTITY_ORIGINS[Number.parseInt(digest.slice(0, 8), 16) % SYSTEM_IDENTITY_ORIGINS.length]!;
-  const unit = SYSTEM_IDENTITY_UNITS[Number.parseInt(digest.slice(8, 16), 16) % SYSTEM_IDENTITY_UNITS.length]!;
-  const role = SYSTEM_IDENTITY_ROLES[Number.parseInt(digest.slice(16, 24), 16) % SYSTEM_IDENTITY_ROLES.length]!;
+  // Slice algorithm + token tables live in identityNameTokens so the PR5b
+  // roleplay-pattern generator can re-derive the same origin/unit/role
+  // tokens from (explorerId, generation) without duplicating the data.
+  // Changing any of those constants MUST bump ROLEPLAY_PATTERN_VERSION.
+  const { origin, unit, role } = extractOriginUnitRole(input.explorerId, input.generation);
   return `${origin}${unit}${role} · 第${input.generation}世`;
 }
 

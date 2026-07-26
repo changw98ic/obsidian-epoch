@@ -35,6 +35,7 @@ import {
   VIABILITY_POLICY_VERSION,
   initialIdentityViability,
 } from "../lib/epoch/journeyViabilityRules.ts";
+import { buildExpectedLifePattern } from "../lib/epoch/journeyRoleplayRules.ts";
 
 function eventFixture(overrides: Partial<EpochEvent> = {}): EpochEvent {
   return {
@@ -159,6 +160,19 @@ test("identity lifecycle rules plan identity issue event sequences", () => {
     },
     viabilityPolicyVersion: VIABILITY_POLICY_VERSION,
     identityViability: initialIdentityViability("agent_1", issuedAt),
+    // PR5b: planner builds a deterministic ExpectedLifePattern at issuance.
+    expectedLifePattern: buildExpectedLifePattern({
+      identityId: "agent_1",
+      identityName: "Archivist",
+      explorerId: "explorer_1",
+      generation: 2,
+      personalityTraits: initialIdentityTraits({
+        agentId: "agent_1",
+        identityName: "Archivist",
+        generation: 2,
+      }),
+      frozenAt: issuedAt,
+    }),
   });
 
   const projectedIdentity = {
@@ -357,6 +371,21 @@ test("identity lifecycle rules plan reincarnation event sequences", () => {
     },
     viabilityPolicyVersion: VIABILITY_POLICY_VERSION,
     identityViability: initialIdentityViability("agent_2", startedAt),
+    // PR5b: reincarnation builds a FRESH pattern from nextAgentId + new
+    // explorerId + generation + new identityName. The previous identity's
+    // pattern is NOT inherited — by construction the inputHash differs.
+    expectedLifePattern: buildExpectedLifePattern({
+      identityId: "agent_2",
+      identityName: "Second Archivist",
+      explorerId: "explorer_1",
+      generation: 3,
+      personalityTraits: initialIdentityTraits({
+        agentId: "agent_2",
+        identityName: "Second Archivist",
+        generation: 3,
+      }),
+      frozenAt: startedAt,
+    }),
   });
 
   const reincarnation = events[1];

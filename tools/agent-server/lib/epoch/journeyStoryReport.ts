@@ -425,7 +425,14 @@ function playerImpactEvaluation(
     };
   }
   if (worldCommit?.status === "discarded") {
-    const discardSummary = worldCommit.reason === "quality_below_canon_threshold"
+    // PR4 deriveWorldCommit emits "below_canon_threshold"; the legacy
+    // "quality_below_canon_threshold" name is still permitted on the union
+    // (journeyRules.ts:62) for persisted records, so we branch on both to
+    // keep the below-canon-discard rendering correct regardless of which
+    // emitter produced the reason string.
+    const isBelowCanon = worldCommit.reason === "below_canon_threshold"
+      || worldCommit.reason === "quality_below_canon_threshold";
+    const discardSummary = isBelowCanon
       ? "主线虽已完成，但服务端评分未达到正史固化门槛，镜像结果未写入真实世界"
       : "主线未完成，镜像结果未写入真实世界";
     return {
@@ -465,7 +472,8 @@ function worldCommitEvaluation(worldCommit: JourneyWorldCommit | undefined) {
       status: worldCommit.status,
       summary: worldCommit.status === "solidified"
         ? `主线完成并安全返程，本局已固化；地区影响 +${worldCommit.influenceDelta}，NPC 关系 ${worldCommit.npcRelationships.length} 项。`
-        : worldCommit.reason === "quality_below_canon_threshold"
+        : (worldCommit.reason === "below_canon_threshold"
+            || worldCommit.reason === "quality_below_canon_threshold")
           ? "主线已完成，但服务端评分低于正史固化门槛，本局镜像未固化。"
           : "主线未完成或未形成安全返程闭环，本局镜像未固化。",
     },
