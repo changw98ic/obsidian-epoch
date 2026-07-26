@@ -31,6 +31,7 @@
     "agent:journey-soak": "node --import tsx ../agent-server/journey-soak.ts",
     "agent:world-content:compile": "node --import tsx ../agent-server/compile-world-content.ts",
     "agent:world-content:check": "node --import tsx ../agent-server/compile-world-content.ts --check",
+    "agent:balance-simulate": "node --import tsx ../agent-server/scripts/phase6-balance-simulate.ts --seed 42 --iterations 1000",
     "agent:generate-boss-assets": "node --import tsx ../agent-server/generate-boss-assets.ts",
     "agent:generate-location-assets": "node --import tsx ../agent-server/generate-location-assets.ts",
     "agent:generate-npc-assets": "node --import tsx ../agent-server/generate-npc-assets.ts",
