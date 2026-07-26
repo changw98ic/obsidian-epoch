@@ -31,6 +31,10 @@ import {
 } from "../lib/epoch/identityLifecycleRules.ts";
 import { eventFactory } from "../lib/epoch/eventFactory.ts";
 import { createSequentialEpochIdFactory } from "../lib/epoch/protocol.ts";
+import {
+  VIABILITY_POLICY_VERSION,
+  initialIdentityViability,
+} from "../lib/epoch/journeyViabilityRules.ts";
 
 function eventFixture(overrides: Partial<EpochEvent> = {}): EpochEvent {
   return {
@@ -77,6 +81,8 @@ test("identity lifecycle rules plan issued and recovery payloads", () => {
       remaining: 9,
       startedAt: "2026-07-07T01:02:03.000Z",
     },
+    viabilityPolicyVersion: VIABILITY_POLICY_VERSION,
+    identityViability: initialIdentityViability("agent_1", "2026-07-07T01:02:03.000Z"),
   });
 
   const firstTraits = initialIdentityTraits({
@@ -151,6 +157,8 @@ test("identity lifecycle rules plan identity issue event sequences", () => {
       remaining: 9,
       startedAt: issuedAt,
     },
+    viabilityPolicyVersion: VIABILITY_POLICY_VERSION,
+    identityViability: initialIdentityViability("agent_1", issuedAt),
   });
 
   const projectedIdentity = {
@@ -347,6 +355,8 @@ test("identity lifecycle rules plan reincarnation event sequences", () => {
       remaining: 10,
       startedAt,
     },
+    viabilityPolicyVersion: VIABILITY_POLICY_VERSION,
+    identityViability: initialIdentityViability("agent_2", startedAt),
   });
 
   const reincarnation = events[1];

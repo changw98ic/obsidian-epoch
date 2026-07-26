@@ -215,6 +215,21 @@ function dedupeSelfLossContributions(
  * - Rule 7: lifetime gain does NOT offset loss (`max(0, -lifetimeDelta)`).
  * - Rule 8: a run with no paid contributions yields 0 bps and an empty map.
  *
+ * Residual anti-loop risk (PR5a): this function is reason-blind. A
+ * viability-triggered `lifetime_adjusted` event (reasons
+ * `identity_viability_acceleration` /
+ * `identity_viability_social_death`) carries a `viabilityTriggerRef` whose
+ * `sourceSettlementId` MUST NOT match the current journey. If a future
+ * integration bug fed such an event back into the SAME journey's
+ * `ctx.selfLossContributions`, this bucket would score it as ordinary
+ * self-loss and the settlement would pay for its own viability projection —
+ * violating spec §6.8. PR5a cannot structurally prevent this: the
+ * `SelfLossContribution` wire shape (frozen in PR4) carries no reason
+ * field, so the scorer has no way to distinguish a viability-tagged event
+ * from an ordinary one. The contract is enforced planner-side (see
+ * `deriveViabilityTrigger` JSDoc) and defended at event-apply time in
+ * `gameCore.ts` (reserved-reason guard + `sourceSettlementId` match check).
+ *
  * Returns:
  * - `bps`: the SIGNED contribution to {@link ConsequenceBreakdown.selfLossScoreBps}.
  *   The magnitude is clamped to `[0, SELFLOSS_CAP_BPS]`; the contribution to

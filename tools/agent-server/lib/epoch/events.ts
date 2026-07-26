@@ -61,7 +61,10 @@ import {
   type DoubtStrength,
   ROLEPLAY_PATTERN_VERSION,
 } from "./journeyRoleplayRules.ts";
-import { VIABILITY_POLICY_VERSION } from "./journeyViabilityRules.ts";
+import {
+  VIABILITY_POLICY_VERSION,
+  type IdentityViability,
+} from "./journeyViabilityRules.ts";
 import type {
   EpochWorldCommodityLedger,
   EpochWorldSimulationFlowSummary,
@@ -195,6 +198,20 @@ export interface IdentityIssuedPayload {
   readonly expectedLifePatternVersion?: typeof ROLEPLAY_PATTERN_VERSION;
   /** PR1 additive. Viability-policy version the identity's projection started under. */
   readonly viabilityPolicyVersion?: typeof VIABILITY_POLICY_VERSION;
+  /**
+   * PR5a additive (journeyViabilityRules). Initial viability snapshot frozen
+   * onto the identity at issuance. Required-after-issuance at the apply
+   * layer: the applyEvent path for `identity_issued` always populates
+   * `identityViability` on the identity record from this field (or from
+   * {@link initialIdentityViability} when the emitter is a legacy caller
+   * that did not attach one).
+   *
+   * Reincarnation reset: on `reincarnation_issued`, the new identity
+   * inherits NO viability state from the previous identityId. The issued
+   * payload writes a fresh initial snapshot here; the previous identity's
+   * projection history is sealed in the archive.
+   */
+  readonly identityViability?: IdentityViability;
 }
 
 export interface ExplorerRecoveryRotatedPayload {
@@ -205,9 +222,34 @@ export interface ExplorerRecoveryRotatedPayload {
 
 export interface LifetimeAdjustedPayload {
   readonly delta: number;
+  /**
+   * Reason for the adjustment. Two values are server-attested and reserved
+   * for the runtime's viability-triggered path; MCP callers that try to
+   * emit these reasons are rejected by the planner unless a
+   * {@link viabilityTriggerRef} is supplied:
+   *  - `identity_viability_acceleration` — stressed status accelerated the
+   *    lifetime drain (delta = `-ceil(max * lifetimeAccelerationBps / 1_000_000)`).
+   *  - `identity_viability_social_death` — status flipped to `social_death`
+   *    on this projection; delta drains remaining lifetime to 0.
+   */
   readonly reason: string;
   readonly previousRemaining: number;
   readonly remaining: number;
+  /**
+   * PR5a additive. Server-attested reference to the viability projection
+   * that triggered this adjustment. Required when `reason` is
+   * `identity_viability_acceleration` or `identity_viability_social_death`;
+   * the planner rejects MCP calls that pass these reasons without it.
+   * Absent for every other (legacy / non-viability) reason.
+   */
+  readonly viabilityTriggerRef?: {
+    /** Settlement decision that produced the triggering projection. */
+    readonly sourceSettlementId: string;
+    /** The projection's lifetimeAccelerationBps value, frozen for replay audit. */
+    readonly lifetimeAccelerationBps: number;
+    /** True when the trigger is a social-death flip; false for stressed acceleration. */
+    readonly socialDeathTriggered: boolean;
+  };
 }
 
 export interface IdentityArchivedPayload {
@@ -1129,6 +1171,29 @@ export interface AgentFactionStandingChangedPayload {
   readonly sourceEventId: string;
   readonly changedAt: string;
   readonly worldMinute: number;
+  /**
+   * PR5a additive (factionDoubtPropagationRules). Provenance kind for the
+   * standing delta. Existing emitters leave this undefined; downstream
+   * consumers MUST treat undefined as `legacy`.
+   *
+   *  - `journey_solidify`            — baseline solidify path (legacy +
+   *                                    mirror-ledger faction_standing_delta
+   *                                    promotion).
+   *  - `viability_doubt_propagation` — same-faction doubt propagation
+   *                                    (PR5a; pairs with `sourceDoubtEventId`
+   *                                    so the trail back to the
+   *                                    NpcDoubtEvent is auditable).
+   *  - `legacy`                      — pre-PR5a events that pre-date the
+   *                                    kind marker.
+   */
+  readonly sourceKind?: "journey_solidify" | "viability_doubt_propagation" | "legacy";
+  /**
+   * PR5a additive. Canonical event id of the NpcDoubtEvent that originated
+   * this standing delta, when `sourceKind === 'viability_doubt_propagation'`.
+   * Absent otherwise. Used to make same-faction doubt propagation auditable
+   * back to the rumour that triggered it.
+   */
+  readonly sourceDoubtEventId?: string;
 }
 
 export interface JourneyWorldSolidifiedPayload {
@@ -1239,6 +1304,51 @@ export interface NpcIdentityDoubtPayload {
   readonly approachTags: readonly ApproachTag[];
   readonly mirrorLedgerEntryId: string;
   readonly recordedAt: string;
+}
+
+/**
+ * PR5a additive (journeyViabilityRules). Canonical record of a single
+ * identity's viability projection produced AFTER a SettlementDecision
+ * completes. Mirrors {@link IdentityViabilityProjection} 1:1.
+ *
+ * Anti-loop invariant (spec §6.8): the lifetime delta implied by this
+ * projection (`lifetimeAccelerationBps`) feeds future lifetime projections
+ * only — it MUST NOT re-feed the ConsequenceScore of the settlement that
+ * produced it. The structural guard is that this payload is persisted
+ * verbatim and never re-derived under replay; the orchestrator emits it
+ * AFTER `deriveSettlementDecision` returns and AFTER the solidify commits
+ * canonical faction/NPC/influence events, so its `after` snapshot reflects
+ * the post-solidify world state.
+ *
+ * The identity only carries the latest `after` snapshot to bound memory;
+ * the chronicle retains the full before/after pair via this event.
+ */
+export interface IdentityViabilityProjectedPayload {
+  readonly identityId: string;
+  /** Viability immediately before the settlement was applied. */
+  readonly before: IdentityViability;
+  /** Viability immediately after the settlement was applied (post-solidify). */
+  readonly after: IdentityViability;
+  /** Signed delta of viabilityScoreBps (after - before). May be positive. */
+  readonly deltaBps: number;
+  /**
+   * Acceleration applied to the identity's lifetime when status degrades.
+   * In basis points. Consumed by the NEXT journey's lifetime tick (NOT the
+   * current settlement's selfLossContributions — anti-loop).
+   */
+  readonly lifetimeAccelerationBps: number;
+  /**
+   * True when this projection is the one that flipped status to
+   * "social_death". Fires the social-death side-effect exactly once across
+   * the identity's lifetime.
+   */
+  readonly socialDeathTriggered: boolean;
+  /** Settlement decision that produced this projection. */
+  readonly sourceSettlementId: string;
+  /** Policy version under which this projection was computed. */
+  readonly policyVersion: typeof VIABILITY_POLICY_VERSION;
+  /** ISO-8601 timestamp the projection was anchored at (post-solidify). */
+  readonly projectedAt: string;
 }
 
 export type TraceSourceEventType = RegionInfluenceSourceEventType | "bounty_claimed" | "diplomacy_responded";
@@ -2022,6 +2132,13 @@ export interface EpochEventPayloadMap {
    * reverse).
    */
   readonly npc_identity_doubt: NpcIdentityDoubtPayload;
+  /**
+   * PR5a additive. Viability projection promoted to the canonical event
+   * stream on settlement. NOTE: the {@link EpochEventType} union lists the
+   * key (protocol.ts EPOCH_EVENT_TYPES), so this entry participates in the
+   * full event-payload map.
+   */
+  readonly identity_viability_projected: IdentityViabilityProjectedPayload;
   readonly region_influence_changed: RegionInfluenceChangedPayload;
   readonly trace_created: TraceCreatedPayload;
   readonly trace_conflict_deployed: TraceConflictDeployedPayload;

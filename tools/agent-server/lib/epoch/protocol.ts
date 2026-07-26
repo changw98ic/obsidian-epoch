@@ -212,6 +212,15 @@ export const EPOCH_EVENT_TYPES = [
   "region_control_decayed",
   "region_control_released",
   "region_monument_built",
+  /**
+   * PR5a additive (journeyViabilityRules). Canonical record of an identity's
+   * viability projection produced AFTER a SettlementDecision completes. The
+   * implied lifetime delta feeds future lifetime projections only — it never
+   * re-feeds the ConsequenceScore of the settlement that produced it (spec
+   * §6.8 anti-loop). The identity only carries the latest `after` snapshot
+   * to bound memory; the chronicle retains the full before/after pair.
+   */
+  "identity_viability_projected",
 ] as const;
 
 export type EpochEventType = typeof EPOCH_EVENT_TYPES[number];

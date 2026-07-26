@@ -232,6 +232,13 @@ export interface ConsequenceScore {
    * Viability-derived summary (before/after bps, status). Projection of an
    * {@link IdentityViability} computed AFTER settlement; never re-feeds this
    * score.
+   *
+   * PR5a: this field is declared on the contract but INERT —
+   * {@link buildConsequenceScore} does not read
+   * {@link SettlementContext.identityViability} and does not populate this
+   * summary. The planner integration PR wires both ends (input projection +
+   * output population); until then the field carries no runtime data. The
+   * optional `?` keeps the wire shape forward-compatible with that wiring.
    */
   readonly viabilitySummary?: {
     readonly viabilityScoreBpsBefore: number;
@@ -453,7 +460,16 @@ export interface SettlementContext {
   readonly expectedLifePattern?: ExpectedLifePattern;
   /** Optional roleplay score; projects the {@link ConsequenceScore.roleplaySummary}. */
   readonly roleplayScore?: RoleplayScore;
-  /** Optional identity viability; projects the {@link ConsequenceScore.viabilitySummary}. */
+  /**
+   * Optional identity viability; projects the {@link ConsequenceScore.viabilitySummary}.
+   *
+   * PR5a: INERT input. {@link buildConsequenceScore} does not read this
+   * field and does not populate the matching output summary. The planner
+   * integration PR is responsible for handing the post-settlement snapshot
+   * in here and for populating `viabilitySummary` on the output score; the
+   * algorithm-only PR5a leaves both ends unwired so the field cannot leak
+   * into the additive breakdown (zero-affinity / anti-loop invariant).
+   */
   readonly identityViability?: IdentityViability;
   /**
    * AUDIT-ONLY strategy snapshot. Never re-enters any score / reward / tier

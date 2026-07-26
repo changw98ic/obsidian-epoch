@@ -12,6 +12,13 @@ import {
 } from "./events.ts";
 import type { EpochEventFactory } from "./eventFactory.ts";
 import type { EpochLineageInheritance } from "./protocol.ts";
+import {
+  LIFETIME_REASON_IDENTITY_VIABILITY_ACCELERATION,
+  LIFETIME_REASON_IDENTITY_VIABILITY_SOCIAL_DEATH,
+  VIABILITY_POLICY_VERSION,
+  initialIdentityViability,
+  type IdentityViability,
+} from "./journeyViabilityRules.ts";
 
 const PERSONALITY_DRIFT_SOURCE_EVENT_TYPES: ReadonlySet<EpochEvent["eventType"]> = new Set([
   "anomaly_event_resolved",
@@ -80,6 +87,14 @@ export interface IdentityIssuedPayloadInput {
   readonly inheritance?: EpochLineageInheritance;
   readonly maxLifetime: number;
   readonly startedAt: string;
+  /**
+   * PR5a additive. Initial viability snapshot to freeze onto the identity.
+   * Callers SHOULD pass {@link initialIdentityViability}; legacy callers
+   * may omit it and the payload helper synthesises a fresh snapshot at
+   * {@link startedAt}. Reincarnation always passes a fresh snapshot — the
+   * previous identity's viability history is NOT inherited.
+   */
+  readonly initialViability?: IdentityViability;
 }
 
 export interface IdentityIssueEventsInput extends IdentityIssuedPayloadInput {
@@ -114,9 +129,28 @@ export interface ExplorerRecoveryRotationResult {
 
 export interface LifetimeAdjustedPayloadInput {
   readonly delta: number;
+  /**
+   * Reason for the adjustment. Two values are server-attested and reserved:
+   *  - {@link LIFETIME_REASON_IDENTITY_VIABILITY_ACCELERATION} (`identity_viability_acceleration`)
+   *  - {@link LIFETIME_REASON_IDENTITY_VIABILITY_SOCIAL_DEATH} (`identity_viability_social_death`)
+   *
+   * The payload helper refuses to attach the {@link viabilityTriggerRef}
+   * for these reasons unless the caller passes it. MCP-originated calls
+   * cannot supply a server-attested ref, so they are rejected upstream.
+   */
   readonly reason: string;
   readonly previousRemaining: number;
   readonly remaining: number;
+  /**
+   * PR5a additive. Server-attested reference to the viability projection
+   * that triggered this adjustment. Required when `reason` is one of the
+   * two reserved viability reasons; ignored otherwise.
+   */
+  readonly viabilityTriggerRef?: {
+    readonly sourceSettlementId: string;
+    readonly lifetimeAccelerationBps: number;
+    readonly socialDeathTriggered: boolean;
+  };
 }
 
 export interface LifetimeAdjustmentArchiveInput {
@@ -129,6 +163,17 @@ export interface LifetimeAdjustmentEventsInput extends LifetimeAdjustedPayloadIn
   readonly archive?: LifetimeAdjustmentArchiveInput;
   readonly makeEvent: EpochEventFactory;
 }
+
+/**
+ * PR5a additive. Reserved reason values for the runtime viability path.
+ * MCP callers cannot supply the {@link viabilityTriggerRef} that
+ * {@link lifetimeAdjustedPayload} demands for these reasons, so they are
+ * structurally barred from the reserved channel.
+ */
+export const LIFETIME_REASON_RESERVED_VIABILITY = Object.freeze([
+  LIFETIME_REASON_IDENTITY_VIABILITY_ACCELERATION,
+  LIFETIME_REASON_IDENTITY_VIABILITY_SOCIAL_DEATH,
+] as const);
 
 export interface IdentityArchivedPayloadInput {
   readonly archiveReason: string;
@@ -204,6 +249,8 @@ export interface PersonalityDriftConfirmationProjectionInput<TDrift extends Pers
 
 export function identityIssuedPayload(input: IdentityIssuedPayloadInput): IdentityIssuedPayload {
   const includesExplorerSecretHash = Object.prototype.hasOwnProperty.call(input, "explorerSecretHash");
+  const initialViability =
+    input.initialViability ?? initialIdentityViability(input.agentId, input.startedAt);
   return {
     agentId: input.agentId,
     explorerId: input.explorerId,
@@ -223,6 +270,8 @@ export function identityIssuedPayload(input: IdentityIssuedPayloadInput): Identi
       remaining: input.maxLifetime,
       startedAt: input.startedAt,
     },
+    viabilityPolicyVersion: VIABILITY_POLICY_VERSION,
+    identityViability: initialViability,
   };
 }
 
@@ -290,11 +339,21 @@ export function projectExplorerRecoveryRotation(
 }
 
 export function lifetimeAdjustedPayload(input: LifetimeAdjustedPayloadInput): LifetimeAdjustedPayload {
+  const isViabilityReason =
+    input.reason === LIFETIME_REASON_IDENTITY_VIABILITY_ACCELERATION
+    || input.reason === LIFETIME_REASON_IDENTITY_VIABILITY_SOCIAL_DEATH;
+  // Server-attested guard: the reserved viability reasons REQUIRE a
+  // viabilityTriggerRef. MCP tools that call this helper with these reasons
+  // but no ref are rejected here so the reserved channel cannot be forged.
+  if (isViabilityReason && !input.viabilityTriggerRef) {
+    throw new Error(`lifetime_adjusted_viability_trigger_ref_required:${input.reason}`);
+  }
   return {
     delta: input.delta,
     reason: input.reason,
     previousRemaining: input.previousRemaining,
     remaining: input.remaining,
+    ...(input.viabilityTriggerRef ? { viabilityTriggerRef: input.viabilityTriggerRef } : {}),
   };
 }
 
@@ -304,6 +363,7 @@ export function planLifetimeAdjustmentEvents(input: LifetimeAdjustmentEventsInpu
     reason: input.reason,
     previousRemaining: input.previousRemaining,
     remaining: input.remaining,
+    ...(input.viabilityTriggerRef ? { viabilityTriggerRef: input.viabilityTriggerRef } : {}),
   });
   const adjusted = input.makeEvent("lifetime_adjusted", input.agentId, adjustedPayload, {
     agentId: input.agentId,

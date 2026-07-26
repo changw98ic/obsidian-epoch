@@ -665,3 +665,58 @@ test("computeSettlementContextReplayDigest excludes the audit-only strategyConsi
     computeSettlementContextReplayDigest(ctx2),
   );
 });
+
+// ---------------------------------------------------------------------------
+// PR5a — Verify-round-1 adversarial findings (NON-BLOCKING) locked as
+// regression tests. The scorer is reason-blind by design; the anti-loop
+// contract for viability-triggered lifetime_adjusted is enforced planner-side
+// + at gameCore event-apply time, NOT inside computeSelfLossBucket.
+// ---------------------------------------------------------------------------
+
+test("PR5a residual risk: computeSelfLossBucket is reason-blind — viability-tagged lifetime_adjusted fed back WOULD score as self-loss (Verify finding 2, documented contract)", () => {
+  // The SelfLossContribution wire shape (frozen in PR4) carries no `reason`
+  // field. computeSelfLossBucket therefore cannot distinguish a viability-
+  // triggered lifetime_adjusted event (reasons `identity_viability_acceleration`
+  // / `identity_viability_social_death`) from an ordinary hosted-action
+  // lifetime cost. If a future integration bug fed such an event back into
+  // the SAME journey's ctx.selfLossContributions, this test demonstrates
+  // that the scorer would happily charge it — violating spec §6.8.
+  //
+  // The mitigation is NOT in this function. It lives in three places that
+  // this test cannot reach:
+  //   1. deriveViabilityTrigger JSDoc contract (planner MUST NOT push the
+  //      returned delta into the same journey's selfLossContributions).
+  //   2. lifetimeAdjustedPayload helper refuses the reserved reasons without
+  //      a server-attested viabilityTriggerRef (identityLifecycleRules).
+  //   3. gameCore.ts lifetime_adjusted case guards a preceding
+  //      identity_viability_projected event with matching sourceSettlementId.
+  //
+  // We lock the reason-blind behavior in so that a future attempt to add a
+  // `reason` discriminant to SelfLossContribution shows up as a deliberate
+  // POLICY_VERSION bump, not a silent type widening.
+  const viabilityTaggedContribution: SelfLossContribution = {
+    actionEventId: "evt_viability_lifetime_adjusted",
+    costKind: "lifetime",
+    sourceKind: "lifetime_adjusted_event",
+    canonicalEventIds: ["evt_lifetime_adjusted_viability"],
+    lifetimeDelta: -50, // magnitude 50 → 50 * 10 = 500 bps of self-loss
+  };
+  const ctx = makeBaseCtx({
+    selfLossContributions: [viabilityTaggedContribution],
+  });
+  const score = buildConsequenceScore(ctx);
+
+  // The scorer charges 500 bps. This is the documented reason-blind behavior;
+  // the planner contract above is what prevents this contribution from ever
+  // appearing here in production.
+  assert.equal(score.breakdown.selfLossScoreBps, -500);
+  assert.deepEqual(
+    score.breakdown.selfLossSourceEventsByKind.lifetime_adjusted_event,
+    ["evt_lifetime_adjusted_viability"],
+  );
+  // No collateral entry was created (the contribution is self-loss, not
+  // collateral). Belt-and-braces: the same canonical event id MUST NOT
+  // appear in the collateral audit list.
+  assert.equal(score.breakdown.collateralLedgerEntryIds.length, 0);
+});
+

@@ -38,7 +38,12 @@ import {
   AFFINITY_MATRIX_VERSION,
 } from "./journeyStrategyRules.ts";
 import type { ExpectedLifePattern } from "./journeyRoleplayRules.ts";
-import type { IdentityViability } from "./journeyViabilityRules.ts";
+import {
+  type IdentityViability,
+  initialIdentityViability,
+  LIFETIME_REASON_IDENTITY_VIABILITY_ACCELERATION,
+  LIFETIME_REASON_IDENTITY_VIABILITY_SOCIAL_DEATH,
+} from "./journeyViabilityRules.ts";
 import { eventFactory } from "./eventFactory.ts";
 import {
   causalEpochEventCanonicalJson,
@@ -3284,6 +3289,12 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
     case "identity_issued": {
       const payload = event.payload;
       const worldMinute = currentProjectionWorldMinute(projection);
+      // PR5a: required-after-issuance. The payload always carries
+      // identityViability (identityLifecycleRules.identityIssuedPayload
+      // synthesises a fresh snapshot when the emitter omits one). The
+      // defensive fallback guards legacy events persisted before PR5a.
+      const initialViability = payload.identityViability
+        ?? initialIdentityViability(payload.agentId, event.createdAt);
       identities[payload.agentId] = {
         agentId: payload.agentId,
         explorerId: payload.explorerId,
@@ -3306,6 +3317,7 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
           worldMinute,
         }),
         createdAt: event.createdAt,
+        identityViability: initialViability,
       };
       lineage[payload.explorerId] = [...(lineage[payload.explorerId] || []), payload.agentId];
       agentCustody[payload.agentId] = {
@@ -3367,12 +3379,63 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
     }
     case "lifetime_adjusted": {
       const identity = requireIdentity(projection, event.aggregateId);
+      // PR5a defensive guard: when the reason is a reserved viability reason,
+      // a preceding identity_viability_projected event MUST exist on the same
+      // identity whose sourceSettlementId matches the trigger ref. The
+      // planner enforces this in normal operation; this assertion catches a
+      // forged or replayed lifetime_adjusted that bypasses the planner.
+      const payload = event.payload;
+      if (
+        payload.reason === LIFETIME_REASON_IDENTITY_VIABILITY_ACCELERATION
+        || payload.reason === LIFETIME_REASON_IDENTITY_VIABILITY_SOCIAL_DEATH
+      ) {
+        const triggerRef = payload.viabilityTriggerRef;
+        if (!triggerRef) {
+          throw new Error(
+            `lifetime_adjusted_viability_trigger_ref_missing:${event.eventId}:${payload.reason}`,
+          );
+        }
+        let priorProjectionEvent: EpochEvent | undefined;
+        for (let i = projection.events.length - 1; i >= 0; i -= 1) {
+          const candidate = projection.events[i];
+          if (
+            candidate
+            && candidate.eventType === "identity_viability_projected"
+            && (candidate.payload as { readonly identityId?: string }).identityId === event.aggregateId
+          ) {
+            priorProjectionEvent = candidate;
+            break;
+          }
+        }
+        const priorSourceSettlementId = priorProjectionEvent
+          ? (priorProjectionEvent.payload as { readonly sourceSettlementId?: string }).sourceSettlementId
+          : undefined;
+        if (priorSourceSettlementId !== triggerRef.sourceSettlementId) {
+          throw new Error(
+            `lifetime_adjusted_viability_trigger_ref_mismatch:${event.eventId}:${triggerRef.sourceSettlementId}`,
+          );
+        }
+      }
       identities[event.aggregateId] = {
         ...identity,
         lifetime: {
           ...identity.lifetime,
-          remaining: event.payload.remaining,
+          remaining: payload.remaining,
         },
+      };
+      break;
+    }
+    case "identity_viability_projected": {
+      // PR5a: persist the post-settlement snapshot onto the identity. The
+      // identity only carries the latest `after` snapshot to bound memory;
+      // the chronicle retains the full before/after pair via the event
+      // payload. doubtedBy / identityExposed / flaggedWanted / factionStanding
+      // are per-identity and DO NOT cross identity boundaries (spec §8).
+      const payload = event.payload;
+      const identity = requireIdentity(projection, payload.identityId);
+      identities[payload.identityId] = {
+        ...identity,
+        identityViability: payload.after,
       };
       break;
     }
