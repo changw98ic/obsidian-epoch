@@ -696,6 +696,7 @@ function emptyRecoveryFileMap(): Record<KnownJsonlFileName, readonly JsonRecord[
     "result-pages.jsonl": [],
     "context-snapshots.jsonl": [],
     "outbox.jsonl": [],
+    "phase6-archive-migration.jsonl": [],
   };
 }
 

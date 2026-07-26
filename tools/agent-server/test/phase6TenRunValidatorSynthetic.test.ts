@@ -41,6 +41,7 @@ function receipt(runIndex: number): JsonRecord {
     runIndex,
     seed: `seed-${runIndex}`,
     ...versions,
+    settlementPolicyVersion: "phase6-settlement-policy-v1",
     startedAt: `2026-07-21T00:${String(runIndex).padStart(2, "0")}:01.000Z`,
     settledAt: `2026-07-21T00:${String(runIndex).padStart(2, "0")}:04.000Z`,
     worldTimeBefore: runIndex * 100,

@@ -320,14 +320,15 @@ test("HTTP remote compact commit has one atomic persistence owner and replays id
       ?? actionOptions.find((option) => option.optionKey === "verify_salt_ledger")
       ?? record(actionOptions[0]);
     assert.ok(selected.actionOptionId);
-    assert.ok(selected.signature);
+    const signed = record(selected.signed);
+    assert.ok(signed.signature);
     const commitArgs = {
       journeyId,
       sceneId: sceneContract.sceneId,
       episodeId: record(proposal.episode).episodeId,
       expectedVersion: proposal.expectedVersion,
       actionOptionId: selected.actionOptionId,
-      signature: selected.signature,
+      signature: signed.signature,
       recoveryCode,
       idempotencyKey: `commit-${suffix}`,
     };
@@ -716,14 +717,15 @@ async function nextCommitArgs(
     ?? options.find((option) => option.optionKey === "verify_salt_ledger")
     ?? record(actionOptions[0]);
   assert.ok(selected.actionOptionId);
-  assert.ok(selected.signature);
+  const signed = record(selected.signed);
+  assert.ok(signed.signature);
   return {
     journeyId: input.journeyId,
     sceneId: sceneContract.sceneId,
     episodeId: record(proposal.episode).episodeId,
     expectedVersion: proposal.expectedVersion,
     actionOptionId: selected.actionOptionId,
-    signature: selected.signature,
+    signature: signed.signature,
     recoveryCode: input.recoveryCode,
     idempotencyKey: `commit-${input.journeyId}-${step}`,
   };

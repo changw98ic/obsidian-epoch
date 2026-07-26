@@ -69,6 +69,7 @@ export const KNOWN_JSONL_FILES = [
   "result-pages.jsonl",
   "context-snapshots.jsonl",
   "outbox.jsonl",
+  "phase6-archive-migration.jsonl",
 ] as const;
 
 type KnownJsonlFileName = typeof KNOWN_JSONL_FILES[number];
@@ -315,6 +316,7 @@ function emptyKnownJsonlRecordFiles(): MutableKnownJsonlRecordFiles {
     "result-pages.jsonl": [],
     "context-snapshots.jsonl": [],
     "outbox.jsonl": [],
+    "phase6-archive-migration.jsonl": [],
   };
 }
 
@@ -334,6 +336,7 @@ function hydrateKnownJsonlRecordFiles(files: KnownJsonlRecordFiles) {
     resultPages: files["result-pages.jsonl"],
     contextSnapshots: files["context-snapshots.jsonl"],
     outbox: files["outbox.jsonl"],
+    archiveMigration: files["phase6-archive-migration.jsonl"] ?? [],
   });
 }
 

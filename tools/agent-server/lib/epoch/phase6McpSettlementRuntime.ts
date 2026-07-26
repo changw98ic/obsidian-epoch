@@ -1,8 +1,11 @@
 import type {
   Phase6CompleteRunWithReceiptRuntimeInput,
   Phase6ExperimentRuntime,
+  Phase6ResultReceipt,
   Phase6ResultReceiptV2,
+  Phase6ResultReceiptV3,
 } from "./phase6ExperimentRuntime.ts";
+import { PHASE6_MATRIX_VERSION } from "./phase6ScenarioMatrixRules.ts";
 import type {
   Phase6JourneyContextRuntimeCaptureStartResult,
   Phase6JourneyContextRuntimeFinalizeResult,
@@ -143,7 +146,7 @@ export interface Phase6McpSettlementFinalizedJourney {
   readonly binding: Phase6McpSettlementRunBinding;
   readonly finalize: Phase6JourneyContextRuntimeFinalizeResult;
   readonly experimentRun: Phase6Run;
-  readonly receipt?: Phase6ResultReceiptV2;
+  readonly receipt?: Phase6ResultReceipt;
 }
 
 export type Phase6McpSettlementRuntimeCommand =
@@ -514,7 +517,7 @@ export function createPhase6McpSettlementRuntime(
 function completeCommandInput(
   journeyId: string,
   binding: Phase6McpSettlementRunBinding,
-  receipt: Phase6ResultReceiptV2,
+  receipt: Phase6ResultReceipt,
 ): Phase6CompleteRunWithReceiptRuntimeInput {
   return {
     commandId: stableCompleteCommandId(journeyId, receipt.receiptId),
@@ -527,18 +530,21 @@ function completeCommandInput(
 function resultReceiptFromFinalize(
   finalized: Phase6JourneyContextRuntimeFinalizeResult & { readonly ok: true },
   binding: Phase6McpSettlementRunBinding,
-): Phase6ResultReceiptV2 {
+): Phase6ResultReceiptV3 {
   const receiptId = finalized.assembly.assembly.artifacts.receipt.receiptId;
   assertText(receiptId, "receiptId");
   return {
     receiptId,
-    receiptVersion: "v2",
+    receiptVersion: "v3",
     experimentId: binding.experimentId,
     runIndex: binding.runIndex,
     identity: binding.identity,
     explorer: binding.explorer,
     versions: binding.versions,
     seed: binding.seed,
+    scenarioTag: binding.scenarioTag,
+    matrixSnapshot: binding.scenarioMatrix,
+    matrixVersion: PHASE6_MATRIX_VERSION,
   };
 }
 
@@ -649,7 +655,7 @@ function stableRunId(experimentId: string, runIndex: Phase6RunIndex): string {
 function stableRunReceipt(experimentId: string, runIndex: Phase6RunIndex): Phase6RunReceiptRef {
   return {
     receiptId: `${stableRunId(experimentId, runIndex)}:receipt:v1`,
-    receiptVersion: "v1",
+    receiptVersion: "phase6-experiment-receipt.v3",
   };
 }
 

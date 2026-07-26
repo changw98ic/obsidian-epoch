@@ -1,3 +1,4 @@
+import { PHASE6_MATRIX_VERSION } from "./phase6ScenarioMatrixRules.ts";
 import {
   PHASE6_RUN_INDEXES,
   complete,
@@ -16,9 +17,12 @@ import {
   type Phase6Run,
   type Phase6RunIndex,
   type Phase6RunResultReceiptRef,
+  type Phase6ScenarioMatrixVersion,
   type Phase6SeedBinding,
   type Phase6VersionBinding,
 } from "./phase6ExperimentRules";
+
+export const PHASE6_EXPERIMENT_RECEIPT_VERSION = "phase6-experiment-receipt.v3" as const;
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -84,18 +88,33 @@ export interface Phase6ResultReceiptV2 extends Phase6RunResultReceiptRef {
   readonly seed: Phase6SeedBinding;
 }
 
+export interface Phase6ResultReceiptV3 extends Phase6RunResultReceiptRef {
+  readonly receiptVersion: "v3";
+  readonly experimentId: string;
+  readonly runIndex: Phase6RunIndex;
+  readonly identity: Phase6IdentityBinding;
+  readonly explorer: Phase6ExplorerBinding;
+  readonly versions: Phase6VersionBinding;
+  readonly seed: Phase6SeedBinding;
+  readonly scenarioTag: string;
+  readonly matrixSnapshot: Phase6ScenarioMatrixVersion;
+  readonly matrixVersion: typeof PHASE6_MATRIX_VERSION;
+}
+
+export type Phase6ResultReceipt = Phase6ResultReceiptV2 | Phase6ResultReceiptV3;
+
 export interface Phase6CompleteRunWithReceiptRuntimeInput
   extends Phase6RuntimeCommandInput {
   readonly experimentId: string;
   readonly runIndex: Phase6RunIndex;
-  readonly receipt: Phase6ResultReceiptV2;
+  readonly receipt: Phase6ResultReceipt;
 }
 
 export interface Phase6FailRunRuntimeInput extends Phase6RuntimeCommandInput {
   readonly experimentId: string;
   readonly runIndex: Phase6RunIndex;
   readonly reason: string;
-  readonly receipt?: Phase6ResultReceiptV2;
+  readonly receipt?: Phase6ResultReceipt;
 }
 
 export interface Phase6CompleteExperimentRuntimeInput
@@ -328,13 +347,13 @@ function markExperimentComplete(
 }
 
 function assertReceiptMatchesRun(
-  receipt: Phase6ResultReceiptV2,
+  receipt: Phase6ResultReceipt,
   experiment: Phase6Experiment,
   run: Phase6Run,
 ): void {
   assertNonEmpty(receipt.receiptId, "receipt.receiptId");
-  if (receipt.receiptVersion !== "v2") {
-    throw new Error("Phase 6 result receipt must be v2");
+  if (receipt.receiptVersion !== "v2" && receipt.receiptVersion !== "v3") {
+    throw new Error("Phase 6 result receipt must be v2 or v3");
   }
   if (receipt.experimentId !== experiment.experimentId) {
     throw new Error("Phase 6 receipt experimentId does not match registration");
@@ -354,6 +373,15 @@ function assertReceiptMatchesRun(
   if (!sameJson(receipt.seed, run.seed)) {
     throw new Error("Phase 6 receipt seed does not match registration");
   }
+  // V3 additional checks
+  if (receipt.receiptVersion === "v3") {
+    if (receipt.matrixVersion !== PHASE6_MATRIX_VERSION) {
+      throw new Error("Phase 6 receipt matrixVersion does not match current matrix");
+    }
+    if (!nonEmpty(receipt.scenarioTag)) {
+      throw new Error("Phase 6 receipt scenarioTag is required for v3");
+    }
+  }
 }
 
 function assertValidExperiment(
@@ -370,6 +398,10 @@ function assertNonEmpty(value: string, label: string): void {
   if (value.trim().length === 0) {
     throw new Error(`Phase 6 ${label} is required`);
   }
+}
+
+function nonEmpty(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function assertNoSecretKeys(value: unknown): void {
@@ -424,4 +456,26 @@ function sortJson(value: unknown): unknown {
 
 function formatNow(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
+}
+
+/**
+ * Read-only adapter for legacy V2 receipts. Returns a view that exposes the
+ * receipt's fields without allowing it to be used as a new settlement input.
+ */
+export function readLegacyReceipt(receipt: Phase6ResultReceiptV2): {
+  readonly receiptVersion: "v2";
+  readonly experimentId: string;
+  readonly runIndex: Phase6RunIndex;
+  readonly scenarioTag: undefined;
+  readonly matrixVersion: undefined;
+  readonly matrixSnapshot: undefined;
+} {
+  return {
+    receiptVersion: "v2",
+    experimentId: receipt.experimentId,
+    runIndex: receipt.runIndex,
+    scenarioTag: undefined,
+    matrixVersion: undefined,
+    matrixSnapshot: undefined,
+  };
 }

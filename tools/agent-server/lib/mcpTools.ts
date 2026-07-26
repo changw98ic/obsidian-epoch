@@ -164,6 +164,7 @@ import { buildPhase6ServerPreSettlement } from "./epoch/phase6ServerPreSettlemen
 import { buildPhase6ServerOutcomeEvidence } from "./epoch/phase6ServerOutcomeRules.ts";
 import {
   PHASE6_AUTHORITATIVE_SCENARIO_MATRIX,
+  PHASE6_MATRIX_VERSION,
   assertPhase6ScenarioBinding,
   phase6ScenarioForRun,
 } from "./epoch/phase6ScenarioMatrixRules.ts";
@@ -4684,7 +4685,10 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         }
         const identity = { identityId: preparedIdentityId };
         const journeyTaskType = optionalString(recordValue(preparedJourney.taskRequest).taskType);
-        assertPhase6ScenarioBinding(runIndex, scenarioTag, journeyTaskType);
+        // v3: scenario binding checks runIndex + scenarioTag only.
+        // taskFamilyId is server-authoritative per the scenario matrix; the
+        // journey's taskType (human-readable) is not compared against it.
+        assertPhase6ScenarioBinding(runIndex, scenarioTag);
         const expectedVersion = Number(preparedJourney.version);
         if (!Number.isInteger(expectedVersion) || expectedVersion < 0) {
           throw new Error("phase6_experiment_journey_version_invalid");
@@ -8221,7 +8225,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       experimentId: binding.experimentId,
       runIndex: binding.runIndex,
       receipt: {
-        receiptVersion: "v2",
+        receiptVersion: "v3",
         experimentId: binding.experimentId,
         runIndex: binding.runIndex,
         identity: binding.identity,
@@ -8230,6 +8234,9 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
         versions: binding.versions,
         seed: { seed: binding.seed },
         receiptId: optionalString(receipt.receiptId),
+        scenarioTag: optionalString(binding.scenarioTag) || phase6ScenarioForRun(binding.runIndex).tag,
+        matrixSnapshot: binding.scenarioMatrix,
+        matrixVersion: PHASE6_MATRIX_VERSION,
       },
     });
   };
@@ -8845,7 +8852,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       ...args,
       expectedVersion: worldWindow.journey.mirrorWindow?.startExpectedVersion
         ?? worldWindow.journey.version,
-      ...(phase6Binding ? { phase6Scenario: phase6Binding.scenario } : {}),
+      ...(phase6Binding ? { phase6Scenario: { intensity: phase6Binding.scenario.intensity } } : {}),
     };
     const taskContext = runtime.epochJourneyTaskGenerationContext(boundArgs);
     if (process.env.EPOCH_DIAG) console.error("[region-taskctx]", JSON.stringify({

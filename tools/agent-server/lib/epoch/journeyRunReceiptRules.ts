@@ -209,6 +209,7 @@ export interface JourneyRunReceipt {
   readonly catalogVersion: string;
   readonly codeVersion: string;
   readonly scenarioMatrixVersion: string;
+  readonly matrixVersion?: string;
   readonly generatedAt: string;
   readonly startedAt: string;
   readonly settledAt: string;
@@ -301,6 +302,7 @@ export interface BuildJourneyRunReceiptInput {
   readonly catalogVersion: string;
   readonly codeVersion: string;
   readonly scenarioMatrixVersion: string;
+  readonly matrixVersion?: string;
   readonly generatedAt: string;
   readonly startedAt: string;
   readonly settledAt: string;
@@ -531,6 +533,7 @@ function receiptBody(receipt: Omit<JourneyRunReceipt, "integrity">) {
     catalogVersion: receipt.catalogVersion,
     codeVersion: receipt.codeVersion,
     scenarioMatrixVersion: receipt.scenarioMatrixVersion,
+    ...(receipt.matrixVersion !== undefined ? { matrixVersion: receipt.matrixVersion } : {}),
     generatedAt: receipt.generatedAt,
     startedAt: receipt.startedAt,
     settledAt: receipt.settledAt,
@@ -605,6 +608,7 @@ export function buildJourneyRunReceipt(input: BuildJourneyRunReceiptInput): Jour
     catalogVersion: input.catalogVersion.trim(),
     codeVersion: input.codeVersion.trim(),
     scenarioMatrixVersion: input.scenarioMatrixVersion.trim(),
+    ...(input.matrixVersion !== undefined ? { matrixVersion: input.matrixVersion } : {}),
     generatedAt: input.generatedAt,
     startedAt: input.startedAt,
     settledAt: input.settledAt,
