@@ -222,3 +222,238 @@ export interface StrategyConsistencyScore {
   readonly strategyPolicyVersion: typeof STRATEGY_POLICY_VERSION;
   readonly computedAt: string;
 }
+
+// ─── PR6: Strategy consistency runtime ───────────────────────────────────────
+
+/**
+ * Frozen snapshot of a journey's strategy disposition. Created at journey start
+ * from the identity's {@link IdentityStrategyDisposition} and immutable for the
+ * journey's lifetime. Carries `dispositionRef` (the identityId) for audit
+ * traceability.
+ */
+export interface JourneyStrategySnapshot {
+  readonly journeyId: string;
+  readonly primary: Strategy;
+  readonly secondary?: Strategy;
+  readonly frozenAt: string;
+  /** IdentityId whose disposition this snapshot was derived from. */
+  readonly dispositionRef: string;
+  readonly snapshotVersion: typeof STRATEGY_POLICY_VERSION;
+}
+
+/**
+ * Internal affinity matrix: approachTag × strategy → raw affinity score.
+ *
+ * Values:
+ *   100 = bonus  (approach naturally aligns with strategy)
+ *    50 = neutral (approach is compatible but not a signature move)
+ *     0 = penalty (approach contradicts the strategy)
+ *
+ * Used by {@link scoreStrategyConsistency} and {@link classifyPrimaryViolation}.
+ * AUDIT-ONLY: these values MUST NOT enter ConsequenceScore, SettlementDecision,
+ * reward, or viability computations.
+ *
+ * Known risk (spec §14): logistics has 5 non-penalty entries (1 bonus + 4 neutral),
+ * giving it broader tolerance than other strategies. Balance validation deferred
+ * to Step 16.
+ */
+export const AFFINITY_MATRIX: Readonly<Record<ApproachTag, Readonly<Record<Strategy, number>>>> =
+  Object.freeze({
+    combat:       Object.freeze({ combat: 100, cunning: 0,   support: 0,   logistics: 50, exploration: 50 }),
+    stealth:      Object.freeze({ combat: 0,   cunning: 100, support: 50,  logistics: 0,  exploration: 50 }),
+    diplomacy:    Object.freeze({ combat: 50,  cunning: 50,  support: 50,  logistics: 50, exploration: 0 }),
+    support:      Object.freeze({ combat: 0,   cunning: 0,   support: 100, logistics: 50, exploration: 0 }),
+    logistics:    Object.freeze({ combat: 50,  cunning: 0,   support: 50,  logistics: 100, exploration: 0 }),
+    scout:        Object.freeze({ combat: 50,  cunning: 50,  support: 0,   logistics: 0,  exploration: 100 }),
+    preservation: Object.freeze({ combat: 0,   cunning: 0,   support: 50,  logistics: 50, exploration: 50 }),
+  });
+
+/**
+ * Clamp a number to the 0-10000 basis-point range. Local to this module;
+ * not exported (same contract as journeyViabilityRules.clampBps).
+ */
+function clampBps(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(10_000, Math.round(value)));
+}
+
+/**
+ * PR6: Freeze an identity's strategy disposition from mandate/policy inputs.
+ * Pure: same inputs → same output. The returned object is immutable and carries
+ * both {@link STRATEGY_POLICY_VERSION} and {@link AFFINITY_MATRIX_VERSION} for
+ * replay determinism.
+ */
+export function freezeIdentityStrategyDisposition(
+  identityId: string,
+  primary: Strategy,
+  secondary: Strategy | undefined,
+  frozenAt: string,
+): IdentityStrategyDisposition {
+  return {
+    identityId,
+    primary,
+    secondary,
+    frozenAt,
+    strategyPolicyVersion: STRATEGY_POLICY_VERSION,
+    affinityMatrixVersion: AFFINITY_MATRIX_VERSION,
+  };
+}
+
+/**
+ * PR6: Create a frozen journey strategy snapshot from an identity's disposition.
+ * Called once at journey start; the snapshot is immutable for the journey's
+ * lifetime.
+ */
+export function snapshotJourneyStrategy(
+  journeyId: string,
+  disposition: IdentityStrategyDisposition,
+): JourneyStrategySnapshot {
+  return {
+    journeyId,
+    primary: disposition.primary,
+    secondary: disposition.secondary,
+    frozenAt: disposition.frozenAt,
+    dispositionRef: disposition.identityId,
+    snapshotVersion: STRATEGY_POLICY_VERSION,
+  };
+}
+
+/**
+ * PR6: Return the approach tags that carry bonus affinity for a given primary
+ * strategy. Pure read-only lookup against {@link AFFINITY_MATRIX}.
+ *
+ * Used for prompt injection (narrative "you excel at X") and storyReport audit.
+ * Does NOT enter any score computation.
+ */
+export function expectedApproachForTask(primary: Strategy): readonly ApproachTag[] {
+  const result: ApproachTag[] = [];
+  for (const tag of APPROACH_TAGS) {
+    if (AFFINITY_MATRIX[tag]![primary] === 100) {
+      result.push(tag);
+    }
+  }
+  return result;
+}
+
+/**
+ * PR6: Classify whether the observed approach tags violate the primary strategy.
+ *
+ * Computes `primaryAffinityScore` = average raw affinity of observed tags
+ * against the primary strategy column, scaled to bps (* 100).
+ *
+ * - `primaryAffinityScore < 2000` → `fully_violates` (all/most tags are penalty)
+ * - otherwise → `normal`
+ *
+ * Called once at journey end (inside {@link scoreStrategyConsistency}).
+ * Pure: same inputs → same output.
+ */
+export function classifyPrimaryViolation(
+  primary: Strategy,
+  observedTags: readonly ApproachTag[],
+): PrimaryViolationClassification {
+  if (observedTags.length === 0) {
+    // No observations: default to normal (legacy compatible).
+    return { kind: "normal", primaryWeightBps: 10000, secondaryWeightBps: 0 };
+  }
+  let sum = 0;
+  for (const tag of observedTags) {
+    sum += AFFINITY_MATRIX[tag]![primary] ?? 0;
+  }
+  const primaryAffinityScoreBps = (sum / observedTags.length) * 100;
+  if (primaryAffinityScoreBps < 2000) {
+    return { kind: "fully_violates", primaryWeightBps: 3000, secondaryWeightBps: 7000 };
+  }
+  return { kind: "normal", primaryWeightBps: 10000, secondaryWeightBps: 0 };
+}
+
+/**
+ * PR6: Compute the audit-only strategy consistency score for a journey.
+ *
+ * Algorithm:
+ * 1. Flatten all observed approach tags from the entries.
+ * 2. For each tag, look up its affinity to the primary strategy (100/50/0).
+ * 3. `matchBps = clamp(sum(affinity) / max(1, tagCount) * 100, 0, 10000)`.
+ * 4. Classify the primary violation.
+ *
+ * HARD ZERO-BONUS CONTRACT: this score is audit-only. It MUST NOT be consumed
+ * by ConsequenceScore, SettlementDecision, reward, or viability.
+ *
+ * Pure: same inputs → same output.
+ */
+export function scoreStrategyConsistency(
+  snapshot: JourneyStrategySnapshot,
+  observedEntries: readonly ApproachSnapshotEntry[],
+  computedAt: string,
+): StrategyConsistencyScore {
+  const allTags: ApproachTag[] = [];
+  for (const entry of observedEntries) {
+    for (const tag of entry.approachTags) {
+      allTags.push(tag);
+    }
+  }
+  const tagCount = allTags.length;
+  let sum = 0;
+  for (const tag of allTags) {
+    sum += AFFINITY_MATRIX[tag]![snapshot.primary] ?? 0;
+  }
+  const matchBps = tagCount === 0
+    ? 10000  // no observations: legacy default full match
+    : clampBps((sum / tagCount) * 100);
+  const classification = classifyPrimaryViolation(snapshot.primary, allTags);
+  const approachSnapshot: ApproachSnapshot = {
+    journeyId: snapshot.journeyId,
+    entries: observedEntries,
+    snapshotVersion: STRATEGY_POLICY_VERSION,
+  };
+  return {
+    matchBps,
+    snapshot: approachSnapshot,
+    classification,
+    strategyPolicyVersion: STRATEGY_POLICY_VERSION,
+    computedAt,
+  };
+}
+
+/**
+ * PR6: Produce narrative text for prompt injection based on the violation
+ * classification and disposition. Returns human-readable strings that describe
+ * the agent's strategy tendencies without leaking any numeric scores.
+ *
+ * - `normal`: "你一贯擅长{primary}风格的行动"
+ * - `fully_violates`: "你本局偏离了{primary}作风，更多依赖{secondary}来弥补"
+ *
+ * Pure narrative output. No bps/score/affinity values are exposed.
+ */
+export function dispositionWeights(
+  classification: PrimaryViolationClassification,
+  disposition: IdentityStrategyDisposition,
+): { readonly primaryNarrative: string; readonly secondaryNarrative: string } {
+  const STRATEGY_LABEL_CN: Readonly<Record<Strategy, string>> = Object.freeze({
+    combat: "战斗",
+    cunning: "诡计",
+    support: "支援",
+    logistics: "后勤",
+    exploration: "探索",
+  });
+  const primaryLabel = STRATEGY_LABEL_CN[disposition.primary];
+  const secondaryLabel = disposition.secondary
+    ? STRATEGY_LABEL_CN[disposition.secondary]
+    : undefined;
+  if (classification.kind === "normal") {
+    return {
+      primaryNarrative: `你一贯擅长${primaryLabel}风格的行动`,
+      secondaryNarrative: secondaryLabel
+        ? `你偶尔也会运用${secondaryLabel}的手段`
+        : "",
+    };
+  }
+  // fully_violates
+  return {
+    primaryNarrative: secondaryLabel
+      ? `你本局偏离了${primaryLabel}作风，更多依赖${secondaryLabel}来弥补`
+      : `你本局偏离了惯常的${primaryLabel}作风`,
+    secondaryNarrative: secondaryLabel
+      ? `${secondaryLabel}成为你本局的主要依靠`
+      : "",
+  };
+}

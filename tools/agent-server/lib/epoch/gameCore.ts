@@ -3392,6 +3392,12 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
         ...(payload.expectedLifePattern
           ? { expectedLifePattern: payload.expectedLifePattern }
           : {}),
+        // PR6: persist the strategy disposition onto the identity. Legacy
+        // events persisted before PR6 leave this absent; strategy consistency
+        // scoring defaults to normal (10000/0) when no disposition is present.
+        ...(payload.strategyDisposition
+          ? { strategyDisposition: payload.strategyDisposition }
+          : {}),
       };
       lineage[payload.explorerId] = [...(lineage[payload.explorerId] || []), payload.agentId];
       agentCustody[payload.agentId] = {
@@ -6600,6 +6606,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       maxLifetime,
       startedAt,
       makeEvent: eventFactory(clock, idFactory, context),
+      ...(input.strategyProfile ? { strategyProfile: input.strategyProfile } : {}),
     });
     const nextProjection = applyEvents(current, nextEvents);
     return commit(nextEvents, projectIdentityIssue({ events: nextEvents, projection: nextProjection }));

@@ -21,6 +21,8 @@ interface IdentityProfile {
   readonly needs: Readonly<Record<string, number>>;
   readonly strongestNeeds: readonly { readonly key: string; readonly value: number }[];
   readonly resources: Readonly<Record<string, number>>;
+  /** PR6 additive. Primary strategy for approach alignment bonus. */
+  readonly strategyPrimary?: string;
 }
 
 interface SignedActionOption {
@@ -267,6 +269,77 @@ function preferredRisk(profile: IdentityProfile): number {
   return Math.max(0, Math.min(2, preferred));
 }
 
+// ─── PR6: Approach alignment bonus ──────────────────────────────────────────
+
+/**
+ * Strategy → primary approach affinity map. Mirrors AFFINITY_MATRIX from
+ * journeyStrategyRules.ts: a strategy has affinity 100 for its primary approach,
+ * 50 for secondary approaches, and 0 for unrelated ones.
+ *
+ * This is the SOAK-RUNTIME copy used for non-authoritative scoring. The
+ * authoritative copy lives in journeyStrategyRules.ts.
+ */
+const STRATEGY_PRIMARY_APPROACH: Readonly<Record<string, string>> = Object.freeze({
+  combat: "combat",
+  cunning: "stealth",
+  support: "support",
+  logistics: "logistics",
+  exploration: "scout",
+});
+
+const APPROACH_SIGNAL_SUPPORT = /support|assist|help|aid|protect|shield|heal|支援|协助|帮助|保护|治疗/iu;
+const APPROACH_SIGNAL_STEALTH = /stealth|avoid|sneak|hide|evade|潜行|回避|避开|隐匿|悄|无声/iu;
+const APPROACH_SIGNAL_LOGISTICS = /logistics|supply|carry|transport|stockpile|provision|后勤|补给|搬运|储备|采购/iu;
+const APPROACH_SIGNAL_DIPLOMACY = /diplomacy|negotiate|parley|liaison|外交|谈判|联络|斡旋|交涉/iu;
+const APPROACH_SIGNAL_SCOUT = /scout|recon|explore|survey|discover|侦察|侦察|探索|勘察|发现/iu;
+const APPROACH_SIGNAL_COMBAT = /combat|fight|attack|defend|engage|assault|战斗|攻击|防御|迎击|突击/iu;
+
+/**
+ * Derive the dominant approach tag from action text. Returns the tag string
+ * or undefined if no signal matches. Mirrors the logic in
+ * journeyGeneratedTaskRules.deriveActionApproachTags but without importing it
+ * (soak runtime is standalone).
+ */
+function deriveApproachFromText(text: string): string | undefined {
+  if (APPROACH_SIGNAL_SUPPORT.test(text)) return "support";
+  if (APPROACH_SIGNAL_STEALTH.test(text)) return "stealth";
+  if (APPROACH_SIGNAL_LOGISTICS.test(text)) return "logistics";
+  if (APPROACH_SIGNAL_DIPLOMACY.test(text)) return "diplomacy";
+  if (APPROACH_SIGNAL_SCOUT.test(text)) return "scout";
+  if (APPROACH_SIGNAL_COMBAT.test(text)) return "combat";
+  return undefined;
+}
+
+/**
+ * Compute the approach alignment bonus for a scored action option.
+ *
+ * Primary-strategy-aligned actions get +8 (narrative preference).
+ * Actions that fully violate the primary get -5 (narrative penalty).
+ * Neutral actions get 0.
+ *
+ * Non-hard filter: this is a scoring hint, not a gate.
+ */
+function computeApproachAlignment(text: string, strategyPrimary: string | undefined): number {
+  if (!strategyPrimary) return 0;
+  const primaryApproach = STRATEGY_PRIMARY_APPROACH[strategyPrimary];
+  if (!primaryApproach) return 0;
+  const actionApproach = deriveApproachFromText(text);
+  if (!actionApproach) return 0;
+  // Primary match: +8
+  if (actionApproach === primaryApproach) return 8;
+  // Opposite of primary (hard violation): -5
+  // Map: combat↔stealth, support↔combat, logistics↔scout
+  const violations: Readonly<Record<string, string>> = {
+    combat: "stealth",
+    stealth: "combat",
+    support: "combat",
+    logistics: "scout",
+    exploration: "logistics",
+  };
+  if (violations[strategyPrimary] === actionApproach) return -5;
+  return 0;
+}
+
 function chooseAction(input: {
   readonly agentId: string;
   readonly profile: IdentityProfile;
@@ -308,6 +381,9 @@ function chooseAction(input: {
     };
   }
 
+  // PR6: derive strategy primary for approach alignment bonus.
+  const strategyPrimary = input.profile.strategyPrimary;
+
   const wantedRisk = preferredRisk(input.profile);
   const scored = input.options.map((option) => {
     const text = `${objectiveText} ${option.label} ${option.intent}`;
@@ -320,6 +396,10 @@ function chooseAction(input: {
     score += riskSuccessReward(option) * 6;
     const cost = riskResourceCost(option);
     if (cost && (input.profile.resources[cost.resourceId] ?? 0) < cost.amount) score -= 120;
+    // PR6: approach alignment bonus. Primary-strategy-aligned actions get +8;
+    // actions that fully violate the primary get -5. Non-hard filter.
+    const approachAlignmentBonus = computeApproachAlignment(text, strategyPrimary);
+    score += approachAlignmentBonus;
     if (option.completionKind === "skip") {
       score -= isSide ? 12 : 65;
       if (pressure >= 9_000) score += 90;

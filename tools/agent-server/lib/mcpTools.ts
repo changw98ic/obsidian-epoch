@@ -73,6 +73,18 @@ import {
 } from "./epoch/worldSimulationRules.ts";
 import { epochWorldMinuteFromTime, epochWorldTimeFromMinute } from "./epoch/worldCalendar.ts";
 import {
+  expectedApproachForTask,
+  type IdentityStrategyDisposition,
+} from "./epoch/journeyStrategyRules.ts";
+import {
+  compareApproachToLifePattern,
+  type ExpectedLifePattern,
+} from "./epoch/journeyRoleplayRules.ts";
+import {
+  projectFeedbackSignals,
+  type WorldFeedbackSignal,
+} from "./epoch/journeyFeedbackRules.ts";
+import {
   canonicalPlaceContext,
   loadDefaultWorldContentRegistry,
   validateWorldContentRegistry,
@@ -747,6 +759,89 @@ function compactJourneyDecisionWorldSlice(value: unknown) {
       strongestPriceDeltasMilliCoin: strongestResourceTrends("priceDeltaMilliCoin"),
     },
   };
+}
+
+// ─── PR6: Prompt narrative helpers ──────────────────────────────────────────
+
+/**
+ * STRATEGY_APPROACH_LABEL: Chinese label for each approach tag. Used only in
+ * prompt narrative injection; never leaks numeric values.
+ */
+const APPROACH_LABEL_CN: Readonly<Record<string, string>> = Object.freeze({
+  combat: "战斗",
+  stealth: "潜行",
+  diplomacy: "外交",
+  support: "支援",
+  logistics: "后勤",
+  scout: "侦察",
+  preservation: "保全",
+});
+
+/**
+ * Build a strategy-tendency narrative string for prompt injection.
+ *
+ * Normal case: "你一贯擅长{primary}风格的行动"
+ * No disposition: returns empty string (legacy identity).
+ *
+ * HARD CONTRACT: no numeric values (score/fitBps/affinity) are exposed.
+ * Pure narrative text only.
+ */
+function buildStrategyPromptNarrative(
+  disposition: IdentityStrategyDisposition | undefined,
+): string {
+  if (!disposition) return "";
+  const STRATEGY_LABEL_CN: Readonly<Record<string, string>> = Object.freeze({
+    combat: "战斗",
+    cunning: "诡计",
+    support: "支援",
+    logistics: "后勤",
+    exploration: "探索",
+  });
+  const primaryLabel = STRATEGY_LABEL_CN[disposition.primary];
+  if (!primaryLabel) return "";
+  const secondaryLabel = disposition.secondary
+    ? STRATEGY_LABEL_CN[disposition.secondary]
+    : undefined;
+  // At prompt time we don't know the classification (computed at journey end).
+  // Default to the "normal" narrative: primary tendency.
+  const parts = [`你一贯擅长${primaryLabel}风格的行动`];
+  if (secondaryLabel) {
+    parts.push(`你偶尔也会运用${secondaryLabel}的手段`);
+  }
+  return parts.join("。");
+}
+
+/**
+ * Build an expected-life-pattern narrative string for prompt injection.
+ *
+ * Describes expected and forbidden approaches in natural language without
+ * exposing the structured ExpectedLifePattern fields or numeric values.
+ *
+ * HARD CONTRACT: no bps/score/tier/affinity/fit values are exposed.
+ * Pure narrative text only.
+ */
+function buildLifePatternPromptNarrative(
+  pattern: ExpectedLifePattern | undefined,
+): string {
+  if (!pattern) return "";
+  const parts: string[] = [];
+  if (pattern.expectedApproaches.length > 0) {
+    const labels = pattern.expectedApproaches
+      .map((tag) => APPROACH_LABEL_CN[tag])
+      .filter(Boolean);
+    if (labels.length > 0) {
+      parts.push(`你的行动风格倾向于${labels.join("与")}`);
+    }
+  }
+  if (pattern.forbiddenApproaches.length > 0) {
+    const labels = pattern.forbiddenApproaches
+      .map((tag) => APPROACH_LABEL_CN[tag])
+      .filter(Boolean);
+    if (labels.length > 0) {
+      parts.push(`避免${labels.join("与")}类的行为`);
+    }
+  }
+  return parts.join("，");
 }
 
 function positiveIntegerValue(value: unknown, fallback: number) {
@@ -2914,6 +3009,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         worldSolidification: undefined,
         worldCommitRecord: undefined,
         settlementDecision: undefined as SettlementDecision | undefined,
+        feedbackSignals: undefined as readonly WorldFeedbackSignal[] | undefined,
       };
     }
     const settledAtWorldTime = status.journey.settledAtWorldTime;
@@ -3159,12 +3255,56 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     const finalizeMirrorEvents = companionRuntime.journeyRuntime()
       .projection().events
       .filter((event) => !journeyEventsBeforeFinalize.has(event.eventId));
+    // PR6: project world-feedback signals from settled state. These signals
+    // are injected into the NEXT prompt as narrative context (no numeric values).
+    let feedbackSignals: readonly WorldFeedbackSignal[] | undefined;
+    if (settlementDecision) {
+      const doubtEntries = liveMirrorEntries
+        .filter((entry) => entry.effectKind === "identity_doubt")
+        .map((entry) => ({
+          npcId: entry.targetEntityId,
+          doubtStrength: (entry.delta >= 3 ? "severe" : entry.delta >= 2 ? "high" : entry.delta >= 1 ? "moderate" : "low") as "low" | "moderate" | "high" | "severe",
+          sourceActionEventId: entry.actionEventId,
+          regionId: status.journey.destinationRegionId,
+        }));
+      const identityProgress = epochRuntime.progress({ agentId: status.journey.agentId });
+      const identityRecord = recordValue(identityProgress.identity);
+      const viability = identityRecord.identityViability as
+        | { readonly flaggedWanted?: unknown; readonly identityExposed?: boolean }
+        | undefined;
+      const rawFlaggedWanted = viability?.flaggedWanted;
+      const flaggedWanted = rawFlaggedWanted instanceof Set
+        ? rawFlaggedWanted as ReadonlySet<string>
+        : new Set<string>(
+            Array.isArray(rawFlaggedWanted)
+              ? rawFlaggedWanted.filter((v: unknown): v is string => typeof v === "string")
+              : [],
+          );
+      const factionStandingDeltas = worldCommit && worldCommit.status === "solidified"
+        ? (worldCommit.factionStandings ?? []).map((standing: { readonly factionId?: string; readonly delta?: number; readonly sourceEventId?: string }) => ({
+            factionId: standing.factionId ?? "",
+            delta: standing.delta ?? 0,
+            sourceEventId: standing.sourceEventId ?? "",
+          }))
+        : [];
+      feedbackSignals = projectFeedbackSignals({
+        identityId: status.journey.agentId,
+        doubtEntries,
+        viability: {
+          flaggedWanted,
+          identityExposed: Boolean(viability?.identityExposed),
+        },
+        factionStandingDeltas,
+        projectedAt: new Date().toISOString(),
+      });
+    }
     const finalizeResult = {
       status: finalizeStatus,
       worldSynchronization,
       worldSolidification,
       worldCommitRecord,
       settlementDecision,
+      feedbackSignals,
     };
     // Attach in-place (attachJourneyEventsForPersistence mutates via
     // Object.defineProperty) to preserve the plain-return type inference.
@@ -3316,6 +3456,8 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         duplicate: rewardGrant.duplicate,
       } } : {}),
       ...(finalStatus.journey.worldCommit ? { worldCommit: finalStatus.journey.worldCommit } : {}),
+      // PR6: feedback signals projected from settled state.
+      ...(mirrorFinalization.feedbackSignals ? { feedbackSignals: mirrorFinalization.feedbackSignals } : {}),
       nextAction: "obsidian_epoch.journey_status",
     };
     attachEpochEventsForPersistence(result, [
@@ -9010,6 +9152,14 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
         .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
         .slice(0, 6)
         .map(([need, pressureBps]) => ({ need, pressureBps }));
+      // PR6: build narrative context from identity strategy/life pattern/feedback.
+      // No numeric values (score/fitBps/affinity/tps) are leaked.
+      const strategyNarrative = buildStrategyPromptNarrative(
+        identity.strategyDisposition as IdentityStrategyDisposition | undefined,
+      );
+      const lifePatternNarrative = buildLifePatternPromptNarrative(
+        identity.expectedLifePattern as ExpectedLifePattern | undefined,
+      );
       await requestContext.notifyProgress?.(
         stepIndex / Math.max(1, maxObjectiveSteps),
         `正在请求 Host 选择第 ${stepIndex + 1}/${maxObjectiveSteps} 个服务器签发行动。`,
@@ -9021,6 +9171,10 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
           "Optional side objectives may be skipped when survival pressure, fatigue, resources, personality, or long-term priorities make that choice credible.",
           "Do not assume that the highest-risk option is best and do not optimize for a hidden grade.",
           "Return strict JSON with actionOptionId, rationale, confidence, and optional userFacingMessage. Do not invent completion, outcomes, rewards, hidden tasks, people, or world facts.",
+          // PR6: inject strategy tendency narrative (no numeric leakage).
+          ...(strategyNarrative ? [strategyNarrative] : []),
+          // PR6: inject expected life pattern narrative (no numeric leakage).
+          ...(lifePatternNarrative ? [lifePatternNarrative] : []),
         ].join(" "),
         messages: [{
           role: "user",

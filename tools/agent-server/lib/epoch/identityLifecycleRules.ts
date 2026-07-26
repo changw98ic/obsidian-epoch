@@ -23,6 +23,11 @@ import {
   initialIdentityViability,
   type IdentityViability,
 } from "./journeyViabilityRules.ts";
+import {
+  freezeIdentityStrategyDisposition,
+  type IdentityStrategyDisposition,
+  type StrategyProfile,
+} from "./journeyStrategyRules.ts";
 
 const PERSONALITY_DRIFT_SOURCE_EVENT_TYPES: ReadonlySet<EpochEvent["eventType"]> = new Set([
   "anomaly_event_resolved",
@@ -108,10 +113,24 @@ export interface IdentityIssuedPayloadInput {
    * does not build the pattern itself, preserving the pure-function boundary.
    */
   readonly expectedLifePattern?: ExpectedLifePattern;
+  /**
+   * PR6 additive. Server-frozen {@link IdentityStrategyDisposition} to carry on
+   * the identity payload. When omitted, the identity has no frozen strategy
+   * posture and strategy-consistency scoring defaults to normal (10000/0).
+   * The payload helper passes this through verbatim.
+   */
+  readonly strategyDisposition?: IdentityStrategyDisposition;
 }
 
 export interface IdentityIssueEventsInput extends IdentityIssuedPayloadInput {
   readonly makeEvent: EpochEventFactory;
+  /**
+   * PR6 additive. When present, the planner freezes a strategy disposition
+   * from the profile and forwards it into the issued payload. Legacy callers
+   * that omit this still produce a valid payload (no disposition → strategy
+   * consistency defaults to normal).
+   */
+  readonly strategyProfile?: StrategyProfile;
 }
 
 export interface IdentityIssueProjectionInput<TIdentity> {
@@ -289,6 +308,10 @@ export function identityIssuedPayload(input: IdentityIssuedPayloadInput): Identi
     // helper does not build the pattern — that is the planner's responsibility
     // so the helper stays pure and deterministic on its other inputs.
     ...(input.expectedLifePattern ? { expectedLifePattern: input.expectedLifePattern } : {}),
+    // PR6: transparently forward the caller-supplied disposition (if any).
+    // Legacy callers may omit it; the strategy-consistency pipeline defaults
+    // to normal (10000/0) when no disposition is present.
+    ...(input.strategyDisposition ? { strategyDisposition: input.strategyDisposition } : {}),
   };
 }
 
@@ -314,6 +337,16 @@ export function planIdentityIssueEvents(input: IdentityIssueEventsInput): readon
     personalityTraits: traits,
     frozenAt: input.startedAt,
   });
+  // PR6: freeze strategy disposition when the caller supplies a strategy profile.
+  const strategyDisposition = input.strategyDisposition
+    ?? (input.strategyProfile
+      ? freezeIdentityStrategyDisposition(
+          input.agentId,
+          input.strategyProfile.primary,
+          input.strategyProfile.secondary,
+          input.startedAt,
+        )
+      : undefined);
   const payload = identityIssuedPayload({
     agentId: input.agentId,
     explorerId: input.explorerId,
@@ -325,6 +358,7 @@ export function planIdentityIssueEvents(input: IdentityIssueEventsInput): readon
     maxLifetime: input.maxLifetime,
     startedAt: input.startedAt,
     expectedLifePattern,
+    ...(strategyDisposition ? { strategyDisposition } : {}),
   });
   return [input.makeEvent("identity_issued", input.agentId, payload, { agentId: input.agentId })];
 }

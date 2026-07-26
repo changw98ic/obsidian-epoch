@@ -3,6 +3,10 @@ import type {
   PersistedJourneyNarrative,
   ServerJourneyEpisodeFacts,
 } from "./journeyNarrativeRules.ts";
+import type {
+  PrimaryViolationClassification,
+  StrategyConsistencyScore,
+} from "./journeyStrategyRules.ts";
 import { buildJourneyMission, type JourneyMission } from "./journeyMissionReadModel.ts";
 import { publicRegionLabel, publicText } from "./publicVocabulary.ts";
 import {
@@ -109,6 +113,15 @@ export interface GroundedJourneyStoryReport {
       }[];
     };
     readonly warning?: string;
+    /**
+     * PR6 additive. Audit-only strategy consistency classification.
+     * Independent from identityFidelityPercent — never mixed into the
+     * fidelity calculation or reward pipeline.
+     */
+    readonly strategyConsistencyAudit?: {
+      readonly matchBps: number;
+      readonly classification: PrimaryViolationClassification["kind"];
+    };
   };
   readonly narrative: string;
   readonly chapters: readonly GroundedJourneyStoryChapter[];
@@ -157,6 +170,12 @@ export interface BuildGroundedJourneyStoryReportInput {
   readonly hiddenTaskSeal?: JourneyHiddenTaskSeal;
   readonly worldCommit?: JourneyWorldCommit;
   readonly identity?: JourneyStoryIdentityInput;
+  /**
+   * PR6 additive. Audit-only strategy consistency snapshot from
+   * SettlementContext. Read by report builder for the audit field;
+   * never consumed by identityFidelityPercent or reward calculation.
+   */
+  readonly strategyConsistencySnapshot?: StrategyConsistencyScore;
 }
 
 function clean(value: string): string {
@@ -994,6 +1013,13 @@ export function buildGroundedJourneyStoryReport(
     rewardConversion: rewardConversionEvaluation(rewards, input.worldCommit),
     playerImpact: playerImpactEvaluation(input.episodes, protagonist?.entityId || "", input.worldCommit),
     ...worldCommitEvaluation(input.worldCommit),
+    // PR6: strategy consistency audit — independent from identityFidelity.
+    ...(input.strategyConsistencySnapshot ? {
+      strategyConsistencyAudit: {
+        matchBps: input.strategyConsistencySnapshot.matchBps,
+        classification: input.strategyConsistencySnapshot.classification.kind,
+      },
+    } : {}),
   };
   const chapterTitles = mainChapterTitles(mainBeat.selectedAction.optionKey, mainTitle);
   const time = storyTime(input.startedAtWorldTime, input.dueAtWorldTime);
@@ -1279,6 +1305,13 @@ function buildGeneratedJourneyStoryReport(
     rewardConversion: rewardConversionEvaluation(rewards, input.worldCommit),
     playerImpact: playerImpactEvaluation(input.episodes, protagonist?.entityId || "", input.worldCommit),
     ...worldCommitEvaluation(input.worldCommit),
+    // PR6: strategy consistency audit — independent from identityFidelity.
+    ...(input.strategyConsistencySnapshot ? {
+      strategyConsistencyAudit: {
+        matchBps: input.strategyConsistencySnapshot.matchBps,
+        classification: input.strategyConsistencySnapshot.classification.kind,
+      },
+    } : {}),
   };
   const storyContent = chapters.map((entry) => entry.text).join("\n\n");
   const header = [
