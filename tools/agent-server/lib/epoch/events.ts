@@ -50,6 +50,21 @@ import type {
 } from "./traceConflictRules.ts";
 import type { JourneySceneContract } from "./journeySceneContractRules.ts";
 import type { JourneyActionResolution } from "./journeyActionResolutionRules.ts";
+import {
+  type IdentityStrategyDisposition,
+  type ApproachTag,
+  STRATEGY_POLICY_VERSION,
+  AFFINITY_MATRIX_VERSION,
+} from "./journeyStrategyRules.ts";
+import {
+  type ExpectedLifePattern,
+  type DoubtStrength,
+  ROLEPLAY_PATTERN_VERSION,
+} from "./journeyRoleplayRules.ts";
+import {
+  VIABILITY_POLICY_VERSION,
+  type IdentityViability,
+} from "./journeyViabilityRules.ts";
 import type {
   EpochWorldCommodityLedger,
   EpochWorldSimulationFlowSummary,
@@ -170,6 +185,44 @@ export interface IdentityIssuedPayload {
     readonly remaining: number;
     readonly startedAt: string;
   };
+  /**
+   * PR1 additive (journeyStrategyRules). Strategy disposition frozen onto the
+   * identity at issuance. AUDIT-ONLY: never consumed by score/reward/viability.
+   */
+  readonly strategyDisposition?: IdentityStrategyDisposition;
+  /** PR1 additive. Strategy-policy version the disposition was frozen against. */
+  readonly strategyPolicyVersion?: typeof STRATEGY_POLICY_VERSION;
+  /** PR1 additive. Affinity-matrix version the disposition was frozen against. */
+  readonly affinityMatrixVersion?: typeof AFFINITY_MATRIX_VERSION;
+  /** PR1 additive. Roleplay-pattern version the identity's life pattern was frozen against. */
+  readonly expectedLifePatternVersion?: typeof ROLEPLAY_PATTERN_VERSION;
+  /** PR1 additive. Viability-policy version the identity's projection started under. */
+  readonly viabilityPolicyVersion?: typeof VIABILITY_POLICY_VERSION;
+  /**
+   * PR5a additive (journeyViabilityRules). Initial viability snapshot frozen
+   * onto the identity at issuance. Every canonical identity event must carry
+   * this snapshot; the applyEvent path projects it without synthesis.
+   *
+   * Reincarnation reset: on `reincarnation_issued`, the new identity
+   * inherits NO viability state from the previous identityId. The issued
+   * payload writes a fresh initial snapshot here; the previous identity's
+   * projection history is sealed in the archive.
+   */
+  readonly identityViability: IdentityViability;
+  /**
+   * PR5b additive (journeyRoleplayRules). Server-frozen expected-life-pattern
+   * bound to this identity, produced deterministically from the issuance
+   * inputs by {@link buildExpectedLifePattern}. The applyEvent path for
+   * `identity_issued` projects this onto `identity.expectedLifePattern`; the
+   * roleplay-doubt hook in `submitHostedAction` reads it to classify observed
+   * approach tags.
+   *
+   * Reincarnation reset: on `reincarnation_issued`, the new identity carries
+   * a FRESH pattern built from the new (agentId, explorerId, generation,
+   * identityName) tuple. The previous identity's pattern is NOT inherited —
+   * by construction the inputHash differs.
+   */
+  readonly expectedLifePattern: ExpectedLifePattern;
 }
 
 export interface ExplorerRecoveryRotatedPayload {
@@ -180,9 +233,34 @@ export interface ExplorerRecoveryRotatedPayload {
 
 export interface LifetimeAdjustedPayload {
   readonly delta: number;
+  /**
+   * Reason for the adjustment. Two values are server-attested and reserved
+   * for the runtime's viability-triggered path; MCP callers that try to
+   * emit these reasons are rejected by the planner unless a
+   * {@link viabilityTriggerRef} is supplied:
+   *  - `identity_viability_acceleration` — stressed status accelerated the
+   *    lifetime drain (delta = `-ceil(max * lifetimeAccelerationBps / 1_000_000)`).
+   *  - `identity_viability_social_death` — status flipped to `social_death`
+   *    on this projection; delta drains remaining lifetime to 0.
+   */
   readonly reason: string;
   readonly previousRemaining: number;
   readonly remaining: number;
+  /**
+   * PR5a additive. Server-attested reference to the viability projection
+   * that triggered this adjustment. Required when `reason` is
+   * `identity_viability_acceleration` or `identity_viability_social_death`;
+   * the planner rejects MCP calls that pass these reasons without it.
+   * Absent for every other (legacy / non-viability) reason.
+   */
+  readonly viabilityTriggerRef?: {
+    /** Settlement decision that produced the triggering projection. */
+    readonly sourceSettlementId: string;
+    /** The projection's lifetimeAccelerationBps value, frozen for replay audit. */
+    readonly lifetimeAccelerationBps: number;
+    /** True when the trigger is a social-death flip; false for stressed acceleration. */
+    readonly socialDeathTriggered: boolean;
+  };
 }
 
 export interface IdentityArchivedPayload {
@@ -1104,6 +1182,29 @@ export interface AgentFactionStandingChangedPayload {
   readonly sourceEventId: string;
   readonly changedAt: string;
   readonly worldMinute: number;
+  /**
+   * PR5a additive (factionDoubtPropagationRules). Provenance kind for the
+   * standing delta. Existing emitters leave this undefined; downstream
+   * consumers MUST treat undefined as `legacy`.
+   *
+   *  - `journey_solidify`            — baseline solidify path (legacy +
+   *                                    mirror-ledger faction_standing_delta
+   *                                    promotion).
+   *  - `viability_doubt_propagation` — same-faction doubt propagation
+   *                                    (PR5a; pairs with `sourceDoubtEventId`
+   *                                    so the trail back to the
+   *                                    NpcDoubtEvent is auditable).
+   *  - `legacy`                      — pre-PR5a events that pre-date the
+   *                                    kind marker.
+   */
+  readonly sourceKind?: "journey_solidify" | "viability_doubt_propagation" | "legacy";
+  /**
+   * PR5a additive. Canonical event id of the NpcDoubtEvent that originated
+   * this standing delta, when `sourceKind === 'viability_doubt_propagation'`.
+   * Absent otherwise. Used to make same-faction doubt propagation auditable
+   * back to the rumour that triggered it.
+   */
+  readonly sourceDoubtEventId?: string;
 }
 
 export interface JourneyWorldSolidifiedPayload {
@@ -1116,9 +1217,9 @@ export interface JourneyWorldSolidifiedPayload {
   readonly mirrorStartedAtWorldTime: string;
   readonly mirrorEndedAtWorldTime: string;
   /** Canonical shared-world time when this historical mirror was accepted. */
-  readonly committedAtWorldTime?: string;
-  readonly completionTier?: "及格" | "良好" | "优秀" | "惊世";
-  readonly completionScoreBps?: number;
+  readonly committedAtWorldTime: string;
+  readonly completionTier: "及格" | "良好" | "优秀" | "惊世";
+  readonly completionScoreBps: number;
   readonly worldSliceHash?: `sha256:${string}`;
   readonly influenceDelta: number;
   readonly factionStandings: readonly {
@@ -1138,9 +1239,145 @@ export interface JourneyWorldSolidifiedPayload {
   readonly sourceEventIds: readonly string[];
   readonly effectEventIds: readonly string[];
   readonly solidifiedAt: string;
+  /** Canon threshold in basis points used by the settlement decision. */
+  readonly canonThresholdBps: number;
+  /** Settlement-policy version under which the journey was adjudicated. */
+  readonly settlementPolicyVersion: number;
+  /** Consequence-score policy version used at solidify time. */
+  readonly consequenceScorePolicyVersion: number;
+  /** PR1 additive. Strategy-policy version under which the journey was adjudicated. */
+  readonly strategyPolicyVersion?: number;
+  /**
+   * PR1 additive. Quest-offer id bound to this solidify, when the journey was
+   * offer-driven. INTERNAL-only.
+   */
+  readonly questOfferId?: string;
+  /** PR1 additive. sha256 of the offer bound to this solidify, for replay. */
+  readonly offerHash?: `sha256:${string}`;
+  /**
+   * PR2 additive. Mirror-ledger entry ids promoted into the canonical effect
+   * events listed in {@link effectEventIds}. An empty array means this
+   * journey produced no promotable mirror collateral. Carried for replay
+   * audit so a restart-duplicate solidify can detect double-promotion.
+   */
+  readonly mirrorLedgerPromotedEntryIds: readonly string[];
+  /** Settlement id linking this solidify to its SettlementDecision. */
+  readonly settlementId: string;
+  /** Per-bucket breakdown of the completion score, for receipt audit. */
+  readonly consequenceScoreBreakdown: {
+    readonly resultScoreBps: number;
+    readonly selfLossScoreBps: number;
+    readonly collateralScoreBps: number;
+  };
+}
+
+/**
+ * PR1 additive (journeyRoleplayRules). Canonical-stream payload for an NPC
+ * doubt observation recorded against an identity's expected life pattern
+ * during a mirror journey. Mirrors {@link NpcDoubtEvent} in the roleplay
+ * rules module; promoted to the canonical event stream only when (and if) the
+ * journey solidifies. INTERNAL-only.
+ *
+ * Zero-bonus boundary: this payload is server-authored adjudication data. It
+ * must never carry the public-leak fields `taskFamilyId` / `strategyAffinity`
+ * / `fitBps` / singular `expectedApproach` bonus marker. The plural
+ * `approachTags` below is the server-owned observation record.
+ */
+export interface NpcIdentityDoubtPayload {
+  readonly journeyId: string;
+  readonly agentId: string;
+  readonly identityId: string;
+  readonly npcId: string;
+  readonly factionId?: string;
+  readonly regionId: string;
+  readonly doubtStrength: DoubtStrength;
+  readonly reason: string;
+  readonly sourceActionEventId: string;
+  /** Plural approach-tag observation; distinct from the public singular `expectedApproach` bonus marker. */
+  readonly approachTags: readonly ApproachTag[];
+  readonly mirrorLedgerEntryId: string;
+  readonly recordedAt: string;
+}
+
+/**
+ * PR5a additive (journeyViabilityRules). Canonical record of a single
+ * identity's viability projection produced AFTER a SettlementDecision
+ * completes. Mirrors {@link IdentityViabilityProjection} 1:1.
+ *
+ * Anti-loop invariant (spec §6.8): the lifetime delta implied by this
+ * projection (`lifetimeAccelerationBps`) feeds future lifetime projections
+ * only — it MUST NOT re-feed the ConsequenceScore of the settlement that
+ * produced it. The structural guard is that this payload is persisted
+ * verbatim and never re-derived under replay; the orchestrator emits it
+ * AFTER `deriveSettlementDecision` returns and AFTER the solidify commits
+ * canonical faction/NPC/influence events, so its `after` snapshot reflects
+ * the post-solidify world state.
+ *
+ * The identity only carries the latest `after` snapshot to bound memory;
+ * the chronicle retains the full before/after pair via this event.
+ */
+export interface IdentityViabilityProjectedPayload {
+  readonly identityId: string;
+  /** Viability immediately before the settlement was applied. */
+  readonly before: IdentityViability;
+  /** Viability immediately after the settlement was applied (post-solidify). */
+  readonly after: IdentityViability;
+  /** Signed delta of viabilityScoreBps (after - before). May be positive. */
+  readonly deltaBps: number;
+  /**
+   * Acceleration applied to the identity's lifetime when status degrades.
+   * In basis points. Consumed by the NEXT journey's lifetime tick (NOT the
+   * current settlement's selfLossContributions — anti-loop).
+   */
+  readonly lifetimeAccelerationBps: number;
+  /**
+   * True when this projection is the one that flipped status to
+   * "social_death". Fires the social-death side-effect exactly once across
+   * the identity's lifetime.
+   */
+  readonly socialDeathTriggered: boolean;
+  /** Settlement decision that produced this projection. */
+  readonly sourceSettlementId: string;
+  /** Policy version under which this projection was computed. */
+  readonly policyVersion: typeof VIABILITY_POLICY_VERSION;
+  /** ISO-8601 timestamp the projection was anchored at (post-solidify). */
+  readonly projectedAt: string;
 }
 
 export type TraceSourceEventType = RegionInfluenceSourceEventType | "bounty_claimed" | "diplomacy_responded";
+
+/**
+ * PR5c additive. Canonical payload for a world object lifecycle state
+ * transition (intact → degraded, intact → destroyed, degraded → destroyed).
+ * Emitted by the solidify path when a promoted `object_mutation` or
+ * `object_destroy` mirror-ledger entry commits.
+ */
+export interface WorldObjectStateChangedPayload {
+  readonly objectId: string;
+  readonly regionId: string;
+  readonly statusAfter: "intact" | "degraded" | "destroyed";
+  readonly degree: number;
+  readonly sourceActionEventId: string;
+  readonly sourceAggregateId: string;
+  readonly changedAt: string;
+  readonly worldMinute: number;
+}
+
+/**
+ * PR5c additive. Canonical payload for a hidden-prerequisite link status
+ * change. Emitted by the solidify-time cascade after a
+ * `world_object_state_changed` event destroys an object that is a hidden
+ * prerequisite for some objective.
+ */
+export interface HiddenPrerequisiteLinkChangedPayload {
+  readonly regionId: string;
+  readonly objectiveId: string;
+  readonly prerequisiteObjectId: string;
+  readonly statusAfter: "intact" | "degraded" | "destroyed";
+  readonly sourceActionEventId: string;
+  readonly sourceLedgerEntryId?: string;
+  readonly changedAt: string;
+}
 
 export interface TraceCreatedPayload {
   readonly traceId: string;
@@ -1912,6 +2149,22 @@ export interface EpochEventPayloadMap {
   readonly season_resolved: SeasonResolvedPayload;
   readonly agent_faction_standing_changed: AgentFactionStandingChangedPayload;
   readonly journey_world_solidified: JourneyWorldSolidifiedPayload;
+  /**
+   * PR1 additive. NPC doubt observation promoted to the canonical event stream
+   * on solidify. NOTE: the {@link EpochEventType} union / EPOCH_EVENT_TYPES
+   * registration is intentionally deferred to a later PR; this map entry is
+   * additive and does not require the union to list the key yet (the mapped
+   * type only requires every EpochEventType member to have a payload, not the
+   * reverse).
+   */
+  readonly npc_identity_doubt: NpcIdentityDoubtPayload;
+  /**
+   * PR5a additive. Viability projection promoted to the canonical event
+   * stream on settlement. NOTE: the {@link EpochEventType} union lists the
+   * key (protocol.ts EPOCH_EVENT_TYPES), so this entry participates in the
+   * full event-payload map.
+   */
+  readonly identity_viability_projected: IdentityViabilityProjectedPayload;
   readonly region_influence_changed: RegionInfluenceChangedPayload;
   readonly trace_created: TraceCreatedPayload;
   readonly trace_conflict_deployed: TraceConflictDeployedPayload;
@@ -1968,6 +2221,8 @@ export interface EpochEventPayloadMap {
   readonly abuse_score_changed: AbuseScoreChangedPayload;
   readonly abuse_score_released: AbuseScoreReleasedPayload;
   readonly abuse_score_decayed: AbuseScoreDecayedPayload;
+  readonly world_object_state_changed: WorldObjectStateChangedPayload;
+  readonly hidden_prerequisite_link_changed: HiddenPrerequisiteLinkChangedPayload;
 }
 
 export type EpochEvent = {

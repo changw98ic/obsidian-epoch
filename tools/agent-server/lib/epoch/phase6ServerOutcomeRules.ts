@@ -261,8 +261,9 @@ function commandResultForAction(
 function isJourneyResolution(value: unknown): value is JourneyActionResolution {
   const resolution = record(value);
   return resolution.authority === "server"
-    && nonEmpty(resolution.outcome)
-    && nonEmpty(resolution.completionKind)
+    && typeof resolution.outcome === "string"
+    && ["exceptional_success", "success", "partial_success", "failure"].includes(resolution.outcome)
+    && (resolution.completionKind === "complete" || resolution.completionKind === "failed")
     && typeof resolution.score === "number"
     && typeof resolution.difficulty === "number";
 }
@@ -475,7 +476,6 @@ function buildOutcomeResolution(
   const injuryFacts = factsForEvents(events, isInjuryFact);
   const worldImpactFacts = factsForEvents(events, isWorldImpactFact);
   const failed = actions.some((action) => action.outcome === "failure");
-  const skipped = actions.some((action) => action.completionKind === "skip");
   return {
     authority: "server_commit",
     source: "server_committed_canonical_events",
@@ -489,7 +489,7 @@ function buildOutcomeResolution(
       ? { settledAt: text(input.journeyBinding.settledAt) || text(input.journeyBinding.updatedAt) }
       : {}),
     objective: failed ? 0 : 1,
-    completion: skipped ? 0 : 1,
+    completion: 1,
     survival: injuryFacts.length === 0 ? 1 : 0,
     difficulty: average(actions.map((action) => action.difficulty).filter(Number.isFinite)),
     resourceCost,

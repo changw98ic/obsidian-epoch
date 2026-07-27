@@ -19,7 +19,6 @@ import {
 } from "./phase6ResultPageRules.ts";
 import {
   JOURNEY_RUN_RECEIPT_AUTHORITY,
-  JOURNEY_RUN_RECEIPT_LEGACY_VERSION,
   JOURNEY_RUN_RECEIPT_VERSION,
   JOURNEY_RUN_SUITABILITY_DIMENSIONS,
   journeyRunReceiptPayloadHash,
@@ -41,7 +40,6 @@ export type Phase6ServerResultPageFindingCode =
   | Phase6ResultPageFindingCode
   | "PHASE6_SERVER_RESULT_PAGE_RECEIPT_MISSING"
   | "PHASE6_SERVER_RESULT_PAGE_RECEIPT_NOT_FINALIZED"
-  | "PHASE6_SERVER_RESULT_PAGE_LEGACY_RECEIPT_REJECTED"
   | "PHASE6_SERVER_RESULT_PAGE_RECEIPT_INVALID"
   | "PHASE6_SERVER_RESULT_PAGE_CANONICAL_ARTIFACT_MISSING"
   | "PHASE6_SERVER_RESULT_PAGE_CANONICAL_ARTIFACT_INVALID"
@@ -350,14 +348,6 @@ function strictFinalizedReceipt(
       "PHASE6_SERVER_RESULT_PAGE_RECEIPT_MISSING",
       "journey_run_receipt.v2 is required",
       "receipt",
-    ));
-    return undefined;
-  }
-  if (value.version === JOURNEY_RUN_RECEIPT_LEGACY_VERSION) {
-    findings.push(finding(
-      "PHASE6_SERVER_RESULT_PAGE_LEGACY_RECEIPT_REJECTED",
-      "Legacy journey_run_receipt.v1 cannot produce a Phase 6 result",
-      "receipt.version",
     ));
     return undefined;
   }

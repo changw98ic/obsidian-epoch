@@ -1,5 +1,5 @@
 import { projectEpochEvents, type EpochProjection } from "./gameCore.ts";
-import type { EpochEvent } from "./events.ts";
+import type { EpochEvent, JourneyWorldSolidifiedPayload } from "./events.ts";
 import { progressView } from "./progressReadModel.ts";
 import {
   resultPageFocusHostedSession,
@@ -39,9 +39,19 @@ import {
   type JourneyRewardBundle,
 } from "./journeyGeneratedTaskRules.ts";
 import { sha256Hex } from "./runtimeAuth.ts";
-import { assertAttributeId, assertResourceId, type EpochResourceId } from "./protocol.ts";
+import { assertResourceId, type EpochResourceId } from "./protocol.ts";
 import type { JourneyWorldCommit } from "./journeyRules.ts";
+import {
+  CANON_THRESHOLD_BPS,
+  SETTLEMENT_POLICY_VERSION,
+  CONSEQUENCE_SCORE_POLICY_VERSION,
+} from "./journeySettlementRules.ts";
 import type { JourneyRunReceipt } from "./journeyRunReceiptRules.ts";
+import type { RoleplayDeviationClassification, HiddenPrerequisiteStatus } from "./journeyRoleplayRules.ts";
+import { ROLEPLAY_PATTERN_VERSION } from "./journeyRoleplayRules.ts";
+import type { ViabilityStatus } from "./journeyViabilityRules.ts";
+import { VIABILITY_POLICY_VERSION } from "./journeyViabilityRules.ts";
+import { STRATEGY_POLICY_VERSION } from "./journeyStrategyRules.ts";
 
 type AnyRecord = Readonly<Record<string, unknown>>;
 
@@ -57,10 +67,10 @@ function resultPageRewardBundle(value: unknown): JourneyRewardBundle | undefined
   }
   const record = value as Record<string, unknown>;
   if (Object.keys(record).some((key) =>
-    key !== "resources" && key !== "items" && key !== "attributes" && key !== "attributeProgression")
+    key !== "resources" && key !== "items" && key !== "attributeProgression")
     || !Array.isArray(record.resources) || record.resources.length > 4
     || !Array.isArray(record.items) || record.items.length > 4
-    || (record.attributes !== undefined && (!Array.isArray(record.attributes) || record.attributes.length > 6))) {
+    || record.attributeProgression === undefined) {
     throw new Error("result_page_journey_reward_bundle_invalid");
   }
   const resources = record.resources.map((entry) => {
@@ -97,24 +107,7 @@ function resultPageRewardBundle(value: unknown): JourneyRewardBundle | undefined
       rarity,
     };
   });
-  const attributes = (Array.isArray(record.attributes) ? record.attributes : []).map((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new Error("result_page_journey_reward_bundle_invalid");
-    }
-    const attribute = entry as Record<string, unknown>;
-    if (Object.keys(attribute).some((key) => key !== "attributeId" && key !== "amount")
-      || typeof attribute.attributeId !== "string" || !attribute.attributeId.trim()
-      || typeof attribute.amount !== "number" || !Number.isSafeInteger(attribute.amount) || attribute.amount < 1) {
-      throw new Error("result_page_journey_reward_bundle_invalid");
-    }
-    return {
-      attributeId: assertAttributeId(attribute.attributeId),
-      amount: attribute.amount,
-    };
-  });
-  const attributeProgression = record.attributeProgression === undefined
-    ? undefined
-    : (() => {
+  const attributeProgression = (() => {
         if (!record.attributeProgression || typeof record.attributeProgression !== "object"
           || Array.isArray(record.attributeProgression)) {
           throw new Error("result_page_journey_reward_bundle_invalid");
@@ -137,9 +130,8 @@ function resultPageRewardBundle(value: unknown): JourneyRewardBundle | undefined
   return {
     resources,
     items,
-    attributes,
-    ...(attributeProgression ? { attributeProgression } : {}),
-  } as JourneyRewardBundle;
+    attributeProgression,
+  };
 }
 
 function resultPageWorldCommit(value: unknown): JourneyWorldCommit | undefined {
@@ -149,10 +141,17 @@ function resultPageWorldCommit(value: unknown): JourneyWorldCommit | undefined {
   }
   const record = value as Record<string, unknown>;
   const status = record.status === "solidified" || record.status === "discarded" ? record.status : undefined;
-  const reason = record.reason === "main_completed_and_returned"
-    || record.reason === "main_incomplete_or_return_failed"
-    || record.reason === "quality_below_canon_threshold"
-    ? record.reason
+  const completionTier = record.completionTier === "未及格"
+    || record.completionTier === "及格"
+    || record.completionTier === "良好"
+    || record.completionTier === "优秀"
+    || record.completionTier === "惊世"
+    ? record.completionTier
+    : undefined;
+  const reason = record.reason === "main_completed_and_above_threshold"
+    || record.reason === "main_incomplete"
+    || record.reason === "below_canon_threshold"
+    ? record.reason as JourneyWorldCommit["reason"]
     : undefined;
   const regionId = typeof record.regionId === "string" && record.regionId.trim() ? record.regionId.trim() : undefined;
   const committedAtWorldTime = typeof record.committedAtWorldTime === "string"
@@ -211,22 +210,84 @@ function resultPageWorldCommit(value: unknown): JourneyWorldCommit | undefined {
   const commitEventId = typeof record.commitEventId === "string" && record.commitEventId.trim()
     ? record.commitEventId.trim()
     : undefined;
-  if (record.mode !== "mirror" || !status || !reason || !regionId || !committedAtWorldTime
+  if (record.mode !== "mirror" || !status || !completionTier || !reason || !regionId || !committedAtWorldTime
     || influenceDelta === undefined || influenceDelta < 0 || !sourceEventIds || !factionStandings || !npcRelationships) {
     throw new Error("result_page_journey_world_commit_invalid");
   }
+  const completionScoreBps = typeof record.completionScoreBps === "number"
+    && Number.isSafeInteger(record.completionScoreBps)
+    && record.completionScoreBps >= 0
+    && record.completionScoreBps <= 10_000
+    ? record.completionScoreBps
+    : undefined;
+  const canonThresholdBps = record.canonThresholdBps === CANON_THRESHOLD_BPS
+    ? CANON_THRESHOLD_BPS
+    : undefined;
+  const settlementPolicyVersion = record.settlementPolicyVersion === SETTLEMENT_POLICY_VERSION
+    ? SETTLEMENT_POLICY_VERSION
+    : undefined;
+  const consequenceScorePolicyVersion = record.consequenceScorePolicyVersion === CONSEQUENCE_SCORE_POLICY_VERSION
+    ? CONSEQUENCE_SCORE_POLICY_VERSION
+    : undefined;
+  const settlementId = typeof record.settlementId === "string" && record.settlementId.trim()
+    ? record.settlementId.trim()
+    : undefined;
+  let consequenceScoreBreakdown: {
+    readonly resultScoreBps: number;
+    readonly selfLossScoreBps: number;
+    readonly collateralScoreBps: number;
+  } | undefined;
+  const breakdownValue = record.consequenceScoreBreakdown;
+  if (breakdownValue && typeof breakdownValue === "object" && !Array.isArray(breakdownValue)) {
+    const breakdown = breakdownValue as Record<string, unknown>;
+    const components = [
+      breakdown.resultScoreBps,
+      breakdown.selfLossScoreBps,
+      breakdown.collateralScoreBps,
+    ];
+    if (components.every((entry) => typeof entry === "number"
+      && Number.isSafeInteger(entry)
+      && entry >= -10_000
+      && entry <= 10_000)) {
+      consequenceScoreBreakdown = {
+        resultScoreBps: breakdown.resultScoreBps as number,
+        selfLossScoreBps: breakdown.selfLossScoreBps as number,
+        collateralScoreBps: breakdown.collateralScoreBps as number,
+      };
+    }
+  }
+  if (completionScoreBps === undefined
+    || canonThresholdBps === undefined
+    || settlementPolicyVersion === undefined
+    || consequenceScorePolicyVersion === undefined
+    || settlementId === undefined
+    || consequenceScoreBreakdown === undefined) {
+    throw new Error("result_page_journey_world_commit_invalid");
+  }
   if (status === "solidified") {
-    if (reason !== "main_completed_and_returned" || !commitEventId || !sourceEventIds.includes(commitEventId)) {
+    if (reason !== "main_completed_and_above_threshold"
+      || !commitEventId
+      || !sourceEventIds.includes(commitEventId)) {
       throw new Error("result_page_journey_world_commit_invalid");
     }
-  } else if (!["main_incomplete_or_return_failed", "quality_below_canon_threshold"].includes(reason)
-    || commitEventId || sourceEventIds.length
-    || influenceDelta !== 0 || factionStandings.length || npcRelationships.length) {
-    throw new Error("result_page_journey_world_commit_invalid");
+    if (completionScoreBps < canonThresholdBps) {
+      throw new Error("result_page_world_commit_threshold_inconsistent");
+    }
+  } else {
+    if ((reason !== "below_canon_threshold" && reason !== "main_incomplete")
+      || commitEventId
+      || sourceEventIds.length
+      || influenceDelta !== 0 || factionStandings.length || npcRelationships.length) {
+      throw new Error("result_page_journey_world_commit_invalid");
+    }
+    if (reason === "below_canon_threshold" && completionScoreBps >= canonThresholdBps) {
+      throw new Error("result_page_world_commit_threshold_inconsistent");
+    }
   }
   return {
     mode: "mirror",
     status,
+    completionTier,
     reason,
     regionId,
     committedAtWorldTime,
@@ -235,7 +296,340 @@ function resultPageWorldCommit(value: unknown): JourneyWorldCommit | undefined {
     npcRelationships,
     ...(commitEventId ? { commitEventId } : {}),
     sourceEventIds,
+    completionScoreBps,
+    canonThresholdBps,
+    settlementPolicyVersion,
+    consequenceScorePolicyVersion,
+    settlementId,
+    consequenceScoreBreakdown,
   };
+}
+
+// ── PR8: Settlement / Roleplay / Viability / Strategy / HiddenPrereq ────
+
+function resultPageSettlementScoreBreakdown(value: unknown): {
+  readonly resultScoreBps: number;
+  readonly selfLossScoreBps: number;
+  readonly collateralScoreBps: number;
+  readonly totalBps: number;
+} | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const components = [record.resultScoreBps, record.selfLossScoreBps, record.collateralScoreBps, record.totalBps];
+  if (components.some((entry) => typeof entry !== "number" || !Number.isSafeInteger(entry) || entry < -10_000 || entry > 10_000)) {
+    throw new Error("result_page_settlement_score_breakdown_invalid");
+  }
+  return {
+    resultScoreBps: record.resultScoreBps as number,
+    selfLossScoreBps: record.selfLossScoreBps as number,
+    collateralScoreBps: record.collateralScoreBps as number,
+    totalBps: record.totalBps as number,
+  };
+}
+
+function resultPageSettlementHiddenClamp(value: unknown): EpochResultPageJourney["settlement"] extends { readonly score?: infer S } ? S extends { readonly hiddenClamp?: infer H } ? H : never : never {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined as never;
+  const record = value as Record<string, unknown>;
+  const applied = record.applied === true;
+  const reason = record.reason === "main_incomplete" || record.reason === "hidden_incomplete" ? record.reason : undefined;
+  const tierCap = typeof record.tierCap === "string" ? record.tierCap : undefined;
+  if (!tierCap) throw new Error("result_page_settlement_hidden_clamp_invalid");
+  const sourceHiddenObjectiveIds = Array.isArray(record.sourceHiddenObjectiveIds)
+    ? (record.sourceHiddenObjectiveIds as unknown[]).filter((id): id is string => typeof id === "string" && Boolean(id.trim()))
+    : [];
+  return {
+    applied,
+    ...(reason ? { reason } : {}),
+    tierCap,
+    sourceHiddenObjectiveIds,
+  } as never;
+}
+
+function resultPageSettlementScore(value: unknown): NonNullable<EpochResultPageJourney["settlement"]>["score"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const breakdown = resultPageSettlementScoreBreakdown(record.breakdown);
+  if (!breakdown) throw new Error("result_page_settlement_score_invalid");
+  if (typeof record.mainLineSucceeded !== "boolean") throw new Error("result_page_settlement_score_invalid");
+  if (typeof record.hiddenComplete !== "boolean") throw new Error("result_page_settlement_score_invalid");
+  const hiddenClamp = resultPageSettlementHiddenClamp(record.hiddenClamp);
+  const roleplaySummary = record.roleplaySummary && typeof record.roleplaySummary === "object" && !Array.isArray(record.roleplaySummary)
+    ? (() => {
+        const rp = record.roleplaySummary as Record<string, unknown>;
+        if (typeof rp.deviationBps !== "number" || !Number.isSafeInteger(rp.deviationBps) || rp.deviationBps < 0 || rp.deviationBps > 10_000) {
+          throw new Error("result_page_settlement_roleplay_summary_invalid");
+        }
+        if (typeof rp.doubtEventCount !== "number" || !Number.isSafeInteger(rp.doubtEventCount) || rp.doubtEventCount < 0) {
+          throw new Error("result_page_settlement_roleplay_summary_invalid");
+        }
+        if (typeof rp.exposed !== "boolean") throw new Error("result_page_settlement_roleplay_summary_invalid");
+        return { deviationBps: rp.deviationBps, doubtEventCount: rp.doubtEventCount, exposed: rp.exposed };
+      })()
+    : undefined;
+  const viabilitySummary = record.viabilitySummary && typeof record.viabilitySummary === "object" && !Array.isArray(record.viabilitySummary)
+    ? (() => {
+        const vs = record.viabilitySummary as Record<string, unknown>;
+        if (typeof vs.viabilityScoreBpsBefore !== "number" || !Number.isSafeInteger(vs.viabilityScoreBpsBefore) || vs.viabilityScoreBpsBefore < 0 || vs.viabilityScoreBpsBefore > 10_000) {
+          throw new Error("result_page_settlement_viability_summary_invalid");
+        }
+        if (typeof vs.viabilityScoreBpsAfter !== "number" || !Number.isSafeInteger(vs.viabilityScoreBpsAfter) || vs.viabilityScoreBpsAfter < 0 || vs.viabilityScoreBpsAfter > 10_000) {
+          throw new Error("result_page_settlement_viability_summary_invalid");
+        }
+        if (typeof vs.status !== "string") throw new Error("result_page_settlement_viability_summary_invalid");
+        return { viabilityScoreBpsBefore: vs.viabilityScoreBpsBefore, viabilityScoreBpsAfter: vs.viabilityScoreBpsAfter, status: vs.status };
+      })()
+    : undefined;
+  if (typeof record.policyVersion !== "number" || record.policyVersion !== CONSEQUENCE_SCORE_POLICY_VERSION) {
+    throw new Error("result_page_settlement_score_policy_version_invalid");
+  }
+  if (typeof record.computedAt !== "string" || !Number.isFinite(Date.parse(record.computedAt))) {
+    throw new Error("result_page_settlement_score_computed_at_invalid");
+  }
+  return {
+    breakdown,
+    mainLineSucceeded: record.mainLineSucceeded as boolean,
+    hiddenComplete: record.hiddenComplete as boolean,
+    ...(hiddenClamp !== undefined ? { hiddenClamp } : {}),
+    ...(roleplaySummary ? { roleplaySummary } : {}),
+    ...(viabilitySummary ? { viabilitySummary } : {}),
+    policyVersion: record.policyVersion as number,
+    computedAt: record.computedAt as string,
+  };
+}
+
+function resultPageSettlementRewardModifier(value: unknown): NonNullable<EpochResultPageJourney["settlement"]>["reward"] extends { readonly modifier?: infer M } ? M : never {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("result_page_settlement_reward_modifier_invalid");
+  const record = value as Record<string, unknown>;
+  if (typeof record.modifierBps !== "number" || !Number.isSafeInteger(record.modifierBps)) {
+    throw new Error("result_page_settlement_reward_modifier_invalid");
+  }
+  if (typeof record.multiplierBps !== "number" || !Number.isSafeInteger(record.multiplierBps) || record.multiplierBps < 5_000 || record.multiplierBps > 15_000) {
+    throw new Error("result_page_settlement_reward_modifier_invalid");
+  }
+  if (record.reason !== "strategy_score_modifier" && record.reason !== "journey_grade") {
+    throw new Error("result_page_settlement_reward_modifier_invalid");
+  }
+  return {
+    modifierBps: record.modifierBps,
+    multiplierBps: record.multiplierBps,
+    reason: record.reason as "strategy_score_modifier" | "journey_grade",
+  } as never;
+}
+
+function resultPageSettlementReward(value: unknown): NonNullable<EpochResultPageJourney["settlement"]>["reward"] | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("result_page_settlement_reward_invalid");
+  const record = value as Record<string, unknown>;
+  if (typeof record.tier !== "string" || !record.tier.trim()) throw new Error("result_page_settlement_reward_invalid");
+  if (typeof record.baseBundleRef !== "string" || !record.baseBundleRef.trim()) throw new Error("result_page_settlement_reward_invalid");
+  const modifier = resultPageSettlementRewardModifier(record.modifier);
+  const resourceGrants = record.resourceGrants && typeof record.resourceGrants === "object" && !Array.isArray(record.resourceGrants)
+    ? Object.freeze(record.resourceGrants as Readonly<Record<string, number>>)
+    : undefined;
+  const itemGrants = Array.isArray(record.itemGrants)
+    ? record.itemGrants.map((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("result_page_settlement_reward_invalid");
+        const item = entry as Record<string, unknown>;
+        if (typeof item.itemId !== "string" || !item.itemId.trim()) throw new Error("result_page_settlement_reward_invalid");
+        if (typeof item.quantity !== "number" || !Number.isSafeInteger(item.quantity) || item.quantity < 1) throw new Error("result_page_settlement_reward_invalid");
+        if (typeof item.rarityTier !== "number" || !Number.isSafeInteger(item.rarityTier) || item.rarityTier < 0 || item.rarityTier > 3) throw new Error("result_page_settlement_reward_invalid");
+        return { itemId: item.itemId.trim(), quantity: item.quantity, rarityTier: item.rarityTier };
+      })
+    : undefined;
+  if (typeof record.idempotencyKey !== "string" || !record.idempotencyKey.trim()) throw new Error("result_page_settlement_reward_invalid");
+  if (record.negativeRewardForbidden !== true) throw new Error("result_page_settlement_reward_invalid");
+  return {
+    tier: record.tier.trim(),
+    baseBundleRef: record.baseBundleRef.trim(),
+    modifier,
+    ...(resourceGrants ? { resourceGrants } : {}),
+    ...(itemGrants ? { itemGrants } : {}),
+    idempotencyKey: record.idempotencyKey.trim(),
+    negativeRewardForbidden: true,
+  } as NonNullable<EpochResultPageJourney["settlement"]>["reward"];
+}
+
+function resultPageSettlementWorldCommitDecision(value: unknown): NonNullable<EpochResultPageJourney["settlement"]>["worldCommitDecision"] | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("result_page_settlement_world_commit_decision_invalid");
+  const record = value as Record<string, unknown>;
+  const status = record.status === "solidified" || record.status === "discarded" ? record.status : undefined;
+  if (!status) throw new Error("result_page_settlement_world_commit_decision_invalid");
+  if (typeof record.canonEligible !== "boolean") throw new Error("result_page_settlement_world_commit_decision_invalid");
+  if (typeof record.thresholdBps !== "number" || record.thresholdBps !== CANON_THRESHOLD_BPS) throw new Error("result_page_settlement_world_commit_decision_invalid");
+  if (typeof record.policyVersion !== "number" || record.policyVersion !== SETTLEMENT_POLICY_VERSION) throw new Error("result_page_settlement_world_commit_decision_invalid");
+  const reason = record.reason === "main_completed_and_above_threshold" || record.reason === "below_canon_threshold" || record.reason === "main_incomplete"
+    ? record.reason : undefined;
+  if (!reason) throw new Error("result_page_settlement_world_commit_decision_invalid");
+  // Invariants: canonEligible iff solidified; threshold check for below_canon_threshold
+  if (status === "solidified" && !record.canonEligible) throw new Error("result_page_settlement_world_commit_decision_inconsistent");
+  if (reason === "main_incomplete" && record.canonEligible) throw new Error("result_page_settlement_world_commit_decision_inconsistent");
+  return { status, canonEligible: record.canonEligible as boolean, thresholdBps: record.thresholdBps as number, policyVersion: record.policyVersion as number, reason };
+}
+
+function resultPageSettlement(value: unknown): EpochResultPageJourney["settlement"] | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("result_page_settlement_invalid");
+  const record = value as Record<string, unknown>;
+  const score = resultPageSettlementScore(record.score);
+  const tier = typeof record.tier === "string" && record.tier.trim() ? record.tier.trim() : undefined;
+  const reward = resultPageSettlementReward(record.reward);
+  const worldCommitDecision = resultPageSettlementWorldCommitDecision(record.worldCommitDecision);
+  const policyVersion = typeof record.policyVersion === "number" && record.policyVersion === SETTLEMENT_POLICY_VERSION
+    ? record.policyVersion : undefined;
+  return {
+    ...(score ? { score } : {}),
+    ...(tier ? { tier } : {}),
+    ...(reward ? { reward } : {}),
+    ...(worldCommitDecision ? { worldCommitDecision } : {}),
+    ...(policyVersion !== undefined ? { policyVersion } : {}),
+  };
+}
+
+function resultPageRoleplay(value: unknown): EpochResultPageJourney["roleplay"] | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("result_page_roleplay_invalid");
+  const record = value as Record<string, unknown>;
+  if (typeof record.deviationBps !== "number" || !Number.isSafeInteger(record.deviationBps) || record.deviationBps < 0 || record.deviationBps > 10_000) {
+    throw new Error("result_page_roleplay_invalid");
+  }
+  const validClassifications = new Set<string>(["aligned", "minor_deviation", "major_deviation", "forbidden_action"]);
+  if (typeof record.classification !== "string" || !validClassifications.has(record.classification)) {
+    throw new Error("result_page_roleplay_invalid");
+  }
+  const npcDoubtEvents = Array.isArray(record.npcDoubtEvents)
+    ? record.npcDoubtEvents.map((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("result_page_roleplay_doubt_event_invalid");
+        const event = entry as Record<string, unknown>;
+        if (typeof event.npcId !== "string" || !event.npcId.trim()) throw new Error("result_page_roleplay_doubt_event_invalid");
+        if (typeof event.doubtStrength !== "string") throw new Error("result_page_roleplay_doubt_event_invalid");
+        if (typeof event.reason !== "string") throw new Error("result_page_roleplay_doubt_event_invalid");
+        return {
+          npcId: event.npcId.trim(),
+          ...(typeof event.factionId === "string" && event.factionId.trim() ? { factionId: event.factionId.trim() } : {}),
+          doubtStrength: event.doubtStrength,
+          reason: event.reason,
+        };
+      })
+    : undefined;
+  if (typeof record.exposed !== "boolean") throw new Error("result_page_roleplay_invalid");
+  if (typeof record.patternVersion !== "number" || record.patternVersion !== ROLEPLAY_PATTERN_VERSION) {
+    throw new Error("result_page_roleplay_pattern_version_invalid");
+  }
+  return {
+    deviationBps: record.deviationBps as number,
+    classification: record.classification as RoleplayDeviationClassification,
+    ...(npcDoubtEvents ? { npcDoubtEvents } : {}),
+    exposed: record.exposed as boolean,
+    patternVersion: record.patternVersion as number,
+  };
+}
+
+function resultPageViability(value: unknown): EpochResultPageJourney["viability"] | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("result_page_viability_invalid");
+  const record = value as Record<string, unknown>;
+  const before = record.before && typeof record.before === "object" && !Array.isArray(record.before)
+    ? (() => {
+        const b = record.before as Record<string, unknown>;
+        if (typeof b.viabilityScoreBps !== "number" || !Number.isSafeInteger(b.viabilityScoreBps) || b.viabilityScoreBps < 0 || b.viabilityScoreBps > 10_000) {
+          throw new Error("result_page_viability_before_invalid");
+        }
+        return { viabilityScoreBps: b.viabilityScoreBps };
+      })()
+    : undefined;
+  const after = record.after && typeof record.after === "object" && !Array.isArray(record.after)
+    ? (() => {
+        const a = record.after as Record<string, unknown>;
+        if (typeof a.viabilityScoreBps !== "number" || !Number.isSafeInteger(a.viabilityScoreBps) || a.viabilityScoreBps < 0 || a.viabilityScoreBps > 10_000) {
+          throw new Error("result_page_viability_after_invalid");
+        }
+        return { viabilityScoreBps: a.viabilityScoreBps };
+      })()
+    : undefined;
+  if (typeof record.deltaBps !== "number" || !Number.isSafeInteger(record.deltaBps)) {
+    throw new Error("result_page_viability_invalid");
+  }
+  if (typeof record.status !== "string") throw new Error("result_page_viability_invalid");
+  const lifetimeConsequence = typeof record.lifetimeConsequence === "string" && record.lifetimeConsequence.trim()
+    ? record.lifetimeConsequence.trim() : undefined;
+  return {
+    ...(before ? { before } : {}),
+    ...(after ? { after } : {}),
+    deltaBps: record.deltaBps as number,
+    status: record.status as string,
+    ...(lifetimeConsequence ? { lifetimeConsequence } : {}),
+  };
+}
+
+function resultPageStrategyConsistency(value: unknown): EpochResultPageJourney["strategyConsistency"] | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("result_page_strategy_consistency_invalid");
+  const record = value as Record<string, unknown>;
+  if (typeof record.matchBps !== "number" || !Number.isSafeInteger(record.matchBps) || record.matchBps < 0 || record.matchBps > 10_000) {
+    throw new Error("result_page_strategy_consistency_invalid");
+  }
+  if (typeof record.classification !== "string") throw new Error("result_page_strategy_consistency_invalid");
+  const snapshot = record.snapshot && typeof record.snapshot === "object" && !Array.isArray(record.snapshot)
+    ? (() => {
+        const s = record.snapshot as Record<string, unknown>;
+        if (typeof s.journeyId !== "string" || !s.journeyId.trim()) throw new Error("result_page_strategy_consistency_snapshot_invalid");
+        const entries = Array.isArray(s.entries)
+          ? s.entries.map((entry) => {
+              if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("result_page_strategy_consistency_snapshot_invalid");
+              const e = entry as Record<string, unknown>;
+              if (typeof e.source !== "string" || !e.source.trim()) throw new Error("result_page_strategy_consistency_snapshot_invalid");
+              if (typeof e.sourceId !== "string" || !e.sourceId.trim()) throw new Error("result_page_strategy_consistency_snapshot_invalid");
+              if (!Array.isArray(e.approachTags)) throw new Error("result_page_strategy_consistency_snapshot_invalid");
+              if (typeof e.recordedAt !== "string" || !Number.isFinite(Date.parse(e.recordedAt))) throw new Error("result_page_strategy_consistency_snapshot_invalid");
+              return {
+                source: e.source.trim(),
+                sourceId: e.sourceId.trim(),
+                approachTags: (e.approachTags as unknown[]).filter((t): t is string => typeof t === "string"),
+                recordedAt: e.recordedAt,
+              };
+            })
+          : undefined;
+        if (typeof s.snapshotVersion !== "number") throw new Error("result_page_strategy_consistency_snapshot_invalid");
+        return {
+          journeyId: s.journeyId.trim(),
+          ...(entries ? { entries } : {}),
+          snapshotVersion: s.snapshotVersion,
+        };
+      })()
+    : undefined;
+  if (typeof record.strategyPolicyVersion !== "number" || record.strategyPolicyVersion !== STRATEGY_POLICY_VERSION) {
+    throw new Error("result_page_strategy_consistency_policy_version_invalid");
+  }
+  return {
+    matchBps: record.matchBps as number,
+    classification: record.classification as string,
+    ...(snapshot ? { snapshot } : {}),
+    strategyPolicyVersion: record.strategyPolicyVersion as number,
+  };
+}
+
+function resultPageHiddenPrerequisites(value: unknown): EpochResultPageJourney["hiddenPrerequisites"] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error("result_page_hidden_prerequisites_invalid");
+  const validStatuses = new Set<string>(["intact", "destroyed", "degraded"]);
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("result_page_hidden_prerequisite_invalid");
+    const record = entry as Record<string, unknown>;
+    if (typeof record.objectiveId !== "string" || !record.objectiveId.trim()) throw new Error("result_page_hidden_prerequisite_invalid");
+    if (typeof record.prerequisiteObjectId !== "string" || !record.prerequisiteObjectId.trim()) throw new Error("result_page_hidden_prerequisite_invalid");
+    if (typeof record.status !== "string" || !validStatuses.has(record.status)) throw new Error("result_page_hidden_prerequisite_invalid");
+    if (typeof record.observedAt !== "string" || !Number.isFinite(Date.parse(record.observedAt))) throw new Error("result_page_hidden_prerequisite_invalid");
+    return {
+      objectiveId: record.objectiveId.trim(),
+      prerequisiteObjectId: record.prerequisiteObjectId.trim(),
+      status: record.status as HiddenPrerequisiteStatus,
+      ...(typeof record.destroyedAtActionEventId === "string" && record.destroyedAtActionEventId.trim() ? { destroyedAtActionEventId: record.destroyedAtActionEventId.trim() } : {}),
+      ...(typeof record.degradedAtActionEventId === "string" && record.degradedAtActionEventId.trim() ? { degradedAtActionEventId: record.degradedAtActionEventId.trim() } : {}),
+      ...(typeof record.sourceLedgerEntryId === "string" && record.sourceLedgerEntryId.trim() ? { sourceLedgerEntryId: record.sourceLedgerEntryId.trim() } : {}),
+      observedAt: record.observedAt,
+    };
+  });
 }
 
 export interface BuildEpochResultPagePayloadInput {
@@ -338,10 +732,10 @@ function resultPageJourney(
   const taskPlan = source.taskPlan && typeof source.taskPlan === "object" && !Array.isArray(source.taskPlan)
     ? source.taskPlan as JourneyGeneratedTaskPlan
     : undefined;
-  const hiddenTaskSeal: JourneyHiddenTaskSeal | undefined = taskPlan
-    ? resolveHiddenTaskSeal?.(journeyId, taskPlan)
-    : undefined;
-  if (taskPlan) deriveJourneyHiddenTask(taskPlan, hiddenTaskSeal);
+  if (!taskPlan || !resolveHiddenTaskSeal) throw new Error("result_page_journey_task_plan_required");
+  const hiddenTaskSeal = resolveHiddenTaskSeal(journeyId, taskPlan);
+  if (!hiddenTaskSeal) throw new Error("result_page_journey_hidden_task_seal_missing");
+  deriveJourneyHiddenTask(taskPlan, hiddenTaskSeal);
   const canonicalEventIds = Array.isArray(source.canonicalEventIds)
     ? source.canonicalEventIds.filter((id): id is string => typeof id === "string" && Boolean(id.trim())).slice(0, 30)
     : [];
@@ -358,10 +752,15 @@ function resultPageJourney(
       : {}),
   } : undefined;
   const publicRewardBundle = resultPageRewardBundle(delta?.rewardBundle);
+  const isSettled = ["settled", "completed"].includes(status);
+  const settlement = isSettled ? resultPageSettlement(source.settlement) : undefined;
+  const roleplay = isSettled ? resultPageRoleplay(source.roleplay) : undefined;
+  const viability = isSettled ? resultPageViability(source.viability) : undefined;
+  const strategyConsistency = isSettled ? resultPageStrategyConsistency(source.strategyConsistency) : undefined;
+  const hiddenPrerequisites = isSettled ? resultPageHiddenPrerequisites(source.hiddenPrerequisites) : undefined;
+  const hiddenPrerequisiteLinks = hiddenPrerequisites ?? [];
   const groundedEventIds = [...new Set(episodes.flatMap((episode) => episode.serverFacts.sourceEventIds))];
-  const episodePathComplete = taskPlan
-    ? episodes.length >= 3 && !nextJourneyTaskObjective(taskPlan, episodes)
-    : episodes.length === 3;
+  const episodePathComplete = episodes.length >= 3 && !nextJourneyTaskObjective(taskPlan, episodes);
   if (["settled", "completed"].includes(status)
     && (!episodePathComplete || !sameIds(canonicalEventIds, groundedEventIds))) {
     throw new Error("result_page_journey_grounding_invalid");
@@ -377,6 +776,7 @@ function resultPageJourney(
     episodes,
     taskPlan,
     hiddenTaskSeal,
+    hiddenPrerequisiteLinks,
     identity,
   });
   if (["settled", "completed"].includes(status) && !storyReport) {
@@ -390,6 +790,8 @@ function resultPageJourney(
     episodes,
     taskPlan,
     hiddenTaskSeal,
+    hiddenPrerequisiteLinks,
+    completionTier: worldCommit?.completionTier,
   });
   const phase6AuthoritativeCompletion = explicitPhase6CompletionInput !== undefined
     && ["settled", "completed"].includes(status)
@@ -416,6 +818,11 @@ function resultPageJourney(
       ...(publicReward && Object.keys(publicReward).length > 0 ? { reward: publicReward } : {}),
       ...(publicRewardBundle ? { rewardBundle: publicRewardBundle } : {}),
     } } : {}),
+    ...(settlement ? { settlement } : {}),
+    ...(roleplay ? { roleplay } : {}),
+    ...(viability ? { viability } : {}),
+    ...(strategyConsistency ? { strategyConsistency } : {}),
+    ...(hiddenPrerequisites ? { hiddenPrerequisites } : {}),
   } as EpochResultPageJourney;
 }
 
@@ -524,20 +931,19 @@ export function assertEpochResultPagePayload(
     }
     const signedAction = session.payload.sceneContract?.actionOptions?.find((action) =>
       action.actionOptionId === event.payload.actionOptionId);
-    const legacyUnsignedAction = session.payload.sceneContract?.actionOptions === undefined
-      && event.payload.actionOptionId === undefined
-      && event.payload.optionLabel === undefined
-      && event.payload.outcomeSummary === undefined
-      && event.payload.journeyResolution === undefined
-      && episode.generatedTaskObjective === undefined
-      && influenceEvents.length === 0
-      && traceEvents.length === 0
-      && factionStandingEvents.length === 0;
     if (!signedAction) {
-      if (legacyUnsignedAction) continue;
       throw new Error("result_page_journey_provenance_invalid");
     }
-    const completionKind = event.payload.journeyResolution?.completionKind ?? signedAction.completionKind;
+    const completionKind = event.payload.journeyResolution?.completionKind;
+    const recallOnlyMainEpisode = episode.phase === "main"
+      && episode.serverFacts?.storyBeat?.selectedAction.optionKey === "recall_without_objective"
+      && episode.serverFacts?.storyBeat?.selectedAction.taskObjectiveId === undefined;
+    if (episode.generatedTaskObjective
+      && !recallOnlyMainEpisode
+      && completionKind !== "complete"
+      && completionKind !== "failed") {
+      throw new Error("result_page_journey_provenance_invalid");
+    }
     const persistedResolution = episode.serverFacts?.storyBeat?.selectedAction.resolution;
     if (persistedResolution !== undefined
       && stableResultPageJson(persistedResolution) !== stableResultPageJson(event.payload.journeyResolution)) {
@@ -573,17 +979,28 @@ export function assertEpochResultPagePayload(
         throw new Error("result_page_journey_world_commit_invalid");
       }
       const marker = markers[0];
+      const markerPayload = marker.payload as JourneyWorldSolidifiedPayload;
       const expectedCommit: JourneyWorldCommit = {
         mode: "mirror",
         status: "solidified",
-        reason: "main_completed_and_returned",
-        regionId: marker.payload.regionId,
-        committedAtWorldTime: marker.payload.committedAtWorldTime ?? marker.payload.mirrorEndedAtWorldTime,
-        influenceDelta: marker.payload.influenceDelta,
-        factionStandings: marker.payload.factionStandings,
-        npcRelationships: marker.payload.npcRelationships,
+        completionTier: markerPayload.completionTier,
+        reason: "main_completed_and_above_threshold",
+        regionId: markerPayload.regionId,
+        committedAtWorldTime: markerPayload.committedAtWorldTime ?? markerPayload.mirrorEndedAtWorldTime,
+        influenceDelta: markerPayload.influenceDelta,
+        factionStandings: markerPayload.factionStandings,
+        npcRelationships: markerPayload.npcRelationships,
         commitEventId: marker.eventId,
-        sourceEventIds: [...marker.payload.effectEventIds, marker.eventId],
+        sourceEventIds: [...markerPayload.effectEventIds, marker.eventId],
+        completionScoreBps: markerPayload.completionScoreBps,
+        canonThresholdBps: markerPayload.canonThresholdBps,
+        settlementPolicyVersion: markerPayload.settlementPolicyVersion,
+        consequenceScorePolicyVersion: markerPayload.consequenceScorePolicyVersion,
+        ...(markerPayload.strategyPolicyVersion !== undefined ? { strategyPolicyVersion: markerPayload.strategyPolicyVersion } : {}),
+        ...(markerPayload.questOfferId !== undefined ? { questOfferId: markerPayload.questOfferId } : {}),
+        ...(markerPayload.offerHash !== undefined ? { offerHash: markerPayload.offerHash } : {}),
+        settlementId: markerPayload.settlementId,
+        consequenceScoreBreakdown: markerPayload.consequenceScoreBreakdown,
       };
       if (stableResultPageJson(expectedCommit) !== stableResultPageJson(worldCommit)
         || marker.payload.sourceEventIds.some((eventId) => !journey.canonicalEventIds.includes(eventId))) {

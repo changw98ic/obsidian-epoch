@@ -3,6 +3,7 @@ import { createHash, createPublicKey, verify as verifySignature } from "node:cry
 import test from "node:test";
 import { createEpochGameCore, epochShopOffersForRegion, previewEpochDowntime, projectEpochEvents, type EpochNpcRelationship, type EpochSocialHook } from "../lib/epoch/gameCore.ts";
 import type { EpochEvent } from "../lib/epoch/events.ts";
+import { createEpochEvent } from "../lib/epoch/events.ts";
 import { assertNpcRelationshipKind, createSequentialEpochIdFactory, type EpochClock, type EpochCommandContext } from "../lib/epoch/protocol.ts";
 import { createEpochRuntime } from "../lib/epoch/runtime.ts";
 import { JOURNEY_FIRST_ENTRY_RESERVE } from "../lib/epoch/journeyActionResolutionRules.ts";
@@ -9004,4 +9005,239 @@ test("bound crafted inventory effects improve server-settled resource contests",
   assert.equal(boundPayload.agentScoreAfter, 5);
   assert.equal(boundContest.value.totalScore, 5);
   assert.equal(boundContest.value.leaderboard[0].score, 5);
+});
+
+// ---------------------------------------------------------------------------
+// PR5a — identity_viability_projected apply path + lifetime_adjusted
+// defensive guard for reserved viability reasons.
+// ---------------------------------------------------------------------------
+
+test("PR5a: identity_issued persists initial identityViability snapshot on the identity record", () => {
+  const core = createEpochGameCore({
+    idFactory: createSequentialEpochIdFactory("viab_issue"),
+    defaultLifetime: 8,
+  });
+  const issued = core.issueIdentity({ explorerId: "explorer_viab" }, userContext);
+  const projected = core.project().identities[issued.value.agentId];
+  assert.ok(projected?.identityViability, "identityViability must be populated after issue");
+  assert.equal(projected.identityViability!.viabilityScoreBps, 10_000);
+  assert.equal(projected.identityViability!.status, "healthy");
+  assert.equal(projected.identityViability!.identityId, issued.value.agentId);
+  assert.equal(projected.identityViability!.policyVersion, 1);
+});
+
+test("PR5a: identity_viability_projected apply branch overwrites the identity's identityViability with the after snapshot", () => {
+  const core = createEpochGameCore({
+    idFactory: createSequentialEpochIdFactory("viab_proj"),
+    defaultLifetime: 8,
+  });
+  const issued = core.issueIdentity({ explorerId: "explorer_viab2" }, userContext);
+  const agentId = issued.value.agentId;
+  const before = core.project().identities[agentId]!.identityViability!;
+  // Construct a degraded "after" snapshot.
+  const after = {
+    ...before,
+    viabilityScoreBps: 4_000,
+    status: "stressed" as const,
+    doubtedBy: { npc_a: "high" as const },
+    projectedAt: "2026-07-07T02:00:00.000Z",
+  };
+  const projectionEvent = createEpochEvent({
+    eventType: "identity_viability_projected",
+    aggregateType: "agent_identity",
+    aggregateId: agentId,
+    context: serverContext,
+    createdAt: "2026-07-07T02:00:00.000Z",
+    idFactory: createSequentialEpochIdFactory("viab_evt"),
+    agentId,
+    payload: {
+      identityId: agentId,
+      before,
+      after,
+      deltaBps: after.viabilityScoreBps - before.viabilityScoreBps,
+      lifetimeAccelerationBps: 1_500,
+      socialDeathTriggered: false,
+      sourceSettlementId: "settlement:journey_proj:v1",
+      policyVersion: 1,
+      projectedAt: "2026-07-07T02:00:00.000Z",
+    },
+  });
+  const projected = projectEpochEvents([...core.events(), projectionEvent]);
+  const identity = projected.identities[agentId]!;
+  assert.equal(identity.identityViability?.viabilityScoreBps, 4_000);
+  assert.equal(identity.identityViability?.status, "stressed");
+  // The identity only carries the latest `after` snapshot; the before/after
+  // pair is retained on the event itself.
+  assert.equal(identity.identityViability?.projectedAt, "2026-07-07T02:00:00.000Z");
+});
+
+test("PR5a: lifetime_adjusted with reserved viability reason requires a matching prior identity_viability_projected", () => {
+  const core = createEpochGameCore({
+    idFactory: createSequentialEpochIdFactory("viab_guard"),
+    defaultLifetime: 20,
+  });
+  const issued = core.issueIdentity({ explorerId: "explorer_viab3" }, userContext);
+  const agentId = issued.value.agentId;
+  const before = core.project().identities[agentId]!.identityViability!;
+  // Emit a valid projection first, then a lifetime_adjusted that references
+  // its sourceSettlementId. This must apply cleanly.
+  const after = { ...before, projectedAt: "2026-07-07T03:00:00.000Z" };
+  const projectionEvent = createEpochEvent({
+    eventType: "identity_viability_projected",
+    aggregateType: "agent_identity",
+    aggregateId: agentId,
+    context: serverContext,
+    createdAt: "2026-07-07T03:00:00.000Z",
+    idFactory: createSequentialEpochIdFactory("viab_evt2"),
+    agentId,
+    payload: {
+      identityId: agentId,
+      before,
+      after,
+      deltaBps: 0,
+      lifetimeAccelerationBps: 2_000,
+      socialDeathTriggered: false,
+      sourceSettlementId: "settlement:journey_ok:v1",
+      policyVersion: 1,
+      projectedAt: "2026-07-07T03:00:00.000Z",
+    },
+  });
+  const okAdjust = createEpochEvent({
+    eventType: "lifetime_adjusted",
+    aggregateType: "agent_identity",
+    aggregateId: agentId,
+    context: serverContext,
+    createdAt: "2026-07-07T03:30:00.000Z",
+    idFactory: createSequentialEpochIdFactory("viab_evt3"),
+    agentId,
+    payload: {
+      delta: -2,
+      reason: "identity_viability_acceleration",
+      previousRemaining: 20,
+      remaining: 18,
+      viabilityTriggerRef: {
+        sourceSettlementId: "settlement:journey_ok:v1",
+        lifetimeAccelerationBps: 2_000,
+        socialDeathTriggered: false,
+      },
+    },
+  });
+  // Should not throw.
+  const projected = projectEpochEvents([...core.events(), projectionEvent, okAdjust]);
+  assert.equal(projected.identities[agentId]?.lifetime.remaining, 18);
+});
+
+test("PR5a: lifetime_adjusted with reserved viability reason WITHOUT matching projection throws", () => {
+  const core = createEpochGameCore({
+    idFactory: createSequentialEpochIdFactory("viab_throw"),
+    defaultLifetime: 20,
+  });
+  const issued = core.issueIdentity({ explorerId: "explorer_viab4" }, userContext);
+  const agentId = issued.value.agentId;
+  // lifetime_adjusted with viability reason but NO prior projection event.
+  const badAdjust = createEpochEvent({
+    eventType: "lifetime_adjusted",
+    aggregateType: "agent_identity",
+    aggregateId: agentId,
+    context: serverContext,
+    createdAt: "2026-07-07T04:00:00.000Z",
+    idFactory: createSequentialEpochIdFactory("viab_evt4"),
+    agentId,
+    payload: {
+      delta: -2,
+      reason: "identity_viability_acceleration",
+      previousRemaining: 20,
+      remaining: 18,
+      viabilityTriggerRef: {
+        sourceSettlementId: "settlement:journey_mismatch:v1",
+        lifetimeAccelerationBps: 2_000,
+        socialDeathTriggered: false,
+      },
+    },
+  });
+  assert.throws(
+    () => projectEpochEvents([...core.events(), badAdjust]),
+    /lifetime_adjusted_viability_trigger_ref_mismatch/,
+  );
+});
+
+test("PR5a: reincarnation resets identityViability — new identity does NOT inherit old identity's notoriety", () => {
+  const core = createEpochGameCore({
+    idFactory: createSequentialEpochIdFactory("viab_reinc"),
+    defaultLifetime: 5,
+  });
+  const first = core.issueIdentity({ explorerId: "explorer_viab5" }, userContext);
+  const agentId = first.value.agentId;
+  // Drive the first identity to social death via a viability projection,
+  // then a social-death lifetime_adjusted that archives it.
+  const before = core.project().identities[agentId]!.identityViability!;
+  const after = {
+    ...before,
+    viabilityScoreBps: 1_000,
+    status: "social_death" as const,
+    doubtedBy: { npc_x: "severe" as const },
+    factionStanding: { faction_a: -5_000 },
+    flaggedWanted: new Set(["region_a"]),
+    identityExposed: true,
+    projectedAt: "2026-07-07T05:00:00.000Z",
+  };
+  const projectionEvent = createEpochEvent({
+    eventType: "identity_viability_projected",
+    aggregateType: "agent_identity",
+    aggregateId: agentId,
+    context: serverContext,
+    createdAt: "2026-07-07T05:00:00.000Z",
+    idFactory: createSequentialEpochIdFactory("viab_evt5"),
+    agentId,
+    payload: {
+      identityId: agentId,
+      before,
+      after,
+      deltaBps: after.viabilityScoreBps - before.viabilityScoreBps,
+      lifetimeAccelerationBps: 10_000,
+      socialDeathTriggered: true,
+      sourceSettlementId: "settlement:journey_death:v1",
+      policyVersion: 1,
+      projectedAt: "2026-07-07T05:00:00.000Z",
+    },
+  });
+  // Apply projection first, then trigger the existing lifetime adjustment
+  // path through the public adjustLifetime API (delta=-5, reason=anything).
+  // We feed projection through projectEpochEvents to verify the snapshot
+  // is persisted; the public API doesn't yet emit viability-driven
+  // adjustments (that's the runtime's job) so we use the synthetic event
+  // route to confirm the apply path.
+  const beforeProjection = core.project();
+  assert.equal(beforeProjection.identities[agentId]?.identityViability?.status, "healthy");
+  const afterProjection = projectEpochEvents([...core.events(), projectionEvent]);
+  assert.equal(afterProjection.identities[agentId]?.identityViability?.status, "social_death");
+  assert.equal(afterProjection.identities[agentId]?.identityViability?.identityExposed, true);
+
+  // Now drive reincarnation through the public API; the new identity must
+  // start with a fresh initial snapshot.
+  const archived = core.adjustLifetime({
+    agentId,
+    delta: -5,
+    reason: "social_death_cinematic",
+    finalTitle: "末路档案员",
+  }, serverContext);
+  assert.equal(archived.value.status, "archived");
+  const reincarnation = archived.events.find((event) => event.eventType === "reincarnation_issued");
+  assert.ok(reincarnation);
+  if (reincarnation!.eventType !== "reincarnation_issued") throw new Error("reincarnation_missing");
+  const newAgentId = (reincarnation!.payload as { readonly nextAgentId: string }).nextAgentId;
+  const newIdentity = archived.value; // adjustLifetime returns the archived identity; the reincarnation is in events
+  void newIdentity;
+  // Re-project through the public API to read the new identity state.
+  const finalProjection = core.project();
+  const nextIdentity = finalProjection.identities[newAgentId];
+  assert.ok(nextIdentity, "reincarnation identity must exist");
+  assert.ok(nextIdentity!.identityViability, "new identity must carry a fresh viability snapshot");
+  // CRITICAL: notoriety is NOT inherited.
+  assert.equal(nextIdentity!.identityViability!.viabilityScoreBps, 10_000);
+  assert.equal(nextIdentity!.identityViability!.status, "healthy");
+  assert.equal(nextIdentity!.identityViability!.identityExposed, false);
+  assert.equal(Object.keys(nextIdentity!.identityViability!.factionStanding).length, 0);
+  assert.equal(Object.keys(nextIdentity!.identityViability!.doubtedBy).length, 0);
+  assert.equal(nextIdentity!.identityViability!.flaggedWanted.size, 0);
 });

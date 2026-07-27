@@ -4,11 +4,34 @@ export type Phase6ExperimentState =
   | "planned"
   | "running"
   | "failed"
-  | "complete";
+  | "complete"
+  | "archived";
+
+export type ArchiveReason =
+  | "matrix_rewrite"
+  | "manual_deprecated"
+  | "schema_incompatible";
+
+export interface ArchivedPhase6Experiment {
+  readonly experimentId: string;
+  readonly archivedAt: string;
+  readonly archiveReason: ArchiveReason;
+  readonly originalMatrixVersion: string;
+  readonly originalReceiptDigest: string;
+  readonly originalState: Phase6ExperimentState;
+  readonly identity: Phase6IdentityBinding;
+  readonly explorer: Phase6ExplorerBinding;
+  readonly scenarioMatrix: Phase6ScenarioMatrixVersion;
+  readonly versions: Phase6VersionBinding;
+  readonly runCount: number;
+  readonly completedRunCount: number;
+  readonly readonlyNote: "This experiment is archived. All write endpoints reject modifications.";
+}
 
 export interface Phase6ScenarioMatrixVersion {
   readonly id: string;
   readonly version: string;
+  readonly matrixVersion?: string;
 }
 
 export interface Phase6IdentityBinding {
@@ -67,6 +90,7 @@ export interface Phase6Experiment {
   readonly scenarioMatrix: Phase6ScenarioMatrixVersion;
   readonly versions: Phase6VersionBinding;
   readonly runs: readonly Phase6Run[];
+  readonly archived?: ArchivedPhase6Experiment;
 }
 
 export interface Phase6CreateInput {
@@ -112,6 +136,7 @@ export interface Phase6ExperimentSummary {
   readonly failedRuns: number;
   readonly completeRuns: number;
   readonly missingRunIndexes: readonly Phase6RunIndex[];
+  readonly archived?: { archiveReason: ArchiveReason; archivedAt: string };
 }
 
 export interface Phase6ValidationResult {
@@ -217,6 +242,48 @@ export function complete(
   });
 }
 
+/**
+ * Archive a Phase 6 experiment. Idempotent: if already archived with the same
+ * reason, returns the experiment unchanged. Throws if the experiment is in a
+ * state that cannot be archived (only non-archived experiments can be archived).
+ */
+export function archive(
+  experiment: Phase6Experiment,
+  reason: ArchiveReason,
+  originalMatrixVersion: string,
+  originalReceiptDigest: string,
+  now: string,
+): Phase6Experiment {
+  if (experiment.state === "archived") {
+    // Idempotent: already archived
+    return experiment;
+  }
+
+  const completedRunCount = experiment.runs.filter((r) => r.state === "complete").length;
+
+  const archiveRecord: ArchivedPhase6Experiment = {
+    experimentId: experiment.experimentId,
+    archivedAt: now,
+    archiveReason: reason,
+    originalMatrixVersion,
+    originalReceiptDigest,
+    originalState: experiment.state,
+    identity: experiment.identity,
+    explorer: experiment.explorer,
+    scenarioMatrix: experiment.scenarioMatrix,
+    versions: experiment.versions,
+    runCount: experiment.runs.length,
+    completedRunCount,
+    readonlyNote: "This experiment is archived. All write endpoints reject modifications.",
+  };
+
+  return {
+    ...experiment,
+    state: "archived",
+    archived: archiveRecord,
+  };
+}
+
 export function validate(
   experiment: Phase6Experiment,
 ): Phase6ValidationResult {
@@ -232,7 +299,7 @@ export function summary(
     (runIndex) => !experiment.runs.some((run) => run.runIndex === runIndex),
   );
 
-  return {
+  const base: Phase6ExperimentSummary = {
     experimentId: experiment.experimentId,
     state: experiment.state,
     identityId: experiment.identity.identityId,
@@ -249,6 +316,18 @@ export function summary(
     completeRuns: countRuns(experiment, "complete"),
     missingRunIndexes,
   };
+
+  if (experiment.archived) {
+    return {
+      ...base,
+      archived: {
+        archiveReason: experiment.archived.archiveReason,
+        archivedAt: experiment.archived.archivedAt,
+      },
+    };
+  }
+
+  return base;
 }
 
 function withRuns(
@@ -309,6 +388,11 @@ function collectExperimentErrors(
   experiment: Phase6Experiment,
   errors: string[],
 ): void {
+  // Archived experiments are always valid (frozen state)
+  if (experiment.state === "archived") {
+    return;
+  }
+
   collectRequiredErrors(experiment, errors);
 
   const seen = new Set<Phase6RunIndex>();
@@ -428,6 +512,9 @@ function assertExplorerMatches(
 function assertMutable(experiment: Phase6Experiment): void {
   if (experiment.state === "complete") {
     throw new Error("Phase 6 experiment is complete and cannot be modified");
+  }
+  if (experiment.state === "archived") {
+    throw new Error("phase6_experiment_archived_readonly");
   }
 }
 

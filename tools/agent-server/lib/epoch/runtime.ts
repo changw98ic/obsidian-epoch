@@ -165,6 +165,7 @@ import {
   type JourneyHiddenTaskSealResolver,
   type JourneyRewardBundle,
 } from "./journeyGeneratedTaskRules.ts";
+import type { MirrorConsequenceLedgerEntry } from "./journeySettlementRules.ts";
 import {
   anomalyEventInputFromOperatorInput,
   anomalyEventInputFromTemplate,
@@ -188,6 +189,7 @@ import { createExplorationRuntime } from "./explorationRuntime.ts";
 import { createDowntimeRuntime } from "./downtimeRuntime.ts";
 import { createNpcCandidateRuntime } from "./npcCandidateRuntime.ts";
 import { createNpcLifecycleRuntime } from "./npcLifecycleRuntime.ts";
+import { extractOriginUnitRole } from "./identityNameTokens.ts";
 import {
   constantTimeTextEqual,
   createServerIssuedExplorerCredential,
@@ -943,6 +945,116 @@ export interface EpochResultPageJourney {
     };
     readonly rewardBundle?: import("./journeyGeneratedTaskRules.ts").JourneyRewardBundle;
   };
+
+  // ── PR8: result-page-only settlement payload (settled/completed) ────────
+  /** Settlement decision artifact. Present only when journey.status is 'settled' or 'completed'. */
+  readonly settlement?: {
+    readonly score?: {
+      readonly breakdown?: {
+        readonly resultScoreBps: number;
+        readonly selfLossScoreBps: number;
+        readonly collateralScoreBps: number;
+        readonly totalBps: number;
+      };
+      readonly mainLineSucceeded: boolean;
+      readonly hiddenComplete: boolean;
+      readonly hiddenClamp?: {
+        readonly applied: boolean;
+        readonly reason?: string;
+        readonly tierCap: string;
+        readonly sourceHiddenObjectiveIds?: readonly string[];
+      };
+      readonly roleplaySummary?: {
+        readonly deviationBps: number;
+        readonly doubtEventCount: number;
+        readonly exposed: boolean;
+      };
+      readonly viabilitySummary?: {
+        readonly viabilityScoreBpsBefore: number;
+        readonly viabilityScoreBpsAfter: number;
+        readonly status: string;
+      };
+      readonly policyVersion: number;
+      readonly computedAt: string;
+    };
+    readonly tier?: string;
+    readonly reward?: {
+      readonly tier: string;
+      readonly baseBundleRef: string;
+      readonly modifier?: {
+        readonly modifierBps: number;
+        readonly multiplierBps: number;
+        readonly reason: string;
+      };
+      readonly resourceGrants?: Readonly<Record<string, number>>;
+      readonly itemGrants?: readonly {
+        readonly itemId: string;
+        readonly quantity: number;
+        readonly rarityTier: number;
+      }[];
+      readonly idempotencyKey: string;
+      readonly negativeRewardForbidden: true;
+    };
+    readonly worldCommitDecision?: {
+      readonly status: string;
+      readonly canonEligible: boolean;
+      readonly thresholdBps: number;
+      readonly policyVersion: number;
+      readonly reason: string;
+    };
+    readonly policyVersion?: number;
+  };
+  /** Roleplay score projection. Present only when roleplay scoring ran. */
+  readonly roleplay?: {
+    readonly deviationBps: number;
+    readonly classification: string;
+    readonly npcDoubtEvents?: readonly {
+      readonly npcId: string;
+      readonly factionId?: string;
+      readonly doubtStrength: string;
+      readonly reason: string;
+    }[];
+    readonly exposed: boolean;
+    readonly patternVersion: number;
+  };
+  /** Identity viability projection. Present only when viability projection ran. */
+  readonly viability?: {
+    readonly before?: {
+      readonly viabilityScoreBps: number;
+    };
+    readonly after?: {
+      readonly viabilityScoreBps: number;
+    };
+    readonly deltaBps: number;
+    readonly status: string;
+    readonly lifetimeConsequence?: string;
+  };
+  /** Strategy consistency audit. Present only when audit ran. Never feeds settlement/reward. */
+  readonly strategyConsistency?: {
+    readonly matchBps: number;
+    readonly classification: string;
+    readonly snapshot?: {
+      readonly journeyId: string;
+      readonly entries?: readonly {
+        readonly source: string;
+        readonly sourceId: string;
+        readonly approachTags: readonly string[];
+        readonly recordedAt: string;
+      }[];
+      readonly snapshotVersion: number;
+    };
+    readonly strategyPolicyVersion: number;
+  };
+  /** Hidden prerequisite links. Present only when journey touched hidden prerequisite objects. */
+  readonly hiddenPrerequisites?: readonly {
+    readonly objectiveId: string;
+    readonly prerequisiteObjectId: string;
+    readonly status: "intact" | "destroyed" | "degraded";
+    readonly destroyedAtActionEventId?: string;
+    readonly degradedAtActionEventId?: string;
+    readonly sourceLedgerEntryId?: string;
+    readonly observedAt: string;
+  }[];
 }
 
 export interface EpochResultPageDraft extends EpochResultPagePayload {
@@ -1066,18 +1178,11 @@ export interface EpochResultPageAccessResult {
 const DEFAULT_ATTESTATION_CHALLENGE_TTL_MS = 5 * 60_000;
 const DEFAULT_HIGH_VALUE_CONFIRMATION_TTL_MS = 10 * 60_000;
 const ANOMALY_SKIP_ERRORS = new Set(["anomaly_event_region_open"]);
-const SYSTEM_IDENTITY_ORIGINS = [
-  "雾钟站", "黑石码头", "镜湖工坊", "赤砂哨所", "北墙温室", "星槎坞",
-  "旧渠", "风蚀塔", "浮桥集市", "月井营地", "灰烬观测站", "回声仓城",
-] as const;
-const SYSTEM_IDENTITY_UNITS = [
-  "第七采样组", "夜航班", "边界测绘队", "临时实验组", "外勤救援队", "遗迹勘探组",
-  "生态观察班", "城外猎行队", "补给调度组", "设备检修班", "入门试炼营", "数据校准所",
-] as const;
-const SYSTEM_IDENTITY_ROLES = [
-  "见习记录员", "样本护送员", "设备检修员", "外勤助理", "试炼候补", "变异兽猎手",
-  "数据校准员", "药圃照料员", "补给联络员", "遗迹勘探员", "安全观察员", "生态采样员",
-] as const;
+// System identity-name token tables (ORIGINS / UNITS / ROLES) and the
+// sha256(explorerId:generation) slice algorithm live in identityNameTokens
+// so journeyRoleplayRules' pattern generator can re-derive the same tokens
+// without duplicating the data. Changing any of those constants MUST bump
+// ROLEPLAY_PATTERN_VERSION in journeyRoleplayRules.
 
 function phase6EventRefFromEpochEvent(event: EpochEvent): Phase6CanonicalEventRef {
   return {
@@ -1234,10 +1339,11 @@ function phase6InjuriesAdapterFailure(): Phase6JourneyContextRuntimeCaptureStart
 }
 
 function systemAssignedIdentityName(input: { readonly explorerId: string; readonly generation: number }) {
-  const digest = sha256Hex(`${input.explorerId}:${input.generation}`);
-  const origin = SYSTEM_IDENTITY_ORIGINS[Number.parseInt(digest.slice(0, 8), 16) % SYSTEM_IDENTITY_ORIGINS.length]!;
-  const unit = SYSTEM_IDENTITY_UNITS[Number.parseInt(digest.slice(8, 16), 16) % SYSTEM_IDENTITY_UNITS.length]!;
-  const role = SYSTEM_IDENTITY_ROLES[Number.parseInt(digest.slice(16, 24), 16) % SYSTEM_IDENTITY_ROLES.length]!;
+  // Slice algorithm + token tables live in identityNameTokens so the PR5b
+  // roleplay-pattern generator can re-derive the same origin/unit/role
+  // tokens from (explorerId, generation) without duplicating the data.
+  // Changing any of those constants MUST bump ROLEPLAY_PATTERN_VERSION.
+  const { origin, unit, role } = extractOriginUnitRole(input.explorerId, input.generation);
   return `${origin}${unit}${role} · 第${input.generation}世`;
 }
 
@@ -1729,6 +1835,25 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
       ...(typeof input.worldSliceHash === "string"
         ? { worldSliceHash: input.worldSliceHash as `sha256:${string}` }
         : {}),
+      mirrorLedgerEntries: Array.isArray(input.mirrorLedgerEntries)
+        ? input.mirrorLedgerEntries as readonly MirrorConsequenceLedgerEntry[]
+        : (() => {
+            throw new Error("journey_mirror_ledger_entries_required");
+          })(),
+      canonThresholdBps: Number(input.canonThresholdBps),
+      settlementPolicyVersion: Number(input.settlementPolicyVersion),
+      consequenceScorePolicyVersion: Number(input.consequenceScorePolicyVersion),
+      settlementId: assertNonEmptyString(input.settlementId, "journey_settlement_id"),
+      consequenceScoreBreakdown: (() => {
+        if (!isRecord(input.consequenceScoreBreakdown)) {
+          throw new Error("journey_consequence_score_breakdown_required");
+        }
+        return input.consequenceScoreBreakdown as {
+          readonly resultScoreBps: number;
+          readonly selfLossScoreBps: number;
+          readonly collateralScoreBps: number;
+        };
+      })(),
     }, maintenanceContext(input, `journey_world_solidified:${String(input.journeyId || "").trim()}`))),
     grantJourneyReward: (input: AnyRecord = {}) => {
       const journeyId = assertNonEmptyString(input.journeyId, "journey_id");
@@ -1738,17 +1863,18 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         throw new Error("journey_reward_tier_invalid");
       }
       const reward = JOURNEY_TIER_REWARDS[tier as keyof typeof JOURNEY_TIER_REWARDS];
-      const taskPlan = isRecord(input.taskPlan)
-        ? input.taskPlan as unknown as JourneyGeneratedTaskPlan
-        : undefined;
-      const hiddenTaskSeal = isRecord(input.hiddenTaskSeal)
-        ? input.hiddenTaskSeal as unknown as JourneyHiddenTaskSeal
-        : undefined;
-      if (taskPlan) deriveJourneyHiddenTask(taskPlan, hiddenTaskSeal);
-      const rewardBundle: JourneyRewardBundle = taskPlan
-        ? journeyRewardBundleForPlan(taskPlan, tier as Exclude<JourneyCompletionTier, "未及格">)
-        : { resources: [reward], items: [], attributes: [], attributeProgression: { mode: "no-direct-gain", evidenceSystem: "progressionRules.attributeEvidenceXp", summary: "journey_completion_no_task_plan" } };
-      const reason = `journey_grade:${journeyId}:${tier}`;
+      if (!isRecord(input.taskPlan) || !isRecord(input.hiddenTaskSeal)) {
+        throw new Error("journey_reward_task_contract_required");
+      }
+      const taskPlan = input.taskPlan as unknown as JourneyGeneratedTaskPlan;
+      const hiddenTaskSeal = input.hiddenTaskSeal as unknown as JourneyHiddenTaskSeal;
+      deriveJourneyHiddenTask(taskPlan, hiddenTaskSeal);
+      const rewardBundle: JourneyRewardBundle = journeyRewardBundleForPlan(
+        taskPlan,
+        tier as Exclude<JourneyCompletionTier, "未及格">,
+      );
+      const settlementId = assertNonEmptyString(input.settlementId, "journey_settlement_id");
+      const reason = `journey_grade:${journeyId}:${settlementId}:${tier}`;
       const existing = core.project().events.find((event) => event.eventType === "resource_granted"
         && event.agentId === agentId
         && event.payload.reason === reason);
@@ -1777,14 +1903,12 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         rarity: item.rarity,
         sourceEventIds,
       }, maintenanceContext(input, `${reason}:item:${item.itemKey}`))));
-      const attributeGrants: EpochRuntimeResult<unknown>[] = [];
       const persistenceEvents = [
         ...epochEventsForPersistence(resourceGrant),
         ...itemGrants.flatMap((grant) => epochEventsForPersistence(grant)),
-        ...attributeGrants.flatMap((grant) => epochEventsForPersistence(grant)),
       ];
-      const publicEvents = [resourceGrant, ...itemGrants, ...attributeGrants].flatMap((grant) => grant.events);
-      const projection = attributeGrants.at(-1)?.projection ?? itemGrants.at(-1)?.projection ?? resourceGrant.projection;
+      const publicEvents = [resourceGrant, ...itemGrants].flatMap((grant) => grant.events);
+      const projection = itemGrants.at(-1)?.projection ?? resourceGrant.projection;
       return attachEpochEventsForPersistence({
         ...resourceGrant,
         events: publicEvents,
@@ -1792,11 +1916,8 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         reward,
         rewardBundle,
         grantedItems: itemGrants.map((grant) => grant.value),
-        grantedAttributes: attributeGrants.map((grant) => grant.value),
         reason,
-        duplicate: Boolean(existing)
-          && itemGrants.every((grant) => grant.events.length === 0)
-          && attributeGrants.every((grant) => grant.events.length === 0),
+        duplicate: Boolean(existing) && itemGrants.every((grant) => grant.events.length === 0),
       }, persistenceEvents);
     },
     agentBriefing,
@@ -3188,5 +3309,9 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     getResultPage: ({ pageId }: AnyRecord = {}) => resultPageRuntime.get(String(pageId || "")) || null,
     getPublicResultPage: resultPageRuntime.getPublic,
     resultPages: () => ({ pages: resultPageRuntime.values() }),
+    /** PR5c: canonical world-object lifecycle states from the epoch projection. */
+    worldObjectStates: () => core.project().worldObjectStates,
+    /** PR5c: canonical hidden-prerequisite link states from the epoch projection. */
+    hiddenPrerequisiteLinks: () => core.project().hiddenPrerequisiteLinks,
   };
 }

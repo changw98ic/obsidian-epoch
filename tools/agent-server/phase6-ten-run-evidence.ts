@@ -73,16 +73,16 @@ const REQUIRED_SCORE_DIMS = [
   "antiFarmDecay",
 ];
 const PHASE6_SCENARIO_PROTOCOL = Object.freeze([
-  { scenarioTag: "low-prepared-resource", taskType: "resource_acquisition" },
-  { scenarioTag: "low-underprepared-information", taskType: "information_acquisition" },
-  { scenarioTag: "medium-prepared-structured", taskType: "structured_challenge" },
-  { scenarioTag: "medium-borderline-companion", taskType: "companion_support" },
-  { scenarioTag: "medium-mismatched-preserve", taskType: "resource_preservation" },
-  { scenarioTag: "high-prepared-priority", taskType: "priority_commission" },
-  { scenarioTag: "high-underprepared-crisis", taskType: "crisis_retreat" },
-  { scenarioTag: "medium-prepared-cultivation", taskType: "cultivation_material" },
-  { scenarioTag: "medium-specialist-crafting", taskType: "crafting_material" },
-  { scenarioTag: "dynamic-mixed-repeat", taskType: "repeated_route_audit" },
+  { scenarioTag: "low-prepared-resource", taskFamilyId: "resource_acquisition", taskTypeText: "Resource Acquisition" },
+  { scenarioTag: "low-underprepared-information", taskFamilyId: "information_acquisition", taskTypeText: "Information Gathering" },
+  { scenarioTag: "medium-prepared-structured", taskFamilyId: "structured_challenge", taskTypeText: "Structured Challenge" },
+  { scenarioTag: "medium-borderline-companion", taskFamilyId: "companion_support", taskTypeText: "Companion Support" },
+  { scenarioTag: "medium-mismatched-preserve", taskFamilyId: "resource_preservation", taskTypeText: "Resource Preservation" },
+  { scenarioTag: "high-prepared-priority", taskFamilyId: "priority_commission", taskTypeText: "Priority Commission" },
+  { scenarioTag: "high-underprepared-crisis", taskFamilyId: "crisis_retreat", taskTypeText: "Crisis Retreat" },
+  { scenarioTag: "medium-prepared-cultivation", taskFamilyId: "cultivation_material", taskTypeText: "Cultivation Material" },
+  { scenarioTag: "medium-specialist-crafting", taskFamilyId: "crafting_material", taskTypeText: "Crafting Material" },
+  { scenarioTag: "dynamic-mixed-repeat", taskFamilyId: "repeated_route_audit", taskTypeText: "Repeated Route Audit" },
 ]);
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -278,15 +278,17 @@ function validateCdeProtocol(sources, expectedRuns, errors) {
       });
     }
     const prepares = prepareCalls.filter((source) => source.binding.runIndex === runIndex);
-    const taskTypes = unique(prepares.map((source) => stringValue(firstValue(source.record, [
-      ["input", "taskType"], ["input", "task_type"], ["output", "taskType"], ["output", "task", "type"],
+    // The server-issued taskFamilyId is the only authoritative scenario binding.
+    const taskFamilyIds = unique(prepares.map((source) => stringValue(firstValue(source.record, [
+      ["input", "taskFamilyId"], ["output", "taskFamilyId"],
     ]))).filter(Boolean));
-    if (prepares.length !== 1 || taskTypes.length !== 1 || taskTypes[0] !== expected?.taskType) {
+    const effectiveFamilyId = taskFamilyIds[0];
+    if (prepares.length !== 1 || !effectiveFamilyId || effectiveFamilyId !== expected?.taskFamilyId) {
       errors.push({
         code: "E_CDE_PREPARE_SCENARIO_PROTOCOL",
         runIndex,
-        expected: expected?.taskType,
-        actual: taskTypes,
+        expected: expected?.taskFamilyId,
+        actual: taskFamilyIds,
         calls: prepares.length,
       });
     }
@@ -308,6 +310,49 @@ function validateCdeProtocol(sources, expectedRuns, errors) {
   }
 }
 
+function validateSettlementPolicy(sources, receiptCandidates, expectedRuns, errors) {
+  // Check each run's receipt for settlement policy version and matrix consistency
+  for (let runIndex = 1; runIndex <= expectedRuns; runIndex += 1) {
+    const candidates = receiptCandidates.filter((c) => c.binding.runIndex === runIndex);
+    for (const candidate of candidates) {
+      const receipt = candidate.receipt;
+      // Check receipt contains settlement policy version
+      const settlementPolicyVersion = stringValue(firstValue(receipt, [
+        ["settlementPolicyVersion"], ["settlement_policy_version"],
+        ["versions", "settlementPolicyVersion"],
+      ]));
+      if (!settlementPolicyVersion) {
+        errors.push({ code: "E_RECEIPT_SETTLEMENT_POLICY_MISSING", runIndex });
+      }
+      // Check receipt matrixVersion is present (consistency with experiment is checked elsewhere)
+      const matrixVersion = stringValue(firstValue(receipt, [
+        ["scenarioMatrixVersion"], ["scenario_matrix_version"],
+        ["versions", "scenarioMatrixVersion"],
+      ]));
+      if (!matrixVersion) {
+        errors.push({ code: "E_RECEIPT_MATRIX_VERSION_MISSING", runIndex });
+      }
+      // Check worldCommit is binary (true/false), not legacy probability
+      const worldCommit = firstValue(receipt, [
+        ["worldCommit"], ["world_commit"],
+        ["world", "commit"],
+      ]);
+      if (worldCommit !== undefined && typeof worldCommit !== "boolean") {
+        errors.push({ code: "E_RECEIPT_WORLD_COMMIT_NOT_BINARY", runIndex });
+      }
+      // Check receipt does not contain legacy affinity bonus fields
+      const affinityBonus = firstValue(receipt, [
+        ["affinityBonus"], ["affinity_bonus"],
+        ["score", "affinityBonus"], ["score", "affinity_bonus"],
+        ["score", "dimensions", "affinityBonus"],
+      ]);
+      if (affinityBonus !== undefined) {
+        errors.push({ code: "E_RECEIPT_AFFINITY_BONUS_PRESENT", runIndex });
+      }
+    }
+  }
+}
+
 function deriveEvidence({ inputPath, outputDir, sourceText, parseErrors, sources, expectedRuns, sqlitePath, sqliteAuthority }) {
   const errors = [];
   const warnings = [];
@@ -321,6 +366,9 @@ function deriveEvidence({ inputPath, outputDir, sourceText, parseErrors, sources
   const expectedExperimentId = experimentIds.length === 1 ? experimentIds[0] : undefined;
   const scopedSources = expectedExperimentId ? sources.filter((source) => source.binding.experimentId === expectedExperimentId) : sources;
   validateCdeProtocol(scopedSources, expectedRuns, errors);
+  const sourceReceiptCandidatesForPolicy = collectReceiptCandidates(sources.filter((source) => !source.compactTransport));
+  const sqliteReceiptCandidatesForPolicy = collectSqliteReceiptCandidates(sqliteAuthority);
+  validateSettlementPolicy(scopedSources, [...sourceReceiptCandidatesForPolicy, ...sqliteReceiptCandidatesForPolicy], expectedRuns, errors);
   const legacyEvidenceSources = scopedSources.filter((source) => !source.compactTransport);
   const sourceReceiptCandidates = collectReceiptCandidates(sources.filter((source) => !source.compactTransport));
   if (sourceReceiptCandidates.length > 0) validateReceiptCandidates(sourceReceiptCandidates, expectedRuns, errors);

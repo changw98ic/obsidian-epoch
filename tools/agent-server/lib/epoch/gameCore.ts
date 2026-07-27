@@ -32,6 +32,21 @@ import {
   type TurnCardCreatedPayload,
   type TurnResolvedPayload,
 } from "./events.ts";
+import {
+  type IdentityStrategyDisposition,
+  type StrategyProfile,
+  type ApproachTag,
+  AFFINITY_MATRIX_VERSION,
+  APPROACH_TAGS,
+} from "./journeyStrategyRules.ts";
+import type { ExpectedLifePattern, HiddenPrerequisiteLink } from "./journeyRoleplayRules.ts";
+import type { CanonicalWorldObjectState } from "./hiddenPrerequisiteRules.ts";
+import {
+  type IdentityViability,
+  LIFETIME_REASON_IDENTITY_VIABILITY_ACCELERATION,
+  LIFETIME_REASON_IDENTITY_VIABILITY_SOCIAL_DEATH,
+  initialIdentityViability,
+} from "./journeyViabilityRules.ts";
 import { eventFactory } from "./eventFactory.ts";
 import {
   causalEpochEventCanonicalJson,
@@ -346,8 +361,33 @@ import {
   resolveJourneyAction,
   type JourneyActionResolution,
 } from "./journeyActionResolutionRules.ts";
-import { planJourneyWorldImpactEvents } from "./journeyWorldImpactRules.ts";
+import { planJourneyWorldImpactEvents, planJourneyObjectImpactBlueprints } from "./journeyWorldImpactRules.ts";
 import type { JourneyWorldCommit } from "./journeyRules.ts";
+import {
+  planJourneyMirrorConsequenceBlueprints,
+  planJourneyRoleplayDoubt,
+} from "./journeyMirrorConsequenceBlueprints.ts";
+import {
+  buildCanonicalEventFromMirrorEntry,
+} from "./journeyMirrorConsequenceIntegration.ts";
+import {
+  appendMirrorConsequence,
+  assertNoDuplicatePromotion,
+  deriveMirrorConsequenceEntryId,
+  promoteMirrorConsequences,
+  markMirrorConsequencePromoted,
+  emptyMirrorConsequenceLedger,
+  type MirrorConsequenceLedgerState,
+} from "./journeyMirrorLedger.ts";
+import type {
+  ConsequenceEffectKind,
+  MirrorConsequenceLedgerEntry,
+} from "./journeySettlementRules.ts";
+import {
+  CANON_THRESHOLD_BPS,
+  SETTLEMENT_POLICY_VERSION,
+  CONSEQUENCE_SCORE_POLICY_VERSION,
+} from "./journeySettlementRules.ts";
 import {
   planServerHostedJobCompletedEvents,
   planServerHostedJobQueuedEvents,
@@ -615,6 +655,24 @@ export interface EpochAgentIdentity {
   readonly needs?: EpochActorNeedsState;
   readonly lifeGoal?: EpochActorLifeGoal;
   readonly createdAt: string;
+  /**
+   * PR1 additive (journeyStrategyRules). Strategy disposition frozen onto the
+   * identity so the journey pipeline can ground offers/plans in a stable
+   * primary posture across journeys. AUDIT-ONLY: never an input to any score,
+   * reward, or viability computation (zero-bonus boundary).
+   */
+  readonly strategyDisposition?: IdentityStrategyDisposition;
+  /**
+   * PR1 additive (journeyRoleplayRules). Server-frozen roleplay norm bound to
+   * this identity for its lifetime; read by every roleplay-scoring pass.
+   */
+  readonly expectedLifePattern?: ExpectedLifePattern;
+  /**
+   * PR1 additive (journeyViabilityRules). Server-authoritative snapshot of the
+   * identity's viability (faction standing, exposure, doubt, status bucket).
+   * Projected AFTER settlement completes; never re-feeds the current score.
+   */
+  readonly identityViability?: IdentityViability;
 }
 
 export interface EpochAgentPersonality {
@@ -1818,6 +1876,20 @@ export interface EpochProjection {
   readonly serverHostedJobIdsByAgent: Readonly<Record<string, readonly string[]>>;
   readonly attestationRecords: Readonly<Record<string, EpochAttestationRecord>>;
   readonly abuseScores: Readonly<Record<string, EpochAbuseScoreProfile>>;
+  /**
+   * PR5c additive. Canonical world-object lifecycle states. Populated ONLY
+   * by canonical intents (solidify path) via world_object_state_changed
+   * events. Keyed by objectId (no region prefix — the projection is
+   * region-scoped at the caller level).
+   */
+  readonly worldObjectStates: Readonly<Record<string, CanonicalWorldObjectState>>;
+  /**
+   * PR5c additive. Canonical hidden-prerequisite link states. Populated
+   * ONLY by canonical intents (solidify path) via
+   * hidden_prerequisite_link_changed events. Keyed by
+   * `${regionId}:${objectiveId}:${prerequisiteObjectId}`.
+   */
+  readonly hiddenPrerequisiteLinks: Readonly<Record<string, HiddenPrerequisiteLink>>;
 }
 
 export interface EpochCommandResult<TValue> {
@@ -1833,6 +1905,38 @@ export interface EpochGameCoreOptions {
   readonly defaultLifetime?: number;
   readonly maxDowntimeSeconds?: number;
   readonly identityNameFactory?: (input: { explorerId: string; generation: number }) => string;
+  /**
+   * PR2 mirror-consequence ledger sink. When supplied, `submitHostedAction`
+   * computes mirror-world consequence blueprints for every completed
+   * objective and forwards them through this callback instead of emitting
+   * canonical world events directly. The integrator (e.g. agent-companion
+   * runtime) is responsible for translating the callback into a
+   * `JourneyRuntime.recordMirrorConsequences` call so the ledger projection
+   * remains the single in-memory truth. A mirror action that produces
+   * consequence entries fails when no sink is configured; collateral is never
+   * silently discarded.
+   *
+   * `expectedVersion` sentinel: gameCore always passes `-1` to signal
+   * "no compare-and-set check". The submit-time caller does not own the
+   * journey runtime's version counter and cannot perform CAS on its
+   * behalf. Integrators MUST treat `-1` as an opt-out: either skip the
+   * version check entirely, or fetch the current `journey.version` from
+   * their own projection and forward the real value into
+   * `JourneyRuntime.recordMirrorConsequences`. Any other negative value
+   * is invalid. Integrations that blindly forward `expectedVersion` into
+   * a CAS-enforcing runtime will throw `journey_version_conflict`.
+   */
+  readonly journeyMirrorLedgerSink?: (input: {
+    readonly journeyId: string;
+    readonly agentId: string;
+    /**
+     * Always `-1` from gameCore. See the sentinel note on
+     * {@link EpochGameCoreOptions.journeyMirrorLedgerSink}.
+     */
+    readonly expectedVersion: number;
+    readonly actionEventId: string;
+    readonly entries: readonly MirrorConsequenceLedgerEntry[];
+  }) => void;
 }
 
 export interface IssueIdentityInput {
@@ -1841,6 +1945,22 @@ export interface IssueIdentityInput {
   readonly identityName?: string;
   readonly maxLifetime?: number;
   readonly previousAgentId?: string;
+  /**
+   * PR1 additive (journeyStrategyRules). Declared strategy pair persisted with
+   * the issued identity. Persisted alongside {@link strategyDisposition} when
+   * the identity layer freezes the primary posture.
+   */
+  readonly strategyProfile?: StrategyProfile;
+  /**
+   * PR1 additive (journeyStrategyRules). Version of the affinity matrix the
+   * disposition was frozen against, carried for historical replay.
+   */
+  readonly affinityMatrixVersion?: typeof AFFINITY_MATRIX_VERSION;
+  /**
+   * PR1 additive (journeyRoleplayRules). sha256 of the deterministic input
+   * bundle that produced the {@link ExpectedLifePattern} for this identity.
+   */
+  readonly expectedLifePatternInputHash?: `sha256:${string}`;
 }
 
 export interface RotateExplorerRecoveryInput {
@@ -2531,6 +2651,42 @@ export interface SolidifyJourneyWorldInput {
   readonly completionTier: "及格" | "良好" | "优秀" | "惊世";
   readonly completionScoreBps: number;
   readonly worldSliceHash?: `sha256:${string}`;
+  /**
+   * PR2 mirror-consequence ledger entries to promote at solidification. The
+   * solidify path consumes the entries via {@link promoteMirrorConsequences}
+   * and rebuilds canonical world events with stable event ids derived from
+   * each entryId. An empty array is valid when the completed mirror journey
+   * produced no collateral entries; the old direct-impact derivation is not
+   * available on this path.
+   *
+   * Per-action `influenceScoreAfter` / `standingAfter` snapshots in the
+   * entries reflect the region/faction score captured at submit time
+   * (non-cumulative). The solidify path rebases these against the running
+   * {@link workingProjection} so the promoted canonical events carry
+   * cumulative baselines matching direct canonical planning; the submit-time
+   * snapshots are observational only.
+   *
+   * Only `region_influence_delta`, `trace_created`, and
+   * `faction_standing_delta` are supported. Every other effect kind
+   * (including self-loss `resource_spent` / `lifetime_adjusted`) is
+   * rejected up-front with `journey_mirror_ledger_kind_not_supported:*`
+   * before any canonical events are constructed.
+   */
+  readonly mirrorLedgerEntries: readonly MirrorConsequenceLedgerEntry[];
+  /** Canon threshold the score was compared against. */
+  readonly canonThresholdBps: number;
+  /** Settlement-policy version under which the solidify is adjudicated. */
+  readonly settlementPolicyVersion: number;
+  /** Consequence-score policy version used at solidify time. */
+  readonly consequenceScorePolicyVersion: number;
+  /** Settlement id linking this solidify to its SettlementDecision. */
+  readonly settlementId: string;
+  /** Per-bucket breakdown of the completion score, recorded on the marker. */
+  readonly consequenceScoreBreakdown: {
+    readonly resultScoreBps: number;
+    readonly selfLossScoreBps: number;
+    readonly collateralScoreBps: number;
+  };
 }
 
 export interface QueueServerHostedJobInput {
@@ -2685,11 +2841,51 @@ function emptyProjection(): EpochProjection {
     serverHostedJobIdsByAgent: {},
     attestationRecords: {},
     abuseScores: {},
+    worldObjectStates: {},
+    hiddenPrerequisiteLinks: {},
   };
 }
 
 function uniqueValues(values: readonly string[]): string[] {
   return values.filter((value, index) => value && values.indexOf(value) === index);
+}
+
+/**
+ * PR5b fix: collect the mission-sanctioned approach palette for a scene
+ * contract's actionOptions. Returns the union of every actionOption's
+ * `approachTags`, filtered against the canonical {@link APPROACH_TAGS}
+ * universe (defence-in-depth so a malformed option cannot introduce an
+ * unknown string into the set). The result is passed to
+ * {@link planJourneyRoleplayDoubt} as `missionSanctionedApproaches`, where
+ * it drives the mission-aligned override (spec §6.9): an action whose
+ * observed tags are all sanctioned is classified 'aligned' and emits no
+ * doubt, so a combat-role identity on a support mission is not penalised
+ * for doing exactly what the mission offered.
+ *
+ * The returned array is reordered against APPROACH_TAGS so the set is
+ * canonical and stable across actionOptions iteration order. Empty when
+ * the scene carries no approachTags.
+ */
+function collectSceneMissionSanctionedApproaches(
+  actionOptions: readonly { readonly approachTags?: readonly ApproachTag[] }[],
+): readonly ApproachTag[] {
+  const sanctioned = new Set<ApproachTag>();
+  for (const option of actionOptions) {
+    if (!option.approachTags) continue;
+    for (const tag of option.approachTags) {
+      // Defence-in-depth: only canonical APPROACH_TAGS members enter the
+      // set. The persisted arrays already only contain valid tags; this
+      // guard exists so a future caller cannot corrupt the override.
+      for (const canonical of APPROACH_TAGS) {
+        if (tag === canonical) {
+          sanctioned.add(tag);
+          break;
+        }
+      }
+    }
+  }
+  if (sanctioned.size === 0) return [];
+  return APPROACH_TAGS.filter((tag) => sanctioned.has(tag));
 }
 
 function currentProjectionWorldMinute(projection: EpochProjection): number {
@@ -2711,20 +2907,121 @@ function currentAgentFactionStandingScore(
     .find((standing) => standing?.factionId === factionId)?.score ?? 0;
 }
 
+/**
+ * Effect kinds the PR2 solidify mirror path supports. Region influence,
+ * trace creation, and faction standing are the only kinds
+ * {@link buildCanonicalEventFromMirrorEntry} knows how to promote; every
+ * other kind (including self-loss `resource_spent` / `lifetime_adjusted`
+ * and the relationship/object/identity kinds reserved for later PRs) is
+ * rejected up-front in {@link solidifyJourneyWorld} so the error surface
+ * is consistent (all unsupported kinds fail before any canonical event
+ * is constructed).
+ */
+const SUPPORTED_MIRROR_EFFECT_KINDS: ReadonlySet<ConsequenceEffectKind> = new Set<ConsequenceEffectKind>([
+  "region_influence_delta",
+  "trace_created",
+  "faction_standing_delta",
+  // PR5c: physical object impact kinds. object_mutation (degree 1-2 → degraded)
+  // and object_destroy (degree 3+ → destroyed) are promoted by
+  // buildCanonicalEventFromMirrorEntry into world_object_state_changed events.
+  // hidden_prerequisite_destroyed is synthesised by the solidify-time cascade
+  // after the canonical object-state transition commits.
+  "object_mutation",
+  "object_destroy",
+  "hidden_prerequisite_destroyed",
+]);
+
+/**
+ * Read a string field from a mirror-consequence blueprint. The blueprint
+ * shape is contract-guaranteed by
+ * {@link planJourneyMirrorConsequenceBlueprints} but typed as
+ * `Record<string, unknown>` so the ledger stays shape-agnostic; this
+ * helper narrows to `string` for the rebasing maths below.
+ */
+function readBlueprintString(
+  entry: MirrorConsequenceLedgerEntry,
+  key: string,
+): string {
+  const value = entry.effectBlueprint[key];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`journey_mirror_solidify_blueprint_field_invalid:${key}`);
+  }
+  return value;
+}
+
+/**
+ * Rebase a mirror-consequence entry's score snapshots against the running
+ * {@link EpochProjection} so multi-objective journeys produce cumulative
+ * baselines matching canonical cumulative influence planning.
+ *
+ * Mirror-mode `submitHostedAction` captures `influenceScoreAfter` /
+ * `standingAfter` per-action at submit time without visibility into prior
+ * objectives' canonical influence deltas (mirror-mode submit emits no
+ * canonical collateral). Solidify is the single point where the canonical
+ * world events commit, so the projection-derived baseline overrides the
+ * submit-time snapshot here.
+ *
+ * - `region_influence_delta`: `influenceScoreAfter` becomes
+ *   `currentRegionInfluenceScore(projection, regionId, agentId) + delta`.
+ * - `faction_standing_delta`: `standingAfter` is recomputed as
+ *   `min(10_000, clamp(-10_000, 10_000, floor(currentScore)) + delta)`,
+ *   mirroring the cap logic in {@link planJourneyWorldImpactEvents}.
+ * - `trace_created`: no score baseline on this kind; returned unchanged.
+ */
+function rebaseMirrorEntryAgainstProjection(
+  entry: MirrorConsequenceLedgerEntry,
+  projection: EpochProjection,
+): MirrorConsequenceLedgerEntry {
+  if (entry.effectKind === "region_influence_delta") {
+    const regionId = readBlueprintString(entry, "regionId");
+    const agentId = readBlueprintString(entry, "agentId");
+    const influenceScoreAfter = currentRegionInfluenceScore(projection, regionId, agentId) + entry.delta;
+    return {
+      ...entry,
+      effectBlueprint: { ...entry.effectBlueprint, influenceScoreAfter },
+    };
+  }
+  if (entry.effectKind === "faction_standing_delta") {
+    const agentId = readBlueprintString(entry, "agentId");
+    const factionId = readBlueprintString(entry, "factionId");
+    const standingBefore = Math.max(
+      -10_000,
+      Math.min(10_000, Math.floor(currentAgentFactionStandingScore(projection, agentId, factionId))),
+    );
+    const standingAfter = Math.min(10_000, standingBefore + entry.delta);
+    return {
+      ...entry,
+      effectBlueprint: { ...entry.effectBlueprint, standingAfter },
+    };
+  }
+  return entry;
+}
+
 function journeyWorldCommitFromMarker(
   event: Extract<EpochEvent, { readonly eventType: "journey_world_solidified" }>,
 ): JourneyWorldCommit {
+  const payload = event.payload as JourneyWorldSolidifiedPayload;
   return {
     mode: "mirror",
     status: "solidified",
-    reason: "main_completed_and_returned",
-    regionId: event.payload.regionId,
-    committedAtWorldTime: event.payload.committedAtWorldTime ?? event.payload.mirrorEndedAtWorldTime,
-    influenceDelta: event.payload.influenceDelta,
-    factionStandings: event.payload.factionStandings,
-    npcRelationships: event.payload.npcRelationships,
+    completionTier: payload.completionTier,
+    reason: "main_completed_and_above_threshold",
+    regionId: payload.regionId,
+    committedAtWorldTime: payload.committedAtWorldTime ?? payload.mirrorEndedAtWorldTime,
+    influenceDelta: payload.influenceDelta,
+    factionStandings: payload.factionStandings,
+    npcRelationships: payload.npcRelationships,
     commitEventId: event.eventId,
-    sourceEventIds: [...event.payload.effectEventIds, event.eventId],
+    sourceEventIds: [...payload.effectEventIds, event.eventId],
+    completionScoreBps: payload.completionScoreBps,
+    canonThresholdBps: payload.canonThresholdBps,
+    settlementPolicyVersion: payload.settlementPolicyVersion,
+    consequenceScorePolicyVersion: payload.consequenceScorePolicyVersion,
+    ...(payload.strategyPolicyVersion !== undefined ? { strategyPolicyVersion: payload.strategyPolicyVersion } : {}),
+    ...(payload.questOfferId !== undefined ? { questOfferId: payload.questOfferId } : {}),
+    ...(payload.offerHash !== undefined ? { offerHash: payload.offerHash } : {}),
+    settlementId: payload.settlementId,
+    consequenceScoreBreakdown: payload.consequenceScoreBreakdown,
   };
 }
 
@@ -2988,6 +3285,8 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
   );
   const attestationRecords = { ...projection.attestationRecords };
   const abuseScores = { ...projection.abuseScores };
+  const worldObjectStates: Record<string, CanonicalWorldObjectState> = { ...projection.worldObjectStates };
+  const hiddenPrerequisiteLinks: Record<string, HiddenPrerequisiteLink> = { ...projection.hiddenPrerequisiteLinks };
 
   switch (event.eventType) {
     case "world_clock_advanced": {
@@ -3042,6 +3341,9 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
     case "identity_issued": {
       const payload = event.payload;
       const worldMinute = currentProjectionWorldMinute(projection);
+      const initialViability = payload.identityViability;
+      if (!initialViability) throw new Error("identity_issued_viability_required");
+      if (!payload.expectedLifePattern) throw new Error("identity_issued_expected_life_pattern_required");
       identities[payload.agentId] = {
         agentId: payload.agentId,
         explorerId: payload.explorerId,
@@ -3064,6 +3366,11 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
           worldMinute,
         }),
         createdAt: event.createdAt,
+        identityViability: initialViability,
+        expectedLifePattern: payload.expectedLifePattern,
+        ...(payload.strategyDisposition
+          ? { strategyDisposition: payload.strategyDisposition }
+          : {}),
       };
       lineage[payload.explorerId] = [...(lineage[payload.explorerId] || []), payload.agentId];
       agentCustody[payload.agentId] = {
@@ -3125,12 +3432,114 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
     }
     case "lifetime_adjusted": {
       const identity = requireIdentity(projection, event.aggregateId);
+      // PR5a defensive guard: when the reason is a reserved viability reason,
+      // a preceding identity_viability_projected event MUST exist on the same
+      // identity whose sourceSettlementId matches the trigger ref. The
+      // planner enforces this in normal operation; this assertion catches a
+      // forged or replayed lifetime_adjusted that bypasses the planner.
+      const payload = event.payload;
+      if (
+        payload.reason === LIFETIME_REASON_IDENTITY_VIABILITY_ACCELERATION
+        || payload.reason === LIFETIME_REASON_IDENTITY_VIABILITY_SOCIAL_DEATH
+      ) {
+        const triggerRef = payload.viabilityTriggerRef;
+        if (!triggerRef) {
+          throw new Error(
+            `lifetime_adjusted_viability_trigger_ref_missing:${event.eventId}:${payload.reason}`,
+          );
+        }
+        let priorProjectionEvent: EpochEvent | undefined;
+        for (let i = projection.events.length - 1; i >= 0; i -= 1) {
+          const candidate = projection.events[i];
+          if (
+            candidate
+            && candidate.eventType === "identity_viability_projected"
+            && (candidate.payload as { readonly identityId?: string }).identityId === event.aggregateId
+          ) {
+            priorProjectionEvent = candidate;
+            break;
+          }
+        }
+        const priorSourceSettlementId = priorProjectionEvent
+          ? (priorProjectionEvent.payload as { readonly sourceSettlementId?: string }).sourceSettlementId
+          : undefined;
+        if (priorSourceSettlementId !== triggerRef.sourceSettlementId) {
+          throw new Error(
+            `lifetime_adjusted_viability_trigger_ref_mismatch:${event.eventId}:${triggerRef.sourceSettlementId}`,
+          );
+        }
+      }
       identities[event.aggregateId] = {
         ...identity,
         lifetime: {
           ...identity.lifetime,
-          remaining: event.payload.remaining,
+          remaining: payload.remaining,
         },
+      };
+      break;
+    }
+    case "identity_viability_projected": {
+      // PR5a: persist the post-settlement snapshot onto the identity. The
+      // identity only carries the latest `after` snapshot to bound memory;
+      // the chronicle retains the full before/after pair via the event
+      // payload. doubtedBy / identityExposed / flaggedWanted / factionStanding
+      // are per-identity and DO NOT cross identity boundaries (spec §8).
+      const payload = event.payload;
+      const identity = requireIdentity(projection, payload.identityId);
+      identities[payload.identityId] = {
+        ...identity,
+        identityViability: payload.after,
+      };
+      break;
+    }
+    case "world_object_state_changed": {
+      // PR5c: canonical world-object lifecycle state transition. Irreversible:
+      // once an object reaches 'destroyed', no later event may relax it.
+      // Degraded → degraded is allowed only if degree is monotonic
+      // non-decreasing.
+      const wosPayload = event.payload;
+      const currentWos = worldObjectStates[wosPayload.objectId];
+      const currentWosStatus = currentWos?.status ?? "intact";
+      const currentWosDegree = currentWos?.degree ?? 0;
+      // Irreversibility guard: destroyed is terminal.
+      if (currentWosStatus === "destroyed" && wosPayload.statusAfter === "degraded") {
+        // Skip — destroyed is terminal, cannot relax to degraded.
+        break;
+      }
+      // Monotonicity guard for degraded → degraded.
+      if (currentWosStatus === "degraded" && wosPayload.statusAfter === "degraded"
+        && wosPayload.degree < currentWosDegree) {
+        // Skip — degree must be non-decreasing.
+        break;
+      }
+      worldObjectStates[wosPayload.objectId] = {
+        status: wosPayload.statusAfter,
+        degree: wosPayload.degree,
+        sourceActionEventId: wosPayload.sourceActionEventId,
+        changedAt: wosPayload.changedAt,
+      };
+      break;
+    }
+    case "hidden_prerequisite_link_changed": {
+      // PR5c: canonical hidden-prerequisite link status change.
+      const hplPayload = event.payload;
+      const linkKey = `${hplPayload.regionId}:${hplPayload.objectiveId}:${hplPayload.prerequisiteObjectId}`;
+      const currentLink = hiddenPrerequisiteLinks[linkKey];
+      // Irreversibility guard: destroyed is terminal.
+      if (currentLink?.status === "destroyed" && hplPayload.statusAfter !== "destroyed") {
+        break;
+      }
+      hiddenPrerequisiteLinks[linkKey] = {
+        objectiveId: hplPayload.objectiveId,
+        prerequisiteObjectId: hplPayload.prerequisiteObjectId,
+        status: hplPayload.statusAfter,
+        ...(hplPayload.statusAfter === "destroyed"
+          ? { destroyedAtActionEventId: hplPayload.sourceActionEventId }
+          : {}),
+        ...(hplPayload.sourceLedgerEntryId
+          ? { sourceLedgerEntryId: hplPayload.sourceLedgerEntryId }
+          : {}),
+        observedAt: hplPayload.changedAt,
       };
       break;
     }
@@ -3145,6 +3554,26 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
           archivedAt: event.payload.archivedAt,
           finalTitle: event.payload.finalTitle,
         },
+        // PR7: zero viability on archive so stale snapshots do not leak
+        // across the identity boundary. The archived identity carries a
+        // terminal social-death snapshot — all transient fields
+        // (factionStanding, flaggedWanted, doubtedBy, identityExposed) are
+        // reset to empty; viabilityScoreBps drops to 0 and status becomes
+        // 'social_death'. This mirrors what initialIdentityViability does
+        // for fresh identities but with a zero score to reflect terminality.
+        identityViability: identity.identityViability
+          ? {
+              identityId: identity.agentId,
+              factionStanding: {},
+              flaggedWanted: new Set<string>(),
+              identityExposed: false,
+              doubtedBy: {},
+              viabilityScoreBps: 0,
+              status: "social_death",
+              policyVersion: identity.identityViability.policyVersion,
+              projectedAt: event.payload.archivedAt,
+            }
+          : undefined,
       };
       break;
     }
@@ -5921,6 +6350,8 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
     serverHostedJobIdsByAgent,
     attestationRecords,
     abuseScores,
+    worldObjectStates,
+    hiddenPrerequisiteLinks,
   };
 }
 
@@ -6053,6 +6484,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
   const maxDowntimeSeconds = options.maxDowntimeSeconds || DEFAULT_MAX_DOWNTIME_SECONDS;
   const identityNameFactory = options.identityNameFactory || ((input: { explorerId: string; generation: number }) =>
     `${input.explorerId}-第${input.generation}世`);
+  const journeyMirrorLedgerSink = options.journeyMirrorLedgerSink;
   let events = initialEvents;
   const frozenProjectionObjects = new WeakSet<object>();
   let currentProjection = freezeProjection(projectEpochEvents(events), frozenProjectionObjects);
@@ -6166,7 +6598,9 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       previousAgentId,
       maxLifetime,
       startedAt,
+      initialViability: initialIdentityViability(agentId, startedAt),
       makeEvent: eventFactory(clock, idFactory, context),
+      ...(input.strategyProfile ? { strategyProfile: input.strategyProfile } : {}),
     });
     const nextProjection = applyEvents(current, nextEvents);
     return commit(nextEvents, projectIdentityIssue({ events: nextEvents, projection: nextProjection }));
@@ -9639,7 +10073,6 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
           risk: signedJourneyAction.risk,
           objectiveKind: session.sceneContract.taskObjective?.kind,
           journeyPreparationScore,
-          ...(signedJourneyAction.completionKind === "skip" ? { signedCompletionKind: "skip" as const } : {}),
           identity: {
             lifetime: identity.lifetime,
             traits: identity.personality.traits,
@@ -9732,36 +10165,145 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
           }));
         }
         if (journeyResolution && signedJourneyAction?.taskObjectiveId
-          && session.sceneContract?.taskObjective
-          && session.sceneContract.worldMode !== "mirror") {
-          sideEffects.push(...planJourneyWorldImpactEvents({
-            makeEvent,
-            idFactory,
-            regionId: session.regionId,
-            agentId: session.agentId,
-            explorerId: session.explorerId,
-            identityName: identity.identityName,
-            journeyId: session.sceneContract.journeyId,
-            episodeId: session.sceneContract.episodeId,
-            objectiveId: signedJourneyAction.taskObjectiveId,
-            objectiveKind: session.sceneContract.taskObjective.kind,
-            objectiveTitle: session.sceneContract.taskObjective.title,
-            actionLabel: signedJourneyAction.label,
-            actionRisk: signedJourneyAction.risk,
-            allowedEffectKinds: signedJourneyAction.allowedEffectKinds,
-            resolution: journeyResolution,
-            previousInfluenceScore: currentRegionInfluenceScore(current, session.regionId, session.agentId),
-            previousFactionStandingScore: currentAgentFactionStandingScore(
-              current,
-              session.agentId,
-              signedJourneyAction.routeSelection?.factionObjectId,
-            ),
-            routeSelection: signedJourneyAction.routeSelection,
-            sourceEventId: actionRecorded.eventId,
-            sourceAggregateId: session.sessionId,
-            recordedAt,
-            worldMinute: currentProjectionWorldMinute(current),
-          }));
+          && session.sceneContract?.taskObjective) {
+          if (session.sceneContract.worldMode === "mirror") {
+            // Mirror-mode collateral does not enter the canonical epoch event
+            // stream at action time. The ledger sink is mandatory whenever an
+            // action produces entries; collateral must remain available for
+            // settlement and solidification.
+            const physicalBlueprints = planJourneyMirrorConsequenceBlueprints({
+                regionId: session.regionId,
+                agentId: session.agentId,
+                explorerId: session.explorerId,
+                identityName: identity.identityName,
+                journeyId: session.sceneContract.journeyId,
+                episodeId: session.sceneContract.episodeId,
+                objectiveId: signedJourneyAction.taskObjectiveId,
+                objectiveKind: session.sceneContract.taskObjective.kind,
+                objectiveTitle: session.sceneContract.taskObjective.title,
+                actionLabel: signedJourneyAction.label,
+                actionRisk: signedJourneyAction.risk,
+                allowedEffectKinds: signedJourneyAction.allowedEffectKinds,
+                resolution: journeyResolution,
+                previousInfluenceScore: currentRegionInfluenceScore(current, session.regionId, session.agentId),
+                previousFactionStandingScore: currentAgentFactionStandingScore(
+                  current,
+                  session.agentId,
+                  signedJourneyAction.routeSelection?.factionObjectId,
+                ),
+                routeSelection: signedJourneyAction.routeSelection,
+                actionEventId: actionRecorded.eventId,
+                sourceAggregateId: session.sessionId,
+                recordedAt,
+            });
+              // PR5b: roleplay-doubt hook. Server-side rule logic compares the
+              // signed action's approachTags against the identity's frozen
+              // ExpectedLifePattern and emits 0 or 1 identity_doubt mirror
+              // ledger entries. LLM-free; the hook is read-only with respect
+              // to canonical world state. Actions without observable approach
+              // tags, or identities without a comparison norm, produce no
+              // doubt entry. The entries join the same ledger sink as the
+              // physical-impact blueprints so solidify-time promotion handles
+              // them uniformly.
+              const approachTags = signedJourneyAction.approachTags;
+              // PR5b fix: derive the mission-sanctioned approach palette as
+              // the union of approachTags across every actionOption the
+              // current scene contract offers. By construction, a server-
+              // offered action's tags are a subset of this union. The
+              // roleplay-doubt planner uses this set to apply a mission-
+              // aligned override (spec §6.9): if the agent only used
+              // approaches the mission offered, the action is aligned and
+              // no doubt fires — a combat-role identity on a support mission
+              // is not deviating when the mission demands support/logistics.
+              const missionSanctionedApproaches = approachTags && approachTags.length > 0
+                ? collectSceneMissionSanctionedApproaches(session.sceneContract.actionOptions)
+                : [];
+              const doubtEntries = identity.expectedLifePattern && approachTags && approachTags.length > 0
+                ? planJourneyRoleplayDoubt({
+                    pattern: identity.expectedLifePattern,
+                    observed: approachTags,
+                    agentId: session.agentId,
+                    journeyId: session.sceneContract.journeyId,
+                    episodeId: session.sceneContract.episodeId,
+                    regionId: session.regionId,
+                    ...(signedJourneyAction.routeSelection?.factionObjectId
+                      ? { factionId: signedJourneyAction.routeSelection.factionObjectId }
+                      : {}),
+                    actionEventId: actionRecorded.eventId,
+                    recordedAt,
+                    ...(missionSanctionedApproaches.length > 0
+                      ? { missionSanctionedApproaches }
+                      : {}),
+                  })
+                : [];
+              // PR5c: object-impact planner. When the signed action carries
+              // an internal actionObjectImpact descriptor, emit a mirror-ledger
+              // entry for the physical object mutation/destruction. The entry
+              // flows through the same mirror-ledger append → promote → solidify
+              // path as region/trace/faction blueprints. On solidify,
+              // buildCanonicalEventFromMirrorEntry dispatches it to a canonical
+              // world_object_state_changed event; on discard the entry never
+              // reaches canonical state.
+              const objectImpactEntries = planJourneyObjectImpactBlueprints({
+                actionEventId: actionRecorded.eventId,
+                agentId: session.agentId,
+                regionId: session.regionId,
+                actionObjectImpact: signedJourneyAction.actionObjectImpact,
+                resolution: journeyResolution,
+                recordedAt,
+                sourceAggregateId: session.sessionId,
+              });
+              const blueprints: MirrorConsequenceLedgerEntry[] = [
+                ...physicalBlueprints,
+                ...doubtEntries,
+                ...objectImpactEntries,
+              ];
+              if (blueprints.length > 0) {
+                if (!journeyMirrorLedgerSink) {
+                  throw new Error("journey_mirror_ledger_sink_required");
+                }
+                // expectedVersion: -1 is the documented "no CAS check"
+                // sentinel. The integrator owns journey.version and MUST
+                // fetch it from its own projection; see
+                // EpochGameCoreOptions.journeyMirrorLedgerSink JSDoc.
+                journeyMirrorLedgerSink({
+                  journeyId: session.sceneContract.journeyId,
+                  agentId: session.agentId,
+                  expectedVersion: -1,
+                  actionEventId: actionRecorded.eventId,
+                  entries: blueprints,
+                });
+              }
+          } else {
+            sideEffects.push(...planJourneyWorldImpactEvents({
+              makeEvent,
+              idFactory,
+              regionId: session.regionId,
+              agentId: session.agentId,
+              explorerId: session.explorerId,
+              identityName: identity.identityName,
+              journeyId: session.sceneContract.journeyId,
+              episodeId: session.sceneContract.episodeId,
+              objectiveId: signedJourneyAction.taskObjectiveId,
+              objectiveKind: session.sceneContract.taskObjective.kind,
+              objectiveTitle: session.sceneContract.taskObjective.title,
+              actionLabel: signedJourneyAction.label,
+              actionRisk: signedJourneyAction.risk,
+              allowedEffectKinds: signedJourneyAction.allowedEffectKinds,
+              resolution: journeyResolution,
+              previousInfluenceScore: currentRegionInfluenceScore(current, session.regionId, session.agentId),
+              previousFactionStandingScore: currentAgentFactionStandingScore(
+                current,
+                session.agentId,
+                signedJourneyAction.routeSelection?.factionObjectId,
+              ),
+              routeSelection: signedJourneyAction.routeSelection,
+              sourceEventId: actionRecorded.eventId,
+              sourceAggregateId: session.sessionId,
+              recordedAt,
+              worldMinute: currentProjectionWorldMinute(current),
+            }));
+          }
         }
         if (!option.socialHookId || session.sceneContract?.worldMode === "mirror") return sideEffects;
         const hook = current.socialHooks[option.socialHookId];
@@ -9822,6 +10364,10 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       && event.payload.journeyId === journeyId
       && event.payload.agentId === agentId);
     if (existingMarker) {
+      const existingSettlementId = (existingMarker.payload as { readonly settlementId?: string }).settlementId;
+      if (existingSettlementId !== input.settlementId) {
+        throw new Error("journey_settlement_id_mismatch");
+      }
       return { events: [], value: journeyWorldCommitFromMarker(existingMarker), projection: current };
     }
 
@@ -9859,6 +10405,38 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     }
     if (input.worldSliceHash !== undefined && !/^sha256:[0-9a-f]{64}$/u.test(input.worldSliceHash)) {
       throw new Error("journey_world_slice_hash_invalid");
+    }
+    if (input.settlementPolicyVersion !== SETTLEMENT_POLICY_VERSION) {
+      throw new Error(
+        `journey_settlement_policy_version_mismatch:${input.settlementPolicyVersion}:${SETTLEMENT_POLICY_VERSION}`,
+      );
+    }
+    if (input.canonThresholdBps !== CANON_THRESHOLD_BPS) {
+      throw new Error(
+        `journey_canon_threshold_version_mismatch:${input.canonThresholdBps}:${CANON_THRESHOLD_BPS}`,
+      );
+    }
+    if (input.completionScoreBps < input.canonThresholdBps) {
+      throw new Error(
+        `journey_below_canon_threshold:${input.completionScoreBps}:${input.canonThresholdBps}`,
+      );
+    }
+    if (input.consequenceScorePolicyVersion !== CONSEQUENCE_SCORE_POLICY_VERSION) {
+      throw new Error(
+        `journey_consequence_score_policy_version_mismatch:${input.consequenceScorePolicyVersion}:${CONSEQUENCE_SCORE_POLICY_VERSION}`,
+      );
+    }
+    if (!input.settlementId.trim()) {
+      throw new Error("journey_settlement_id_required");
+    }
+    const breakdown = input.consequenceScoreBreakdown;
+    const components = [
+      breakdown.resultScoreBps,
+      breakdown.selfLossScoreBps,
+      breakdown.collateralScoreBps,
+    ];
+    if (components.some((value) => !Number.isSafeInteger(value) || value < -10_000 || value > 10_000)) {
+      throw new Error("journey_consequence_score_breakdown_invalid");
     }
 
     const journeySessions = Object.values(current.hostedSessions).filter((session) =>
@@ -9902,25 +10480,6 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       if (!signedAction || !actionEvent || actionEvent.payload.journeyResolution?.completionKind !== "complete") continue;
       evidenceByObjectiveId.set(objectiveId, { session, action, actionEvent, signedAction });
     }
-    if (completedObjectiveIds.includes("legacy_main") && !evidenceByObjectiveId.has("legacy_main")) {
-      const session = journeySessions.find((candidate) =>
-        candidate.sceneContract?.phase === "main"
-        && !candidate.sceneContract.taskObjective
-        && candidate.actions.length > 0);
-      const action = session?.actions.at(-1);
-      const signedAction = action && session?.sceneContract?.actionOptions.find((candidate) =>
-        candidate.actionOptionId === action.actionOptionId);
-      const actionEvent = action
-        ? current.events.find((event): event is Extract<EpochEvent, {
-            readonly eventType: "hosted_action_recorded";
-          }> => event.eventType === "hosted_action_recorded"
-            && event.payload.actionId === action.actionId
-            && event.correlationId === context.correlationId)
-        : undefined;
-      if (session && action && signedAction && actionEvent) {
-        evidenceByObjectiveId.set("legacy_main", { session, action, actionEvent, signedAction });
-      }
-    }
     if (completedObjectiveIds.some((objectiveId) => !evidenceByObjectiveId.has(objectiveId))) {
       throw new Error("journey_completed_objective_evidence_missing");
     }
@@ -9934,41 +10493,157 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     let workingProjection = current;
     const orderedEvidence = completedObjectiveIds.map((objectiveId) =>
       evidenceByObjectiveId.get(objectiveId) as NonNullable<ReturnType<typeof evidenceByObjectiveId.get>>);
-    for (const evidence of orderedEvidence) {
-      const contract = evidence.session.sceneContract as JourneySceneContract;
-      const objective = contract.taskObjective;
-      const resolution = evidence.action.journeyResolution;
-      if (!objective || !resolution) continue;
-      const planned = planJourneyWorldImpactEvents({
-        makeEvent,
-        idFactory,
-        regionId,
-        agentId,
-        explorerId: identity.explorerId,
-        identityName: identity.identityName,
-        journeyId,
-        episodeId: contract.episodeId,
-        objectiveId: objective.objectiveId,
-        objectiveKind: objective.kind,
-        objectiveTitle: objective.title,
-        actionLabel: evidence.signedAction.label,
-        actionRisk: evidence.signedAction.risk,
-        allowedEffectKinds: evidence.signedAction.allowedEffectKinds,
-        resolution,
-        previousInfluenceScore: currentRegionInfluenceScore(workingProjection, regionId, agentId),
-        previousFactionStandingScore: currentAgentFactionStandingScore(
-          workingProjection,
-          agentId,
-          evidence.signedAction.routeSelection?.factionObjectId,
-        ),
-        routeSelection: evidence.signedAction.routeSelection,
-        sourceEventId: evidence.actionEvent.eventId,
-        sourceAggregateId: evidence.session.sessionId,
-        recordedAt: solidifiedAt,
-        worldMinute: currentProjectionWorldMinute(workingProjection),
-      });
-      effectEvents.push(...planned);
-      workingProjection = applyEvents(workingProjection, planned);
+
+    // PR2: promote the mirror-consequence ledger. Rebuild canonical events
+    // from its entries so downstream region/trace/faction consumers remain
+    // agnostic to the source. The ledger is the only source for mirror-world
+    // collateral at solidification.
+    //
+    // Promotion persistence contract: the local ledger rebuilt here is for
+    // invariant checking ({@link assertNoDuplicatePromotion}) only. This
+    // function does NOT update the caller's persistent ledger projection
+    // with promotion records. The caller (agent-companion runtime) owns the
+    // lifecycle: it MUST have already appended the entries before calling
+    // solidify, and MUST record promotion state for each canonical event id
+    // produced below. The journey_world_solidified marker short-circuits
+    // replays, so a process crash between canonical events being committed
+    // and promotion records being persisted will leave the entries orphaned
+    // on restart (canonical events exist, ledger still shows them pending).
+    //
+    // Crash recovery: the journey_world_solidified marker carries
+    // `mirrorLedgerPromotedEntryIds` (the entryIds this solidify promoted)
+    // and `effectEventIds` (the canonical event ids in promotion order —
+    // one canonical event per promoted entry, followed by any NPC
+    // canonicalization events). The integrator MUST read those two fields
+    // on restart and reconcile its persistent ledger: pair the entryIds
+    // positionally with the leading `mirrorLedgerPromotedEntryIds.length`
+    // effectEventIds, then mark each entry promoted via
+    // {@link markMirrorConsequencePromoted}. mcpTools.ts implements this
+    // reconciliation for the agent-companion runtime; this function does
+    // not perform integrator-level reconciliation itself.
+    const mirrorLedgerEntries = input.mirrorLedgerEntries;
+    let mirrorLedger: MirrorConsequenceLedgerState | undefined;
+    if (mirrorLedgerEntries.length > 0) {
+      // Fast-fail before any canonical events are constructed: PR2 only
+      // supports region_influence_delta, trace_created, and
+      // faction_standing_delta in the solidify mirror path. Other kinds
+      // (npc_relationship_delta, object_mutation, object_destroy,
+      // hidden_prerequisite_destroyed, identity_doubt) and self-loss kinds
+      // (resource_spent, lifetime_adjusted) would otherwise throw
+      // mid-loop inside buildCanonicalEventFromMirrorEntry after some
+      // canonical events are already in effectEvents. The whitelist keeps
+      // the error surface consistent: every unsupported kind fails up
+      // front with effectEvents empty.
+      for (const entry of mirrorLedgerEntries) {
+        if (!SUPPORTED_MIRROR_EFFECT_KINDS.has(entry.effectKind)) {
+          throw new Error(
+            `journey_mirror_ledger_kind_not_supported:${entry.effectKind}`,
+          );
+        }
+      }
+      mirrorLedger = emptyMirrorConsequenceLedger(journeyId);
+      for (const entry of mirrorLedgerEntries) {
+        mirrorLedger = appendMirrorConsequence(mirrorLedger, entry);
+      }
+      const { entriesToPromote } = promoteMirrorConsequences(mirrorLedger);
+      for (const entry of entriesToPromote) {
+        const entryId = deriveMirrorConsequenceEntryId({
+          journeyId,
+          actionEventId: entry.actionEventId,
+          dedupeKey: entry.dedupeKey,
+        });
+        // Rebase cumulative baselines against the running projection so
+        // multi-objective journeys produce the same influenceScoreAfter /
+        // standingAfter that action-time capture cannot compute across
+        // multiple objectives. Mirror-mode submitHostedAction captures these
+        // snapshots per-action at submit time without visibility into
+        // prior objectives' canonical influence deltas; solidify is the
+        // single point where canonical world events commit, so the
+        // projection-derived baseline overrides the submit-time snapshot
+        // here. {@link rebaseMirrorEntryAgainstProjection} is a no-op for
+        // trace_created (no score baseline on that kind).
+        const rebasedEntry = rebaseMirrorEntryAgainstProjection(entry, workingProjection);
+        const canonicalEvent = buildCanonicalEventFromMirrorEntry({
+          entryId,
+          entry: rebasedEntry,
+          makeEvent,
+          idFactory,
+          worldMinute: currentProjectionWorldMinute(workingProjection),
+        });
+        effectEvents.push(canonicalEvent);
+        mirrorLedger = markMirrorConsequencePromoted(mirrorLedger, entryId, canonicalEvent.eventId);
+        workingProjection = applyEvents(workingProjection, [canonicalEvent]);
+      }
+      assertNoDuplicatePromotion(mirrorLedger);
+
+      // PR5c cascade: after promoting object_mutation/object_destroy entries,
+      // check if any destroyed object is a hidden prerequisite for an objective
+      // in the current journey's plan. If so, emit hidden_prerequisite_link_changed
+      // canonical events. The cascade is idempotent — the dedupe key
+      // `hidden_prereq:${objectiveId}:${actionEventId}` prevents duplicates.
+      const destroyedObjects = new Set<string>();
+      for (const [objectId, state] of Object.entries(workingProjection.worldObjectStates)) {
+        if (state.status === "destroyed") destroyedObjects.add(objectId);
+      }
+      if (destroyedObjects.size > 0) {
+        for (const evidence of orderedEvidence) {
+          const contract = evidence.session.sceneContract as JourneySceneContract;
+          const taskObjective = contract.taskObjective;
+          if (!taskObjective) continue;
+          const hiddenPrereqObjectIds = taskObjective.hiddenPrerequisiteObjectIds ?? [];
+          for (const prereqObjectId of hiddenPrereqObjectIds) {
+            if (!destroyedObjects.has(prereqObjectId)) continue;
+            const dedupeKey = `hidden_prereq:${taskObjective.objectiveId}:${evidence.actionEvent.eventId}`;
+            const existingEntryId = deriveMirrorConsequenceEntryId({
+              journeyId,
+              actionEventId: evidence.actionEvent.eventId,
+              dedupeKey,
+            });
+            // Check if this cascade entry was already promoted (idempotency).
+            const alreadyPromoted = mirrorLedger
+              ? existingEntryId in mirrorLedger.promotedCanonicalEventIds
+              : false;
+            if (alreadyPromoted) continue;
+            const cascadeEntry: MirrorConsequenceLedgerEntry = {
+              actionEventId: evidence.actionEvent.eventId,
+              effectKind: "hidden_prerequisite_destroyed",
+              targetEntityId: `hidden:${taskObjective.objectiveId}`,
+              delta: 0,
+              consequenceType: "collateral",
+              sourceEventIds: [evidence.actionEvent.eventId],
+              effectBlueprint: {
+                prerequisiteObjectId: prereqObjectId,
+                objectiveId: taskObjective.objectiveId,
+                regionId,
+              },
+              recordedAt: solidifiedAt,
+              dedupeKey,
+            };
+            mirrorLedger = appendMirrorConsequence(mirrorLedger, cascadeEntry);
+          }
+        }
+        // Promote and apply the cascade entries.
+        const { entriesToPromote: cascadeEntries } = promoteMirrorConsequences(mirrorLedger);
+        for (const entry of cascadeEntries) {
+          const entryId = deriveMirrorConsequenceEntryId({
+            journeyId,
+            actionEventId: entry.actionEventId,
+            dedupeKey: entry.dedupeKey,
+          });
+          const rebasedEntry = rebaseMirrorEntryAgainstProjection(entry, workingProjection);
+          const canonicalEvent = buildCanonicalEventFromMirrorEntry({
+            entryId,
+            entry: rebasedEntry,
+            makeEvent,
+            idFactory,
+            worldMinute: currentProjectionWorldMinute(workingProjection),
+          });
+          effectEvents.push(canonicalEvent);
+          mirrorLedger = markMirrorConsequencePromoted(mirrorLedger, entryId, canonicalEvent.eventId);
+          workingProjection = applyEvents(workingProjection, [canonicalEvent]);
+        }
+        assertNoDuplicatePromotion(mirrorLedger);
+      }
     }
 
     const contacts = new Map<string, {
@@ -10088,6 +10763,14 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       sourceEventIds,
       effectEventIds: effectEvents.map((event) => event.eventId),
       solidifiedAt,
+      mirrorLedgerPromotedEntryIds: mirrorLedger
+        ? Object.entries(mirrorLedger.promotedCanonicalEventIds).map(([entryId]) => entryId)
+        : [],
+      settlementPolicyVersion: input.settlementPolicyVersion,
+      consequenceScorePolicyVersion: input.consequenceScorePolicyVersion,
+      canonThresholdBps: input.canonThresholdBps,
+      settlementId: input.settlementId,
+      consequenceScoreBreakdown: input.consequenceScoreBreakdown,
     };
     const marker = makeEvent("journey_world_solidified", journeyId, markerPayload, {
       aggregateType: "agent_identity",

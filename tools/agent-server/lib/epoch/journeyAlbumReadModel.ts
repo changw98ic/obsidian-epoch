@@ -79,14 +79,20 @@ export function buildJourneyAlbum(
     agentId,
     journeys: journeys.map((record) => {
       const episodes = record.journey.episodeIds.map((episodeId) => projection.episodes[episodeId]).filter(Boolean);
+      if (!record.journey.taskPlan) throw new Error("journey_task_plan_required");
+      const taskPlan = record.journey.taskPlan;
+      const hiddenTaskSeal = projection.hiddenTaskSeals[record.journey.journeyId];
+      if (!hiddenTaskSeal) throw new Error("journey_hidden_task_seal_missing");
       const mission = buildJourneyMission({
         journeyId: record.journey.journeyId,
         journeyStatus: record.journey.status,
         playerObjective: record.journey.mandate.objective,
         regionId: record.journey.destinationRegionId,
         episodes,
-        taskPlan: record.journey.taskPlan,
-        hiddenTaskSeal: projection.hiddenTaskSeals[record.journey.journeyId],
+        taskPlan,
+        hiddenTaskSeal,
+        hiddenPrerequisiteLinks: [],
+        completionTier: record.journey.worldCommit?.completionTier,
       });
       const storyReport = options.storyReportForJourney?.(record.journey) ?? buildGroundedJourneyStoryReport({
         journeyId: record.journey.journeyId,
@@ -97,8 +103,9 @@ export function buildJourneyAlbum(
         dueAtWorldTime: record.journey.dueAtWorldTime,
         worldCommit: record.journey.worldCommit,
         episodes,
-        taskPlan: record.journey.taskPlan,
-        hiddenTaskSeal: projection.hiddenTaskSeals[record.journey.journeyId],
+        taskPlan,
+        hiddenTaskSeal,
+        hiddenPrerequisiteLinks: [],
       });
       return {
         ...record,

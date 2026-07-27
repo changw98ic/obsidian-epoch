@@ -259,6 +259,13 @@ const JOURNEY_SNAPSHOT_EVENT_TYPES = new Set([
   "journey_world_commit_recorded",
   "journey_verification_linked",
   "journey_status_changed",
+  // PR2 mirror-consequence ledger events. Each carries a snapshot of the
+  // journey record (version bump) so the projection reducer can re-apply
+  // ledger mutations on restart. Without these entries in the allowlist,
+  // `assertAgentCommandCommit` rejects the persisted batch.
+  "journey_mirror_consequence_recorded",
+  "journey_mirror_consequence_promoted",
+  "journey_mirror_consequence_discarded",
 ]);
 
 function assertRecordArray(record: JsonRecord, key: string) {
@@ -362,6 +369,7 @@ export function hydrateAgentRuntimeOptions({
   resultPages = [],
   contextSnapshots = [],
   outbox = [],
+  archiveMigration = [],
 }: {
   tickets?: readonly object[];
   runs?: readonly object[];
@@ -377,6 +385,7 @@ export function hydrateAgentRuntimeOptions({
   resultPages?: readonly object[];
   contextSnapshots?: readonly object[];
   outbox?: readonly object[];
+  archiveMigration?: readonly object[];
   dataDir?: string;
 } = {}) {
   const ticketRecords = tickets.map(recordValue);
@@ -398,6 +407,7 @@ export function hydrateAgentRuntimeOptions({
   const resultPageRecords = resultPages.map(recordValue);
   const contextSnapshotRecords = contextSnapshots.map(recordValue);
   const outboxRecords = outbox.map(recordValue);
+  const archiveMigrationRecords = (archiveMigration ?? []).map(recordValue);
   const ticketById = new Map<string, JsonRecord>();
   for (const record of ticketRecords) {
     const runTicket = stringValue(record.runTicket);
@@ -494,6 +504,7 @@ export function hydrateAgentRuntimeOptions({
     resultPages: sharedResultPages,
     contextSnapshots: savedContextSnapshots,
     outboxEvents: outboxRecords,
+    archiveMigrationRecords,
   };
 }
 
@@ -514,5 +525,6 @@ export async function loadAgentRuntimeOptions() {
     resultPages: await readJsonl("result-pages.jsonl"),
     contextSnapshots: await readJsonl("context-snapshots.jsonl"),
     outbox: await readJsonl("outbox.jsonl"),
+    archiveMigration: await readJsonl("phase6-archive-migration.jsonl"),
   });
 }

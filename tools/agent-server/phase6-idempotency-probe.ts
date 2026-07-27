@@ -274,8 +274,7 @@ async function runJourneyAndResultPageProbe({ mcp, explorerId, recovery, records
     recoveryCode: recovery,
     idempotencyKey: "probe-journey-propose",
   });
-  const action = proposed.proposal.sceneContract.actionOptions.find((entry) => entry.completionKind !== "skip")
-    || proposed.proposal.sceneContract.actionOptions[0];
+  const action = proposed.proposal.sceneContract.actionOptions[0];
   const commitInput = {
     journeyId: started.journey.journeyId,
     sceneId: proposed.proposal.sceneContract.sceneId,

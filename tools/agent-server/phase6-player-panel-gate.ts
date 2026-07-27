@@ -6,7 +6,6 @@ import fs from "node:fs";
 import path from "node:path";
 
 const SCHEMA_VERSION = "obsidian-epoch.phase6-player-panel-gate.v1";
-const LEGACY_RECEIPT_VERSION = "journey_run_receipt.v1";
 const V2_RECEIPT_VERSION = "journey_run_receipt.v2";
 const DEFAULT_EXPECTED_RUNS = 10;
 const REQUIRED_GROUPS_PER_RUN = 2;
@@ -412,23 +411,6 @@ function panelReportedHash(record, panel) {
   ]) ?? firstValue(panel, [["panelHash"], ["panel_hash"], ["hash"]]));
 }
 
-function receiptHashValue(receipt, side) {
-  const snake = `${side}_panel_hash`;
-  const camel = `${side}PanelHash`;
-  return textValue(firstValue(receipt, [
-    [camel],
-    [snake],
-    ["panelHashes", side],
-    ["panel_hashes", side],
-    ["hashes", "panels", side],
-    ["hashes", "panel", side],
-    ["playerPanel", "hashes", side],
-    ["player_panel", "hashes", side],
-    ["payload", camel],
-    ["payload", "panelHashes", side],
-  ]));
-}
-
 function receiptSchema(receipt) {
   const versionValues = unique([
     textValue(getPath(receipt, ["version"])),
@@ -439,16 +421,10 @@ function receiptSchema(receipt) {
   ].filter(Boolean));
   if (versionValues.length > 1) return { kind: "invalid", errorCode: "E_RECEIPT_VERSION_CONFLICT" };
   if (versionValues.length === 1) {
-    if (versionValues[0] === LEGACY_RECEIPT_VERSION) return { kind: "legacy" };
     if (versionValues[0] === V2_RECEIPT_VERSION) return { kind: "v2" };
     return { kind: "invalid", errorCode: "E_RECEIPT_VERSION_UNSUPPORTED" };
   }
-  const hasV2Shape = getPath(receipt, ["snapshots"]) !== undefined
-    || getPath(receipt, ["deltas"]) !== undefined
-    || getPath(receipt, ["integrity", "deltasHash"]) !== undefined;
-  return hasV2Shape
-    ? { kind: "invalid", errorCode: "E_RECEIPT_VERSION_MISSING" }
-    : { kind: "legacy" };
+  return { kind: "invalid", errorCode: "E_RECEIPT_VERSION_MISSING" };
 }
 
 function isRecord(value) {
@@ -501,20 +477,6 @@ function validateExactDimensionContainer(panel, paths, requiredKeys, code, runKe
   const actualKeys = Object.keys(containers[0]).sort();
   const expectedKeys = [...requiredKeys].sort();
   if (canonicalize(actualKeys) !== canonicalize(expectedKeys)) errors.push(error(code, runKey));
-}
-
-function diffReportedHash(record, receipt) {
-  return textValue(firstValue(receipt, [
-    ["panelDiffHash"],
-    ["panel_diff_hash"],
-    ["diffHash"],
-    ["diff_hash"],
-    ["playerPanel", "diffHash"],
-    ["player_panel", "diffHash"],
-    ["hashes", "panelDiff"],
-    ["hashes", "diff"],
-    ["payload", "panelDiffHash"],
-  ]) ?? firstValue(record, [["diffHash"], ["diff_hash"], ["panelDiffHash"], ["panel_diff_hash"]]));
 }
 
 function hashesEqual(actual, expected) {
@@ -697,15 +659,7 @@ function summarize(beforeRecords, afterRecords, receiptRecords, options, parseEr
       const schema = receiptSchemas[index];
       if (schema.kind === "v2") {
         validateV2Receipt(receipt, beforePanel, afterPanel, key, errors);
-        return;
       }
-      if (schema.kind !== "legacy") return;
-      const receiptBeforeHash = receiptHashValue(receipt, "before");
-      const receiptAfterHash = receiptHashValue(receipt, "after");
-      const receiptDiffHash = diffReportedHash(afterEntry.record, receipt);
-      if (!receiptBeforeHash || !hashesEqual(beforeHash, receiptBeforeHash)) errors.push(error("E_RECEIPT_BEFORE_HASH_MISMATCH", key));
-      if (!receiptAfterHash || !hashesEqual(afterHash, receiptAfterHash)) errors.push(error("E_RECEIPT_AFTER_HASH_MISMATCH", key));
-      if (!receiptDiffHash || !hashesEqual(diffHash, receiptDiffHash)) errors.push(error("E_RECEIPT_DIFF_HASH_MISMATCH", key));
     });
 
     if (usesCurrentSchema) {

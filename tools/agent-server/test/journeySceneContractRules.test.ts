@@ -11,8 +11,6 @@ import {
 } from "../lib/runtimeActionSigning.ts";
 
 import {
-  GENERIC_JOURNEY_MAIN_ACTION_RECIPES,
-  GRAY_HARBOR_LIVELIHOOD_ACTION_RECIPES,
   buildJourneySceneContract,
   isJourneySceneActionLabelSpecific,
   journeySceneActionSignedContent,
@@ -21,7 +19,6 @@ import {
   type JourneySceneContractBuildInput,
   type JourneySceneContractWorldObject,
 } from "../lib/epoch/journeySceneContractRules.ts";
-import { signedEnvelopeContentHash } from "../lib/epoch/turnActionEnvelopeRules.ts";
 
 const WORLD_OBJECTS: readonly JourneySceneContractWorldObject[] = [
   {
@@ -72,6 +69,42 @@ const WORLD_OBJECTS: readonly JourneySceneContractWorldObject[] = [
   },
 ];
 
+const GENERATED_TASK_OBJECTIVE = {
+  objectiveId: "main_gray_harbor_test",
+  kind: "main" as const,
+  sequence: 1,
+  title: "完成灰港账房核验",
+  objective: "在灰港账房完成一项可追溯核验。",
+  completionCriteria: "核验结果进入服务器签名记录。",
+  sceneType: "livelihood" as const,
+  locationId: "location_gray_harbor_civic_ledger",
+  worldObjectIds: [
+    "location_gray_harbor_civic_ledger",
+    "organization_gray_harbor_civic_office",
+    "npc_night_clerk_kelan",
+  ],
+  actions: [
+    {
+      optionKey: "gray_harbor_verify_primary",
+      label: "与夜班书记珂岚核对灰港民务所记录",
+      intent: "逐项核验已登记的现场事实并保留记录。",
+      risk: "low" as const,
+      allowedEffectKinds: ["journey_progress" as const, "clue_created" as const],
+      targetObjectIds: ["location_gray_harbor_civic_ledger", "npc_night_clerk_kelan"],
+      outcomeSummary: "身份完成了灰港民务所记录核验，并留下可追溯记录。",
+    },
+    {
+      optionKey: "gray_harbor_verify_alternate",
+      label: "在灰港民务账房复核现场对象状态",
+      intent: "只复核服务器提供的对象状态，不补写未经证实的结果。",
+      risk: "medium" as const,
+      allowedEffectKinds: ["journey_progress" as const, "world_reference" as const],
+      targetObjectIds: ["location_gray_harbor_civic_ledger", "organization_gray_harbor_civic_office"],
+      outcomeSummary: "身份复核了灰港民务账房的对象状态，并提交了现场记录。",
+    },
+  ],
+} as const;
+
 function input(overrides: Partial<JourneySceneContractBuildInput> = {}): JourneySceneContractBuildInput {
   return {
     seed: "gray-harbor-day-17",
@@ -93,51 +126,27 @@ function input(overrides: Partial<JourneySceneContractBuildInput> = {}): Journey
     expectedVersion: 3,
     expiresAt: "2026-07-13T08:00:00.000Z",
     ruleVersion: "journey-scene-contract.v2",
+    generatedTaskObjective: GENERATED_TASK_OBJECTIVE,
     ...overrides,
   };
 }
 
-test("gray harbor livelihood catalog exposes six concrete server-owned recipes", () => {
-  assert.deepEqual(GRAY_HARBOR_LIVELIHOOD_ACTION_RECIPES.map((recipe) => recipe.optionKey), [
-    "ask_for_shift",
-    "verify_salt_ledger",
-    "carry_manifest",
-    "ask_about_recent_travelers",
-    "report_discrepancy",
-    "leave_without_commitment",
-  ]);
-});
-
-test("an unmapped infinite-world region receives a deterministic signed generic main route", () => {
+test("an unmapped infinite-world region cannot create a main scene without a generated task", () => {
   const reflectiveCity: readonly JourneySceneContractWorldObject[] = [{
     id: "region_reflective_city",
     type: "region",
     label: "镜城",
     sourceFactIds: ["world:region:region_reflective_city"],
   }];
-  const contract = buildJourneySceneContract(input({
+  assert.throws(() => buildJourneySceneContract(input({
     seed: "reflective-city-generic-main",
     journeyId: "journey_reflective_city_generic",
     episodeId: "episode_reflective_city_main",
     title: "镜城的通用调查",
     worldObjects: reflectiveCity,
     sourceFactIds: reflectiveCity.flatMap((object) => object.sourceFactIds),
-  }));
-
-  assert.deepEqual(
-    contract.actionOptions.map((action) => action.optionKey),
-    GENERIC_JOURNEY_MAIN_ACTION_RECIPES.map((recipe) => recipe.optionKey),
-  );
-  assert.equal(
-    contract.actionOptions.find((action) => action.actionOptionId === contract.safeFallbackActionOptionId)?.optionKey,
-    "leave_without_commitment",
-  );
-  assert.match(contract.premise, /镜城/u);
-  assert.ok(contract.actionOptions.every((action) => verifyJourneySceneActionSignature({
-    agentId: input().agentId,
-    contract,
-    action,
-  })));
+    generatedTaskObjective: undefined,
+  })), /journey_generated_task_objective_required/);
 });
 
 test("builds a deterministic signed scene contract from seed, mandate, world state, and rule version", () => {
@@ -147,12 +156,12 @@ test("builds a deterministic signed scene contract from seed, mandate, world sta
   assert.deepEqual(first, second);
   assert.equal(first.sceneType, "livelihood");
   assert.equal(first.location.id, "location_gray_harbor_civic_ledger");
-  assert.equal(first.actionOptions.length, 6);
+  assert.equal(first.actionOptions.length, 2);
   assert.equal(
     first.actionOptions.find((action) => action.actionOptionId === first.safeFallbackActionOptionId)?.optionKey,
-    "leave_without_commitment",
+    "gray_harbor_verify_primary",
   );
-  assert.equal(new Set(first.actionOptions.map((action) => action.actionOptionId)).size, 6);
+  assert.equal(new Set(first.actionOptions.map((action) => action.actionOptionId)).size, 2);
   assert.ok(first.actionOptions.every((action) => verifyJourneySceneActionSignature({
     agentId: input().agentId,
     contract: first,
@@ -278,10 +287,10 @@ test("maps only signed scene recipes into hosted actions and uses the explicit s
   assert.deepEqual(hosted.map((action) => action.actionOptionId),
     contract.actionOptions.map((action) => action.actionOptionId));
   assert.deepEqual(hosted.map((action) => action.optionKey),
-    GRAY_HARBOR_LIVELIHOOD_ACTION_RECIPES.map((recipe) => recipe.optionKey));
+    ["gray_harbor_verify_primary", "gray_harbor_verify_alternate"]);
   assert.equal(hosted.some((action) => ["observe", "assist", "anomaly"].includes(action.optionKey)), false);
   assert.equal(hosted.find((action) => action.actionOptionId === contract.safeFallbackActionOptionId)?.optionKey,
-    "leave_without_commitment");
+    "gray_harbor_verify_primary");
   assert.ok(hosted.every((action) => action.reward === undefined && action.lifetimeDelta === undefined));
   assert.ok(hosted.every((action) => /服务端会隐藏计算/u.test(action.explanation.risk)));
   assert.ok(hosted.every((action) => /道具装备|可验证收益/u.test(action.explanation.risk)));
@@ -290,7 +299,7 @@ test("maps only signed scene recipes into hosted actions and uses the explicit s
   const highRiskContract = {
     ...contract,
     actionOptions: [
-      { ...contract.actionOptions[0], risk: "high" as const, riskTerms: undefined },
+      { ...contract.actionOptions[0], risk: "high" as const },
       ...contract.actionOptions.slice(1),
     ],
   };
@@ -307,6 +316,7 @@ test("arrival and return phases issue distinct signed Gray Harbor travel actions
     sceneType: "travel" as const,
     worldObjects: region,
     sourceFactIds: region.flatMap((object) => object.sourceFactIds),
+    generatedTaskObjective: undefined,
   };
   const arrival = buildJourneySceneContract(input({
     ...phaseInput,
@@ -322,7 +332,7 @@ test("arrival and return phases issue distinct signed Gray Harbor travel actions
   }));
 
   assert.deepEqual(arrival.actionOptions.map((action) => action.optionKey), [
-    "enter_gray_harbor", "review_arrival_route", "turn_back_before_entry",
+    "enter_destination", "review_arrival_route", "turn_back_before_entry",
   ]);
   assert.deepEqual(returning.actionOptions.map((action) => action.optionKey), [
     "return_by_known_route", "record_verified_facts", "wait_for_safe_departure",
@@ -389,57 +399,11 @@ test("signature binds risk, targets, preconditions, effects, and visible action 
   assert.equal(verifies({ ...original, allowedEffectKinds: ["resource_delta"] }), false);
 });
 
-test("persisted v1 scene actions remain verifiable while v2 makes risk terms mandatory", () => {
-  const legacySignedContent = journeySceneActionSignedContent({
-    agentId: "agent_legacy_fixture",
-    sceneId: "scene_legacy_fixture",
-    expectedVersion: 3,
-    expiresAt: "2026-07-13T08:00:00.000Z",
+test("old scene rule versions are rejected and risk terms remain signature-bound", () => {
+  assert.throws(() => buildJourneySceneContract({
+    ...input(),
     ruleVersion: "journey-scene-contract.v1",
-    signatureVersion: 1,
-    signingPurpose: "journey_scene_action",
-    signingKeyId: "legacy-key-id",
-    action: {
-      actionOptionId: "action_legacy_fixture",
-      optionKey: "legacy_option",
-      label: "legacy label",
-      intent: "legacy intent",
-      risk: "medium",
-      preconditionRefs: ["event_legacy"],
-      allowedEffectKinds: ["journey_progress", "world_reference"],
-      targetEntityIds: ["npc_legacy"],
-    },
-  });
-  assert.deepEqual(legacySignedContent, {
-    actionOptionId: "action_legacy_fixture",
-    agentId: "agent_legacy_fixture",
-    allowedEffectKinds: ["journey_progress", "world_reference"],
-    expectedVersion: 3,
-    expiresAt: "2026-07-13T08:00:00.000Z",
-    intent: "legacy intent",
-    label: "legacy label",
-    optionKey: "legacy_option",
-    preconditionRefs: ["event_legacy"],
-    risk: "medium",
-    ruleVersion: "journey-scene-contract.v1",
-    sceneId: "scene_legacy_fixture",
-    signatureVersion: 1,
-    signingKeyId: "legacy-key-id",
-    signingPurpose: "journey_scene_action",
-    targetEntityIds: ["npc_legacy"],
-  });
-  assert.equal(
-    signedEnvelopeContentHash(legacySignedContent),
-    "sha256:b777f8b18f0ce4bc1e59c1a7b656693383d1a07c87b209c7f90e5c49abe72d21",
-  );
-
-  const legacy = buildJourneySceneContract(input({ ruleVersion: "journey-scene-contract.v1" }));
-  assert.ok(legacy.actionOptions.every((action) => action.riskTerms === undefined));
-  assert.ok(legacy.actionOptions.every((action) => verifyJourneySceneActionSignature({
-    agentId: input().agentId,
-    contract: legacy,
-    action,
-  })));
+  } as unknown as JourneySceneContractBuildInput), /journey_scene_rule_version_unsupported/);
 
   const current = buildJourneySceneContract(input());
   const action = current.actionOptions.find((candidate) => candidate.risk !== "low")
@@ -511,7 +475,8 @@ test("fails closed when required world roles or canonical source facts are absen
   assert.throws(() => buildJourneySceneContract(input({
     worldObjects: withoutNpc,
     sourceFactIds: withoutNpc.flatMap((object) => object.sourceFactIds),
-  })), /gray_harbor_livelihood_scene_incomplete/);
+    generatedTaskObjective: undefined,
+  })), /journey_generated_task_objective_required/);
 
   assert.throws(() => buildJourneySceneContract(input({
     worldObjects: WORLD_OBJECTS.map((object) => object.id === "npc_night_clerk_kelan"
@@ -530,26 +495,40 @@ test("region, organization, and npc are sufficient; document and workplace refs 
   const contract = buildJourneySceneContract(input({
     worldObjects: productionMinimum,
     sourceFactIds: productionMinimum.flatMap((object) => object.sourceFactIds),
+    generatedTaskObjective: {
+      ...GENERATED_TASK_OBJECTIVE,
+      worldObjectIds: productionMinimum.map((object) => object.id),
+      actions: GENERATED_TASK_OBJECTIVE.actions.map((action) => ({
+        ...action,
+        targetObjectIds: ["region_gray_harbor"],
+      })),
+      locationId: "region_gray_harbor",
+    },
   }));
 
   assert.equal(contract.location.id, "region_gray_harbor");
-  assert.equal(contract.actionOptions.length, 6);
+  assert.equal(contract.actionOptions.length, 2);
   assert.ok(contract.actionOptions.every((action) => action.targetEntityIds.every((id) =>
     productionMinimum.some((object) => object.id === id))));
 });
 
-test("different rule versions and world facts produce different signed contracts", () => {
+test("unsupported rule versions fail closed and changed world facts produce different signed contracts", () => {
   const baseline = buildJourneySceneContract(input());
-  const nextRules = buildJourneySceneContract(input({ ruleVersion: "journey-scene-contract.v3-test" }));
-  assert.notEqual(nextRules.sceneId, baseline.sceneId);
-  assert.notEqual(nextRules.actionOptions[0].signature, baseline.actionOptions[0].signature);
+  assert.throws(() => buildJourneySceneContract({
+    ...input(),
+    ruleVersion: "journey-scene-contract.v3-test",
+  } as unknown as JourneySceneContractBuildInput), /journey_scene_rule_version_unsupported/);
 
   const changedWorld = WORLD_OBJECTS.map((object) => object.id === "document_gray_harbor_salt_ledger"
     ? { ...object, sourceFactIds: ["event_salt_ledger_revised"] }
     : object);
   const changedWorldContract = buildJourneySceneContract(input({
-    worldObjects: changedWorld,
-    sourceFactIds: changedWorld.flatMap((object) => object.sourceFactIds),
+      worldObjects: changedWorld,
+      sourceFactIds: changedWorld.flatMap((object) => object.sourceFactIds),
+      generatedTaskObjective: {
+        ...GENERATED_TASK_OBJECTIVE,
+        worldObjectIds: GENERATED_TASK_OBJECTIVE.worldObjectIds.filter((id) => id !== "document_gray_harbor_salt_ledger"),
+      },
   }));
   assert.notEqual(changedWorldContract.sceneId, baseline.sceneId);
 });
@@ -585,6 +564,7 @@ test("hosted_session_started persists and rehydrates the exact signed scene cont
       worldObjects: buildInput.worldObjects,
       sourceFactIds: buildInput.sourceFactIds,
       expectedVersion: buildInput.expectedVersion,
+      generatedTaskObjective: buildInput.generatedTaskObjective,
     },
   }, context);
   const event = started.events[0];
@@ -669,7 +649,6 @@ test("a selected high-risk generated action is resolved by the server and replay
   const selected = started.value.sceneContract?.actionOptions.find((action) =>
     action.optionKey === generatedTaskObjective.actions[0].optionKey);
   assert.ok(selected);
-  assert.equal(selected.completionKind, undefined);
 
   const committed = core.submitHostedAction({
     sessionId: started.value.sessionId,

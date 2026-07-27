@@ -12,6 +12,17 @@ import {
   type JourneyRuntimeEvent,
 } from "../lib/epoch/journeyReadModel.ts";
 import { hydrateAgentRuntimeOptions } from "../lib/store.ts";
+import {
+  buildFallbackJourneyTaskPlan,
+  nextJourneyTaskObjective,
+  type JourneyTaskPlanInstallation,
+} from "../lib/epoch/journeyGeneratedTaskRules.ts";
+import { normalizeJourneyMandate, type JourneyMandate } from "../lib/epoch/journeyPolicyRules.ts";
+import type { PrepareJourneyRuntimeInput } from "../lib/epoch/journeyRuntime.ts";
+import {
+  JOURNEY_ACTION_RESOLUTION_RULE_VERSION,
+  type JourneyActionResolution,
+} from "../lib/epoch/journeyActionResolutionRules.ts";
 
 function sequentialIds(prefix: string) {
   let value = 0;
@@ -52,6 +63,7 @@ function canonicalEpochEventsFor(events: readonly JourneyRuntimeEvent[]): readon
       const beat = episode.serverFacts?.storyBeat;
       if (!beat) return [];
       const actionOptionId = `action_${eventId}`;
+      const selectedAction = beat.selectedAction;
       const common = {
         aggregateType: "hosted_session",
         aggregateId: sessionId,
@@ -73,7 +85,8 @@ function canonicalEpochEventsFor(events: readonly JourneyRuntimeEvent[]): readon
             actionOptionId,
             optionKey: beat.selectedAction.optionKey,
             label: beat.selectedAction.label,
-            targetEntityIds: beat.selectedAction.targetEntityIds ?? [],
+            targetEntityIds: selectedAction.targetEntityIds ?? [],
+            ...(selectedAction.taskObjectiveId ? { taskObjectiveId: selectedAction.taskObjectiveId } : {}),
           }],
         } },
       }, {
@@ -85,9 +98,47 @@ function canonicalEpochEventsFor(events: readonly JourneyRuntimeEvent[]): readon
           actionOptionId,
           optionLabel: beat.selectedAction.label,
           outcomeSummary: beat.outcomeSummary,
+          ...(selectedAction.resolution ? { journeyResolution: selectedAction.resolution } : {}),
         },
       }] as unknown as readonly EpochEvent[];
     });
+  });
+}
+
+function prepareWithTaskPlan(
+  runtime: ReturnType<typeof createJourneyRuntime>,
+  input: PrepareJourneyRuntimeInput,
+) {
+  const prepared = runtime.prepare(input);
+  const mandate = normalizeJourneyMandate(input.mandate) as JourneyMandate;
+  const regionId = input.destinationRegionId;
+  const locationId = regionId === "region_gray_harbor"
+    ? "workplace_gray_harbor"
+    : `${regionId}:test_location`;
+  const installation: JourneyTaskPlanInstallation = buildFallbackJourneyTaskPlan({
+    taskType: input.taskType ?? mandate.objective,
+    scenarioMapId: regionId,
+    availableWorldObjects: [
+      {
+        id: regionId,
+        type: "region",
+        label: regionId,
+        regionId,
+        sourceFactIds: [`world:region:${regionId}`],
+      },
+      {
+        id: locationId,
+        type: "workplace",
+        label: `${regionId}现场`,
+        regionId,
+        sourceFactIds: [`world:workplace:${regionId}`],
+      },
+    ],
+  });
+  return runtime.installTaskPlan({
+    journeyId: prepared.journey.journeyId,
+    expectedVersion: prepared.journey.version,
+    installation,
   });
 }
 
@@ -98,10 +149,39 @@ function groundedEpisode(
 ) {
   const canonicalEventId = `epoch_${episode.phase}_${episode.episodeId}`;
   const actionOptionId = `action_${canonicalEventId}`;
-  const optionKey = `test_${episode.phase || "main"}`;
-  const optionLabel = `完成${episode.title}`;
-  const outcomeSummary = `${episode.title}已由服务器确认。`;
-  const targetEntityIds = episode.worldObjectRefs.map((ref) => ref.id);
+  const objective = episode.generatedTaskObjective;
+  const action = objective?.actions[0];
+  const taskEpisode = Boolean(objective && (episode.phase === "main" || episode.phase === "side"));
+  const optionKey = action?.optionKey ?? `test_${episode.phase || "main"}`;
+  const optionLabel = action?.label ?? `完成${episode.title}`;
+  const outcomeSummary = action?.outcomeSummary ?? `${episode.title}已由服务器确认。`;
+  const targetEntityIds = action?.targetObjectIds.length
+    ? action.targetObjectIds
+    : episode.worldObjectRefs.map((ref) => ref.id);
+  const resolution: JourneyActionResolution | undefined = taskEpisode ? {
+    ruleVersion: JOURNEY_ACTION_RESOLUTION_RULE_VERSION,
+    authority: "server",
+    decisionKeyId: "test-key",
+    inputHash: `sha256:${"0".repeat(64)}`,
+    outcome: "success",
+    completionKind: "complete",
+    score: 80,
+    difficulty: 50,
+    margin: 30,
+    factors: {
+      baseCompetence: 80,
+      identity: 0,
+      attributes: 0,
+      resources: 0,
+      equipment: 0,
+      sceneSupport: 0,
+      journeyPreparation: 0,
+      condition: 0,
+      goalAlignment: 0,
+      deterministicVariance: 0,
+    },
+    summary: outcomeSummary,
+  } : undefined;
   const serverFacts = buildServerJourneyEpisodeFacts({
     journeyId,
     episodeId: episode.episodeId,
@@ -109,7 +189,14 @@ function groundedEpisode(
     title: episode.title,
     agent: { id: "agent_1", displayName: "旅人" },
     worldObjectRefs: episode.worldObjectRefs,
-    action: { optionKey, optionLabel, targetEntityIds, outcomeSummary },
+    action: {
+      optionKey,
+      optionLabel,
+      targetEntityIds,
+      outcomeSummary,
+      ...(objective && taskEpisode ? { taskObjectiveId: objective.objectiveId } : {}),
+      ...(taskEpisode ? { completionKind: "complete" as const, resolution } : {}),
+    },
     canonicalEventIds: [canonicalEventId],
   });
   const journey = runtime.status(journeyId).journey;
@@ -130,7 +217,13 @@ function groundedEpisode(
     payload: { sessionId, sceneContract: {
       journeyId,
       episodeId: episode.episodeId,
-      actionOptions: [{ actionOptionId, optionKey, label: optionLabel, targetEntityIds }],
+      actionOptions: [{
+        actionOptionId,
+        optionKey,
+        label: optionLabel,
+        targetEntityIds,
+        ...(objective && taskEpisode ? { taskObjectiveId: objective.objectiveId } : {}),
+      }],
     } },
   } as unknown as EpochEvent, {
     eventId: canonicalEventId,
@@ -143,47 +236,80 @@ function groundedEpisode(
     causationId: episode.episodeId,
     correlationId: journey.correlationId,
     createdAt: "2026-07-12T00:00:00.000Z",
-    payload: { sessionId, actionOptionId, optionLabel, outcomeSummary },
+    payload: {
+      sessionId,
+      actionOptionId,
+      optionLabel,
+      outcomeSummary,
+      ...(resolution ? { journeyResolution: resolution } : {}),
+    },
   } as unknown as EpochEvent);
   return {
     ...episode,
     sourceFactIds: [...new Set([...episode.sourceFactIds, canonicalEventId])],
-    settlement: { canonicalEventIds: [canonicalEventId], outcomeSummary },
+    settlement: {
+      canonicalEventIds: [canonicalEventId],
+      outcomeSummary,
+      ...(objective && taskEpisode ? {
+        taskObjective: { objectiveId: objective.objectiveId, completionKind: "complete" as const },
+      } : {}),
+    },
     serverFacts,
     narrative: buildPersistedJourneyNarrative({ serverFacts }).value,
   };
 }
 
 function threePhasePlan(runtime: ReturnType<typeof createJourneyRuntime>, journeyId: string, version: number) {
+  const journey = runtime.status(journeyId).journey;
+  if (!journey.taskPlan) throw new Error("journey_task_plan_required");
+  const regionId = journey.destinationRegionId;
+  const objectIds = [...new Set([
+    regionId,
+    ...journey.taskPlan.objectives.flatMap((objective) => objective.worldObjectIds),
+  ])];
   return runtime.composeThreePhaseEpisodes(journeyId, version, {
     identityHistory: {},
     region: {
-      id: "region_gray_harbor",
+      id: regionId,
       type: "region",
-      label: "灰港",
-      sourceFactIds: ["world:region:region_gray_harbor"],
+      label: regionId,
+      sourceFactIds: [`world:region:${regionId}`],
     },
     season: "current",
     resources: {},
     unresolvedClues: [],
-    availableWorldObjects: [{
-      id: "workplace_gray_harbor",
+    availableWorldObjects: objectIds.filter((objectId) => objectId !== regionId).map((objectId) => ({
+      id: objectId,
       type: "workplace",
-      label: "灰港账房",
-      regionId: "region_gray_harbor",
-      sourceFactIds: ["world:workplace:gray_harbor"],
+      label: objectId,
+      regionId,
+      sourceFactIds: [`world:object:${objectId}`],
       tags: ["work"],
-    }],
+    })),
   });
 }
 
 function finishGroundedThreePhases(runtime: ReturnType<typeof createJourneyRuntime>, journeyId: string, version: number) {
   const plan = threePhasePlan(runtime, journeyId, version);
   const arrival = runtime.commitEpisodes(journeyId, version, [groundedEpisode(runtime, journeyId, plan.episodes[0])]);
-  const waiting = runtime.awaitAgent(journeyId, arrival.journey.version);
-  const main = runtime.commitEpisodes(journeyId, waiting.journey.version, [groundedEpisode(runtime, journeyId, plan.episodes[1])]);
-  const returning = runtime.beginReturn(journeyId, main.journey.version);
-  return runtime.commitEpisodes(journeyId, returning.journey.version, [groundedEpisode(runtime, journeyId, plan.episodes[2])]);
+  let current = runtime.awaitAgent(journeyId, arrival.journey.version);
+  const taskPlan = current.journey.taskPlan;
+  if (!taskPlan) throw new Error("journey_task_plan_required");
+  for (;;) {
+    const episodes = current.journey.episodeIds
+      .map((episodeId) => runtime.projection().episodes[episodeId])
+      .filter(Boolean);
+    const next = nextJourneyTaskObjective(taskPlan, episodes);
+    if (!next) break;
+    const episode = plan.episodes.find((candidate) =>
+      candidate.generatedTaskObjective?.objectiveId === next.objectiveId);
+    if (!episode) throw new Error("journey_task_episode_missing");
+    current = runtime.commitEpisodes(journeyId, current.journey.version, [groundedEpisode(runtime, journeyId, episode)]);
+  }
+  const returning = runtime.beginReturn(journeyId, current.journey.version);
+  const returnEpisode = plan.episodes.find((episode) => episode.phase === "return");
+  if (!returnEpisode) throw new Error("journey_return_episode_missing");
+  return runtime.commitEpisodes(journeyId, returning.journey.version, [groundedEpisode(runtime, journeyId, returnEpisode)]);
 }
 
 function mutateLastRecordedEpisode(
@@ -226,13 +352,13 @@ test("prepare applies a safe preset and returns a human-readable zero-question p
 
 test("start freezes a server-randomized mirror window and tick settles exactly once after real due time", () => {
   const runtime = runtimeAt("2026-07-12T00:00:00.000Z", "2026-01-01T08:00:00.000Z");
-  const prepared = runtime.prepare({
+  const prepared = prepareWithTaskPlan(runtime, {
     agentId: "agent_1",
     explorerId: "explorer_1",
     originRegionId: "region_a",
     destinationRegionId: "region_b",
   });
-  const started = runtime.start({ journeyId: prepared.journey.journeyId, expectedVersion: 1 });
+  const started = runtime.start({ journeyId: prepared.journey.journeyId, expectedVersion: prepared.journey.version });
   assert.equal(started.journey.status, "traveling");
   assert.equal(started.journey.worldMode, "mirror");
   assert.equal(started.journey.mirrorTimeRuleVersion, 2);
@@ -272,9 +398,9 @@ test("start freezes a server-randomized mirror window and tick settles exactly o
   }).events, []);
 });
 
-test("an overdue awaiting_agent journey cannot skip its open main decision", () => {
+test("an overdue awaiting_agent journey cannot leave its open main decision unresolved", () => {
   const runtime = runtimeAt("2026-07-12T00:00:00.000Z", "2026-01-01T08:00:00.000Z");
-  const prepared = runtime.prepare({
+  const prepared = prepareWithTaskPlan(runtime, {
     agentId: "agent_waiting",
     explorerId: "explorer_waiting",
     originRegionId: "region_gray_harbor",
@@ -294,12 +420,27 @@ test("an overdue awaiting_agent journey cannot skip its open main decision", () 
   assert.deepEqual(overdue.events, []);
   assert.equal(runtime.status(waiting.journey.journeyId).journey.status, "awaiting_agent");
 
-  const main = runtime.commitEpisodes(waiting.journey.journeyId, waiting.journey.version, [
-    groundedEpisode(runtime, waiting.journey.journeyId, plan.episodes[1]),
-  ]);
-  const returning = runtime.beginReturn(main.journey.journeyId, main.journey.version);
+  let current = waiting;
+  const taskPlan = current.journey.taskPlan;
+  if (!taskPlan) throw new Error("journey_task_plan_required");
+  for (;;) {
+    const episodes = current.journey.episodeIds
+      .map((episodeId) => runtime.projection().episodes[episodeId])
+      .filter(Boolean);
+    const next = nextJourneyTaskObjective(taskPlan, episodes);
+    if (!next) break;
+    const episode = plan.episodes.find((candidate) =>
+      candidate.generatedTaskObjective?.objectiveId === next.objectiveId);
+    if (!episode) throw new Error("journey_task_episode_missing");
+    current = runtime.commitEpisodes(current.journey.journeyId, current.journey.version, [
+      groundedEpisode(runtime, current.journey.journeyId, episode),
+    ]);
+  }
+  const returning = runtime.beginReturn(current.journey.journeyId, current.journey.version);
+  const returnEpisode = plan.episodes.find((episode) => episode.phase === "return");
+  if (!returnEpisode) throw new Error("journey_return_episode_missing");
   runtime.commitEpisodes(returning.journey.journeyId, returning.journey.version, [
-    groundedEpisode(runtime, returning.journey.journeyId, plan.episodes[2]),
+    groundedEpisode(runtime, returning.journey.journeyId, returnEpisode),
   ]);
   assert.equal(runtime.tick({
     nowReal: "2026-07-12T00:45:00.000Z",
@@ -309,13 +450,13 @@ test("an overdue awaiting_agent journey cannot skip its open main decision", () 
 
 test("disconnect hydration catches up due journeys and delivers the return only once", () => {
   const online = runtimeAt("2026-07-12T00:00:00.000Z", "2026-01-01T08:00:00.000Z");
-  const prepared = online.prepare({
+  const prepared = prepareWithTaskPlan(online, {
     agentId: "agent_1",
     explorerId: "explorer_1",
     originRegionId: "a",
     destinationRegionId: "b",
   });
-  const started = online.start({ journeyId: prepared.journey.journeyId, expectedVersion: 1 });
+  const started = online.start({ journeyId: prepared.journey.journeyId, expectedVersion: prepared.journey.version });
   finishGroundedThreePhases(online, started.journey.journeyId, started.journey.version);
   const persisted = online.projection().events;
 
@@ -373,7 +514,7 @@ test("disconnect hydration catches up due journeys and delivers the return only 
 
 test("settlement rejects restored episodes that only look grounded", () => {
   const online = runtimeAt("2026-07-12T00:00:00.000Z", "2026-01-01T08:00:00.000Z");
-  const prepared = online.prepare({
+  const prepared = prepareWithTaskPlan(online, {
     agentId: "agent_probe",
     explorerId: "explorer_probe",
     originRegionId: "region_gray_harbor",
@@ -452,7 +593,7 @@ test("settlement rejects restored episodes that only look grounded", () => {
 
 test("three-phase commit rejects an episode with a forged grounding envelope", () => {
   const runtime = runtimeAt("2026-07-12T00:00:00.000Z");
-  const prepared = runtime.prepare({
+  const prepared = prepareWithTaskPlan(runtime, {
     agentId: "agent_commit_probe",
     explorerId: "explorer_commit_probe",
     originRegionId: "region_gray_harbor",
@@ -474,7 +615,7 @@ test("live three-phase commit cannot bypass a missing canonical Epoch ledger", (
     nowReal: () => "2026-07-12T00:00:00.000Z",
     nowWorld: () => "2026-01-01T08:00:00.000Z",
   });
-  const prepared = runtime.prepare({
+  const prepared = prepareWithTaskPlan(runtime, {
     agentId: "agent_no_ledger",
     explorerId: "explorer_no_ledger",
     originRegionId: "region_gray_harbor",
@@ -561,8 +702,8 @@ test("runtime records one to three grounded scene episodes into the journey proj
     destinationRegionId: "gray_harbor",
     mandate: { objective: "找稳定工作", priorities: ["work"], preferredActivities: ["livelihood"] },
   });
-  const started = runtime.start({ journeyId: prepared.journey.journeyId, expectedVersion: 1 });
-  const plan = runtime.composeEpisodes(started.journey.journeyId, 2, {
+  const started = runtime.start({ journeyId: prepared.journey.journeyId, expectedVersion: prepared.journey.version });
+  const plan = runtime.composeEpisodes(started.journey.journeyId, started.journey.version, {
     identityHistory: {},
     region: {
       id: "gray_harbor",
@@ -592,9 +733,9 @@ test("runtime records one to three grounded scene episodes into the journey proj
   assert.ok(plan.episodes.every((episode) => episode.worldObjectRefs.some((ref) => ref.id === "rope_workshop" || ref.id === "gray_harbor")));
 });
 
-test("three-phase episode commits cannot skip arrival, main, or return order", () => {
+test("three-phase episode commits cannot bypass arrival, main, or return order", () => {
   const runtime = runtimeAt("2026-07-12T00:00:00.000Z");
-  const prepared = runtime.prepare({
+  const prepared = prepareWithTaskPlan(runtime, {
     agentId: "agent_phases",
     explorerId: "explorer_phases",
     originRegionId: "region_gray_harbor",
@@ -630,13 +771,34 @@ test("three-phase episode commits cannot skip arrival, main, or return order", (
   ]);
   const waiting = runtime.awaitAgent(arrived.journey.journeyId, arrived.journey.version);
   assert.throws(() => runtime.commitEpisodes(waiting.journey.journeyId, waiting.journey.version, [plan.episodes[2]]),
-    /journey_episode_phase_order_invalid/);
+    /journey_episode_objective_order_invalid/);
   const main = runtime.commitEpisodes(waiting.journey.journeyId, waiting.journey.version, [
     groundedEpisode(runtime, waiting.journey.journeyId, plan.episodes[1]),
   ]);
-  const returning = runtime.beginReturn(main.journey.journeyId, main.journey.version);
+  let current = main;
+  const committedEpisodeIds = [plan.episodes[0].episodeId, plan.episodes[1].episodeId];
+  const taskPlan = current.journey.taskPlan;
+  if (!taskPlan) throw new Error("journey_task_plan_required");
+  for (;;) {
+    const episodes = current.journey.episodeIds
+      .map((episodeId) => runtime.projection().episodes[episodeId])
+      .filter(Boolean);
+    const next = nextJourneyTaskObjective(taskPlan, episodes);
+    if (!next) break;
+    const episode = plan.episodes.find((candidate) =>
+      candidate.generatedTaskObjective?.objectiveId === next.objectiveId);
+    if (!episode) throw new Error("journey_task_episode_missing");
+    current = runtime.commitEpisodes(current.journey.journeyId, current.journey.version, [
+      groundedEpisode(runtime, current.journey.journeyId, episode),
+    ]);
+    committedEpisodeIds.push(episode.episodeId);
+  }
+  const returning = runtime.beginReturn(current.journey.journeyId, current.journey.version);
+  const returnEpisode = plan.episodes.find((episode) => episode.phase === "return");
+  if (!returnEpisode) throw new Error("journey_return_episode_missing");
   const completed = runtime.commitEpisodes(returning.journey.journeyId, returning.journey.version, [
-    groundedEpisode(runtime, returning.journey.journeyId, plan.episodes[2]),
+    groundedEpisode(runtime, returning.journey.journeyId, returnEpisode),
   ]);
-  assert.deepEqual(completed.journey.episodeIds, plan.episodes.map((episode) => episode.episodeId));
+  committedEpisodeIds.push(returnEpisode.episodeId);
+  assert.deepEqual(completed.journey.episodeIds, committedEpisodeIds);
 });

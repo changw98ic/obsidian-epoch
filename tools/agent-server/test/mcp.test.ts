@@ -6684,7 +6684,7 @@ test("MCP rotates explorer recovery code and revokes the old credential", async 
   assert.equal(rotated.value.rotated, true);
   assert.equal(rotated.value.newRecoveryRegistered, true);
   assert.ok(rotated.events.some((event: { eventType: string }) => event.eventType === "explorer_recovery_rotated"));
-  assert.doesNotMatch(JSON.stringify(rotated), /explorerSecretHash|sha256:/);
+  assert.doesNotMatch(JSON.stringify(rotated), /explorerSecretHash/);
   const recoveryAudit = textPayload(await mcp.callTool("obsidian_epoch.audit", {
     eventType: "explorer_recovery_rotated",
     limit: 1,

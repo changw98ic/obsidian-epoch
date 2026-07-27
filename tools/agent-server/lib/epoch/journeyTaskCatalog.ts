@@ -125,7 +125,7 @@ export const JOURNEY_TASK_ROUTES: readonly JourneyTaskRoute[] = [
       { id: "device_trial_beacon", type: "device", label: "试炼信标" },
     ],
     actions: [
-      { optionKey: "complete_entry_trial", label: "依次完成弥赛主持的三段入门试炼", intent: "按顺序完成平衡桥、信标辨识和负重折返，不跳过核验点。", risk: "medium", allowedEffectKinds: PROGRESS, targetObjectIds: ["npc_trial_officer_misai", "location_cathedral_trial_court", "device_trial_beacon"], outcomeSummary: "身份依次通过平衡桥、辨认正确的试炼信标并完成负重折返；弥赛核验三处记录后签发了入门试炼通过凭证。", completesMission: true, chapterTitle: "完成入门试炼", actionNarrative: "你依次踏上平衡桥、辨认试炼信标，再背起配重完成折返。" },
+      { optionKey: "complete_entry_trial", label: "依次完成弥赛主持的三段入门试炼", intent: "按顺序完成平衡桥、信标辨识和负重折返，逐一完成核验点。", risk: "medium", allowedEffectKinds: PROGRESS, targetObjectIds: ["npc_trial_officer_misai", "location_cathedral_trial_court", "device_trial_beacon"], outcomeSummary: "身份依次通过平衡桥、辨认正确的试炼信标并完成负重折返；弥赛核验三处记录后签发了入门试炼通过凭证。", completesMission: true, chapterTitle: "完成入门试炼", actionNarrative: "你依次踏上平衡桥、辨认试炼信标，再背起配重完成折返。" },
       { optionKey: "complete_trial_assessment", label: "接受弥赛的基础能力评定", intent: "完成基础动作与信标辨识评定，取得下一次正式试炼所需的记录。", risk: "low", allowedEffectKinds: PROGRESS_AND_CLUE, targetObjectIds: ["npc_trial_officer_misai", "device_trial_beacon"], outcomeSummary: "身份完成基础动作与信标辨识评定；弥赛记录了合格项目并给出正式试炼的准入编号。", completesMission: true, chapterTitle: "接受能力评定", actionNarrative: "你按照弥赛的口令完成基础动作，并逐一辨认亮起的试炼信标。" },
       { optionKey: "leave_trial_queue", label: "在弥赛点名前退出试炼队列", intent: "在试炼开始前退出，不生成虚假的通过记录。", risk: "low", allowedEffectKinds: ["journey_progress"], targetObjectIds: ["npc_trial_officer_misai", "location_cathedral_trial_court"], outcomeSummary: "身份在点名前退出试炼队列，没有进入任何试炼环节，也没有取得准入记录。", completesMission: false, chapterTitle: "退出试炼", actionNarrative: "你在点名前离开队列，没有踏入三段试炼庭。" },
     ],

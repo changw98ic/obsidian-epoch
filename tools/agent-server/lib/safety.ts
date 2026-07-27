@@ -122,12 +122,80 @@ export function redactApiKeys(value: unknown): unknown {
   return value;
 }
 
+/**
+ * Internal quest-offer / strategy-binding field names. These are server-only
+ * fields carried on {@link InternalQuestOffer} (and parallel strategy types);
+ * the public {@link PublicQuestOffer} type is forbidden from carrying them.
+ *
+ * The public MCP input schema does not declare them, but defence-in-depth
+ * requires the input boundary to reject them explicitly rather than rely on
+ * schema omission alone (the omission is incidental, not a enforced check).
+ */
+export const INTERNAL_OFFER_FIELDS = [
+  "taskFamilyId",
+  "expectedApproach",
+  "worldSliceHash",
+  "strategyAffinity",
+  "fitBps",
+] as const;
+
+/**
+ * Names of internal-only offer/strategy fields detected on the input boundary.
+ * Returned in insertion order; de-duplicated.
+ *
+ * PR3 (audit round 2): the traversal is RECURSIVE (defence-in-depth). A
+ * shallow top-level scan would miss payloads like
+ * `{ questOffer: { taskFamilyId: "leak" } }` where the forbidden key is
+ * nested one level down. Today this is unexploitable because every handler
+ * that accepts a `questOffer` reshapes it server-side before use, but the
+ * safety boundary itself must not be shallow — schema omission is
+ * incidental, not an enforced check. Array elements are traversed; primitives
+ * are skipped; cycles are guarded with a WeakSet so cyclic client input
+ * cannot loop the visitor.
+ */
+export function findInternalOfferFields(value: unknown): readonly string[] {
+  const found = new Set<string>();
+  const seen = new WeakSet<object>();
+  const visit = (v: unknown): void => {
+    if (v === null || typeof v !== "object") return;
+    if (seen.has(v as object)) return;
+    seen.add(v as object);
+    if (Array.isArray(v)) {
+      // Walk array elements so a payload like
+      // `[{ taskFamilyId: "leak" }, { expectedApproach: [...] }]` is still
+      // caught. The array container itself never carries an internal field.
+      for (const item of v) visit(item);
+      return;
+    }
+    const record = v as Record<string, unknown>;
+    for (const field of INTERNAL_OFFER_FIELDS) {
+      if (field in record) found.add(field);
+    }
+    for (const key of Object.keys(record)) {
+      visit(record[key]);
+    }
+  };
+  visit(value);
+  return [...found];
+}
+
 export function assertPublicSafe(value: unknown): void {
   const leaks = findApiKeyLeaks(value);
   if (leaks.length) {
     const error = Object.assign(new Error("api_key_detected"), {
       code: "api_key_detected",
       leakCount: leaks.length,
+    });
+    throw error;
+  }
+  // PR3: reject internal offer/strategy fields at the input boundary. The
+  // public schema does not declare them; rejecting explicitly makes the
+  // boundary check intentional rather than incidental on schema omission.
+  const internalFields = findInternalOfferFields(value);
+  if (internalFields.length) {
+    const error = Object.assign(new Error("internal_field_rejected"), {
+      code: "internal_field_rejected",
+      fields: internalFields,
     });
     throw error;
   }

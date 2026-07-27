@@ -516,15 +516,13 @@ test("a mirror Journey objective stays isolated from the shared world before mai
         readonly actionOptions: readonly {
           readonly actionOptionId: string;
           readonly signature: string;
-          readonly completionKind?: "skip";
           readonly risk: "low" | "medium" | "high";
         }[];
       };
     };
   };
-  const selected = proposed.proposal.sceneContract.actionOptions.find((option) =>
-    option.completionKind !== "skip" && option.risk === "low")
-    ?? proposed.proposal.sceneContract.actionOptions.find((option) => option.completionKind !== "skip");
+  const selected = proposed.proposal.sceneContract.actionOptions.find((option) => option.risk === "low")
+    ?? proposed.proposal.sceneContract.actionOptions[0];
   assert.ok(selected);
   await mcp.callTool("obsidian_epoch.commit_journey_action", {
     journeyId: started.journey.journeyId,
@@ -594,7 +592,6 @@ test("mirror Journey timestamps are randomized inside persisted history and carr
   const startedResult = await mcp.callTool("obsidian_epoch.start_journey", {
     journeyId: prepared.journey.journeyId,
     expectedVersion: prepared.journey.version,
-    worldDurationMs: 1_000,
     recoveryCode,
     idempotencyKey: "world-clock-start",
   });
@@ -625,7 +622,7 @@ test("mirror Journey timestamps are randomized inside persisted history and carr
   assert.equal(clock.worldMinute, 1_440);
 });
 
-test("the server freezes the historical macro slice before client task generation", () => {
+test("the server freezes the historical macro slice before client task generation", async () => {
   const serverClock = mutableServerClock();
   const runtime = createAgentWorldRuntime({
     epoch: {
@@ -644,7 +641,7 @@ test("the server freezes the historical macro slice before client task generatio
     identityName: "历史切片校验员",
     idempotencyKey: "generation-slice-identity",
   }) as ReturnType<typeof runtime.epochIdentity> & { readonly value: { readonly agentId: string } };
-  const prepared = runtime.epochPrepareJourney({
+  const prepared = await runtime.epochPrepareJourney({
     agentId: identity.value.agentId,
     destinationRegionId: "region_quantum_laboratory",
     taskType: "辅助完成一次实验",

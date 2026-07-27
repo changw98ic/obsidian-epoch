@@ -29,6 +29,7 @@ function fixture(initialEvents: readonly import("../lib/epoch/journeyReadModel.t
       regionInfo: () => ({}),
       agentBriefing: () => ({}),
       events: () => ({ events: [] }),
+      hiddenPrerequisiteLinks: () => ({}),
     },
     journeyOptions: {
       idFactory: (kind) => `${kind}_persist_${++sequence}`,
@@ -138,7 +139,7 @@ test("dynamic task plan command events hydrate across a process restart", () => 
   assert.throws(() => createJourneyRuntime({
     idFactory: (kind) => `${kind}_missing_seal`,
     initialEvents: withoutInstallationSeal,
-  }), /journey_hidden_task_commitment_invalid/u);
+  }), /journey_event_hidden_task_seal_required/u);
 });
 
 test("SQLite stores and hydrates Journey event records", async () => {
@@ -388,7 +389,7 @@ test("Journey idempotency survives restart without persisting credentials or dup
   assert.throws(() => restarted.prepare({ ...prepareInput, destinationRegionId: "region_salt_mirror" }), /idempotency_key_conflict/);
 });
 
-test("default Journey IDs continue above the persisted high-water mark after restart", () => {
+test("default Journey IDs continue above the persisted high-water mark after restart", async () => {
   const recovery = (explorerId: string) => Buffer.from(JSON.stringify({
     explorerId,
     localSecret: `secret-${explorerId}`,
@@ -405,7 +406,7 @@ test("default Journey IDs continue above the persisted high-water mark after res
     idempotencyKey: "identity-restart-b",
   });
   assert.ok("value" in identityA && "value" in identityB);
-  const preparedA = first.epochPrepareJourney({
+  const preparedA = await first.epochPrepareJourney({
     agentId: identityA.value.agentId,
     destinationRegionId: "region_gray_harbor",
     recoveryCode: recovery("explorer_restart_a"),
@@ -415,7 +416,7 @@ test("default Journey IDs continue above the persisted high-water mark after res
     epochEvents: [...epochEventsForPersistence(identityA), ...epochEventsForPersistence(identityB)],
     journeyEvents: journeyEventsForPersistence(preparedA),
   });
-  const preparedB = restarted.epochPrepareJourney({
+  const preparedB = await restarted.epochPrepareJourney({
     agentId: identityB.value.agentId,
     destinationRegionId: "region_gray_harbor",
     recoveryCode: recovery("explorer_restart_b"),

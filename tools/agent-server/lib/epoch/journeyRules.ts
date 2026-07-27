@@ -1,5 +1,7 @@
 import type {
   JourneyGeneratedTaskPlan,
+  JourneyCompletionTier,
+  JourneyTaskPlanInstallation,
   JourneyTaskRequest,
 } from "./journeyGeneratedTaskRules.ts";
 
@@ -47,9 +49,11 @@ export interface JourneyWorldCommitNpcRelationship {
 export interface JourneyWorldCommit {
   readonly mode: "mirror";
   readonly status: "solidified" | "discarded";
-  readonly reason: "main_completed_and_returned"
-    | "main_incomplete_or_return_failed"
-    | "quality_below_canon_threshold";
+  /** Canonical terminal tier from the single settlement decision. */
+  readonly completionTier: JourneyCompletionTier;
+  readonly reason: "main_completed_and_above_threshold"
+    | "main_incomplete"
+    | "below_canon_threshold";
   readonly regionId: string;
   readonly committedAtWorldTime: string;
   readonly influenceDelta: number;
@@ -57,6 +61,31 @@ export interface JourneyWorldCommit {
   readonly npcRelationships: readonly JourneyWorldCommitNpcRelationship[];
   readonly commitEventId?: string;
   readonly sourceEventIds: readonly string[];
+  /** Completion score in basis points (0–10000) that produced this decision. */
+  readonly completionScoreBps: number;
+  /** Canon threshold in basis points used by this decision. */
+  readonly canonThresholdBps: number;
+  /** Settlement-policy version under which the commit was adjudicated. */
+  readonly settlementPolicyVersion: number;
+  /** PR1 additive. Strategy-policy version under which the commit was adjudicated. */
+  readonly strategyPolicyVersion?: number;
+  /**
+   * PR1 additive. Quest-offer id bound to this commit, when the journey was
+   * offer-driven. INTERNAL-only.
+   */
+  readonly questOfferId?: string;
+  /** PR1 additive. sha256 of the offer bound to this commit, for replay. */
+  readonly offerHash?: `sha256:${string}`;
+  /** Consequence-score policy version under which the commit was adjudicated. */
+  readonly consequenceScorePolicyVersion: number;
+  /** Settlement id linking this commit to its SettlementDecision. */
+  readonly settlementId: string;
+  /** Per-bucket breakdown of the completion score, for receipt audit. */
+  readonly consequenceScoreBreakdown: {
+    readonly resultScoreBps: number;
+    readonly selfLossScoreBps: number;
+    readonly collateralScoreBps: number;
+  };
 }
 
 export interface JourneyWorldSliceRegionState {
@@ -133,7 +162,7 @@ export interface EpochJourney {
   readonly taskPlan?: JourneyGeneratedTaskPlan;
   readonly mandate: JourneyMandate;
   readonly policyVersion: number;
-  /** New journeys run against an isolated snapshot. Missing means legacy direct-world behavior. */
+  /** New journeys run against an isolated snapshot. */
   readonly worldMode?: JourneyWorldMode;
   /** Server-owned deterministic randomization rule used for the in-game mirror window. */
   readonly mirrorTimeRuleVersion?: 1 | 2;
@@ -159,6 +188,15 @@ export interface EpochJourney {
   readonly synchronousQuestionCount: number;
   /** Optimistic-concurrency revision. Every successful mutation increments it once. */
   readonly version: number;
+  /**
+   * PR1 additive. Quest-offer id bound to this journey, when the journey is
+   * offer-driven. INTERNAL-only — never crosses the public boundary.
+   */
+  readonly questOfferId?: string;
+  /** PR1 additive. sha256 of the offer bound to this journey, for replay. */
+  readonly offerHash?: `sha256:${string}`;
+  /** PR1 additive. Market-snapshot version the journey was grounded against. */
+  readonly marketSnapshotVersion?: number;
 }
 
 export interface JourneyDueTimes {
@@ -218,7 +256,8 @@ export interface RecordJourneyWorldCommitInput {
 export interface InstallJourneyTaskPlanInput {
   readonly journey: EpochJourney;
   readonly expectedVersion: number;
-  readonly taskPlan: JourneyGeneratedTaskPlan;
+  /** Full installation carrying the source-binding tuple. */
+  readonly installation: JourneyTaskPlanInstallation;
 }
 
 export function recordJourneyWorldCommit(input: RecordJourneyWorldCommitInput): EpochJourney {
@@ -236,26 +275,61 @@ export function recordJourneyWorldCommit(input: RecordJourneyWorldCommitInput): 
   const committedAt = Date.parse(worldCommit.committedAtWorldTime);
   const settledAt = Date.parse(journey.settledAtWorldTime || "");
   const commitTimeValid = journey.mirrorTimeRuleVersion === 2
-    ? Number.isFinite(committedAt) && Number.isFinite(settledAt) && committedAt >= settledAt
-    : worldCommit.committedAtWorldTime === journey.settledAtWorldTime;
+    && Number.isFinite(committedAt)
+    && Number.isFinite(settledAt)
+    && committedAt >= settledAt;
   if (worldCommit.mode !== "mirror"
     || worldCommit.regionId !== journey.destinationRegionId
     || !commitTimeValid) {
     throw new Error("journey_world_commit_invalid");
   }
+  if (worldCommit.settlementPolicyVersion !== 1
+    || worldCommit.consequenceScorePolicyVersion !== 1
+    || !worldCommit.settlementId.trim()
+    || !Number.isSafeInteger(worldCommit.completionScoreBps)
+    || worldCommit.completionScoreBps < 0
+    || worldCommit.completionScoreBps > 10_000
+    || !Number.isSafeInteger(worldCommit.canonThresholdBps)
+    || worldCommit.canonThresholdBps < 0
+    || worldCommit.canonThresholdBps > 10_000) {
+    throw new Error("journey_world_commit_invalid");
+  }
+  const breakdown = worldCommit.consequenceScoreBreakdown;
+  const components = [
+    breakdown.resultScoreBps,
+    breakdown.selfLossScoreBps,
+    breakdown.collateralScoreBps,
+  ];
+  if (components.some((value) => !Number.isSafeInteger(value) || value < -10_000 || value > 10_000)) {
+    throw new Error("journey_world_commit_invalid");
+  }
+  if (!(["未及格", "及格", "良好", "优秀", "惊世"] as const).includes(worldCommit.completionTier)) {
+    throw new Error("journey_world_commit_invalid");
+  }
   if (worldCommit.status === "solidified") {
-    if (worldCommit.reason !== "main_completed_and_returned"
+    if (worldCommit.completionTier === "未及格"
+      || worldCommit.reason !== "main_completed_and_above_threshold"
       || !worldCommit.commitEventId
       || !worldCommit.sourceEventIds.includes(worldCommit.commitEventId)) {
       throw new Error("journey_world_commit_invalid");
     }
-  } else if (!["main_incomplete_or_return_failed", "quality_below_canon_threshold"].includes(worldCommit.reason)
-    || worldCommit.commitEventId
-    || worldCommit.sourceEventIds.length
-    || worldCommit.influenceDelta !== 0
-    || worldCommit.factionStandings.length
-    || worldCommit.npcRelationships.length) {
-    throw new Error("journey_world_commit_invalid");
+    if (worldCommit.completionScoreBps < worldCommit.canonThresholdBps) {
+      throw new Error("journey_world_commit_threshold_inconsistent");
+    }
+  } else {
+    if (worldCommit.completionTier !== "未及格"
+      || (worldCommit.reason !== "below_canon_threshold" && worldCommit.reason !== "main_incomplete")
+      || worldCommit.commitEventId
+      || worldCommit.sourceEventIds.length
+      || worldCommit.influenceDelta !== 0
+      || worldCommit.factionStandings.length
+      || worldCommit.npcRelationships.length) {
+      throw new Error("journey_world_commit_invalid");
+    }
+    if (worldCommit.reason === "below_canon_threshold"
+      && worldCommit.completionScoreBps >= worldCommit.canonThresholdBps) {
+      throw new Error("journey_world_commit_threshold_inconsistent");
+    }
   }
   return { ...journey, worldCommit, version: journey.version + 1 };
 }
@@ -510,20 +584,126 @@ export function installJourneyTaskPlan(input: InstallJourneyTaskPlanInput): Epoc
   assertJourneyForTransition(input.journey);
   assertExpectedVersion(input.journey, input.expectedVersion);
   if (input.journey.status !== "prepared") throw new Error("journey_task_plan_install_status_invalid");
-  if (input.journey.taskPlan) {
-    if (JSON.stringify(input.journey.taskPlan) === JSON.stringify(input.taskPlan)) return input.journey;
-    throw new Error("journey_task_plan_conflict");
+  const installation = input.installation;
+  const plan = installation.plan;
+  const journey = input.journey;
+  const offerDriven = journey.questOfferId !== undefined;
+
+  // Idempotent re-install: identical plan (and, for offer-driven, identical
+  // source-binding tuple) returns the journey untouched. Drift throws.
+  if (journey.taskPlan) {
+    if (JSON.stringify(journey.taskPlan) !== JSON.stringify(plan)) {
+      throw new Error("journey_task_plan_conflict");
+    }
+    if (offerDriven) {
+      assertSourceBindingTupleEquals(journey, installation);
+    }
+    return journey;
   }
-  if (input.journey.taskRequest
-    && (input.journey.taskRequest.taskType !== input.taskPlan.taskType
-      || input.journey.taskRequest.scenarioMapId !== input.taskPlan.scenarioMapId)) {
+
+  if (offerDriven) {
+    // Offer-driven plans are validated by the source-binding tuple
+    // {questOfferId, offerHash, taskFamilyId, marketSnapshotVersion,
+    // worldSliceHash}. taskTypeText no longer needs to equal the raw client
+    // taskType because the offer's taskTypeText is the authoritative label.
+    assertSourceBindingTupleMatches(journey, installation);
+  } else if (journey.taskRequest
+    && (journey.taskRequest.taskType !== plan.taskType
+      || journey.taskRequest.scenarioMapId !== plan.scenarioMapId)) {
     throw new Error("journey_task_plan_request_mismatch");
   }
+
+  // PR3: stamp source-binding fields onto the journey IFF absent. If they
+  // are present and unequal to the installation, the tuple is incoherent.
+  const stampedSourceBinding = stampSourceBinding(journey, installation);
   return {
-    ...input.journey,
-    taskPlan: input.taskPlan,
-    version: input.journey.version + 1,
+    ...journey,
+    taskPlan: plan,
+    ...stampedSourceBinding,
+    version: journey.version + 1,
   };
+}
+
+/**
+ * PR3. Assert the source-binding tuple on the journey matches the freshly
+ * installed tuple. Used on first install for offer-driven journeys. Mismatch
+ * throws `journey_task_plan_source_binding_mismatch`.
+ */
+function assertSourceBindingTupleMatches(
+  journey: EpochJourney,
+  installation: JourneyTaskPlanInstallation,
+): void {
+  const expectedWorldSliceHash = journey.worldSlice?.sliceHash ?? installation.worldSliceHash;
+  if (journey.questOfferId !== installation.questOfferId
+    || journey.offerHash !== installation.offerHash
+    || journey.taskRequest?.taskFamilyId !== installation.taskFamilyId
+    || journey.marketSnapshotVersion !== installation.marketSnapshotVersion
+    || (expectedWorldSliceHash !== undefined && installation.worldSliceHash !== undefined
+      && expectedWorldSliceHash !== installation.worldSliceHash)) {
+    throw new Error("journey_task_plan_source_binding_mismatch");
+  }
+}
+
+/**
+ * PR3. Used on idempotent re-install for offer-driven journeys. Drift between
+ * the previously-installed tuple and the new tuple throws
+ * `journey_task_plan_source_binding_conflict`.
+ */
+function assertSourceBindingTupleEquals(
+  journey: EpochJourney,
+  installation: JourneyTaskPlanInstallation,
+): void {
+  if (journey.questOfferId !== installation.questOfferId
+    || journey.offerHash !== installation.offerHash
+    || journey.taskRequest?.taskFamilyId !== installation.taskFamilyId
+    || journey.marketSnapshotVersion !== installation.marketSnapshotVersion) {
+    throw new Error("journey_task_plan_source_binding_conflict");
+  }
+}
+
+/**
+ * PR3. Write source-binding fields onto the journey IFF absent. If they are
+ * present and unequal, throw `journey_task_plan_source_binding_conflict`.
+ * Returns the patch to spread onto the journey; absent fields are omitted so
+ * the existing record's optionality is preserved.
+ */
+type SourceBindingPatch = {
+  readonly questOfferId?: string;
+  readonly offerHash?: `sha256:${string}`;
+  readonly marketSnapshotVersion?: number;
+};
+
+function stampSourceBinding(
+  journey: EpochJourney,
+  installation: JourneyTaskPlanInstallation,
+): SourceBindingPatch {
+  const patch: {
+    questOfferId?: string;
+    offerHash?: `sha256:${string}`;
+    marketSnapshotVersion?: number;
+  } = {};
+  if (installation.questOfferId !== undefined) {
+    if (journey.questOfferId !== undefined && journey.questOfferId !== installation.questOfferId) {
+      throw new Error("journey_task_plan_source_binding_conflict");
+    }
+    if (journey.questOfferId === undefined) patch.questOfferId = installation.questOfferId;
+  }
+  if (installation.offerHash !== undefined) {
+    if (journey.offerHash !== undefined && journey.offerHash !== installation.offerHash) {
+      throw new Error("journey_task_plan_source_binding_conflict");
+    }
+    if (journey.offerHash === undefined) patch.offerHash = installation.offerHash;
+  }
+  if (installation.marketSnapshotVersion !== undefined) {
+    if (journey.marketSnapshotVersion !== undefined
+      && journey.marketSnapshotVersion !== installation.marketSnapshotVersion) {
+      throw new Error("journey_task_plan_source_binding_conflict");
+    }
+    if (journey.marketSnapshotVersion === undefined) {
+      patch.marketSnapshotVersion = installation.marketSnapshotVersion;
+    }
+  }
+  return patch;
 }
 
 export function startJourney(input: StartJourneyInput): EpochJourney {

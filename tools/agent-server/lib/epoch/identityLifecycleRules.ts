@@ -12,6 +12,22 @@ import {
 } from "./events.ts";
 import type { EpochEventFactory } from "./eventFactory.ts";
 import type { EpochLineageInheritance } from "./protocol.ts";
+import {
+  buildExpectedLifePattern,
+  type ExpectedLifePattern,
+} from "./journeyRoleplayRules.ts";
+import {
+  LIFETIME_REASON_IDENTITY_VIABILITY_ACCELERATION,
+  LIFETIME_REASON_IDENTITY_VIABILITY_SOCIAL_DEATH,
+  VIABILITY_POLICY_VERSION,
+  initialIdentityViability,
+  type IdentityViability,
+} from "./journeyViabilityRules.ts";
+import {
+  freezeIdentityStrategyDisposition,
+  type IdentityStrategyDisposition,
+  type StrategyProfile,
+} from "./journeyStrategyRules.ts";
 
 const PERSONALITY_DRIFT_SOURCE_EVENT_TYPES: ReadonlySet<EpochEvent["eventType"]> = new Set([
   "anomaly_event_resolved",
@@ -80,10 +96,31 @@ export interface IdentityIssuedPayloadInput {
   readonly inheritance?: EpochLineageInheritance;
   readonly maxLifetime: number;
   readonly startedAt: string;
+  /** Initial viability snapshot to freeze onto the identity. */
+  readonly initialViability: IdentityViability;
+  /**
+   * PR5b additive. Server-frozen {@link ExpectedLifePattern} to carry on the
+   * identity payload. Callers MAY pre-build a pattern and pass it here; when
+   * omitted the planner helpers ({@link planIdentityIssueEvents} /
+   * {@link planIdentityReincarnationEvents}) build one deterministically from
+   * the issuance inputs. The payload helper passes this through verbatim — it
+   * does not build the pattern itself, preserving the pure-function boundary.
+   */
+  readonly expectedLifePattern: ExpectedLifePattern;
+  /**
+   * PR6 additive. Server-frozen {@link IdentityStrategyDisposition} to carry on
+   * the identity payload. When omitted, the identity has no frozen strategy
+   * posture and strategy-consistency scoring defaults to normal (10000/0).
+   * The payload helper passes this through verbatim.
+   */
+  readonly strategyDisposition?: IdentityStrategyDisposition;
 }
 
-export interface IdentityIssueEventsInput extends IdentityIssuedPayloadInput {
+export interface IdentityIssueEventsInput extends Omit<IdentityIssuedPayloadInput, "expectedLifePattern"> {
   readonly makeEvent: EpochEventFactory;
+  /** When present, the planner freezes a strategy disposition from the profile. */
+  readonly expectedLifePattern?: ExpectedLifePattern;
+  readonly strategyProfile?: StrategyProfile;
 }
 
 export interface IdentityIssueProjectionInput<TIdentity> {
@@ -114,9 +151,28 @@ export interface ExplorerRecoveryRotationResult {
 
 export interface LifetimeAdjustedPayloadInput {
   readonly delta: number;
+  /**
+   * Reason for the adjustment. Two values are server-attested and reserved:
+   *  - {@link LIFETIME_REASON_IDENTITY_VIABILITY_ACCELERATION} (`identity_viability_acceleration`)
+   *  - {@link LIFETIME_REASON_IDENTITY_VIABILITY_SOCIAL_DEATH} (`identity_viability_social_death`)
+   *
+   * The payload helper refuses to attach the {@link viabilityTriggerRef}
+   * for these reasons unless the caller passes it. MCP-originated calls
+   * cannot supply a server-attested ref, so they are rejected upstream.
+   */
   readonly reason: string;
   readonly previousRemaining: number;
   readonly remaining: number;
+  /**
+   * PR5a additive. Server-attested reference to the viability projection
+   * that triggered this adjustment. Required when `reason` is one of the
+   * two reserved viability reasons; ignored otherwise.
+   */
+  readonly viabilityTriggerRef?: {
+    readonly sourceSettlementId: string;
+    readonly lifetimeAccelerationBps: number;
+    readonly socialDeathTriggered: boolean;
+  };
 }
 
 export interface LifetimeAdjustmentArchiveInput {
@@ -129,6 +185,17 @@ export interface LifetimeAdjustmentEventsInput extends LifetimeAdjustedPayloadIn
   readonly archive?: LifetimeAdjustmentArchiveInput;
   readonly makeEvent: EpochEventFactory;
 }
+
+/**
+ * PR5a additive. Reserved reason values for the runtime viability path.
+ * MCP callers cannot supply the {@link viabilityTriggerRef} that
+ * {@link lifetimeAdjustedPayload} demands for these reasons, so they are
+ * structurally barred from the reserved channel.
+ */
+export const LIFETIME_REASON_RESERVED_VIABILITY = Object.freeze([
+  LIFETIME_REASON_IDENTITY_VIABILITY_ACCELERATION,
+  LIFETIME_REASON_IDENTITY_VIABILITY_SOCIAL_DEATH,
+] as const);
 
 export interface IdentityArchivedPayloadInput {
   readonly archiveReason: string;
@@ -223,10 +290,46 @@ export function identityIssuedPayload(input: IdentityIssuedPayloadInput): Identi
       remaining: input.maxLifetime,
       startedAt: input.startedAt,
     },
+    viabilityPolicyVersion: VIABILITY_POLICY_VERSION,
+    identityViability: input.initialViability,
+    expectedLifePattern: input.expectedLifePattern,
+    // PR6: transparently forward the caller-supplied disposition (if any).
+    ...(input.strategyDisposition ? { strategyDisposition: input.strategyDisposition } : {}),
   };
 }
 
 export function planIdentityIssueEvents(input: IdentityIssueEventsInput): readonly EpochEvent[] {
+  // PR5b: build the deterministic ExpectedLifePattern at issuance. The
+  // builder is pure (same inputs → same pattern + same inputHash) so the
+  // persisted pattern is replay-stable. We build from the SAME personality
+  // traits the helper computes below so the pattern stays consistent with
+  // the issued identity record. When the caller pre-supplies
+  // `expectedLifePattern` it is forwarded verbatim and the builder is not
+  // invoked — that path exists for tests / migration tools that need to
+  // pin a specific pattern.
+  const traits = initialIdentityTraits({
+    agentId: input.agentId,
+    identityName: input.identityName,
+    generation: input.generation,
+  });
+  const expectedLifePattern = input.expectedLifePattern ?? buildExpectedLifePattern({
+    identityId: input.agentId,
+    identityName: input.identityName,
+    explorerId: input.explorerId,
+    generation: input.generation,
+    personalityTraits: traits,
+    frozenAt: input.startedAt,
+  });
+  // PR6: freeze strategy disposition when the caller supplies a strategy profile.
+  const strategyDisposition = input.strategyDisposition
+    ?? (input.strategyProfile
+      ? freezeIdentityStrategyDisposition(
+          input.agentId,
+          input.strategyProfile.primary,
+          input.strategyProfile.secondary,
+          input.startedAt,
+        )
+      : undefined);
   const payload = identityIssuedPayload({
     agentId: input.agentId,
     explorerId: input.explorerId,
@@ -237,6 +340,9 @@ export function planIdentityIssueEvents(input: IdentityIssueEventsInput): readon
     inheritance: input.inheritance,
     maxLifetime: input.maxLifetime,
     startedAt: input.startedAt,
+    initialViability: input.initialViability,
+    expectedLifePattern,
+    ...(strategyDisposition ? { strategyDisposition } : {}),
   });
   return [input.makeEvent("identity_issued", input.agentId, payload, { agentId: input.agentId })];
 }
@@ -290,11 +396,21 @@ export function projectExplorerRecoveryRotation(
 }
 
 export function lifetimeAdjustedPayload(input: LifetimeAdjustedPayloadInput): LifetimeAdjustedPayload {
+  const isViabilityReason =
+    input.reason === LIFETIME_REASON_IDENTITY_VIABILITY_ACCELERATION
+    || input.reason === LIFETIME_REASON_IDENTITY_VIABILITY_SOCIAL_DEATH;
+  // Server-attested guard: the reserved viability reasons REQUIRE a
+  // viabilityTriggerRef. MCP tools that call this helper with these reasons
+  // but no ref are rejected here so the reserved channel cannot be forged.
+  if (isViabilityReason && !input.viabilityTriggerRef) {
+    throw new Error(`lifetime_adjusted_viability_trigger_ref_required:${input.reason}`);
+  }
   return {
     delta: input.delta,
     reason: input.reason,
     previousRemaining: input.previousRemaining,
     remaining: input.remaining,
+    ...(input.viabilityTriggerRef ? { viabilityTriggerRef: input.viabilityTriggerRef } : {}),
   };
 }
 
@@ -304,6 +420,7 @@ export function planLifetimeAdjustmentEvents(input: LifetimeAdjustmentEventsInpu
     reason: input.reason,
     previousRemaining: input.previousRemaining,
     remaining: input.remaining,
+    ...(input.viabilityTriggerRef ? { viabilityTriggerRef: input.viabilityTriggerRef } : {}),
   });
   const adjusted = input.makeEvent("lifetime_adjusted", input.agentId, adjustedPayload, {
     agentId: input.agentId,
@@ -364,6 +481,24 @@ export function reincarnationIssuedPayload(
 export function planIdentityReincarnationEvents(
   input: IdentityReincarnationEventsInput,
 ): readonly EpochEvent[] {
+  // PR5b: reincarnation builds a FRESH pattern from nextAgentId + new
+  // explorerId + generation + new identityName. The previous identity's
+  // pattern (and doubtedBy) is NOT inherited — by construction the inputHash
+  // differs and the new identity starts with a clean roleplay norm. This
+  // mirrors the PR5a viability reset in `initialIdentityViability`.
+  const reincarnationTraits = initialIdentityTraits({
+    agentId: input.nextAgentId,
+    identityName: input.identityName,
+    generation: input.generation,
+  });
+  const expectedLifePattern = buildExpectedLifePattern({
+    identityId: input.nextAgentId,
+    identityName: input.identityName,
+    explorerId: input.explorerId,
+    generation: input.generation,
+    personalityTraits: reincarnationTraits,
+    frozenAt: input.startedAt,
+  });
   const issuedPayload = identityIssuedPayload({
     agentId: input.nextAgentId,
     explorerId: input.explorerId,
@@ -373,6 +508,8 @@ export function planIdentityReincarnationEvents(
     inheritance: input.inheritance,
     maxLifetime: input.maxLifetime,
     startedAt: input.startedAt,
+    initialViability: initialIdentityViability(input.nextAgentId, input.startedAt),
+    expectedLifePattern,
   });
   const issued = input.makeEvent("identity_issued", input.nextAgentId, issuedPayload, {
     agentId: input.nextAgentId,

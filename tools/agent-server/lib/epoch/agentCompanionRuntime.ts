@@ -5,6 +5,8 @@ import { attachJourneyEventsForPersistence, journeyEventsForPersistence } from "
 import { createDurableAgentInteractionProjection } from "./agentInteractionEnvelopeRules.ts";
 import type { EpochEvent } from "./events.ts";
 import type { EpochAgentIdentity } from "./gameCore.ts";
+import type { InternalQuestOffer } from "./journeyOfferRules.ts";
+import type { JourneyOfferRuntime } from "./journeyOfferRuntime.ts";
 import { buildJourneyAlbum } from "./journeyAlbumReadModel.ts";
 import {
   buildGroundedJourneyStoryReport,
@@ -26,7 +28,12 @@ import {
   nextJourneyTaskObjective,
   validateJourneyTaskProposal,
 } from "./journeyGeneratedTaskRules.ts";
+import {
+  scrubJourneyForPublicView,
+  scrubJourneyRecordForPublicView,
+} from "./journeyReadModel.ts";
 import { EPOCH_WORLD_CALENDAR_ORIGIN_YEAR, epochWorldCalendarMoment } from "./worldCalendar.ts";
+import type { HiddenPrerequisiteLink } from "./journeyRoleplayRules.ts";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -41,12 +48,32 @@ export interface AgentCompanionEpochSurface {
   readonly getResultPage?: (input?: UnknownRecord) => unknown;
   /** Returns the unfiltered canonical suffix at this absolute offset; providers must never renumber it. */
   readonly interactionEvents?: (offset?: number) => readonly EpochEvent[];
+  /**
+   * PR5c additive. Returns the canonical world-object lifecycle states from the
+   * epoch projection, keyed by objectId. Used to stamp canonicalStatusDigest on
+   * available world objects and to gate hidden-prerequisite reachability.
+   */
+  readonly worldObjectStates?: () => unknown;
+  /**
+   * PR5c additive. Returns the canonical hidden-prerequisite link states from
+   * the epoch projection, keyed by `${regionId}:${objectiveId}:${prerequisiteObjectId}`.
+   * Used to pass into adjudicateJourneyTask so destroyed prerequisites gate
+   * hidden tier reachability.
+   */
+  readonly hiddenPrerequisiteLinks: () => unknown;
 }
 
 export interface AgentCompanionRuntimeOptions {
   readonly epoch: AgentCompanionEpochSurface;
   readonly journey?: JourneyRuntime;
   readonly journeyOptions?: JourneyRuntimeOptions;
+  /**
+   * PR3. Optional quest-offer runtime. When supplied, the companion can
+   * resolve offer-driven prepare requests end-to-end (claim + resolve +
+   * delegate to {@link JourneyRuntime.prepare}). When absent, offer-driven
+   * prepare requests fail with `offer_runtime_unavailable`.
+   */
+  readonly offerRuntime?: JourneyOfferRuntime;
 }
 
 interface IdempotencyRecord {
@@ -291,6 +318,7 @@ function worldObjects(regionInfo: UnknownRecord, regionId: string): readonly Jou
 export class AgentCompanionRuntime {
   readonly #epoch: AgentCompanionEpochSurface;
   readonly #journey: JourneyRuntime;
+  readonly #offer: JourneyOfferRuntime | undefined;
   readonly #idempotency = new Map<string, IdempotencyRecord>();
   readonly #interactionProjection = createDurableAgentInteractionProjection();
   #epochInteractionOffset = 0;
@@ -300,6 +328,7 @@ export class AgentCompanionRuntime {
     this.#epoch = options.epoch;
     if (!options.journey && !options.journeyOptions) throw new Error("journey_runtime_options_required");
     this.#journey = options.journey ?? createJourneyRuntime(options.journeyOptions as JourneyRuntimeOptions);
+    this.#offer = options.offerRuntime;
     this.#hydrateIdempotency();
     this.#refreshInteractionProjection();
   }
@@ -312,28 +341,177 @@ export class AgentCompanionRuntime {
     const agentId = requiredString(input.agentId, "agent_id");
     const { explorerId } = this.#authorizeAgent(input, agentId);
     return this.#idempotently("prepare", explorerId, input, () => {
+      // PR3: offer-driven mode requires a pre-resolved InternalQuestOffer.
+      // The HTTP layer (or prepareWithOffer below) runs claim+getInternalOffer
+      // upstream and passes the result in. The companion runtime never
+      // performs offer IO itself; the inner JourneyRuntime.prepare is sync.
+      const questOfferId = typeof input.questOfferId === "string" && input.questOfferId.trim()
+        ? input.questOfferId.trim()
+        : undefined;
+      const questOffer = input.questOffer as InternalQuestOffer | undefined;
+      if (questOfferId !== undefined && questOffer === undefined) {
+        throw new Error("journey_offer_resolution_required");
+      }
+      if (questOffer !== undefined && questOfferId !== undefined && questOffer.questOfferId !== questOfferId) {
+        throw new Error("offer_id_mismatch");
+      }
+      // PR3 (Fix 3): when the client omits destinationRegionId in offer-driven
+      // mode, derive it from the resolved offer's region. The schema permits
+      // omission for offer-driven journeys; the runtime would otherwise throw
+      // destination_region_id. Falls back to the canonical default otherwise.
+      const offerRegionId = questOffer?.publicView.region.regionId;
       const destinationRegionId = resolveEpochCanonicalRegionId(
         typeof (input.destinationRegionId ?? input.regionId) === "string" && String(input.destinationRegionId ?? input.regionId).trim()
           ? String(input.destinationRegionId ?? input.regionId).trim()
-          : "region_gray_harbor",
+          : offerRegionId ?? "region_gray_harbor",
       );
       const originRegionId = typeof input.originRegionId === "string" && input.originRegionId.trim()
         ? resolveEpochCanonicalRegionId(input.originRegionId.trim())
         : destinationRegionId;
+      // PR3: when the client omits taskType in offer-driven mode, derive it
+      // from the offer's publicView.taskTypeText. The offer is authoritative
+      // for taskType per the prepare_journey schema contract; this avoids
+      // the offer_task_type_mismatch path when both inputs are absent.
+      const offerTaskType = questOffer?.publicView.taskTypeText;
+      const taskType = typeof input.taskType === "string" && input.taskType.trim()
+        ? input.taskType.trim()
+        : offerRegionId !== undefined
+          ? offerTaskType
+          : undefined;
       const prepared = this.#journey.prepare({
         agentId,
         explorerId,
         originRegionId,
         destinationRegionId,
-        taskType: typeof input.taskType === "string" && input.taskType.trim()
-          ? input.taskType.trim()
-          : undefined,
+        taskType,
         mandate: input.mandate,
         policy: input.policy ?? { presetId: input.presetId ?? "cautious" },
         expectedReturn: input.expectedReturn as string | undefined,
+        ...(questOfferId !== undefined ? { questOfferId } : {}),
+        ...(questOffer !== undefined ? { questOffer } : {}),
+        ...(typeof input.offerHash === "string" ? { offerHash: input.offerHash as `sha256:${string}` } : {}),
+        ...(input.marketSnapshotVersion !== undefined
+          ? { marketSnapshotVersion: Number(input.marketSnapshotVersion) }
+          : {}),
       });
-      return { ...prepared, mission: this.#missionForJourney(prepared.journey) };
+      // PR3: zero-bonus boundary — strip internal source-binding fields
+      // (questOfferId/offerHash/marketSnapshotVersion/taskFamilyId/
+      // expectedApproach) before crossing into the untrusted response.
+      // Preparation precedes task-plan installation, so it has no mission
+      // read model yet. Do not synthesize the old three-episode mission here;
+      // the installed canonical plan is required before mission data exists.
+      return scrubJourneyRecordForPublicView(prepared);
     });
+  }
+
+  /**
+   * PR3. Async offer-driven prepare: claim the offer against the supplied
+   * reservation, resolve the {@link InternalQuestOffer} server-side, then
+   * delegate to the sync {@link prepare} with the resolved offer in input.
+   *
+   * The claim is idempotent on `(questOfferId, idempotencyKey)`, so a
+   * network-retry of the whole prepare request hits the offer claim's
+   * idempotency cache and re-returns the same claim — no double-claim. The
+   * subsequent `prepare` is itself wrapped in the journey prepare idempotency
+   * cache, so the journey-side response is also stable across retries.
+   *
+   * Throws `offer_runtime_unavailable` if no {@link JourneyOfferRuntime} is
+   * wired. Throws `offer_hash_mismatch` if `offerHash` is supplied and does
+   * not match the resolved internal offer.
+   *
+   * PR3 (audit round 2): prepare-failure rollback. Spec §4.2 only mandates
+   * "replenish failure must NOT roll back claim"; prepare-failure rollback
+   * is unspecified and the prior implementation chose leak-over-rollback.
+   * This implementation rolls back a FRESH claim on any downstream throw
+   * (offer_hash_mismatch, offer_region_mismatch, idempotency_key_conflict,
+   * offer_resolution_failed, journey prepare errors, ...). Heuristic:
+   *
+   *   - Snapshot `lifecycle.status === "claimed"` BEFORE claiming.
+   *   - Track whether `claimQuestOffer` itself threw in this call.
+   *   - On any downstream throw, IF claim succeeded AND the lifecycle was
+   *     NOT already `claimed` when this call started, best-effort release
+   *     the offer (transition `claimed` -> `released`) and surface the
+   *     original error.
+   *
+   * We do NOT roll back idempotent-replay claims: a claim that already
+   * existed when this call started may belong to a prior successful
+   * prepare that the caller is retrying past a transient network glitch,
+   * and releasing it would orphan that prior journey. The check is
+   * prior-state based; concurrent same-key retries with divergent inputs
+   * remain a theoretical race — legitimate retries use identical inputs
+   * and are handled correctly.
+   *
+   * Retry contract after a rolled-back failure: the offer is `released`
+   * (terminal-bypass), so the SAME `questOfferId` cannot be reclaimed.
+   * The client must reserve a fresh offer and retry with the new id
+   * (`idempotencyKey` can be reused — it is scoped per questOfferId).
+   */
+  async prepareWithOffer(input: UnknownRecord = {}): Promise<ReturnType<AgentCompanionRuntime["prepare"]>> {
+    if (this.#offer === undefined) throw new Error("offer_runtime_unavailable");
+    const agentId = requiredString(input.agentId, "agent_id");
+    const { explorerId } = this.#authorizeAgent(input, agentId);
+    const questOfferId = requiredString(input.questOfferId, "quest_offer_id");
+    const reservationToken = requiredString(input.reservationToken, "reservation_token");
+    const idempotencyKey = requiredString(input.idempotencyKey, "idempotency_key");
+    if (input.marketSnapshotVersion === undefined || input.marketSnapshotVersion === null) {
+      throw new Error("market_snapshot_version_required");
+    }
+    const marketSnapshotVersion = Number(input.marketSnapshotVersion);
+    if (!Number.isFinite(marketSnapshotVersion)) {
+      throw new Error("market_snapshot_version_required");
+    }
+    // PR3 (audit round 2): snapshot prior lifecycle state so the catch
+    // block can tell a FRESH claim (rollback eligible) from an idempotent
+    // replay (must NOT roll back — would orphan a prior successful prepare
+    // the caller is retrying past).
+    const offerStore = this.#offer.getStore();
+    const lifecycleBefore = offerStore.projection.lifecyclesById[questOfferId];
+    const wasAlreadyClaimed = lifecycleBefore?.status === "claimed";
+    let claimSucceededInThisCall = false;
+    try {
+      // Claim is idempotent on (questOfferId, idempotencyKey); replays return
+      // the same claimId without re-advancing the lifecycle.
+      await this.#offer.claimQuestOffer({
+        questOfferId,
+        reservationToken,
+        explorerId,
+        agentId,
+        idempotencyKey,
+        marketSnapshotVersion,
+      });
+      claimSucceededInThisCall = true;
+      const internal = this.#offer.getInternalOffer(questOfferId);
+      if (internal === undefined) {
+        throw new Error("offer_resolution_failed");
+      }
+      if (typeof input.offerHash === "string" && internal.offerHash !== input.offerHash) {
+        throw new Error("offer_hash_mismatch");
+      }
+      // Hand the resolved offer to the sync prepare path. Strip the raw offer
+      // IO fields from the idempotency subject so the cache key is stable
+      // across retries (the claim is already idempotent on its own key).
+      const { reservationToken: _stripToken, questOffer: _stripPrior, ...rest } = input;
+      void _stripToken;
+      void _stripPrior;
+      return this.prepare({ ...rest, questOffer: internal });
+    } catch (error) {
+      // Roll back a FRESH claim if anything downstream threw. Without this,
+      // any prepare-side error leaks the offer as `claimed` with no
+      // automatic cleanup — the client would have to explicitly invoke
+      // releaseOrExpireQuestOffer. Best-effort: release errors are
+      // swallowed so the original prepare-side error surfaces.
+      if (claimSucceededInThisCall && !wasAlreadyClaimed) {
+        try {
+          await this.#offer.releaseOrExpireQuestOffer({
+            questOfferId,
+            reason: "released",
+          });
+        } catch {
+          // Swallow — the original error is the actionable one.
+        }
+      }
+      throw error;
+    }
   }
 
   start(input: UnknownRecord = {}) {
@@ -342,11 +520,7 @@ export class AgentCompanionRuntime {
     this.#authorizeExplorer(input, current.journey.explorerId);
     return this.#idempotently("start", current.journey.explorerId, input, () => {
       let ready = this.#journey.status(journeyId);
-      const generatedPlanRequested = input.taskProposal !== undefined
-        || input.taskGenerationMode === "model_sampling"
-        || input.taskGenerationMode === "server_fallback"
-        || ready.journey.taskRequest?.generationRequested === true;
-      if (!ready.journey.taskPlan && generatedPlanRequested) {
+      if (!ready.journey.taskPlan) {
         const generation = this.#taskGenerationContext(ready.journey);
         const taskPlanInstallation = input.taskProposal === undefined
           ? buildFallbackJourneyTaskPlan({
@@ -365,20 +539,18 @@ export class AgentCompanionRuntime {
         ready = this.#journey.installTaskPlan({
           journeyId,
           expectedVersion: ready.journey.version,
-          taskPlan: taskPlanInstallation.plan,
-          hiddenTaskSeal: taskPlanInstallation.hiddenTaskSeal,
+          installation: taskPlanInstallation,
         });
       }
       const started = this.#journey.start({
         journeyId,
         expectedVersion: ready.journey.version,
         realDurationMs: optionalNumber(input.realDurationMs),
-        worldDurationMs: optionalNumber(input.worldDurationMs),
       });
       const scenePlan = this.#composeThreePhasePlan(started.journey);
       const record = this.#journey.status(journeyId);
       return {
-        ...record,
+        ...scrubJourneyRecordForPublicView(record),
         mission: this.#missionForJourney(record.journey),
         scenePlan,
         nextPollAt: record.journey.nextPollAt,
@@ -395,7 +567,7 @@ export class AgentCompanionRuntime {
         journeyId,
         expectedVersion: Number(input.expectedVersion),
       });
-      return { ...reserved, mission: this.#missionForJourney(reserved.journey) };
+      return scrubJourneyRecordForPublicView(reserved);
     });
   }
 
@@ -421,22 +593,21 @@ export class AgentCompanionRuntime {
     const recordedEpisodes = current.journey.episodeIds
       .map((episodeId) => this.#journey.projection().episodes[episodeId])
       .filter(Boolean);
-    const episode = current.journey.taskPlan
-      ? current.journey.status === "returning"
-        ? scenePlan.episodes.find((candidate) => candidate.phase === "return")
-        : recordedEpisodes.length === 0
-          ? scenePlan.episodes.find((candidate) => candidate.phase === "arrival")
-          : (() => {
-              const objective = nextJourneyTaskObjective(current.journey.taskPlan as NonNullable<EpochJourney["taskPlan"]>, recordedEpisodes);
-              return objective
-                ? scenePlan.episodes.find((candidate) =>
-                    candidate.generatedTaskObjective?.objectiveId === objective.objectiveId)
-                : undefined;
-            })()
-      : scenePlan.episodes[current.journey.episodeIds.length];
+    const taskPlan = this.#requiredTaskPlan(current.journey);
+    const episode = current.journey.status === "returning"
+      ? scenePlan.episodes.find((candidate) => candidate.phase === "return")
+      : recordedEpisodes.length === 0
+        ? scenePlan.episodes.find((candidate) => candidate.phase === "arrival")
+        : (() => {
+            const objective = nextJourneyTaskObjective(taskPlan, recordedEpisodes);
+            return objective
+              ? scenePlan.episodes.find((candidate) =>
+                  candidate.generatedTaskObjective?.objectiveId === objective.objectiveId)
+              : undefined;
+          })();
     if (!episode) throw new Error("journey_steps_complete");
     return {
-      ...current,
+      ...scrubJourneyRecordForPublicView(current),
       mission: this.#missionForJourney(current.journey),
       episode,
       scenePlan,
@@ -458,7 +629,7 @@ export class AgentCompanionRuntime {
         Number(input.expectedVersion),
         input.episodes as readonly JourneySceneEpisode[],
       );
-      return { ...committed, mission: this.#missionForJourney(committed.journey) };
+      return { ...scrubJourneyRecordForPublicView(committed), mission: this.#missionForJourney(committed.journey) };
     });
   }
 
@@ -468,7 +639,7 @@ export class AgentCompanionRuntime {
     this.#authorizeExplorer(input, current.journey.explorerId);
     return this.#idempotently("await_agent", current.journey.explorerId, input, () => {
       const awaiting = this.#journey.awaitAgent(journeyId, Number(input.expectedVersion));
-      return { ...awaiting, mission: this.#missionForJourney(awaiting.journey) };
+      return { ...scrubJourneyRecordForPublicView(awaiting), mission: this.#missionForJourney(awaiting.journey) };
     });
   }
 
@@ -478,7 +649,7 @@ export class AgentCompanionRuntime {
     this.#authorizeExplorer(input, current.journey.explorerId);
     return this.#idempotently("begin_return", current.journey.explorerId, input, () => {
       const returning = this.#journey.beginReturn(journeyId, Number(input.expectedVersion));
-      return { ...returning, mission: this.#missionForJourney(returning.journey) };
+      return { ...scrubJourneyRecordForPublicView(returning), mission: this.#missionForJourney(returning.journey) };
     });
   }
 
@@ -488,7 +659,10 @@ export class AgentCompanionRuntime {
     this.#authorizeExplorer(input, current.journey.explorerId);
     return this.#idempotently("settle_completed", current.journey.explorerId, input, () => {
       const settled = this.#journey.settleCompleted(journeyId, Number(input.expectedVersion));
-      return { ...settled, mission: this.#missionForJourney(settled.journey) };
+      // Settlement freezes the journey before the epoch layer computes the
+      // authoritative SettlementDecision and records worldCommit. Until that
+      // receipt exists, a terminal mission cannot expose a completion tier.
+      return scrubJourneyRecordForPublicView(settled);
     });
   }
 
@@ -505,7 +679,7 @@ export class AgentCompanionRuntime {
         expectedVersion: Number(input.expectedVersion),
         worldCommit: input.worldCommit as JourneyWorldCommit,
       });
-      return { ...recorded, mission: this.#missionForJourney(recorded.journey) };
+      return { ...scrubJourneyRecordForPublicView(recorded), mission: this.#missionForJourney(recorded.journey) };
     });
   }
 
@@ -516,49 +690,62 @@ export class AgentCompanionRuntime {
       this.#authorizeExplorer(input, record.journey.explorerId);
       const projection = this.#journey.projection();
       const episodes = record.journey.episodeIds.map((episodeId) => projection.episodes[episodeId]).filter(Boolean);
-      const hiddenTaskSeal = record.journey.taskPlan
-        ? this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, record.journey.taskPlan)
-        : undefined;
       const identity = this.#identityForJourney(record.journey);
-      const mission = buildJourneyMission({
-        journeyId: record.journey.journeyId,
-        journeyStatus: record.journey.status,
-        playerObjective: record.journey.mandate.objective,
-        regionId: record.journey.destinationRegionId,
-        episodes,
-        taskPlan: record.journey.taskPlan,
-        hiddenTaskSeal,
-      });
-      const storyReport = this.#filedStoryReport(record.journey) ?? buildGroundedJourneyStoryReport({
-        journeyId: record.journey.journeyId,
-        status: record.journey.status,
-        objective: record.journey.mandate.objective,
-        regionId: record.journey.destinationRegionId,
-        startedAtWorldTime: record.journey.startedAtWorldTime,
-        dueAtWorldTime: record.journey.dueAtWorldTime,
-        worldCommit: record.journey.worldCommit,
-        episodes,
-        taskPlan: record.journey.taskPlan,
-        hiddenTaskSeal,
-        identity,
-      });
+      const taskPlan = record.journey.taskPlan;
+      const hiddenTaskSeal = taskPlan
+        ? this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, taskPlan)
+        : undefined;
+      const hiddenPrerequisiteLinks = taskPlan
+        ? this.#hiddenPrerequisiteLinksForPlan(taskPlan)
+        : [];
+      const terminalMissionReady = !["settled", "completed", "cancelled", "identity_ended"].includes(record.journey.status)
+        || record.journey.worldCommit !== undefined;
+      const mission = taskPlan && hiddenTaskSeal && terminalMissionReady
+        ? buildJourneyMission({
+            journeyId: record.journey.journeyId,
+            journeyStatus: record.journey.status,
+            playerObjective: record.journey.mandate.objective,
+            regionId: record.journey.destinationRegionId,
+            episodes,
+            taskPlan,
+            hiddenTaskSeal,
+            hiddenPrerequisiteLinks,
+            completionTier: record.journey.worldCommit?.completionTier,
+          })
+        : undefined;
+      const storyReport = taskPlan && hiddenTaskSeal && terminalMissionReady
+        ? this.#filedStoryReport(record.journey) ?? buildGroundedJourneyStoryReport({
+            journeyId: record.journey.journeyId,
+            status: record.journey.status,
+            objective: record.journey.mandate.objective,
+            regionId: record.journey.destinationRegionId,
+            startedAtWorldTime: record.journey.startedAtWorldTime,
+            dueAtWorldTime: record.journey.dueAtWorldTime,
+            worldCommit: record.journey.worldCommit,
+            episodes,
+            taskPlan,
+            hiddenTaskSeal,
+            hiddenPrerequisiteLinks,
+            identity,
+          })
+        : undefined;
       const interactionLog = buildJourneyInteractionLog({
         journeyId: record.journey.journeyId,
         episodes,
       });
-      const taskAdjudication = record.journey.taskPlan
-        ? adjudicateJourneyTask({
-            plan: record.journey.taskPlan,
+      return {
+        ...scrubJourneyRecordForPublicView(record),
+        episodes,
+        ...(mission ? { mission } : {}),
+        ...(taskPlan && hiddenTaskSeal ? {
+          taskAdjudication: adjudicateJourneyTask({
+            plan: taskPlan,
             episodes,
             hiddenTaskSeal,
             revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
-          })
-        : undefined;
-      return {
-        ...record,
-        episodes,
-        mission,
-        ...(taskAdjudication ? { taskAdjudication } : {}),
+            hiddenPrerequisiteLinks,
+          }),
+        } : {}),
         interactionLog,
         ...(storyReport ? { storyReport } : {}),
         nextPollAt: record.journey.nextPollAt,
@@ -573,25 +760,23 @@ export class AgentCompanionRuntime {
     const episodes = record.journey.episodeIds
       .map((episodeId) => projection.episodes[episodeId])
       .filter(Boolean);
-    const hiddenTaskSeal = record.journey.taskPlan
-      ? this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, record.journey.taskPlan)
-      : undefined;
+    const taskPlan = this.#requiredTaskPlan(record.journey);
+    const hiddenTaskSeal = this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, taskPlan);
     return {
-      ...record,
+      ...scrubJourneyRecordForPublicView(record),
       episodes,
       mission: this.#missionForJourney(record.journey),
       interactionLog: buildJourneyInteractionLog({
         journeyId: record.journey.journeyId,
         episodes,
       }),
-      ...(record.journey.taskPlan ? {
-        taskAdjudication: adjudicateJourneyTask({
-          plan: record.journey.taskPlan,
-          episodes,
-          hiddenTaskSeal,
-          revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
-        }),
-      } : {}),
+      taskAdjudication: adjudicateJourneyTask({
+        plan: taskPlan,
+        episodes,
+        hiddenTaskSeal,
+        revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
+        hiddenPrerequisiteLinks: this.#hiddenPrerequisiteLinksForPlan(taskPlan),
+      }),
       nextPollAt: record.journey.nextPollAt,
     };
   }
@@ -601,7 +786,7 @@ export class AgentCompanionRuntime {
     this.#authorizeExplorer(input, record.journey.explorerId);
     return this.#idempotently("recall", record.journey.explorerId, input, () => {
       const recalled = this.#journey.recall(record.journey.journeyId, Number(input.expectedVersion));
-      return { ...recalled, mission: this.#missionForJourney(recalled.journey) };
+      return { ...scrubJourneyRecordForPublicView(recalled), mission: this.#missionForJourney(recalled.journey) };
     });
   }
 
@@ -630,9 +815,9 @@ export class AgentCompanionRuntime {
         const episodes = journey.episodeIds
           .map((episodeId) => projection.episodes[episodeId])
           .filter(Boolean);
-        const hiddenTaskSeal = journey.taskPlan
-          ? this.#journey.hiddenTaskSealForJourney(journey.journeyId, journey.taskPlan)
-          : undefined;
+        const taskPlan = this.#requiredTaskPlan(journey);
+        const hiddenTaskSeal = this.#journey.hiddenTaskSealForJourney(journey.journeyId, taskPlan);
+        const hiddenPrerequisiteLinks = this.#hiddenPrerequisiteLinksForPlan(taskPlan);
         return buildGroundedJourneyStoryReport({
           journeyId: journey.journeyId,
           status: journey.status,
@@ -642,8 +827,9 @@ export class AgentCompanionRuntime {
           dueAtWorldTime: journey.dueAtWorldTime,
           worldCommit: journey.worldCommit,
           episodes,
-          taskPlan: journey.taskPlan,
+          taskPlan,
           hiddenTaskSeal,
+          hiddenPrerequisiteLinks,
           identity: this.#identityForJourney(journey),
         });
       },
@@ -759,6 +945,8 @@ export class AgentCompanionRuntime {
         const episodes = record.journey.episodeIds
           .map((episodeId) => journeyProjection.episodes[episodeId])
           .filter(Boolean);
+        const taskPlan = this.#requiredTaskPlan(record.journey);
+        const hiddenPrerequisiteLinks = this.#hiddenPrerequisiteLinksForPlan(taskPlan);
         const storyReport = this.#filedStoryReport(record.journey) ?? buildGroundedJourneyStoryReport({
           journeyId: record.journey.journeyId,
           status: record.journey.status,
@@ -768,10 +956,9 @@ export class AgentCompanionRuntime {
           dueAtWorldTime: record.journey.dueAtWorldTime,
           worldCommit: record.journey.worldCommit,
           episodes,
-          taskPlan: record.journey.taskPlan,
-          hiddenTaskSeal: record.journey.taskPlan
-            ? this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, record.journey.taskPlan)
-            : undefined,
+          taskPlan,
+          hiddenTaskSeal: this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, taskPlan),
+          hiddenPrerequisiteLinks,
           identity: this.#identityForJourney(record.journey),
         });
         return storyReport ? [{
@@ -825,7 +1012,7 @@ export class AgentCompanionRuntime {
       this.#epoch.getResultPage({ pageId: journey.verification.pageId }),
       journey,
     );
-    return report?.evaluation.warning === "该身份将无法保留" ? undefined : report;
+    return report;
   }
 
   #identityForJourney(journey: EpochJourney) {
@@ -959,8 +1146,30 @@ export class AgentCompanionRuntime {
       regionId: canonicalRegionId,
       taskType,
     });
-    const availableWorldObjects = [region, ...mapObjects, ...taskCast].filter((object, index, values) =>
+    const rawObjects = [region, ...mapObjects, ...taskCast].filter((object, index, values) =>
       values.findIndex((candidate) => candidate.id === object.id) === index);
+    // PR5c: stamp canonicalStatusDigest on each available world object from the
+    // canonical projection's worldObjectStates. Objects whose id has no entry
+    // in the projection are left with digest=undefined (intact by convention).
+    const worldObjectStatesRaw = this.#epoch.worldObjectStates?.();
+    const worldObjectStates = isRecord(worldObjectStatesRaw) ? worldObjectStatesRaw : {};
+    const availableWorldObjects = rawObjects.map((object) => {
+      const state = worldObjectStates[object.id];
+      if (!isRecord(state)) return object;
+      const status = typeof state.status === "string" ? state.status : undefined;
+      const degree = typeof state.degree === "number" ? state.degree : undefined;
+      if (!status || degree === undefined) return object;
+      return {
+        ...object,
+        canonicalStatusDigest: {
+          status: status as "intact" | "degraded" | "destroyed",
+          degree,
+          ...(typeof state.sourceActionEventId === "string"
+            ? { sourceActionEventId: state.sourceActionEventId } : {}),
+          ...(typeof state.changedAt === "string" ? { changedAt: state.changedAt } : {}),
+        },
+      };
+    });
     return {
       taskType,
       identityName,
@@ -982,21 +1191,58 @@ export class AgentCompanionRuntime {
   #missionForJourney(journey: EpochJourney) {
     const projection = this.#journey.projection();
     const episodes = journey.episodeIds.map((episodeId) => projection.episodes[episodeId]).filter(Boolean);
+    const taskPlan = this.#requiredTaskPlan(journey);
     return buildJourneyMission({
       journeyId: journey.journeyId,
       journeyStatus: journey.status,
       playerObjective: journey.mandate.objective,
       regionId: journey.destinationRegionId,
       episodes,
-      taskPlan: journey.taskPlan,
-      hiddenTaskSeal: journey.taskPlan
-        ? this.#journey.hiddenTaskSealForJourney(journey.journeyId, journey.taskPlan)
-        : undefined,
+      taskPlan,
+      hiddenTaskSeal: this.#journey.hiddenTaskSealForJourney(journey.journeyId, taskPlan),
+      hiddenPrerequisiteLinks: this.#hiddenPrerequisiteLinksForPlan(taskPlan),
+      completionTier: journey.worldCommit?.completionTier,
     });
+  }
+
+  #requiredTaskPlan(journey: EpochJourney) {
+    if (!journey.taskPlan) throw new Error("journey_task_plan_required");
+    return journey.taskPlan;
   }
 
   #authorizeExplorer(input: UnknownRecord, explorerId: string) {
     return this.#epoch.verifyExplorerAuth({ ...input, explorerId });
+  }
+
+  /** Extract canonical hidden-prerequisite links for the installed plan. */
+  #hiddenPrerequisiteLinksForPlan(
+    plan: { readonly objectives: readonly { readonly objectiveId: string }[] },
+  ): readonly HiddenPrerequisiteLink[] {
+    const raw = this.#epoch.hiddenPrerequisiteLinks();
+    if (!isRecord(raw)) throw new Error("journey_hidden_prerequisite_links_invalid");
+    const objectiveIds = new Set(plan.objectives.map((o) => o.objectiveId));
+    const out: HiddenPrerequisiteLink[] = [];
+    for (const value of Object.values(raw)) {
+      if (!isRecord(value)) continue;
+      const objectiveId = typeof value.objectiveId === "string" ? value.objectiveId : "";
+      const prerequisiteObjectId = typeof value.prerequisiteObjectId === "string" ? value.prerequisiteObjectId : "";
+      const regionId = typeof value.regionId === "string" ? value.regionId : "";
+      const status = typeof value.status === "string" ? value.status : "";
+      if (!objectiveId || !prerequisiteObjectId || !regionId || !status || !objectiveIds.has(objectiveId)) continue;
+      out.push({
+        objectiveId,
+        prerequisiteObjectId,
+        status: status as "intact" | "degraded" | "destroyed",
+        ...(typeof value.destroyedAtActionEventId === "string"
+          ? { destroyedAtActionEventId: value.destroyedAtActionEventId } : {}),
+        ...(typeof value.degradedAtActionEventId === "string"
+          ? { degradedAtActionEventId: value.degradedAtActionEventId } : {}),
+        ...(typeof value.sourceLedgerEntryId === "string"
+          ? { sourceLedgerEntryId: value.sourceLedgerEntryId } : {}),
+        observedAt: typeof value.observedAt === "string" ? value.observedAt : "",
+      });
+    }
+    return out;
   }
 
   #captureEvents<TValue extends object>(run: () => TValue): TValue {
@@ -1042,10 +1288,17 @@ export class AgentCompanionRuntime {
       const record = this.#journey.projection().journeys[command.journeyId];
       if (!record) continue;
       const episodes = record.journey.episodeIds.map((episodeId) => this.#journey.projection().episodes[episodeId]).filter(Boolean);
+      const baseValue = scrubJourneyRecordForPublicView(record);
+      const mission = record.journey.taskPlan
+        ? this.#missionForJourney(record.journey)
+        : undefined;
+      if (command.scope === "start" && !mission) {
+        throw new Error("journey_task_plan_required");
+      }
       const value = command.scope === "start"
         ? {
-            ...record,
-            mission: this.#missionForJourney(record.journey),
+            ...baseValue,
+            mission: mission as NonNullable<typeof mission>,
             scenePlan: {
               status: episodes.length ? "ready" : "no_verifiable_world_object",
               candidates: [],
@@ -1054,7 +1307,10 @@ export class AgentCompanionRuntime {
             },
             nextPollAt: record.journey.nextPollAt,
           }
-        : { ...record, mission: this.#missionForJourney(record.journey) };
+        : {
+            ...baseValue,
+            ...(mission ? { mission } : {}),
+          };
       this.#idempotency.set(cacheKey, { subjectHash: command.subjectHash, value });
     }
   }

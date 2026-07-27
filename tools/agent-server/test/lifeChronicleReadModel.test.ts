@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildJourneyAlbum } from "../lib/epoch/journeyAlbumReadModel.ts";
+import {
+  adjudicateJourneyTask,
+  buildFallbackJourneyTaskPlan,
+  nextJourneyTaskObjective,
+} from "../lib/epoch/journeyGeneratedTaskRules.ts";
 import { buildAnnualLifeChronicle, monthlyLifeReports } from "../lib/epoch/lifeChronicleReadModel.ts";
+import { buildJourneySceneContract } from "../lib/epoch/journeySceneContractRules.ts";
 import { createJourneyRuntime } from "../lib/epoch/journeyRuntime.ts";
 import { buildPersistedJourneyNarrative, buildServerJourneyEpisodeFacts } from "../lib/epoch/journeyNarrativeRules.ts";
 import { buildLineageChronicle } from "../lib/epoch/lineageChronicleReadModel.ts";
+import { journeyWorldCatalogForRegion } from "../lib/epoch/journeyWorldCatalog.ts";
 import type { EpochAgentIdentity } from "../lib/epoch/gameCore.ts";
 import type { EpochEvent } from "../lib/epoch/events.ts";
 
@@ -22,34 +29,88 @@ function yearFixture() {
   });
   const travel = (at: string, title: string, participantId?: string) => {
     now = at;
+    const region = {
+      id: "region_gray_harbor",
+      type: "region" as const,
+      label: "灰港",
+      sourceFactIds: ["world:region_gray_harbor"],
+    };
+    const availableWorldObjects = [
+      region,
+      ...journeyWorldCatalogForRegion(region.id),
+      ...(participantId ? [{
+        id: participantId,
+        type: "agent" as const,
+        label: `同行者 ${participantId}`,
+        regionId: region.id,
+        sourceFactIds: [`fact:${participantId}`],
+        participantIds: [participantId],
+        tags: ["explore"],
+      }] : []),
+    ];
     const prepared = runtime.prepare({
       agentId: "agent_chronicle",
       explorerId: "explorer_chronicle",
       originRegionId: "region_gray_harbor",
       destinationRegionId: "region_gray_harbor",
+      taskType: title,
       mandate: { objective: title, priorities: ["explore"] },
     });
-    const started = runtime.start({ journeyId: prepared.journey.journeyId, expectedVersion: prepared.journey.version });
+    const installation = buildFallbackJourneyTaskPlan({
+      taskType: title,
+      scenarioMapId: region.id,
+      availableWorldObjects,
+    });
+    const installed = runtime.installTaskPlan({
+      journeyId: prepared.journey.journeyId,
+      expectedVersion: prepared.journey.version,
+      installation,
+    });
+    const started = runtime.start({ journeyId: installed.journey.journeyId, expectedVersion: installed.journey.version });
     const plan = runtime.composeThreePhaseEpisodes(started.journey.journeyId, started.journey.version, {
       identityHistory: { recentEpisodeFingerprints: [] },
-      region: { id: "region_gray_harbor", type: "region", label: "灰港", sourceFactIds: ["world:region_gray_harbor"] },
+      region,
       season: "current",
       resources: {},
       unresolvedClues: [],
-      availableWorldObjects: [{
-        id: participantId || `place_${sequence}`,
-        type: participantId ? "agent" : "location",
-        label: participantId ? `同行者 ${participantId}` : title,
-        regionId: "region_gray_harbor",
-        sourceFactIds: [`fact_${sequence}`],
-        participantIds: participantId ? [participantId] : [],
-        tags: ["explore"],
-      }],
+      availableWorldObjects,
     });
-    assert.deepEqual(plan.episodes.map((episode) => episode.phase), ["arrival", "main", "return"]);
+    assert.equal(plan.episodes[0]?.phase, "arrival");
+    assert.equal(plan.episodes.at(-1)?.phase, "return");
     const groundedEpisodes = plan.episodes.map((baseEpisode, index) => {
       const canonicalEventIds = [`canonical_hosted_action_${sequence}_${index + 1}`];
-      const outcomeSummary = `${title}的${baseEpisode.phase || "main"}阶段由服务器结算并归档。`;
+      const taskObjective = baseEpisode.generatedTaskObjective;
+      const mandate = {
+        objective: title,
+        priorities: ["explore"],
+        avoid: [],
+        preferredActivities: [],
+        socialPreference: "balanced" as const,
+        returnCondition: "time" as const,
+      };
+      const contract = buildJourneySceneContract({
+        seed: `chronicle:${started.journey.journeyId}:${baseEpisode.episodeId}`,
+        agentId: "agent_chronicle",
+        journeyId: started.journey.journeyId,
+        episodeId: baseEpisode.episodeId,
+        sceneType: baseEpisode.type,
+        phase: baseEpisode.phase,
+        title: baseEpisode.title,
+        mandate,
+        worldObjects: availableWorldObjects,
+        sourceFactIds: availableWorldObjects.flatMap((object) => object.sourceFactIds),
+        expectedVersion: started.journey.version,
+        expiresAt: "2026-12-31T23:59:59.000Z",
+        ...(taskObjective ? {
+          generatedTaskObjective: taskObjective,
+          taskRoutes: started.journey.taskPlan?.routes,
+        } : {}),
+      });
+      const selectedAction = contract.actionOptions[0];
+      assert.ok(selectedAction);
+      const outcomeSummary = taskObjective
+        ? `${title}的${baseEpisode.phase || "main"}阶段由服务器结算并归档。`
+        : selectedAction.outcomeSummary || `${title}的${baseEpisode.phase || "main"}阶段由服务器结算并归档。`;
       const serverFacts = buildServerJourneyEpisodeFacts({
         journeyId: started.journey.journeyId,
         episodeId: baseEpisode.episodeId,
@@ -57,7 +118,18 @@ function yearFixture() {
         title: baseEpisode.title,
         agent: { id: "agent_chronicle", displayName: "灯蛾" },
         worldObjectRefs: baseEpisode.worldObjectRefs,
-        action: { optionLabel: `完成「${title}」的${baseEpisode.phase || "main"}阶段`, outcomeSummary },
+        action: {
+          optionKey: selectedAction.optionKey,
+          optionLabel: selectedAction.label,
+          intent: selectedAction.intent,
+          risk: selectedAction.risk,
+          targetEntityIds: selectedAction.targetEntityIds,
+          outcomeSummary,
+          ...(taskObjective ? {
+            taskObjectiveId: taskObjective.objectiveId,
+            completionKind: "complete" as const,
+          } : {}),
+        },
         canonicalEventIds,
       });
       const narrative = buildPersistedJourneyNarrative({ serverFacts }).value;
@@ -73,7 +145,7 @@ function yearFixture() {
         causationId: baseEpisode.episodeId,
         correlationId: started.journey.correlationId,
         createdAt: now,
-        payload: { sessionId, sceneContract: { journeyId: started.journey.journeyId, episodeId: baseEpisode.episodeId } },
+        payload: { sessionId, sceneContract: contract },
       } as unknown as EpochEvent, {
         eventId: canonicalEventIds[0],
         eventType: "hosted_action_recorded",
@@ -85,21 +157,58 @@ function yearFixture() {
         causationId: baseEpisode.episodeId,
         correlationId: started.journey.correlationId,
         createdAt: now,
-        payload: { sessionId },
+        payload: {
+          sessionId,
+          actionOptionId: selectedAction.actionOptionId,
+          optionLabel: selectedAction.label,
+          outcomeSummary,
+          ...(taskObjective ? {
+            journeyResolution: {
+              completionKind: "complete",
+              authority: "server",
+              summary: outcomeSummary,
+            },
+          } : {}),
+        },
       } as unknown as EpochEvent);
       return {
         ...baseEpisode,
         sourceFactIds: [...baseEpisode.sourceFactIds, ...canonicalEventIds],
-        settlement: { canonicalEventIds, outcomeSummary },
+        settlement: {
+          canonicalEventIds,
+          outcomeSummary,
+          ...(taskObjective ? {
+            taskObjective: {
+              objectiveId: taskObjective.objectiveId,
+              completionKind: "complete" as const,
+            },
+          } : {}),
+        },
         serverFacts,
         narrative,
       };
     });
-    const arrived = runtime.commitEpisodes(started.journey.journeyId, started.journey.version, [groundedEpisodes[0]]);
+    const arrivedEpisode = groundedEpisodes[0];
+    const arrived = runtime.commitEpisodes(started.journey.journeyId, started.journey.version, [arrivedEpisode]);
     const awaitingAgent = runtime.awaitAgent(arrived.journey.journeyId, arrived.journey.version);
-    const mainCommitted = runtime.commitEpisodes(awaitingAgent.journey.journeyId, awaitingAgent.journey.version, [groundedEpisodes[1]]);
-    const returning = runtime.beginReturn(mainCommitted.journey.journeyId, mainCommitted.journey.version);
-    runtime.commitEpisodes(returning.journey.journeyId, returning.journey.version, [groundedEpisodes[2]]);
+    const evidence = [arrivedEpisode];
+    const objectiveEpisodes: typeof evidence = [];
+    for (const candidate of groundedEpisodes.slice(1, -1)) {
+      const expected = nextJourneyTaskObjective(started.journey.taskPlan!, evidence);
+      if (expected?.objectiveId !== candidate.generatedTaskObjective?.objectiveId) continue;
+      objectiveEpisodes.push(candidate);
+      evidence.push(candidate);
+    }
+    let objectivesCommitted = awaitingAgent;
+    for (const objectiveEpisode of objectiveEpisodes) {
+      objectivesCommitted = runtime.commitEpisodes(
+        objectivesCommitted.journey.journeyId,
+        objectivesCommitted.journey.version,
+        [objectiveEpisode],
+      );
+    }
+    const returning = runtime.beginReturn(objectivesCommitted.journey.journeyId, objectivesCommitted.journey.version);
+    runtime.commitEpisodes(returning.journey.journeyId, returning.journey.version, [groundedEpisodes.at(-1)!]);
     const current = runtime.status(started.journey.journeyId);
     runtime.linkVerification({
       journeyId: current.journey.journeyId,
@@ -110,6 +219,46 @@ function yearFixture() {
     });
     now = new Date(Date.parse(at) + 2_000).toISOString();
     runtime.tick();
+    const settled = runtime.status(started.journey.journeyId);
+    const settledEpisodes = settled.journey.episodeIds
+      .map((episodeId) => runtime.projection().episodes[episodeId])
+      .filter((episode): episode is NonNullable<typeof episode> => Boolean(episode));
+    const hiddenTaskSeal = runtime.projection().hiddenTaskSeals[settled.journey.journeyId];
+    assert.ok(hiddenTaskSeal);
+    const adjudication = adjudicateJourneyTask({
+      plan: settled.journey.taskPlan!,
+      episodes: settledEpisodes,
+      hiddenTaskSeal,
+      hiddenPrerequisiteLinks: [],
+    });
+    const mainComplete = adjudication.mainCompleted === adjudication.mainTotal;
+    const commitEventId = `world_commit_${settled.journey.journeyId}`;
+    runtime.recordWorldCommit({
+      journeyId: settled.journey.journeyId,
+      expectedVersion: settled.journey.version,
+      worldCommit: {
+        mode: "mirror",
+        status: mainComplete ? "solidified" : "discarded",
+        completionTier: mainComplete ? "及格" : "未及格",
+        reason: mainComplete ? "main_completed_and_above_threshold" : "main_incomplete",
+        regionId: region.id,
+        committedAtWorldTime: settled.journey.settledAtWorldTime ?? at,
+        influenceDelta: 0,
+        factionStandings: [],
+        npcRelationships: [],
+        ...(mainComplete ? { commitEventId, sourceEventIds: [commitEventId] } : { sourceEventIds: [] }),
+        completionScoreBps: mainComplete ? 4_000 : 0,
+        canonThresholdBps: 4_000,
+        settlementPolicyVersion: 1,
+        consequenceScorePolicyVersion: 1,
+        settlementId: `settlement_${settled.journey.journeyId}`,
+        consequenceScoreBreakdown: {
+          resultScoreBps: mainComplete ? 4_000 : 0,
+          selfLossScoreBps: 0,
+          collateralScoreBps: 0,
+        },
+      },
+    });
   };
   travel("2026-01-05T08:00:00.000Z", "第一次去灰港找活", "agent_neighbor");
   travel("2026-06-12T10:00:00.000Z", "雨季档案馆差事");
@@ -117,16 +266,17 @@ function yearFixture() {
   return runtime.projection();
 }
 
-test("journey album indexes three verified phases for every journey by world time", () => {
+test("journey album indexes every grounded canonical episode for every journey by world time", () => {
   const album = buildJourneyAlbum(yearFixture(), "agent_chronicle");
   assert.equal(album.journeys.length, 3);
-  assert.equal(album.postcards.length, 9);
+  assert.equal(album.postcards.length, 27);
   assert.ok(album.postcards.every((postcard) => postcard.verificationUrl?.includes("#episode-")));
   assert.ok(album.postcards.every((postcard) => postcard.sourceEventIds.length >= 2));
 });
 
 test("album excludes legacy episodes that have no canonical server fact boundary", () => {
   const projection = yearFixture();
+  const fullAlbum = buildJourneyAlbum(projection, "agent_chronicle");
   const firstEpisodeId = Object.keys(projection.episodes)[0];
   assert.ok(firstEpisodeId);
   const firstEpisode = projection.episodes[firstEpisodeId];
@@ -136,7 +286,7 @@ test("album excludes legacy episodes that have no canonical server fact boundary
     ...projection,
     episodes: { ...projection.episodes, [firstEpisodeId]: ungroundedEpisode },
   }, "agent_chronicle");
-  assert.equal(album.postcards.length, 8);
+  assert.equal(album.postcards.length, fullAlbum.postcards.length - 1);
   assert.equal(album.postcards.some((postcard) => postcard.episodeId === firstEpisodeId), false);
 });
 
@@ -245,9 +395,9 @@ test("lineage chronicle joins archived generations to grounded Journey provenanc
     },
   });
   assert.equal(chronicle.generations.length, 2);
-  assert.equal(chronicle.generations[0].postcardIds.length, 9);
+  assert.equal(chronicle.generations[0].postcardIds.length, 27);
   assert.equal(chronicle.generations[1].postcardIds.length, 0);
-  assert.match(chronicle.generations[0].narrative, /第 1 世「灯蛾」.*3 次可验证旅程、9 张事实明信片.*灰港记事者/);
+  assert.match(chronicle.generations[0].narrative, /第 1 世「灯蛾」.*3 次可验证旅程、27 张事实明信片.*灰港记事者/);
   assert.deepEqual(chronicle.transitions, [{
     fromAgentId: "agent_chronicle",
     toAgentId: "agent_chronicle_2",

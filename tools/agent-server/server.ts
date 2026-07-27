@@ -1,6 +1,7 @@
 import { createAgentHttpServer, disposeAgentHttpServerTransport } from "./lib/httpServer.ts";
 import { epochMaintenanceConfigFromEnv, startEpochMaintenanceScheduler } from "./lib/maintenance.ts";
 import { createAgentWorldRuntime } from "./lib/mcpTools.ts";
+import { ServerQuestAi, buildProviderChain, buildAiReplenishStrategy } from "./lib/epoch/serverQuestAi.ts";
 import { createAgentPersistenceFromEnv } from "./lib/persistenceConfig.ts";
 import { productionAgentServerConfigFromEnv } from "./lib/productionConfig.ts";
 import { PlayerMcpAccessTokenStore } from "./lib/playerMcpAccessTokenStore.ts";
@@ -44,6 +45,19 @@ async function main() {
     ? await PlayerMcpAccessTokenStore.open({ jsonlPath: startupConfig.mcpPlayerTokenJsonlPath })
     : undefined;
   reportStartupStage("player_mcp_ready");
+  // PR10: Non-blocking server AI warmup (does not block startup)
+  const serverQuestAi = new ServerQuestAi({ providers: buildProviderChain() });
+  serverQuestAi.startWarmup();
+  serverQuestAi.awaitWarmup().then((state) => {
+    console.log(`[PR10] ServerQuestAi warmup complete: state=${state}`);
+  }).catch((err: unknown) => {
+    console.error(`[PR10] ServerQuestAi warmup failed: ${err instanceof Error ? err.message : String(err)}`);
+  });
+  const aiReplenishStrategy = buildAiReplenishStrategy(serverQuestAi, {
+    onError: (err: unknown) => {
+      console.error(`[PR10] AI replenish error: ${err instanceof Error ? err.message : String(err)}`);
+    },
+  });
   const runtime = createAgentWorldRuntime({
     ...persistence.loadedOptions,
     infiniteWorld: {
@@ -72,6 +86,10 @@ async function main() {
       phase6ExperimentStore: persistence.phase6ExperimentStore,
       phase6CommittedResultStore: persistence.phase6CommittedResultStore,
       phase6RagTraceStore: persistence.phase6RagTraceStore,
+    },
+    journey: {
+      ...((persistence.loadedOptions as { journey?: Record<string, unknown> }).journey || {}),
+      replenishStrategy: aiReplenishStrategy,
     },
   });
   reportStartupStage("runtime_ready");
@@ -198,6 +216,9 @@ async function main() {
       maintenance,
       worldMemory,
       recovery: persistence.recoveryManifest,
+      serverAi: {
+        getState: () => serverQuestAi.getState(),
+      },
     },
     worldMemorySearch: worldMemory?.search,
     worldKnowledgeSearch: worldMemory?.searchKnowledge,

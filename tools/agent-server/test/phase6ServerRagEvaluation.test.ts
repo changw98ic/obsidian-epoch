@@ -83,19 +83,29 @@ test("Phase 6 RAG trace v2 records authoritative evidence sets and computes exac
   assert.deepEqual(validatePhase6ServerRagTrace(trace), { ok: true, status: "ok", issues: [] });
 });
 
-test("Phase 6 RAG SQLite store reads v1 and appends multiple v2 evaluations for one query", () => {
+test("Phase 6 RAG SQLite store appends evaluated and no-retrieval traces for one query", () => {
   const db = new DatabaseSync(":memory:");
   const store = createPhase6RagTraceStore(db);
   const base = evaluatedInput("2026-07-22T10:00:00.000Z");
-  const legacy = capturePhase6ServerRagTrace({ ...base, serverEvaluation: undefined });
+  const noRetrievalTrace = capturePhase6ServerRagTrace({
+    ...base,
+    query: undefined,
+    retrievalConfig: undefined,
+    retrievedChunks: [],
+    serverObservedUsedChunkIds: [],
+    serverObservedGroundingHits: [],
+    retrievalExpected: false,
+    noRetrievalReason: "not_needed",
+    serverEvaluation: undefined,
+  });
   const first = capturePhase6ServerRagTrace(base);
   const second = capturePhase6ServerRagTrace(evaluatedInput("2026-07-22T10:01:00.000Z"));
-  assert.equal(legacy.version, "phase6_server_rag_trace.v1");
-  store.append(legacy);
+  assert.equal(noRetrievalTrace.version, "phase6_server_rag_trace.v2");
+  store.append(noRetrievalTrace);
   store.append(first);
   store.append(second);
   assert.equal(store.list({ experimentId: "experiment-1", runIndex: 1 }).length, 3);
-  assert.equal(store.load(legacy.integrity.traceHash)?.trace.version, "phase6_server_rag_trace.v1");
+  assert.equal(store.load(noRetrievalTrace.integrity.traceHash)?.trace.version, "phase6_server_rag_trace.v2");
   assert.equal(store.loadByBinding({
     experimentId: "experiment-1",
     runIndex: 1,
@@ -125,7 +135,7 @@ test("Phase 6 RAG evaluation fails closed on missing ground truth while no-retri
     noRetrievalReason: "not_needed",
     serverEvaluation: undefined,
   });
-  assert.equal(noRetrieval.version, "phase6_server_rag_trace.v1");
+  assert.equal(noRetrieval.version, "phase6_server_rag_trace.v2");
   assert.equal(noRetrieval.status, "legitimate_no_retrieval");
   assert.equal(validatePhase6ServerRagTrace(noRetrieval).ok, true);
 });

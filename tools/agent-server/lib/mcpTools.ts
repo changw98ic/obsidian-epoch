@@ -25,7 +25,26 @@ import { createLegacyOutboxLedger, graphSyncFromOutboxEntries, type LegacyOutbox
 import { createEpochRuntime, type EpochSharedResultPage } from "./epoch/runtime.ts";
 import { projectEpochEvents } from "./epoch/gameCore.ts";
 import { createAgentCompanionRuntime } from "./epoch/agentCompanionRuntime.ts";
+import { createJourneyOfferRepository, type ReplenishStrategy } from "./epoch/journeyOfferStore.ts";
+import { createJourneyOfferRuntime } from "./epoch/journeyOfferRuntime.ts";
 import type { EpochEvent } from "./epoch/events.ts";
+import { listMirrorConsequences } from "./epoch/journeyMirrorLedger.ts";
+import type { MirrorConsequenceLedgerEntry } from "./epoch/journeySettlementRules.ts";
+import {
+  CANON_THRESHOLD_BPS,
+  SETTLEMENT_POLICY_VERSION,
+  CONSEQUENCE_SCORE_POLICY_VERSION,
+} from "./epoch/journeySettlementRules.ts";
+import type {
+  ResultComponentInputs,
+  SelfLossContribution,
+  SelfLossCostKind,
+  SelfLossSourceKind,
+  SettlementContext,
+  SettlementDecision,
+} from "./epoch/journeySettlementRules.ts";
+import { applySelfLossDedupRules, buildConsequenceScore } from "./epoch/journeyConsequenceScoring.ts";
+import { deriveSettlementDecision, deriveSettlementId } from "./epoch/journeySettlementDecision.ts";
 import {
   causalWorldEventFromEpochEvent,
 } from "./epoch/causalEpochAdapter.ts";
@@ -54,6 +73,18 @@ import {
 } from "./epoch/worldSimulationRules.ts";
 import { epochWorldMinuteFromTime, epochWorldTimeFromMinute } from "./epoch/worldCalendar.ts";
 import {
+  expectedApproachForTask,
+  type IdentityStrategyDisposition,
+} from "./epoch/journeyStrategyRules.ts";
+import {
+  compareApproachToLifePattern,
+  type ExpectedLifePattern,
+} from "./epoch/journeyRoleplayRules.ts";
+import {
+  projectFeedbackSignals,
+  type WorldFeedbackSignal,
+} from "./epoch/journeyFeedbackRules.ts";
+import {
   canonicalPlaceContext,
   loadDefaultWorldContentRegistry,
   validateWorldContentRegistry,
@@ -65,10 +96,14 @@ import {
   journeyTaskGraphState,
   normalizeJourneyCompletionTier,
   nextJourneyTaskObjective,
+  deriveJourneyHiddenTask,
+  journeyRewardBundleForPlan,
   type JourneyTaskEvidenceEpisode,
   type JourneyGeneratedTaskPlan,
+  type JourneyHiddenTaskSeal,
   type JourneyHiddenTaskSealResolver,
 } from "./epoch/journeyGeneratedTaskRules.ts";
+import type { EpochJourney } from "./epoch/journeyRules.ts";
 import { journeyMetricsView } from "./epoch/journeyMetricsReadModel.ts";
 import {
   type JourneyRunReceipt,
@@ -115,6 +150,7 @@ import {
   publicEpochEvent,
 } from "./epoch/runtimePublicProjectionRules.ts";
 import {
+  attachJourneyEventsForPersistence,
   journeyEventsForPersistence,
   mergeJourneyEventsForPersistence,
 } from "./epoch/journeyPersistence.ts";
@@ -129,6 +165,7 @@ import { buildPhase6ServerPreSettlement } from "./epoch/phase6ServerPreSettlemen
 import { buildPhase6ServerOutcomeEvidence } from "./epoch/phase6ServerOutcomeRules.ts";
 import {
   PHASE6_AUTHORITATIVE_SCENARIO_MATRIX,
+  PHASE6_MATRIX_VERSION,
   assertPhase6ScenarioBinding,
   phase6ScenarioForRun,
 } from "./epoch/phase6ScenarioMatrixRules.ts";
@@ -142,6 +179,12 @@ import { createProgressionLedger } from "./progression.ts";
 import { assertPublicSafe } from "./safety.ts";
 import { createTicketRegistry, hashRunPayload } from "./tickets.ts";
 import { createTransparencyLedger, publicVerificationRecord } from "./transparency.ts";
+import {
+  serializeCompact,
+  deriveDecisionEffect,
+  assertPublicActionZeroBonus,
+  type PublicActionOption,
+} from "./epoch/journeyActionPublicSerializer.ts";
 
 type AnyRecord = Record<string, unknown>;
 type ContextSnapshotRecord = AnyRecord & {
@@ -413,6 +456,33 @@ function isRecord(value: unknown): value is AnyRecord {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * PR4 helper: read a finite number from an unknown value, returning the
+ * fallback when the value is not a finite number. Used when reading the
+ * adjudication performance components into ResultComponentInputs.
+ */
+function numberFrom(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+/**
+ * PR4 helper: map a string item rarity label from a legacy
+ * {@link JourneyRewardBundle.items[number].rarity} into the numeric 0..3
+ * form expected by {@link BaseRewardBundle.items[number].baseRarityTier}.
+ * - 0 = no item
+ * - 1 = common
+ * - 2 = rare
+ * - 3 = legendary
+ */
+function rarityTierNumeric(rarity: string | undefined | null): 0 | 1 | 2 | 3 {
+  switch (rarity) {
+    case "common": return 1;
+    case "rare": return 2;
+    case "legendary": return 3;
+    default: return 0;
+  }
+}
+
 function requireObject(value: unknown, name: string): AnyRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${name}_object_required`);
@@ -490,6 +560,7 @@ function phase6ExperimentMcpValue<T>(
 }
 
 function phase6ExperimentRuntimeError(error: unknown): never {
+  if (process.env.EPOCH_DIAG) console.error("[phase6-err]", error instanceof Error ? error.stack : error);
   const message = error instanceof Error ? error.message : "";
   if (/invalid_legacy/i.test(message)) throw new Error("phase6_experiment:invalid_legacy");
   if (/not registered|not_found/i.test(message)) phase6ExperimentMcpError("not_found");
@@ -696,6 +767,89 @@ function compactJourneyDecisionWorldSlice(value: unknown) {
       strongestPriceDeltasMilliCoin: strongestResourceTrends("priceDeltaMilliCoin"),
     },
   };
+}
+
+// ─── PR6: Prompt narrative helpers ──────────────────────────────────────────
+
+/**
+ * STRATEGY_APPROACH_LABEL: Chinese label for each approach tag. Used only in
+ * prompt narrative injection; never leaks numeric values.
+ */
+const APPROACH_LABEL_CN: Readonly<Record<string, string>> = Object.freeze({
+  combat: "战斗",
+  stealth: "潜行",
+  diplomacy: "外交",
+  support: "支援",
+  logistics: "后勤",
+  scout: "侦察",
+  preservation: "保全",
+});
+
+/**
+ * Build a strategy-tendency narrative string for prompt injection.
+ *
+ * Normal case: "你一贯擅长{primary}风格的行动"
+ * No disposition: returns no strategy narrative.
+ *
+ * HARD CONTRACT: no numeric values (score/fitBps/affinity) are exposed.
+ * Pure narrative text only.
+ */
+function buildStrategyPromptNarrative(
+  disposition: IdentityStrategyDisposition | undefined,
+): string {
+  if (!disposition) return "";
+  const STRATEGY_LABEL_CN: Readonly<Record<string, string>> = Object.freeze({
+    combat: "战斗",
+    cunning: "诡计",
+    support: "支援",
+    logistics: "后勤",
+    exploration: "探索",
+  });
+  const primaryLabel = STRATEGY_LABEL_CN[disposition.primary];
+  if (!primaryLabel) return "";
+  const secondaryLabel = disposition.secondary
+    ? STRATEGY_LABEL_CN[disposition.secondary]
+    : undefined;
+  // At prompt time we don't know the classification (computed at journey end).
+  // Default to the "normal" narrative: primary tendency.
+  const parts = [`你一贯擅长${primaryLabel}风格的行动`];
+  if (secondaryLabel) {
+    parts.push(`你偶尔也会运用${secondaryLabel}的手段`);
+  }
+  return parts.join("。");
+}
+
+/**
+ * Build an expected-life-pattern narrative string for prompt injection.
+ *
+ * Describes expected and forbidden approaches in natural language without
+ * exposing the structured ExpectedLifePattern fields or numeric values.
+ *
+ * HARD CONTRACT: no bps/score/tier/affinity/fit values are exposed.
+ * Pure narrative text only.
+ */
+function buildLifePatternPromptNarrative(
+  pattern: ExpectedLifePattern | undefined,
+): string {
+  if (!pattern) return "";
+  const parts: string[] = [];
+  if (pattern.expectedApproaches.length > 0) {
+    const labels = pattern.expectedApproaches
+      .map((tag) => APPROACH_LABEL_CN[tag])
+      .filter(Boolean);
+    if (labels.length > 0) {
+      parts.push(`你的行动风格倾向于${labels.join("与")}`);
+    }
+  }
+  if (pattern.forbiddenApproaches.length > 0) {
+    const labels = pattern.forbiddenApproaches
+      .map((tag) => APPROACH_LABEL_CN[tag])
+      .filter(Boolean);
+    if (labels.length > 0) {
+      parts.push(`避免${labels.join("与")}类的行为`);
+    }
+  }
+  return parts.join("，");
 }
 
 function positiveIntegerValue(value: unknown, fallback: number) {
@@ -1216,9 +1370,14 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     projection: typeof initialJourneyProjection,
     journeyId: string,
     plan: JourneyGeneratedTaskPlan,
-  ) => projection.journeys[journeyId]?.journey.taskPlan?.hiddenTaskCommitment === plan.hiddenTaskCommitment
-    ? projection.hiddenTaskSeals[journeyId]
-    : undefined;
+  ): JourneyHiddenTaskSeal => {
+    if (projection.journeys[journeyId]?.journey.taskPlan?.hiddenTaskCommitment !== plan.hiddenTaskCommitment) {
+      throw new Error("journey_hidden_task_plan_mismatch");
+    }
+    const seal = projection.hiddenTaskSeals[journeyId];
+    if (!seal) throw new Error("journey_hidden_task_seal_missing");
+    return seal;
+  };
   let resolveJourneyHiddenTaskSeal: JourneyHiddenTaskSealResolver = (journeyId, plan) =>
     sealFromProjection(initialJourneyProjection, journeyId, plan);
   const initialResultPages = Array.isArray(options.resultPages)
@@ -1229,11 +1388,57 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
   // Phase 6 pages share the SQLite result_pages index but have their own public read contract.
   const initialEpochResultPages = initialResultPages.filter((page) =>
     optionalString(recordValue(page).createdBy) !== "obsidian_epoch.phase6");
+  // PR2 mirror-consequence ledger bridge.
+  //
+  // The gameCore `submitHostedAction` emits mirror-world consequence
+  // blueprints through `journeyMirrorLedgerSink` (gameCore.ts:9856). The
+  // integrator must forward those blueprints to the companion runtime so the
+  // journey projection's `mirrorLedgers[journeyId]` fills in at action time.
+  //
+  // Synchronous forwarding inside the sink would bump `journey.version` via
+  // `recordMirrorConsequences`, but `commitSingleJourneyStepRuntime` runs
+  // `submitHostedAction` → `commitEpisodes` in sequence with a single
+  // `expectedVersion` (mcpTools.ts:2478-2484); a version bump between the two
+  // throws `journey_version_conflict`. To preserve that contract the sink
+  // buffers blueprints per journey and `drainPendingMirrorConsequences`
+  // flushes them at safe points (after `commitEpisodes`, before ledger reads,
+  // and before `solidifyJourneyWorld`). Effect matches the plan: by the time
+  // the integrator reads the ledger for solidify, every submitted mirror
+  // action's collateral entries are present and idempotent under replay.
+  const companionRuntimeRef: {
+    current: ReturnType<typeof createAgentCompanionRuntime> | undefined;
+  } = { current: undefined };
+  const pendingMirrorConsequences = new Map<string, MirrorConsequenceLedgerEntry[]>();
+  const drainPendingMirrorConsequences = (journeyId: string): readonly JourneyRuntimeEvent[] => {
+    const pending = pendingMirrorConsequences.get(journeyId);
+    if (!pending || pending.length === 0) return [];
+    pendingMirrorConsequences.delete(journeyId);
+    const companion = companionRuntimeRef.current;
+    if (!companion) return [];
+    const journeyRuntime = companion.journeyRuntime();
+    const before = new Set(journeyRuntime.projection().events.map((event) => event.eventId));
+    const live = journeyRuntime.status(journeyId);
+    journeyRuntime.recordMirrorConsequences({
+      journeyId,
+      expectedVersion: live.journey.version,
+      entries: pending,
+    });
+    return journeyRuntime.projection().events.filter((event) => !before.has(event.eventId));
+  };
   const epochRuntime = createEpochRuntime({
     ...epochOptions,
     initialEvents: initialEpochEvents,
     initialResultPages: initialEpochResultPages,
     resolveJourneyHiddenTaskSeal: (journeyId, plan) => resolveJourneyHiddenTaskSeal(journeyId, plan),
+    journeyMirrorLedgerSink: (input) => {
+      // Buffer per journey. Drain happens after the surrounding
+      // submit→commitEpisodes flow completes, not here. The gameCore passes
+      // `expectedVersion: -1` (gameCore.ts:9859) precisely because it cannot
+      // see the companion runtime's journey version; the drain resolves the
+      // real version from `journeyRuntime.status(journeyId)`.
+      const existing = pendingMirrorConsequences.get(input.journeyId) ?? [];
+      pendingMirrorConsequences.set(input.journeyId, [...existing, ...input.entries]);
+    },
   });
   const phase6ReceiptSqlite = phase6ReceiptSqlitePath(options);
   const phase6ResultPages = createEpochResultPageReadModel(initialResultPages as readonly EpochSharedResultPage[]);
@@ -1506,6 +1711,18 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     const value = clock?.() ?? new Date();
     return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
   };
+  // PR3: wire the quest-offer runtime so prepare_journey can run in
+  // offer-driven mode (claim + resolve + delegate). Backed by the same
+  // append-only JSONL repository as the rest of the epoch engine.
+  // PR10: inject AI-backed replenish strategy when provided via journey options.
+  const configuredReplenishStrategy = typeof journeyOptions.replenishStrategy === "function"
+    ? journeyOptions.replenishStrategy as ReplenishStrategy
+    : undefined;
+  const journeyOfferRuntime = createJourneyOfferRuntime({
+    repository: createJourneyOfferRepository(),
+    replenishStrategy: configuredReplenishStrategy,
+    now: () => clockIso(configuredJourneyClock),
+  });
   const companionRuntime = createAgentCompanionRuntime({
     epoch: {
       progress: epochRuntime.progress,
@@ -1528,6 +1745,8 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       events: epochRuntime.events,
       getResultPage: epochRuntime.getResultPage,
       interactionEvents: epochRuntime.interactionEvents,
+      worldObjectStates: epochRuntime.worldObjectStates,
+      hiddenPrerequisiteLinks: epochRuntime.hiddenPrerequisiteLinks,
     },
     journeyOptions: {
       idFactory: configuredJourneyIdFactory ?? ((kind) => `${kind}_${String(++journeyIdSequence).padStart(8, "0")}`),
@@ -1557,7 +1776,9 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       defaultWorldDurationMs: positiveNumberValue(journeyOptions.defaultWorldDurationMs, 60 * 60 * 1_000),
       pollIntervalMs: positiveNumberValue(journeyOptions.pollIntervalMs, 5 * 60 * 1_000),
     },
+    offerRuntime: journeyOfferRuntime,
   });
+  companionRuntimeRef.current = companionRuntime;
   resolveJourneyHiddenTaskSeal = (journeyId, plan) =>
     sealFromProjection(companionRuntime.journeyRuntime().projection(), journeyId, plan);
   const transparencyLedger = createTransparencyLedger({
@@ -2267,30 +2488,37 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     };
   }
 
-  function proposeJourneyStepRuntime(input: AnyRecord = {}) {
+  function proposeJourneyStepRuntime(
+    input: AnyRecord = {},
+    options: { readonly recallOnly?: boolean } = {},
+  ) {
     assertPublicSafe(input);
     const proposed = companionRuntime.proposeStep(input);
     const episode = proposed.episode;
     let hostedSession;
     let hostedEvents: readonly ReturnType<typeof epochEventsForPersistence>[number][] = [];
-    try {
-      hostedSession = epochRuntime.journeyHostedSession({
-        ...input,
-        sessionId: undefined,
-        sceneId: undefined,
-        journeyId: proposed.journey.journeyId,
-        episodeId: episode.episodeId,
-        expectedVersion: proposed.journey.version,
-      });
-    } catch (error) {
-      if (!(error instanceof Error) || error.message !== "journey_scene_contract_not_found") throw error;
+    if (!options.recallOnly) {
+      try {
+        hostedSession = epochRuntime.journeyHostedSession({
+          ...input,
+          sessionId: undefined,
+          sceneId: undefined,
+          journeyId: proposed.journey.journeyId,
+          episodeId: episode.episodeId,
+          expectedVersion: proposed.journey.version,
+        });
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== "journey_scene_contract_not_found") throw error;
+      }
+    }
+    if (!hostedSession) {
       const hosted = epochRuntime.startJourneyHostedSession({
         ...input,
         correlationId: proposed.journey.correlationId,
         causationId: proposed.journey.journeyId,
         agentId: proposed.journey.agentId,
         regionId: proposed.journey.destinationRegionId,
-        mandate: episode.title,
+        mandate: options.recallOnly ? `服务器召回：${episode.title}` : episode.title,
         journeyScene: {
           seed: `${proposed.journey.journeyId}:${episode.episodeId}`,
           journeyId: proposed.journey.journeyId,
@@ -2300,6 +2528,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
           ...(proposed.journey.worldMode ? { worldMode: proposed.journey.worldMode } : {}),
           title: episode.title,
           mandate: proposed.journey.mandate,
+          ...(options.recallOnly ? { recallOnly: true } : {}),
           worldObjects: episode.worldObjectRefs.map((worldObject) => ({
             ...worldObject,
             regionId: proposed.journey.destinationRegionId,
@@ -2307,7 +2536,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
           })),
           sourceFactIds: episode.sourceFactIds,
           expectedVersion: proposed.journey.version,
-          ...(episode.generatedTaskObjective
+          ...(!options.recallOnly && episode.generatedTaskObjective
             ? { generatedTaskObjective: episode.generatedTaskObjective }
             : {}),
           ...(proposed.journey.taskPlan?.routes
@@ -2374,8 +2603,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     const agentIdentity = recordValue(agentProgress.identity);
     const selectedContractAction = contract.actionOptions.find((candidate) =>
       candidate.actionOptionId === action.value.actionOptionId);
-    const authoritativeCompletionKind = action.value.journeyResolution?.completionKind
-      ?? selectedContractAction?.completionKind;
+    const authoritativeCompletionKind = action.value.journeyResolution?.completionKind;
     if (selectedContractAction?.taskObjectiveId && !authoritativeCompletionKind) {
       throw new Error("journey_action_resolution_missing");
     }
@@ -2481,6 +2709,13 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       episodes: [committedEpisode],
       idempotencyKey: `${String(input.idempotencyKey || "").trim()}:journey:${contract.episodeId}`,
     });
+    // PR2: flush mirror-consequence blueprints buffered by the sink during
+    // `commitJourneyHostedAction`. Must run AFTER `commitEpisodes` so the
+    // journey version consumed above is the propose-time value; the drain
+    // then appends `journey_mirror_consequence_recorded` at the new version.
+    // The drained events are returned so the caller can persist them —
+    // bypassing this would leave a version gap on restart.
+    const drainedMirrorEvents = drainPendingMirrorConsequences(contract.journeyId);
     const worldClockAdvance = authoritativeWorldClockEnabled
       && status.journey.worldMode !== "mirror"
       && actionEpochEvents.some((event) => event.eventType === "hosted_action_recorded")
@@ -2505,7 +2740,251 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       ...actionEpochEvents,
       ...(worldClockAdvance ? epochEventsForPersistence(worldClockAdvance) : []),
     ]);
-    return mergeJourneyEventsForPersistence(result, status, committed);
+    // Merge journey events from status, commitEpisodes result, and the
+    // drain (which bypassed #captureEvents). Attach in-place to preserve
+    // the plain-return type inference — mergeJourneyEventsForPersistence is
+    // generic and would narrow the inferred return type.
+    const baseJourneyEvents = [
+      ...journeyEventsForPersistence(status),
+      ...journeyEventsForPersistence(committed),
+    ];
+    const baseJourneyEventIds = new Set(baseJourneyEvents.map((event) => event.eventId));
+    const allJourneyEvents = [
+      ...baseJourneyEvents,
+      ...drainedMirrorEvents.filter((event) => !baseJourneyEventIds.has(event.eventId)),
+    ];
+    attachJourneyEventsForPersistence(result, allJourneyEvents);
+    return result;
+  }
+
+  /**
+   * PR4: Map a {@link SettlementTier} (5-tier scale, includes 未及格) into the
+   * 4-tier solidify contract enum (及格/良好/优秀/惊世). 未及格 never reaches
+   * here because the solidify path is only invoked when canonEligible=true,
+   * which requires main line success + score above threshold.
+   *
+   * The solidify event payload uses the four eligible tiers; the
+   * authoritative five-tier value is the {@link SettlementDecision.tier} carried
+   * on the {@link settlementDecision} field of finalizeSettledMirrorWorld's
+   * return value.
+   */
+  function pr4CompletionTierForSolidify(
+    tier: SettlementDecision["tier"],
+  ): "及格" | "良好" | "优秀" | "惊世" {
+    switch (tier) {
+      case "及格": return "及格";
+      case "良好": return "良好";
+      case "优秀": return "优秀";
+      case "惊世": return "惊世";
+      case "未及格":
+        throw new Error("journey_world_commit_tier_ineligible");
+      default: {
+        const _exhaustive: never = tier;
+        throw new Error(`unhandled_settlement_tier:${String(_exhaustive)}`);
+      }
+    }
+  }
+
+  /**
+   * PR4: extract {@link SelfLossContribution} entries from the canonical
+   * resource_cost source — the action resolutions carried on each evidence
+   * episode's serverFacts. Each PAID `resourceCost` (focus / stamina, amount
+   * fixed at 1 by the risk terms) emits one contribution whose actionEventId
+   * is the resolution's `decisionKeyId` (a server-signed stable identifier
+   * for the action) and whose canonicalEventIds carry the underlying signed
+   * input hash so the audit map is replay-stable.
+   *
+   * The other three canonical sources are intentionally not wired here:
+   * - `resource_spent_event` and `lifetime_adjusted_event` are refused by
+   *   the mirror ledger (they are self-loss, not collateral), so the ledger
+   *   projection is not a source for them.
+   * - `hosted_action_lifetime_delta` and the canonical event streams behind
+   *   the other two sources need plumbing through the event store that is
+   *   not yet threaded into this helper.
+   *
+   * The partial wiring is sound because {@link applySelfLossDedupRules}
+   * collapses by (actionEventId, costKind); contributions from distinct
+   * actions never collide, and the unwired sources would de-dedupe against
+   * this stream if they were added later.
+   */
+  function buildSelfLossContributionsFromEpisodes(
+    episodes: readonly JourneyTaskEvidenceEpisode[],
+  ): readonly SelfLossContribution[] {
+    const contributions: SelfLossContribution[] = [];
+    for (const episode of episodes) {
+      const selectedAction = episode.serverFacts?.storyBeat?.selectedAction;
+      const resolution = selectedAction?.resolution;
+      const resourceCost = resolution?.resourceCost;
+      if (!resourceCost || !resourceCost.paid) continue;
+      // decisionKeyId is the server-signed stable identifier for the action;
+      // it stands in for the canonical actionEventId until the event stream
+      // is threaded through. The composite (actionEventId, costKind='resource')
+      // is the dedup key, so two costs on the same action collapse.
+      const actionEventId = resolution.decisionKeyId;
+      const inputHash = resolution.inputHash;
+      contributions.push({
+        actionEventId,
+        costKind: "resource",
+        sourceKind: "resource_cost",
+        canonicalEventIds: [inputHash],
+        resourceUnits: resourceCost.amount,
+      });
+    }
+    return contributions;
+  }
+
+  /**
+   * PR4: Build the {@link SettlementContext} from the post-settle finalStatus
+   * and call {@link deriveSettlementDecision}. This is the SINGLE point at
+   * which tier / reward / worldCommit are computed; downstream code reads
+   * but never re-derives them.
+   *
+   * The context fields map:
+   * - resultComponentInputs: re-derived from the adjudication's
+   *   JourneyTaskPerformance components (main/side/execution/penalty).
+   * - selfLossContributions: an empty array here. PR4 step 2 will wire the
+   *   full self-loss dedup from the journey's resourceCost / lifetime events
+   *   into the SettlementContext; for PR4 step 1 (this PR) we pass an empty
+   *   contribution stream so the self-loss bucket is zero. This is the
+   *   documented conservative path: the additive score still gates canon
+   *   eligibility correctly because the result bucket alone can clear
+   *   CANON_THRESHOLD_BPS for an execution-clean main+side+hidden run.
+   * - mirrorLedgerEntries: live entries from the journey projection, scanned
+   *   for the collateral bucket.
+   *
+   * The hiddenObjectiveIds field carries the required-actions objective IDs
+   * derived from the hidden task seal so the HiddenClamp can fire when
+   * hiddenComplete=false.
+   */
+  function computeSettlementDecisionForFinalize(params: {
+    readonly journeyId: string;
+    readonly taskPlan: NonNullable<EpochJourney["taskPlan"]>;
+    readonly evidenceEpisodes: readonly JourneyTaskEvidenceEpisode[];
+    readonly taskAdjudication: AnyRecord;
+    readonly completedObjectiveIds: readonly string[];
+    readonly requiredMainObjectiveIds: readonly string[];
+    readonly bonusMainObjectiveIds: readonly string[];
+    readonly relevantSideObjectiveIds: readonly string[];
+    readonly mainLineSucceeded: boolean;
+    readonly hiddenComplete: boolean;
+  }): SettlementDecision {
+    const journeyId = params.journeyId;
+    const taskAdjudication = params.taskAdjudication;
+    const performance = isRecord(taskAdjudication.performance)
+      ? taskAdjudication.performance
+      : undefined;
+    // PR4: re-derive the four result-component inputs from the adjudication
+    // performance components. The composite `scoreBps` on performance is NOT
+    // used — only the four physical-adjudication components plus the failed
+    // / failed-action penalty.
+    const mainCompletionBps = numberFrom(performance?.mainCompletionBps, 0);
+    const bonusMainCompletionBps = numberFrom(performance?.bonusMainCompletionBps, 0);
+    const sideCompletionBps = numberFrom(performance?.sideCompletionBps, 0);
+    const executionQualityBps = numberFrom(performance?.executionQualityBps, 0);
+    const failedActions = numberFrom(performance?.failedActions, 0);
+    const penaltyBps = failedActions * 750;
+    const resultComponentInputs: ResultComponentInputs = {
+      mainCompletionBps,
+      bonusMainCompletionBps,
+      sideCompletionBps,
+      executionQualityBps,
+      penaltyBps,
+    };
+    // PR4: wire the four canonical self-loss sources into the contribution
+    // stream. The dominant source in the current architecture is
+    // `resource_cost` — every action whose signed resolution carries a paid
+    // `resourceCost` (focus / stamina) contributes one unit of resource
+    // self-loss. The other three sources (`resource_spent_event`,
+    // `hosted_action_lifetime_delta`, `lifetime_adjusted_event`) require
+    // plumbing through the canonical event stream that is not yet threaded
+    // into this helper; their contributions stay empty for now and the dedup
+    // pass tolerates the partial stream cleanly. Even partial wiring closes
+    // the spec's "self-loss bucket is permanently zero" gap: a journey that
+    // burned focus/stamina now scores strictly lower than a frugal one.
+    const selfLossContributions = applySelfLossDedupRules(
+      buildSelfLossContributionsFromEpisodes(params.evidenceEpisodes),
+    );
+    // PR4: scan the journey projection's mirror ledger for live entries to
+    // feed the collateral bucket. The solidify caller drains pending
+    // blueprints before this; this snapshot is the pre-drain view. The
+    // settlement decision is computed BEFORE the drain so the entries the
+    // caller will promote match what the decision saw.
+    const journeyProjection = companionRuntime.journeyRuntime().projection();
+    const mirrorLedger = journeyProjection.mirrorLedgers[journeyId];
+    const mirrorLedgerEntries = mirrorLedger
+      ? listMirrorConsequences(mirrorLedger)
+      : ([] as readonly MirrorConsequenceLedgerEntry[]);
+    const hiddenObjectiveIds = deriveHiddenObjectiveIdsForJourney(params.taskPlan, journeyId);
+    const baseRewardBundle = deriveBaseRewardBundleForJourney(params.taskPlan, journeyId);
+    const ctx: SettlementContext = {
+      journeyId,
+      mainObjectiveIds: params.requiredMainObjectiveIds,
+      sideObjectiveIds: params.relevantSideObjectiveIds,
+      hiddenObjectiveIds,
+      mainLineSucceeded: params.mainLineSucceeded,
+      hiddenComplete: params.hiddenComplete,
+      actionResolutions: [],
+      selfLossSourceEventsByKind: {
+        resource_cost: [],
+        resource_spent_event: [],
+        hosted_action_lifetime_delta: [],
+        lifetime_adjusted_event: [],
+      },
+      mirrorLedgerEntries,
+      canonicalActionEventIds: [],
+      resultComponentInputs,
+      selfLossContributions,
+      baseRewardBundle,
+      policyVersion: SETTLEMENT_POLICY_VERSION,
+    };
+    void params.bonusMainObjectiveIds;
+    void params.completedObjectiveIds;
+    const score = buildConsequenceScore(ctx);
+    return deriveSettlementDecision(ctx, score);
+  }
+
+  /**
+   * PR4 helper: derive the hidden-objective IDs for the SettlementContext
+   * from the journey's task plan + hidden task seal. Used as the input to
+   * the HiddenClamp's `sourceHiddenObjectiveIds`.
+   */
+  function deriveHiddenObjectiveIdsForJourney(
+    taskPlan: NonNullable<EpochJourney["taskPlan"]>,
+    journeyId: string,
+  ): readonly string[] {
+    const seal = resolveJourneyHiddenTaskSeal(journeyId, taskPlan);
+    const hidden = deriveJourneyHiddenTask(taskPlan, seal);
+    return hidden.requiredActions.map((action) => action.objectiveId);
+  }
+
+  /**
+   * PR4 helper: build a {@link BaseRewardBundle} from the journey's task
+   * plan. Resources come from the JOURNEY_TIER_REWARDS coin reward; items
+   * come from journeyRewardBundleForPlan for the tier 惊世 (the highest
+   * tier). This is a conservative bundle — the actual tier-specific scaling
+   * happens inside deriveRewardGrant, which applies the multiplier on top
+   * of these base amounts.
+   */
+  function deriveBaseRewardBundleForJourney(
+    taskPlan: NonNullable<EpochJourney["taskPlan"]>,
+    journeyId: string,
+  ): { readonly baseBundleRef: string; readonly resources: Readonly<Record<string, number>>; readonly items: readonly { readonly itemId: string; readonly quantity: number; readonly baseRarityTier: 0 | 1 | 2 | 3 }[] } {
+    // Use the canonical plan-based bundle builder to source base resources
+    // and items. The tier parameter to journeyRewardBundleForPlan affects
+    // only item rarity; we pass 惊世 so the base items are available at
+    // their highest tier, then deriveRewardGrant clamps them down per the
+    // actual settled tier.
+    const bundle = journeyRewardBundleForPlan(taskPlan, "惊世");
+    const coinReward = bundle.resources.find((reward) => reward.resourceId === "coin");
+    return {
+      baseBundleRef: `journey:${journeyId}:base`,
+      resources: coinReward ? { coin: coinReward.amount } : {},
+      items: bundle.items.map((item) => ({
+        itemId: item.itemKey,
+        quantity: 1,
+        baseRarityTier: rarityTierNumeric(item.rarity),
+      })),
+    };
   }
 
   function finalizeSettledMirrorWorld(
@@ -2515,51 +2994,70 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     if (status.journey.status !== "settled"
       || status.journey.worldMode !== "mirror"
       || status.journey.worldCommit) {
-      return { status };
+      return {
+        status,
+        worldSynchronization: undefined,
+        worldSolidification: undefined,
+        worldCommitRecord: undefined,
+        settlementDecision: undefined as SettlementDecision | undefined,
+        feedbackSignals: undefined as readonly WorldFeedbackSignal[] | undefined,
+      };
     }
     const settledAtWorldTime = status.journey.settledAtWorldTime;
     const startedAtWorldTime = status.journey.startedAtWorldTime;
     if (!settledAtWorldTime || !startedAtWorldTime) throw new Error("journey_mirror_time_window_missing");
     const statusRecord = recordValue(status);
     const taskAdjudication = recordValue(statusRecord.taskAdjudication);
-    const completionTier = normalizeJourneyCompletionTier(optionalString(taskAdjudication.tier)) || "及格";
-    const performance = recordValue(taskAdjudication.performance);
-    const reportedScoreBps = Number(performance.scoreBps);
-    const completionScoreBps = Number.isSafeInteger(reportedScoreBps)
-      ? Math.max(0, Math.min(10_000, reportedScoreBps))
-      : completionTier === "惊世"
-        ? 10_000
-        : completionTier === "优秀"
-          ? 9_500
-          : completionTier === "良好"
-            ? 7_500
-            : 6_000;
     const evidenceEpisodes = (Array.isArray(statusRecord.episodes)
       ? statusRecord.episodes
       : []) as readonly JourneyTaskEvidenceEpisode[];
+    const taskPlan = status.journey.taskPlan;
+    if (!taskPlan) throw new Error("journey_task_plan_required_for_settlement");
     let completedObjectiveIds: readonly string[] = [];
     let requiredMainObjectiveIds: readonly string[] = [];
+    let bonusMainObjectiveIds: readonly string[] = [];
+    let relevantSideObjectiveIds: readonly string[] = [];
     let mainLineSucceeded = false;
-    if (status.journey.taskPlan) {
-      const graphState = journeyTaskGraphState(status.journey.taskPlan, evidenceEpisodes);
-      const mainCompleted = Number(taskAdjudication.mainCompleted);
-      const mainTotal = Number(taskAdjudication.mainTotal);
-      completedObjectiveIds = Array.isArray(taskAdjudication.completedObjectiveIds)
-        ? taskAdjudication.completedObjectiveIds.filter((value): value is string =>
-            typeof value === "string" && Boolean(value.trim()))
-        : [];
-      requiredMainObjectiveIds = graphState.requiredMainObjectiveIds;
-      mainLineSucceeded = mainTotal > 0 && mainCompleted === mainTotal;
-    } else {
-      const mission = recordValue(statusRecord.mission);
-      mainLineSucceeded = mission.status === "completed"
-        && recordValue(mission.outcome).result === "success";
-      if (mainLineSucceeded) {
-        completedObjectiveIds = ["legacy_main"];
-        requiredMainObjectiveIds = ["legacy_main"];
-      }
-    }
-    const canonEligible = mainLineSucceeded;
+    let hiddenComplete = false;
+    const graphState = journeyTaskGraphState(taskPlan, evidenceEpisodes);
+    // Canonical completion is derived from the signed task graph, not from
+    // a projected count. Only signed complete evidence can satisfy a
+    // required main objective.
+    completedObjectiveIds = graphState.completedObjectiveIds;
+    requiredMainObjectiveIds = graphState.requiredMainObjectiveIds;
+    bonusMainObjectiveIds = graphState.bonusMainObjectiveIds;
+    relevantSideObjectiveIds = graphState.relevantSideObjectiveIds;
+    const completed = new Set(completedObjectiveIds);
+    mainLineSucceeded = requiredMainObjectiveIds.length > 0
+      && requiredMainObjectiveIds.every((objectiveId) => completed.has(objectiveId));
+    hiddenComplete = isRecord(taskAdjudication.hiddenTask)
+      ? Boolean(taskAdjudication.hiddenTask.completed)
+      : false;
+    // Derive SettlementDecision once. This is the single point at which
+    // tier / reward / worldCommit are computed. Downstream code reads but
+    // never re-derives them.
+    const settlementDecision = computeSettlementDecisionForFinalize({
+      journeyId: status.journey.journeyId,
+      taskPlan,
+      evidenceEpisodes,
+      taskAdjudication,
+      completedObjectiveIds,
+      requiredMainObjectiveIds,
+      bonusMainObjectiveIds,
+      relevantSideObjectiveIds,
+      mainLineSucceeded,
+      hiddenComplete,
+    });
+    const completionScoreBps = settlementDecision.score.breakdown.totalBps;
+    // canonEligible is derived from the same inequality the authority guard
+    // enforces.
+    const canonEligible = mainLineSucceeded
+      && completionScoreBps >= settlementDecision.worldCommit.thresholdBps;
+    // Canonical settlement id = `settlement:${journeyId}:v${SETTLEMENT_POLICY_VERSION}`.
+    // Read it from the authority (deriveSettlementId) rather than parsing the
+    // reward idempotencyKey — the key layout is `${journeyId}:${settlementId}:reward`,
+    // so a naive split/slice(0,2) yields `${journeyId}:settlement`, not the id.
+    const settlementId = deriveSettlementId(settlementDecision.journeyId);
     const worldSynchronization = authoritativeWorldClockEnabled
       ? advanceCanonicalWorld({
           reason: "journey_canon_commit_materialization",
@@ -2570,10 +3068,35 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
           correlationId: status.journey.correlationId,
         })
       : undefined;
-    const committedAtWorldTime = status.journey.mirrorTimeRuleVersion === 2
-      ? clockIso(configuredWorldClock)
-      : settledAtWorldTime;
+    if (status.journey.mirrorTimeRuleVersion !== 2) {
+      throw new Error("journey_mirror_time_rule_unsupported");
+    }
+    const committedAtWorldTime = clockIso(configuredWorldClock);
+    // PR2: flush any blueprints buffered by the sink before reading the
+    // ledger. Direct `submit_hosted_action` callers (not funneled through
+    // `commitSingleJourneyStepRuntime`) may still have entries pending here.
+    // Snapshot the event ids now so the drain + promote/discard events emitted
+    // below (which bypass the companion's #captureEvents wrapper) can be
+    // captured for persistence — without this restart replay would see a
+    // `journey_event_version_gap`.
+    const journeyEventsBeforeFinalize = new Set(
+      companionRuntime.journeyRuntime().projection().events.map((event) => event.eventId),
+    );
+    drainPendingMirrorConsequences(status.journey.journeyId);
+    // Read live mirror-ledger entries from the journey projection. The
+    // companion runtime's `mirrorLedgers[journeyId]` is the single in-memory
+    // truth; `listMirrorConsequences` excludes discarded and promoted entries
+    // by default, returning only the live collateral candidates.
+    const journeyProjection = companionRuntime.journeyRuntime().projection();
+    const mirrorLedger = journeyProjection.mirrorLedgers[status.journey.journeyId];
+    const liveMirrorEntries = mirrorLedger
+      ? listMirrorConsequences(mirrorLedger)
+      : ([] as readonly MirrorConsequenceLedgerEntry[]);
     let worldSolidification: ReturnType<typeof epochRuntime.solidifyJourneyWorld> | undefined;
+    // PR4: pass the decision's totalBps + threshold + policyVersion +
+    // settlementId through to solidifyJourneyWorld. The authority in
+    // gameCore.solidifyJourneyWorld independently re-validates the threshold
+    // so a low-score completed main cannot solidify.
     const worldCommit = canonEligible
       ? (worldSolidification = epochRuntime.solidifyJourneyWorld({
           journeyId: status.journey.journeyId,
@@ -2584,24 +3107,46 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
           mirrorStartedAtWorldTime: startedAtWorldTime,
           mirrorEndedAtWorldTime: settledAtWorldTime,
           committedAtWorldTime,
-          completionTier,
+          completionTier: pr4CompletionTierForSolidify(settlementDecision.tier),
           completionScoreBps,
           worldSliceHash: status.journey.worldSlice?.sliceHash,
           correlationId: status.journey.correlationId,
           causationId: status.journey.journeyId,
+          mirrorLedgerEntries: liveMirrorEntries,
+          canonThresholdBps: CANON_THRESHOLD_BPS,
+          settlementPolicyVersion: SETTLEMENT_POLICY_VERSION,
+          consequenceScorePolicyVersion: CONSEQUENCE_SCORE_POLICY_VERSION,
+          settlementId,
+          consequenceScoreBreakdown: {
+            resultScoreBps: settlementDecision.score.breakdown.resultScoreBps,
+            selfLossScoreBps: settlementDecision.score.breakdown.selfLossScoreBps,
+            collateralScoreBps: settlementDecision.score.breakdown.collateralScoreBps,
+          },
         })).value
       : {
           mode: "mirror" as const,
           status: "discarded" as const,
-          reason: (mainLineSucceeded
-            ? "quality_below_canon_threshold"
-            : "main_incomplete_or_return_failed") as "quality_below_canon_threshold" | "main_incomplete_or_return_failed",
+          completionTier: settlementDecision.tier,
+          // The reason is copied directly from the canonical settlement
+          // decision; no alternate reason vocabulary is accepted here.
+          reason: settlementDecision.worldCommit.reason,
           regionId: status.journey.destinationRegionId,
           committedAtWorldTime,
           influenceDelta: 0,
           factionStandings: [],
           npcRelationships: [],
           sourceEventIds: [],
+          // PR4 additive receipt-audit fields on the discarded commit.
+          completionScoreBps,
+          canonThresholdBps: CANON_THRESHOLD_BPS,
+          settlementPolicyVersion: SETTLEMENT_POLICY_VERSION,
+          consequenceScorePolicyVersion: CONSEQUENCE_SCORE_POLICY_VERSION,
+          settlementId,
+          consequenceScoreBreakdown: {
+            resultScoreBps: settlementDecision.score.breakdown.resultScoreBps,
+            selfLossScoreBps: settlementDecision.score.breakdown.selfLossScoreBps,
+            collateralScoreBps: settlementDecision.score.breakdown.collateralScoreBps,
+          },
         };
     const worldCommitRecord = companionRuntime.recordWorldCommit({
       ...input,
@@ -2610,12 +3155,123 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       worldCommit,
       idempotencyKey: `${String(input.idempotencyKey || status.journey.journeyId).trim()}:world-commit`,
     });
-    return {
-      status: companionRuntime.status({ ...input, journeyId: status.journey.journeyId }),
+    // PR2: synchronise the runtime projection's mirror ledger with the
+    // solidify/discard decision. gameCore's internal ledger is ephemeral; the
+    // projection's `mirrorLedgers[journeyId]` is the persistent truth read on
+    // restart. Without this sync, a restart would see live entries where the
+    // gameCore had already promoted or discarded them, and replay would
+    // double-count.
+    if (canonEligible && worldSolidification) {
+      const marker = worldSolidification.events.find((event): event is Extract<EpochEvent,
+        { readonly eventType: "journey_world_solidified" }> =>
+        event.eventType === "journey_world_solidified"
+        && event.payload.journeyId === status.journey.journeyId);
+      if (!marker) throw new Error("journey_world_solidified_marker_missing");
+      const promotedEntryIds = marker.payload.mirrorLedgerPromotedEntryIds;
+      const effectEventIds = marker.payload.effectEventIds;
+      // gameCore.ts:10081-10098 pushes one canonical event per promoted entry
+      // in entriesToPromote order; NPC canonicalization events follow. The
+      // first `promotedEntryIds.length` effectEventIds pair positionally.
+      const promotions = promotedEntryIds
+        .map((entryId, index) => ({
+          entryId,
+          canonicalEventId: effectEventIds[index] ?? "",
+        }))
+        .filter((promotion) => promotion.canonicalEventId !== "");
+      if (promotions.length > 0) {
+        const postCommit = companionRuntime.status({
+          ...input,
+          journeyId: status.journey.journeyId,
+        });
+        companionRuntime.journeyRuntime().promoteMirrorConsequences({
+          journeyId: status.journey.journeyId,
+          expectedVersion: postCommit.journey.version,
+          promotions,
+        });
+      }
+    } else {
+      // canonEligible=false: discard every non-promoted entry. Reads the
+      // fresh version from the post-recordWorldCommit status.
+      const postCommit = companionRuntime.status({
+        ...input,
+        journeyId: status.journey.journeyId,
+      });
+      companionRuntime.journeyRuntime().discardMirrorConsequences({
+        journeyId: status.journey.journeyId,
+        expectedVersion: postCommit.journey.version,
+      });
+    }
+    const finalizeStatus = companionRuntime.status({ ...input, journeyId: status.journey.journeyId });
+    // Capture journey events emitted by the drain + promote/discard calls
+    // above. recordWorldCommit's events are already attached to
+    // worldCommitRecord; the diff below covers everything else so the
+    // persistence pipeline sees one monotonic event stream on restart.
+    const finalizeMirrorEvents = companionRuntime.journeyRuntime()
+      .projection().events
+      .filter((event) => !journeyEventsBeforeFinalize.has(event.eventId));
+    // PR6: project world-feedback signals from settled state. These signals
+    // are injected into the NEXT prompt as narrative context (no numeric values).
+    let feedbackSignals: readonly WorldFeedbackSignal[] | undefined;
+    if (settlementDecision) {
+      const doubtEntries = liveMirrorEntries
+        .filter((entry) => entry.effectKind === "identity_doubt")
+        .map((entry) => ({
+          npcId: entry.targetEntityId,
+          doubtStrength: (entry.delta >= 3 ? "severe" : entry.delta >= 2 ? "high" : entry.delta >= 1 ? "moderate" : "low") as "low" | "moderate" | "high" | "severe",
+          sourceActionEventId: entry.actionEventId,
+          regionId: status.journey.destinationRegionId,
+        }));
+      const identityProgress = epochRuntime.progress({ agentId: status.journey.agentId });
+      const identityRecord = recordValue(identityProgress.identity);
+      const viability = identityRecord.identityViability as
+        | { readonly flaggedWanted?: unknown; readonly identityExposed?: boolean }
+        | undefined;
+      const rawFlaggedWanted = viability?.flaggedWanted;
+      const flaggedWanted = rawFlaggedWanted instanceof Set
+        ? rawFlaggedWanted as ReadonlySet<string>
+        : new Set<string>(
+            Array.isArray(rawFlaggedWanted)
+              ? rawFlaggedWanted.filter((v: unknown): v is string => typeof v === "string")
+              : [],
+          );
+      const factionStandingDeltas = worldCommit && worldCommit.status === "solidified"
+        ? (worldCommit.factionStandings ?? []).map((standing: { readonly factionId?: string; readonly delta?: number; readonly sourceEventId?: string }) => ({
+            factionId: standing.factionId ?? "",
+            delta: standing.delta ?? 0,
+            sourceEventId: standing.sourceEventId ?? "",
+          }))
+        : [];
+      feedbackSignals = projectFeedbackSignals({
+        identityId: status.journey.agentId,
+        doubtEntries,
+        viability: {
+          flaggedWanted,
+          identityExposed: Boolean(viability?.identityExposed),
+        },
+        factionStandingDeltas,
+        projectedAt: new Date().toISOString(),
+      });
+    }
+    const finalizeResult = {
+      status: finalizeStatus,
       worldSynchronization,
       worldSolidification,
       worldCommitRecord,
+      settlementDecision,
+      feedbackSignals,
     };
+    // Attach in-place (attachJourneyEventsForPersistence mutates via
+    // Object.defineProperty) to preserve the plain-return type inference.
+    // Merging worldCommitRecord's events + the drain/promote/discard events
+    // ensures the persistence pipeline receives one monotonic event stream.
+    const worldCommitJourneyEvents = journeyEventsForPersistence(worldCommitRecord);
+    const worldCommitEventIds = new Set(worldCommitJourneyEvents.map((event) => event.eventId));
+    const allFinalizeJourneyEvents = [
+      ...worldCommitJourneyEvents,
+      ...finalizeMirrorEvents.filter((event) => !worldCommitEventIds.has(event.eventId)),
+    ];
+    attachJourneyEventsForPersistence(finalizeResult, allFinalizeJourneyEvents);
+    return finalizeResult;
   }
 
   function commitJourneyActionRuntime(input: AnyRecord = {}) {
@@ -2625,7 +3281,11 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     }
     const main = commitSingleJourneyStepRuntime(input);
     const current = companionRuntime.status(input);
-    const nextTaskObjective = current.journey.taskPlan
+    const recallOnlyMain = Boolean(current.journey.taskPlan
+      && main.episode.phase === "main"
+      && main.episode.serverFacts?.storyBeat?.selectedAction.optionKey === "recall_without_objective"
+      && main.episode.serverFacts.storyBeat.selectedAction.taskObjectiveId === undefined);
+    const nextTaskObjective = current.journey.taskPlan && !recallOnlyMain
       ? nextJourneyTaskObjective(
           current.journey.taskPlan,
           current.episodes as readonly JourneyTaskEvidenceEpisode[],
@@ -2679,14 +3339,14 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       visibleText: `沿已确认路线完成${returnProposal.proposal.episode.title}`,
       idempotencyKey: `${String(input.idempotencyKey || "").trim()}:return`,
     });
-    const settled = returned.journey.taskPlan
-      ? companionRuntime.settleCompleted({
-          ...input,
-          journeyId: returned.journey.journeyId,
-          expectedVersion: returned.journey.version,
-          idempotencyKey: `${String(input.idempotencyKey || "").trim()}:settle-completed`,
-        })
-      : returned;
+    const returnedTaskPlan = returned.journey.taskPlan;
+    if (!returnedTaskPlan) throw new Error("journey_task_plan_required_for_settlement");
+    const settled = companionRuntime.settleCompleted({
+      ...input,
+      journeyId: returned.journey.journeyId,
+      expectedVersion: returned.journey.version,
+      idempotencyKey: `${String(input.idempotencyKey || "").trim()}:settle-completed`,
+    });
     const initialFinalStatus = companionRuntime.status({
       ...input,
       journeyId: returned.journey.journeyId,
@@ -2697,7 +3357,22 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     const taskAdjudication = recordValue(finalStatusRecord.taskAdjudication);
     const worldSolidification = mirrorFinalization.worldSolidification;
     const worldCommitRecord = mirrorFinalization.worldCommitRecord;
-    const completionTier = normalizeJourneyCompletionTier(optionalString(taskAdjudication.tier));
+    const settlementDecision = mirrorFinalization.settlementDecision;
+    // PR4: tier is the authority-derived tier from SettlementDecision when the
+    // journey actually reached the mirror-finalize path (settled + mirror +
+    // no prior worldCommit). For all other cases finalizeSettledMirrorWorld
+    // early-returns with settlementDecision=undefined; no reward is granted,
+    // and completionTier=undefined correctly skips the grant branch below.
+    //
+    // taskAdjudication.tier is intentionally NOT read — adjudicateJourneyTask
+    // no longer computes tier (spec: "adjudicateJourneyTask 不再算 tier"); the
+    // no alternate tier projection exists here.
+    const completionTier = settlementDecision
+      ? settlementDecision.tier
+      : undefined;
+    if (completionTier && !settlementDecision) {
+      throw new Error("journey_settlement_decision_missing");
+    }
     const rewardSourceEventIds = [...new Set((Array.isArray(finalStatusRecord.episodes)
       ? finalStatusRecord.episodes
       : []).flatMap((episodeValue) => {
@@ -2712,13 +3387,18 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
           journeyId: returned.journey.journeyId,
           agentId: returned.journey.agentId,
           tier: completionTier,
-          taskPlan: returned.journey.taskPlan,
-          hiddenTaskSeal: returned.journey.taskPlan
-            ? resolveJourneyHiddenTaskSeal(returned.journey.journeyId, returned.journey.taskPlan)
-            : undefined,
+          taskPlan: returnedTaskPlan,
+          hiddenTaskSeal: resolveJourneyHiddenTaskSeal(
+            returned.journey.journeyId,
+            returnedTaskPlan,
+          ),
           sourceEventIds: rewardSourceEventIds,
           correlationId: returned.journey.correlationId,
           causationId: returned.journey.journeyId,
+          // PR4: scope the idempotency reason to the settlementId so a
+          // policy bump re-grants under a new key and a duplicate call
+          // collapses.
+          settlementId: deriveSettlementId(settlementDecision!.journeyId),
         })
       : undefined;
     const result = {
@@ -2732,10 +3412,11 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         reward: rewardGrant.reward,
         rewardBundle: rewardGrant.rewardBundle,
         grantedItems: rewardGrant.grantedItems,
-        grantedAttributes: rewardGrant.grantedAttributes,
         duplicate: rewardGrant.duplicate,
       } } : {}),
       ...(finalStatus.journey.worldCommit ? { worldCommit: finalStatus.journey.worldCommit } : {}),
+      // PR6: feedback signals projected from settled state.
+      ...(mirrorFinalization.feedbackSignals ? { feedbackSignals: mirrorFinalization.feedbackSignals } : {}),
       nextAction: "obsidian_epoch.journey_status",
     };
     attachEpochEventsForPersistence(result, [
@@ -2876,7 +3557,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         ...input,
         expectedVersion: current.journey.version,
         idempotencyKey: `${String(input.idempotencyKey || "").trim()}:safe-main`,
-      });
+      }, { recallOnly: true });
       const contract = proposal.proposal.sceneContract;
       const safeAction = contract?.actionOptions.find((action) =>
         action.actionOptionId === contract.safeFallbackActionOptionId);
@@ -3063,8 +3744,15 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         readonly nextPollAt?: string;
       };
     },
-    epochPrepareJourney: (input: AnyRecord = {}) => {
+    epochPrepareJourney: async (input: AnyRecord = {}) => {
       assertPublicSafe(input);
+      // PR3: route offer-driven prepares through the async claim+resolve
+      // path. questOfferId presence (and the offer-runtime wiring) is what
+      // flips the journey into offer-driven mode; the sync prepare path
+      // handles the non-offer case.
+      if (typeof input.questOfferId === "string" && input.questOfferId.trim()) {
+        return await companionRuntime.prepareWithOffer(input);
+      }
       return companionRuntime.prepare(input);
     },
     epochJourneyTaskGenerationContext: (input: AnyRecord = {}) => {
@@ -3865,7 +4553,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         // Auto-determine scenarioTag from the scenario matrix if not provided
         const scenario = phase6ScenarioForRun(runIndex);
         const scenarioTag = readInput.scenarioTag ?? scenario.tag;
-        assertPhase6ScenarioBinding(runIndex, scenarioTag);
+        assertPhase6ScenarioBinding(runIndex, scenarioTag, scenario.taskFamilyId);
 
         // Idempotency: if this run already exists, return the existing binding
         const existingRun = existingRuns.find((r) => Number(recordValue(r).runIndex) === runIndex);
@@ -3948,8 +4636,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
           throw new Error("phase6_experiment_journey_identity_lineage_mismatch");
         }
         const identity = { identityId: preparedIdentityId };
-        const journeyTaskType = optionalString(recordValue(preparedJourney.taskRequest).taskType);
-        assertPhase6ScenarioBinding(runIndex, scenarioTag, journeyTaskType);
+        assertPhase6ScenarioBinding(runIndex, scenarioTag, scenario.taskFamilyId);
         const expectedVersion = Number(preparedJourney.version);
         if (!Number.isInteger(expectedVersion) || expectedVersion < 0) {
           throw new Error("phase6_experiment_journey_version_invalid");
@@ -4792,7 +5479,7 @@ const MCP_TOOL_DEFINITIONS = [
   {
     name: "obsidian_epoch.prepare_journey",
     title: "Prepare journey",
-    description: "Owner-authorized mission preview. Records the requested task type and destination map; the route is generated from that map at start and is not a fixed client-authored script.",
+    description: "Owner-authorized mission preview. Records the requested task type and destination map; the route is generated from that map at start and is not a fixed client-authored script. When `questOfferId` is supplied, the server re-resolves every internal field (taskFamilyId/expectedApproach/worldSliceHash/taskType/scenarioMapId) from the offer store and IGNORES any client-supplied override for those fields; the public schema intentionally does NOT expose taskFamilyId/expectedApproach/worldSliceHash, and any client attempt to pass them is rejected at the input boundary. Client-supplied `destinationRegionId`/`taskType` MUST equal the offer's region/taskTypeText when both are present.",
     inputSchema: objectSchema({
       agentId: { type: "string" },
       originRegionId: { type: "string" },
@@ -4805,7 +5492,11 @@ const MCP_TOOL_DEFINITIONS = [
       recoveryCode: { type: "string" },
       localSecret: { type: "string" },
       idempotencyKey: { type: "string" },
-    }, ["agentId", "destinationRegionId", "idempotencyKey"]),
+      questOfferId: { type: "string", description: "Optional. When set, switches the journey into offer-driven mode and the server re-resolves all internal fields from the offer store." },
+      offerHash: { type: "string", description: "Echo of `sha256:${hex}` offerHash the client read from the public snapshot; the server rejects on mismatch with the live internal offer." },
+      reservationToken: { type: "string", description: "Opaque ownership token returned by `reserve_quest_offer`; the server claims the offer against it before binding the journey." },
+      marketSnapshotVersion: { type: "number", description: "Market snapshot version the offer was read under; the server rejects on stale or forward snapshots." },
+    }, ["agentId", "idempotencyKey"]),
   },
   {
     name: "obsidian_epoch.start_journey",
@@ -4815,10 +5506,6 @@ const MCP_TOOL_DEFINITIONS = [
       journeyId: { type: "string" },
       expectedVersion: { type: "number" },
       realDurationMs: { type: "number" },
-      worldDurationMs: {
-        type: "number",
-        description: "Legacy compatibility only. New mirror Journeys ignore this value because the server chooses their in-game end time.",
-      },
       episodeCount: { type: "number" },
       decisionMode: { type: "string", enum: ["agent_native", "host_sampling"] },
       taskGenerationMode: { type: "string", enum: ["model_sampling", "server_fallback"] },
@@ -4837,7 +5524,6 @@ const MCP_TOOL_DEFINITIONS = [
       journeyId: { type: "string" },
       expectedVersion: { type: "number" },
       realDurationMs: { type: "number" },
-      worldDurationMs: { type: "number" },
       episodeCount: { type: "number" },
       decisionMode: { type: "string", enum: ["agent_native", "host_sampling"] },
       taskGenerationMode: { type: "string", enum: ["model_sampling", "server_fallback"] },
@@ -5041,12 +5727,6 @@ const MCP_TOOL_DEFINITIONS = [
       regionControlDecayMinAgeSeconds: { type: "number" },
       abuseDecayLimit: { type: "number" },
       abuseDecayAmount: { type: "number" },
-      worldAdvanceMinutes: {
-        type: "number",
-        minimum: 1,
-        maximum: 43200,
-        description: "Deprecated compatibility field; ignored because elapsed time is server-derived.",
-      },
       idempotencyKey: { type: "string" },
     }, ["operatorKey", "idempotencyKey"]),
   },
@@ -5204,12 +5884,6 @@ const MCP_TOOL_DEFINITIONS = [
     description: "Operator-gated server-time synchronization. The server derives game time at one game day per real minute, persists a bounded catch-up tick, advances the macro world simulation and exposes crossed 60-year aggregation boundaries. Clients cannot choose elapsed time.",
     inputSchema: objectSchema({
       operatorKey: { type: "string" },
-      elapsedWorldMinutes: {
-        type: "number",
-        minimum: 1,
-        maximum: 43200,
-        description: "Deprecated compatibility field; ignored because elapsed time is server-derived.",
-      },
       reason: { type: "string" },
       processedDomains: { type: "array", items: { type: "string" } },
       sourceEventIds: { type: "array", items: { type: "string" } },
@@ -7027,8 +7701,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       runId: optionalString(binding.runId),
       retrievalExpected: binding.retrievalExpected === true && binding.retrievalExpectedSource === "server_policy",
       receiptVersion: optionalString(binding.receiptVersion)
-        || optionalString(recordValue(binding.runReceipt).receiptVersion)
-        || "v2",
+        || optionalString(recordValue(binding.runReceipt).receiptVersion),
       identity,
       explorer,
       scenarioMatrix: {
@@ -7060,7 +7733,8 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     ] as const) {
       if (!value) throw new Error(`phase6_settlement_binding_invalid:${path}`);
     }
-    const scenario = assertPhase6ScenarioBinding(normalized.runIndex, normalized.scenarioTag as string);
+    const scenario = phase6ScenarioForRun(normalized.runIndex);
+    assertPhase6ScenarioBinding(normalized.runIndex, normalized.scenarioTag as string, scenario.taskFamilyId);
     return { ...normalized, scenario };
   };
   const phase6BindingFromRagArgs = (args: AnyRecord) => phase6BindingFromStartJourneyArgs(args);
@@ -7482,7 +8156,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       experimentId: binding.experimentId,
       runIndex: binding.runIndex,
       receipt: {
-        receiptVersion: "v2",
+        receiptVersion: "v3",
         experimentId: binding.experimentId,
         runIndex: binding.runIndex,
         identity: binding.identity,
@@ -7491,6 +8165,9 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
         versions: binding.versions,
         seed: { seed: binding.seed },
         receiptId: optionalString(receipt.receiptId),
+        scenarioTag: optionalString(binding.scenarioTag) || phase6ScenarioForRun(binding.runIndex).tag,
+        matrixSnapshot: binding.scenarioMatrix,
+        matrixVersion: PHASE6_MATRIX_VERSION,
       },
     });
   };
@@ -8106,9 +8783,14 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       ...args,
       expectedVersion: worldWindow.journey.mirrorWindow?.startExpectedVersion
         ?? worldWindow.journey.version,
-      ...(phase6Binding ? { phase6Scenario: phase6Binding.scenario } : {}),
+      ...(phase6Binding ? { phase6Scenario: { intensity: phase6Binding.scenario.intensity } } : {}),
     };
     const taskContext = runtime.epochJourneyTaskGenerationContext(boundArgs);
+    if (process.env.EPOCH_DIAG) console.error("[region-taskctx]", JSON.stringify({
+      scenarioMapId: taskContext?.scenarioMapId,
+      availableCount: taskContext?.availableWorldObjects?.length,
+      generationRequested: taskContext?.generationRequested,
+    }));
     const generatedPlanRequested = args.taskGenerationMode === "model_sampling"
       || args.taskGenerationMode === "server_fallback"
       || taskContext.generationRequested === true;
@@ -8118,7 +8800,7 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       source: "task_plan_sampling",
       trust: "untrusted_client",
       fallback: !generatedPlanRequested
-        ? "legacy_compatibility"
+        ? "server_fallback_default"
         : args.taskGenerationMode === "server_fallback"
           ? "server_fallback_requested"
           : "capability_absent",
@@ -8378,15 +9060,21 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       lastProposal = proposal;
       const contract = proposal.proposal.sceneContract;
       if (!contract) throw new Error("journey_scene_contract_not_found");
+      // PR8: public-only action options for sampling — no riskTerms leak.
+      const RISK_LABELS: Readonly<Record<string, string>> = {
+        low: "低风险：消耗少量集中力，面临轻度对抗",
+        medium: "中风险：消耗专注力，可能获得额外报酬",
+        high: "高风险：消耗体力，面临较强对抗，携带资源与装备可能改善判定",
+      };
       const actionOptions = contract.actionOptions.map((option) => ({
         actionOptionId: option.actionOptionId,
+        optionKey: option.optionKey,
         label: option.label,
         intent: option.intent,
         risk: option.risk,
-        riskTerms: option.riskTerms,
-        decisionEffect: option.completionKind === "skip"
-          ? contract.taskObjective?.kind === "side" ? "skip_optional_side" : "abandon_required_objective"
-          : "attempt_objective",
+        riskLabel: RISK_LABELS[option.risk] ?? option.risk,
+        available: true,
+        decisionEffect: deriveDecisionEffect(contract.taskObjective?.kind),
       }));
       const progress = recordValue(runtime.epochProgress({ agentId: started.journey.agentId }));
       const identity = recordValue(progress.identity);
@@ -8414,6 +9102,14 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
         .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
         .slice(0, 6)
         .map(([need, pressureBps]) => ({ need, pressureBps }));
+      // PR6: build narrative context from identity strategy/life pattern/feedback.
+      // No numeric values (score/fitBps/affinity/tps) are leaked.
+      const strategyNarrative = buildStrategyPromptNarrative(
+        identity.strategyDisposition as IdentityStrategyDisposition | undefined,
+      );
+      const lifePatternNarrative = buildLifePatternPromptNarrative(
+        identity.expectedLifePattern as ExpectedLifePattern | undefined,
+      );
       await requestContext.notifyProgress?.(
         stepIndex / Math.max(1, maxObjectiveSteps),
         `正在请求 Host 选择第 ${stepIndex + 1}/${maxObjectiveSteps} 个服务器签发行动。`,
@@ -8421,10 +9117,14 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       const sampling = await requestContext.sampling.createMessage({
         systemPrompt: [
           "Choose exactly one server-issued actionOptionId as the server-issued identity, not as a quest-grade optimizer.",
-          "Use the identity's traits, strongest needs, life goal, remaining resources, carried inventory, signed riskTerms, mandate, prior route, and current objective.",
-          "Optional side objectives may be skipped when survival pressure, fatigue, resources, personality, or long-term priorities make that choice credible.",
+          "Use the identity's traits, strongest needs, life goal, remaining resources, carried inventory, riskLabel (narrative only), mandate, prior route, and current objective.",
+          "Optional side objectives may remain incomplete when survival pressure, fatigue, resources, personality, or long-term priorities make a real action fail or the journey be recalled.",
           "Do not assume that the highest-risk option is best and do not optimize for a hidden grade.",
           "Return strict JSON with actionOptionId, rationale, confidence, and optional userFacingMessage. Do not invent completion, outcomes, rewards, hidden tasks, people, or world facts.",
+          // PR6: inject strategy tendency narrative (no numeric leakage).
+          ...(strategyNarrative ? [strategyNarrative] : []),
+          // PR6: inject expected life pattern narrative (no numeric leakage).
+          ...(lifePatternNarrative ? [lifePatternNarrative] : []),
         ].join(" "),
         messages: [{
           role: "user",
@@ -8588,37 +9288,10 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     if (status.journey.status !== "settled") return { status };
     const mirrorFinalization = runtime.epochFinalizeSettledMirrorWorld(status, args);
     status = mirrorFinalization.status;
-    const failedJourney = recordValue(status.taskAdjudication).tier === "未及格"
-      || recordValue(recordValue(status.storyReport).evaluation).taskCompletionGrade === "未及格";
-    const progressBeforeFailureArchive = failedJourney
-      ? recordValue(runtime.epochProgress({ agentId: status.journey.agentId }))
-      : {};
-    const identityBeforeFailureArchive = recordValue(progressBeforeFailureArchive.identity);
-    const failureArchive = failedJourney && identityBeforeFailureArchive.status === "active"
-      ? runtime.epochArchiveIdentity({
-          ...args,
-          agentId: status.journey.agentId,
-          archiveReason: "journey_failed_identity_lost",
-          idempotencyKey: `${status.journey.journeyId}:failed-identity-archive:v1`,
-        })
-      : undefined;
-    if (failureArchive) {
-      status = runtime.epochJourneyStatus({
-        ...args,
-        journeyId: status.journey.journeyId,
-      });
-    }
     const existingPage = status.journey.verification
       ? runtime.epochGetResultPage({ pageId: status.journey.verification.pageId })
       : undefined;
-    const existingStoryReport = recordValue(recordValue(recordValue(existingPage).payload).journey).storyReport;
-    const existingStoryEvaluation = recordValue(recordValue(existingStoryReport).evaluation);
-    const existingReportUsesLegacyIdentityWarning = existingStoryEvaluation.warning === "该身份将无法保留";
-    const existingFailedReportMissingIdentityLoss = failedJourney && typeof existingStoryEvaluation.warning !== "string";
-    if (existingPage?.payload?.journey?.status === "settled"
-      && !existingReportUsesLegacyIdentityWarning
-      && !existingFailedReportMissingIdentityLoss
-      && !failureArchive) {
+    if (existingPage?.payload?.journey?.status === "settled") {
       const existingResult = { status, finalVerification: { page: existingPage, duplicate: true } };
       attachEpochEventsForPersistence(
         existingResult,
@@ -8629,15 +9302,14 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
           ...(mirrorFinalization.worldSolidification
             ? epochEventsForPersistence(mirrorFinalization.worldSolidification)
             : []),
-          ...(failureArchive ? epochEventsForPersistence(failureArchive) : []),
         ],
       );
       return mergeJourneyEventsForPersistence(existingResult, mirrorFinalization.worldCommitRecord, status);
     }
     const canonicalEventIds = [...new Set(status.episodes.flatMap((episode) => episode.settlement?.canonicalEventIds || []))];
     const latestSettlement = status.episodes.map((episode) => episode.settlement).filter(Boolean).at(-1);
-    const journeyReward = status.taskAdjudication?.reward ?? latestSettlement?.reward;
-    const journeyRewardBundle = status.taskAdjudication?.rewardBundle;
+    const journeyReward = latestSettlement?.reward;
+    const journeyRewardBundle = undefined;
     const pageInput = {
       ...args,
       correlationId: status.journey.correlationId,
@@ -8708,7 +9380,6 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
         ...(mirrorFinalization.worldSolidification
           ? epochEventsForPersistence(mirrorFinalization.worldSolidification)
           : []),
-        ...(failureArchive ? epochEventsForPersistence(failureArchive) : []),
       ],
     );
     return {
@@ -8929,16 +9600,18 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
   ) => {
     const contract = result.proposal.sceneContract;
     const firstSignedAction = contract?.actionOptions[0];
+    // PR8: use public-only serializer — no internal fields leak to compact transport.
     const compactActionOptions = (contract?.actionOptions ?? []).map((action) => {
-      const {
-        signatureAlgorithm: _signatureAlgorithm,
-        signatureVersion: _signatureVersion,
-        signingPurpose: _signingPurpose,
-        signingKeyId: _signingKeyId,
-        serverPublicKey: _serverPublicKey,
-        ...compactAction
-      } = action;
-      return compactAction;
+      const serialized = serializeCompact(
+        action,
+        contract?.journeyId ?? "",
+        contract?.sceneId ?? "",
+        contract?.expectedVersion ?? 0,
+        contract?.taskObjective?.kind,
+        contract?.expiresAt ?? "",
+      );
+      assertPublicActionZeroBonus(serialized);
+      return serialized;
     });
     return preserveCompactTransportEvents({
       authority: "server_signed_scene_contract",
@@ -9446,7 +10119,25 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     ["obsidian_epoch.journey_status", (args) => journeyStatusWithFinalVerification(args)],
     ["obsidian_epoch.journey_status_compact", async (args) =>
       compactJourneyStatusForTransport(await journeyStatusWithFinalVerification(args))],
-    ["obsidian_epoch.recall_journey", (args) => runtime.epochRecallJourney(args)],
+    ["obsidian_epoch.recall_journey", async (args) => {
+      const result = runtime.epochRecallJourney(args);
+      const journeyId = optionalString(recordValue(recordValue(result).journey).journeyId);
+      if (phase6CommittedResults && journeyId && phase6BindingFromStoredJourney(journeyId)) {
+        const committed = { journeyId, result };
+        const partialPersistence = currentMcpRequestContext()?.persistPartial;
+        if (partialPersistence) {
+          if (partialPersistence.supportsPhase6CommittedResultAtomicWrite !== true) {
+            throw new Error("phase6_committed_result_atomic_persistence_unavailable");
+          }
+          attachPhase6CommittedResultForPersistence(result, committed);
+          await partialPersistence("obsidian_epoch.recall_journey", result);
+          markMcpResultAlreadyPersisted(result);
+        } else {
+          phase6CommittedResults.append(journeyId, result);
+        }
+      }
+      return result;
+    }],
     ["obsidian_epoch.journey_album", (args) => runtime.epochJourneyAlbum(args)],
     ["obsidian_epoch.agent_memory", (args) => runtime.epochAgentMemory(args)],
     ["obsidian_epoch.personal_migration_summary", (args) => runtime.epochPersonalMigrationSummary(args)],

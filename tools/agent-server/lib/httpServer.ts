@@ -117,6 +117,9 @@ interface AgentHealthOptions {
     readonly ttlMs?: number;
     readonly clock?: () => number;
   };
+  readonly serverAi?: {
+    readonly getState: () => "warming" | "ready" | "degraded";
+  };
 }
 
 function storeHealth(input: AgentHealthOptions["store"] | undefined, persistJsonl: typeof appendJsonl | null) {
@@ -166,6 +169,12 @@ function worldMemoryHealth(input: AgentHealthOptions["worldMemory"] | undefined)
           : "ok"
       : "lexical_only",
   };
+}
+
+function serverAiHealth(input: AgentHealthOptions["serverAi"] | undefined) {
+  if (!input) return { status: "unconfigured" };
+  const state = input.getState();
+  return { status: state };
 }
 
 function persistenceHealth(guard: EpochPersistenceGuard) {
@@ -331,6 +340,7 @@ async function serverHealth(
   const publicRegistration = publicRegistrationHealth(publicRegistrationProtection, playerMcpAccessTokens);
   const persistence = persistenceHealth(persistenceGuard);
   const infiniteWorld = infiniteWorldHealth(runtime);
+  const serverAi = serverAiHealth(health?.serverAi);
   return {
     ok: store.status === "ok"
       && maintenance.status !== "error"
@@ -346,6 +356,7 @@ async function serverHealth(
       recovery,
       publicRegistration,
       persistence,
+      serverAi,
       mcp: mcpMetrics,
     },
   };

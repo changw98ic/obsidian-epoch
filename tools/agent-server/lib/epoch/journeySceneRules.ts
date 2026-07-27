@@ -24,6 +24,29 @@ export interface JourneyAvailableWorldObject extends JourneyWorldObjectRef {
   readonly tags?: readonly string[];
   readonly participantIds?: readonly string[];
   readonly sceneTypes?: readonly JourneySceneType[];
+  /**
+   * PR5c: canonical object-state digest stamped by the agent-companion runtime
+   * when assembling the task-generation context. Read from
+   * `projection.worldObjectStates[objectId]` at plan-generation time.
+   *
+   * The digest is INTERNAL-only — it is NOT carried into the public QuestOffer
+   * or any client-facing schema. It is read by the server planner only, exactly
+   * like the existing marketSnapshotVersion / worldSliceHash source-binding
+   * fields on JourneyTaskPlanInstallation.
+   *
+   * Effect on downstream planners:
+   * - fallbackRouteFromMap filters OUT objects with status==='destroyed' from
+   *   the location/supporting-candidate pool.
+   * - The offer-driven planner applies the same exclusion.
+   * - Degraded objects remain eligible (informational; no score impact).
+   * - The plan-validator rejects any proposal referencing a destroyed object.
+   */
+  readonly canonicalStatusDigest?: {
+    readonly status: "intact" | "degraded" | "destroyed";
+    readonly degree: number;
+    readonly sourceActionEventId?: string;
+    readonly changedAt?: string;
+  };
 }
 
 export interface JourneyEpisodeFingerprint {
@@ -90,7 +113,7 @@ export interface JourneySceneEpisode extends Omit<JourneySceneCandidate, "candid
     readonly outcomeSummary?: string;
     readonly taskObjective?: {
       readonly objectiveId: string;
-      readonly completionKind: "complete" | "failed" | "skip";
+      readonly completionKind: "complete" | "failed";
     };
     readonly reward?: {
       readonly resourceId?: EpochResourceId;
@@ -420,10 +443,7 @@ export function generateTaskPlanJourneySceneEpisodes(input: {
       ...input.region.sourceFactIds,
       ...groundedObjects.flatMap((object) => object.sourceFactIds),
     ]);
-    const optionIds = cleaned([
-      ...objective.actions.map((action) => action.optionKey),
-      `skip_${objective.objectiveId}`,
-    ]);
+    const optionIds = cleaned(objective.actions.map((action) => action.optionKey));
     const phase = objective.kind === "side" ? "side" : "main";
     const candidateId = `scene:task:${objective.objectiveId}`;
     return {

@@ -31,6 +31,11 @@ import {
 } from "../lib/epoch/identityLifecycleRules.ts";
 import { eventFactory } from "../lib/epoch/eventFactory.ts";
 import { createSequentialEpochIdFactory } from "../lib/epoch/protocol.ts";
+import {
+  VIABILITY_POLICY_VERSION,
+  initialIdentityViability,
+} from "../lib/epoch/journeyViabilityRules.ts";
+import { buildExpectedLifePattern } from "../lib/epoch/journeyRoleplayRules.ts";
 
 function eventFixture(overrides: Partial<EpochEvent> = {}): EpochEvent {
   return {
@@ -59,6 +64,19 @@ test("identity lifecycle rules plan issued and recovery payloads", () => {
     previousAgentId: "agent_0",
     maxLifetime: 9,
     startedAt: "2026-07-07T01:02:03.000Z",
+    initialViability: initialIdentityViability("agent_1", "2026-07-07T01:02:03.000Z"),
+    expectedLifePattern: buildExpectedLifePattern({
+      identityId: "agent_1",
+      identityName: "Archivist",
+      explorerId: "explorer_1",
+      generation: 2,
+      personalityTraits: initialIdentityTraits({
+        agentId: "agent_1",
+        identityName: "Archivist",
+        generation: 2,
+      }),
+      frozenAt: "2026-07-07T01:02:03.000Z",
+    }),
   }), {
     agentId: "agent_1",
     explorerId: "explorer_1",
@@ -77,6 +95,20 @@ test("identity lifecycle rules plan issued and recovery payloads", () => {
       remaining: 9,
       startedAt: "2026-07-07T01:02:03.000Z",
     },
+    viabilityPolicyVersion: VIABILITY_POLICY_VERSION,
+    identityViability: initialIdentityViability("agent_1", "2026-07-07T01:02:03.000Z"),
+    expectedLifePattern: buildExpectedLifePattern({
+      identityId: "agent_1",
+      identityName: "Archivist",
+      explorerId: "explorer_1",
+      generation: 2,
+      personalityTraits: initialIdentityTraits({
+        agentId: "agent_1",
+        identityName: "Archivist",
+        generation: 2,
+      }),
+      frozenAt: "2026-07-07T01:02:03.000Z",
+    }),
   });
 
   const firstTraits = initialIdentityTraits({
@@ -118,6 +150,7 @@ test("identity lifecycle rules plan identity issue event sequences", () => {
     previousAgentId: "agent_0",
     maxLifetime: 9,
     startedAt: issuedAt,
+    initialViability: initialIdentityViability("agent_1", issuedAt),
     makeEvent: eventFactory(() => new Date(issuedAt), createSequentialEpochIdFactory("identity_issue"), {
       actorExplorerId: "explorer_1",
       trustClass: "user_verified_web" as const,
@@ -151,6 +184,21 @@ test("identity lifecycle rules plan identity issue event sequences", () => {
       remaining: 9,
       startedAt: issuedAt,
     },
+    viabilityPolicyVersion: VIABILITY_POLICY_VERSION,
+    identityViability: initialIdentityViability("agent_1", issuedAt),
+    // PR5b: planner builds a deterministic ExpectedLifePattern at issuance.
+    expectedLifePattern: buildExpectedLifePattern({
+      identityId: "agent_1",
+      identityName: "Archivist",
+      explorerId: "explorer_1",
+      generation: 2,
+      personalityTraits: initialIdentityTraits({
+        agentId: "agent_1",
+        identityName: "Archivist",
+        generation: 2,
+      }),
+      frozenAt: issuedAt,
+    }),
   });
 
   const projectedIdentity = {
@@ -347,6 +395,23 @@ test("identity lifecycle rules plan reincarnation event sequences", () => {
       remaining: 10,
       startedAt,
     },
+    viabilityPolicyVersion: VIABILITY_POLICY_VERSION,
+    identityViability: initialIdentityViability("agent_2", startedAt),
+    // PR5b: reincarnation builds a FRESH pattern from nextAgentId + new
+    // explorerId + generation + new identityName. The previous identity's
+    // pattern is NOT inherited — by construction the inputHash differs.
+    expectedLifePattern: buildExpectedLifePattern({
+      identityId: "agent_2",
+      identityName: "Second Archivist",
+      explorerId: "explorer_1",
+      generation: 3,
+      personalityTraits: initialIdentityTraits({
+        agentId: "agent_2",
+        identityName: "Second Archivist",
+        generation: 3,
+      }),
+      frozenAt: startedAt,
+    }),
   });
 
   const reincarnation = events[1];

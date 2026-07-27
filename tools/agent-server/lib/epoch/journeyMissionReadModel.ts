@@ -1,21 +1,22 @@
 import type { JourneyStoryEpisodeInput } from "./journeyStoryReport.ts";
 import { publicRegionLabel, publicText } from "./publicVocabulary.ts";
 import {
-  isJourneyTaskCompletionAction,
-  journeyTaskRouteForRegion,
-} from "./journeyTaskCatalog.ts";
-import {
   adjudicateJourneyTask,
-  inferJourneyCompletionResult,
   journeyTaskGraphState,
+  type JourneyCompletionTier,
   type JourneyCompletionResult,
   type JourneyGeneratedTaskPlan,
   type JourneyHiddenTaskSeal,
   type JourneyTaskAdjudication,
 } from "./journeyGeneratedTaskRules.ts";
+import type { HiddenPrerequisiteLink } from "./journeyRoleplayRules.ts";
 
 export type JourneyMissionStatus = "briefing" | "active" | "completed" | "failed";
-export type JourneyMissionTaskStatus = "pending" | "active" | "completed" | "failed" | "skipped";
+/**
+ * `not_applicable` means the journey never entered that optional or
+ * downstream task; it is a read-model state, never a server task result.
+ */
+export type JourneyMissionTaskStatus = "pending" | "active" | "completed" | "failed" | "not_applicable";
 
 export interface JourneyMissionTask {
   readonly taskId: string;
@@ -36,8 +37,7 @@ export interface JourneyMissionOutcome {
   readonly totalTaskCount: number;
   readonly decisiveActionOptionKey?: string;
   readonly decisiveActionLabel?: string;
-  readonly completionTier?: JourneyTaskAdjudication["tier"];
-  readonly reward?: JourneyTaskAdjudication["reward"];
+  readonly completionTier?: JourneyCompletionTier;
 }
 
 export interface JourneyMission {
@@ -66,15 +66,12 @@ export interface BuildJourneyMissionInput {
   readonly playerObjective: string;
   readonly regionId: string;
   readonly episodes: readonly JourneyStoryEpisodeInput[];
-  readonly taskPlan?: JourneyGeneratedTaskPlan;
-  readonly hiddenTaskSeal?: JourneyHiddenTaskSeal;
+  readonly taskPlan: JourneyGeneratedTaskPlan;
+  readonly hiddenTaskSeal: JourneyHiddenTaskSeal;
+  readonly hiddenPrerequisiteLinks: readonly HiddenPrerequisiteLink[];
+  /** Canonical tier persisted by the settlement authority for terminal journeys. */
+  readonly completionTier?: JourneyCompletionTier;
 }
-
-const REGISTERED_WORK_ACTIONS = new Set([
-  "verify_salt_ledger",
-  "carry_manifest",
-  "report_discrepancy",
-]);
 
 function clean(value: string): string {
   return publicText(value).trim();
@@ -120,156 +117,14 @@ function carryObjectText(value: string) {
 }
 
 export function buildJourneyMission(input: BuildJourneyMissionInput): JourneyMission {
-  if (input.taskPlan) return buildGeneratedJourneyMission(input, input.taskPlan);
-  const regionName = clean(publicRegionLabel(input.regionId)) || "目的区域";
-  const taskRoute = journeyTaskRouteForRegion(input.regionId);
-  const taskLocation = taskRoute?.worldObjects.find((object) => object.id === taskRoute.locationId)?.label;
-  const playerObjective = clean(input.playerObjective) || "完成一次探索";
-  const arrival = episodeForPhase(input.episodes, "arrival");
-  const main = episodeForPhase(input.episodes, "main");
-  const returning = episodeForPhase(input.episodes, "return");
-  const mainOptionKey = optionKey(main);
-  const reachedLedger = Boolean(arrival) && optionKey(arrival) !== "turn_back_before_entry";
-  const registeredWorkCompleted = Boolean(main && (
-    (mainOptionKey && (taskRoute
-      ? isJourneyTaskCompletionAction(mainOptionKey)
-      : REGISTERED_WORK_ACTIONS.has(mainOptionKey)))
-    || (!mainOptionKey && !/离开|拒绝|折返/u.test(optionLabel(main) || ""))
-  ));
-  const safelyReturned = Boolean(returning) && ["settled", "completed"].includes(input.journeyStatus);
-  const terminal = isJourneyTerminal(input.journeyStatus);
-  const hardFailure = ["cancelled", "identity_ended"].includes(input.journeyStatus);
-
-  const reachStatus: JourneyMissionTaskStatus = reachedLedger
-    ? "completed"
-    : terminal
-      ? "failed"
-      : arrival
-        ? "failed"
-        : ["draft", "prepared"].includes(input.journeyStatus)
-          ? "pending"
-          : "active";
-  const workStatus: JourneyMissionTaskStatus = registeredWorkCompleted
-    ? "completed"
-    : main
-      ? "failed"
-      : reachStatus === "failed"
-        ? "skipped"
-        : reachedLedger
-          ? "active"
-          : "pending";
-  const returnStatus: JourneyMissionTaskStatus = safelyReturned
-    ? "completed"
-    : terminal
-      ? returning
-        ? "failed"
-        : "skipped"
-      : returning
-        ? "active"
-        : "pending";
-
-  const tasks: readonly JourneyMissionTask[] = [
-    {
-      taskId: taskRoute ? "reach_destination" : "reach_civic_ledger",
-      sequence: 1,
-      title: "抵达并登记",
-      objective: taskRoute
-        ? `沿已确认路线抵达${regionName}，前往${taskLocation ?? "任务地点"}。`
-        : `沿登记路线抵达${regionName}民务账房，确认返程窗口。`,
-      completionCriteria: `${regionName}入口与抵达信息进入可追溯记录。`,
-      status: reachStatus,
-      ...taskEvidence(arrival),
-    },
-    {
-      taskId: taskRoute ? "complete_primary_task" : "complete_registered_work",
-      sequence: 2,
-      title: taskRoute?.title ?? "完成登记事务",
-      objective: taskRoute?.mission.primaryObjective
-        ?? `在${regionName}民务所完成一项已经登记、能够核验结果的具体事务。`,
-      completionCriteria: taskRoute?.mission.completionCriteria
-        ?? "盐票账册复核、登记清单递送或清单差额报告至少完成一项，并留下服务器结算记录。",
-      status: workStatus,
-      ...taskEvidence(main),
-    },
-    {
-      taskId: "return_with_record",
-      sequence: 3,
-      title: "带回任务记录",
-      objective: `在返程期限内离开${regionName}，把${taskRoute?.mission.successResult ?? "主任务的直接结果"}带回归档。`,
-      completionCriteria: "返程行动已经记录，本次旅程最终完成结算并归档。",
-      status: returnStatus,
-      ...taskEvidence(returning),
-    },
-  ];
-
-  const completed = tasks.every((task) => task.status === "completed");
-  const failed = hardFailure || (terminal && !completed);
-  const status: JourneyMissionStatus = completed
-    ? "completed"
-    : failed
-      ? "failed"
-      : ["draft", "prepared"].includes(input.journeyStatus)
-        ? "briefing"
-        : "active";
-  const currentTaskId = tasks.find((task) => task.status === "active")?.taskId
-    ?? tasks.find((task) => task.status === "pending")?.taskId;
-  const completedTaskCount = tasks.filter((task) => task.status === "completed").length;
-  const outcome: JourneyMissionOutcome | undefined = terminal ? {
-    result: completed ? "success" : "failure",
-    summary: completed
-      ? `任务完成：三项阶段任务全部结算，已取得${taskRoute?.mission.successResult ?? `${regionName}民务所的可追溯事务记录`}并安全返回。`
-      : hardFailure
-        ? `任务失败：本次旅程以${input.journeyStatus === "identity_ended" ? "身份终结" : "取消"}结束，主目标未能闭环。`
-        : `任务失败：在返程前没有完成全部成功条件；${workStatus === "failed" ? `所选行动未完成${taskRoute?.title ?? "登记事务"}。` : "缺少必要的阶段结算。"}`,
-    completedTaskCount,
-    totalTaskCount: tasks.length,
-    ...(mainOptionKey ? { decisiveActionOptionKey: mainOptionKey } : {}),
-    ...(optionLabel(main) ? { decisiveActionLabel: optionLabel(main) } : {}),
-  } : undefined;
-
-  const primaryObjective = taskRoute?.mission.primaryObjective
-    ?? `在返程期限前抵达${regionName}民务所，完成一项由民务所登记且可核验的事务，并把记录安全带回。`;
-  return {
-    kind: "journey_mission",
-    version: 1,
-    missionId: `mission:${input.journeyId}`,
-    journeyId: input.journeyId,
-    title: taskRoute?.title ?? `${regionName}立足试炼`,
-    playerObjective,
-    briefing: taskRoute
-      ? `${taskRoute.mission.briefing} 玩家本局目标：“${playerObjective}”。`
-      : `长期愿望是“${playerObjective}”。本局把它收束为一项能够明确判定成功或失败的限时任务。`,
-    primaryObjective,
-    stakes: `只有取得${taskRoute?.mission.successResult ?? `被${regionName}民务所承认的办事记录`}并完成返程，本局主任务才算完成。`,
-    successCriteria: taskRoute ? [
-      `抵达${regionName}并前往${taskLocation ?? "任务地点"}。`,
-      taskRoute.mission.completionCriteria,
-      `在返程期限内安全返回，把${taskRoute.mission.successResult}交付归档。`,
-    ] : [
-        `完成${regionName}入口登记并进入民务账房。`,
-        "完成一项服务器签发的登记事务，并取得可追溯的结算结果。",
-        "在返程期限内安全返回，把任务记录交付归档。",
-      ],
-    failureConditions: [
-      `未进入${regionName}便折返。`,
-      taskRoute ? `没有完成“${taskRoute.mission.completionCriteria}”。` : "只询问信息、处理无关事务或拒绝全部登记事务后离开。",
-      "本次旅程被取消、身份终结，或返程时仍缺少任一成功条件。",
-    ],
-    failureConsequences: [
-      "本局结算为失败；已发生的见闻仍保留，但不得宣称主任务完成，也不会伪造工作、报酬或长期关系。",
-    ],
-    status,
-    ...(currentTaskId && !terminal ? { currentTaskId } : {}),
-    tasks,
-    ...(outcome ? { outcome } : {}),
-  };
+  return buildGeneratedJourneyMission(input, input.taskPlan);
 }
 
 function buildGeneratedJourneyMission(
   input: BuildJourneyMissionInput,
   taskPlan: JourneyGeneratedTaskPlan,
 ): JourneyMission {
-  const completionResult = taskPlan.completionResult ?? inferJourneyCompletionResult(taskPlan.successResult);
+  const completionResult = taskPlan.completionResult;
   const terminal = isJourneyTerminal(input.journeyStatus);
   const arrival = episodeForPhase(input.episodes, "arrival");
   const returning = episodeForPhase(input.episodes, "return");
@@ -279,8 +134,12 @@ function buildGeneratedJourneyMission(
     plan: taskPlan,
     episodes: input.episodes,
     hiddenTaskSeal: input.hiddenTaskSeal,
+    hiddenPrerequisiteLinks: input.hiddenPrerequisiteLinks,
     revealHidden: terminal,
   });
+  if (terminal && input.completionTier === undefined) {
+    throw new Error("journey_settlement_tier_required");
+  }
   const graphState = journeyTaskGraphState(taskPlan, input.episodes);
   const requiredMainIds = new Set(graphState.requiredMainObjectiveIds);
   const relevantSideIds = new Set(graphState.relevantSideObjectiveIds);
@@ -301,11 +160,11 @@ function buildGeneratedJourneyMission(
     const status: JourneyMissionTaskStatus = completed
       ? "completed"
       : episode
-        ? failed || objective.kind !== "side" ? "failed" : "skipped"
+        ? "failed"
         : !relevant
-          ? "skipped"
+          ? "not_applicable"
         : terminal
-          ? objective.kind === "side" ? "skipped" : "failed"
+          ? objective.kind === "side" ? "not_applicable" : "failed"
           : reached && availableIds.has(objective.objectiveId)
             ? "active"
             : "pending";
@@ -357,12 +216,11 @@ function buildGeneratedJourneyMission(
   const outcome: JourneyMissionOutcome | undefined = terminal ? {
     result: success ? "success" : "failure",
     summary: success
-      ? `主线完成并安全返程；服务端依据签名行动判定为“${adjudication.tier}”。`
-      : `主线未全部完成或未安全返程；服务端判定为“${adjudication.tier}”。`,
+      ? `主线完成并安全返程；服务端依据签名行动判定为“${input.completionTier}”。`
+      : `主线未全部完成或未安全返程；服务端判定为“${input.completionTier}”。`,
     completedTaskCount: tasks.filter((task) => task.status === "completed").length,
     totalTaskCount: tasks.length,
-    completionTier: adjudication.tier,
-    ...(adjudication.reward ? { reward: adjudication.reward } : {}),
+    ...(input.completionTier ? { completionTier: input.completionTier } : {}),
   } : undefined;
   return {
     kind: "journey_mission",

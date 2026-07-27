@@ -4,23 +4,26 @@ import {
   adjudicateJourneyTask,
   buildFallbackJourneyTaskPlan,
   deriveJourneyHiddenTask,
+  journeyRewardBundleForPlan,
   journeyTaskGraphState,
   JOURNEY_TIER_REWARDS,
   nextJourneyTaskObjective,
   normalizeJourneyCompletionTier,
   normalizeJourneyTaskActionRisk,
   validateJourneyTaskProposal,
+  type JourneyCompletionTier,
   type JourneyGeneratedTaskPlan,
 } from "../lib/epoch/journeyGeneratedTaskRules.ts";
 import { journeyTaskRouteForRegion } from "../lib/epoch/journeyTaskCatalog.ts";
+
 import { journeyScopedNpcObjects } from "../lib/epoch/journeyWorldCatalog.ts";
 import {
   JOURNEY_ACTION_RESOLUTION_RULE_VERSION,
   type JourneyActionResolution,
 } from "../lib/epoch/journeyActionResolutionRules.ts";
 
-test("legacy perfect tier label normalizes to excellent", () => {
-  assert.equal(normalizeJourneyCompletionTier("完美"), "优秀");
+test("completion tier normalization accepts only the canonical labels", () => {
+  assert.equal(normalizeJourneyCompletionTier("完美"), undefined);
   assert.equal(normalizeJourneyCompletionTier("优秀"), "优秀");
 });
 
@@ -97,19 +100,6 @@ function evidence(
   });
 }
 
-function skippedEvidence(plan: JourneyGeneratedTaskPlan, objectiveId: string) {
-  const objective = plan.objectives.find((candidate) => candidate.objectiveId === objectiveId);
-  assert.ok(objective);
-  return [{
-    generatedTaskObjective: objective,
-    serverFacts: { storyBeat: { selectedAction: {
-      optionKey: `skip_${objective.objectiveId}`,
-      taskObjectiveId: objective.objectiveId,
-      completionKind: "skip" as const,
-    } } },
-  }];
-}
-
 function failedEvidence(plan: JourneyGeneratedTaskPlan, objectiveId: string) {
   const objective = plan.objectives.find((candidate) => candidate.objectiveId === objectiveId);
   assert.ok(objective);
@@ -157,8 +147,8 @@ test("fallback blueprint contains executable multi-stage main and side objective
   assert.equal(plan.objectives.filter((objective) => objective.kind === "side").length, 2);
   assert.equal(plan.objectives.filter((objective) => objective.kind === "choice").length, 1);
   assert.ok(plan.objectives.every((objective) => objective.actions.length === 2));
-  assert.ok(plan.routes?.some((route) => route.kind === "choice"));
-  assert.ok(plan.routes?.some((route) => route.kind === "unlock"
+  assert.ok(plan.routes.some((route) => route.kind === "choice"));
+  assert.ok(plan.routes.some((route) => route.kind === "unlock"
     && route.unlockedByObjectiveIds.some((objectiveId) =>
       plan.objectives.some((objective) => objective.objectiveId === objectiveId && objective.kind === "side"))));
   assert.equal(plan.completionResult.returnMode, "report");
@@ -206,7 +196,7 @@ test("server-authored catalog risks are not inflated by the untrusted-model sema
 test("server task graph selects one exclusive route and lets a completed side objective unlock another main route", () => {
   const { plan } = fixture();
   const choice = plan.objectives.find((objective) => objective.kind === "choice");
-  const sideUnlockRoute = plan.routes?.find((route) => route.kind === "unlock");
+  const sideUnlockRoute = plan.routes.find((route) => route.kind === "unlock");
   assert.ok(choice);
   assert.ok(sideUnlockRoute);
   const selectedChoice = choice.actions.find((action) => action.selectsRouteId);
@@ -244,20 +234,20 @@ test("server task graph selects one exclusive route and lets a completed side ob
   assert.ok(afterUnlock.requiredMainObjectiveIds.every((objectiveId) =>
     !sideUnlockRoute.objectiveIds.includes(objectiveId)));
   assert.ok(afterUnlock.requiredMainObjectiveIds.every((objectiveId) =>
-    !plan.routes?.find((route) => route.routeId === otherChoiceRoute)?.objectiveIds.includes(objectiveId)));
+    !plan.routes.find((route) => route.routeId === otherChoiceRoute)?.objectiveIds.includes(objectiveId)));
 });
 
 test("failure on a side-unlocked bonus main does not erase a completed core route", () => {
   const { plan, hiddenTaskSeal } = fixture();
   const choice = plan.objectives.find((objective) => objective.kind === "choice");
-  const unlockRoute = plan.routes?.find((route) => route.kind === "unlock");
+  const unlockRoute = plan.routes.find((route) => route.kind === "unlock");
   assert.ok(choice);
   assert.ok(unlockRoute);
   const choiceAction = choice.actions.find((action) => action.selectsRouteId);
   assert.ok(choiceAction?.selectsRouteId);
-  const selectedRoute = plan.routes?.find((route) => route.routeId === choiceAction.selectsRouteId);
+  const selectedRoute = plan.routes.find((route) => route.routeId === choiceAction.selectsRouteId);
   assert.ok(selectedRoute);
-  const routedObjectiveIds = new Set(plan.routes?.flatMap((route) => route.objectiveIds));
+  const routedObjectiveIds = new Set(plan.routes.flatMap((route) => route.objectiveIds));
   const commonMains = plan.objectives.filter((objective) =>
     objective.kind === "main" && !routedObjectiveIds.has(objective.objectiveId));
   const unlockSide = plan.objectives.find((objective) =>
@@ -280,6 +270,7 @@ test("failure on a side-unlocked bonus main does not erase a completed core rout
   const result = adjudicateJourneyTask({
     plan,
     hiddenTaskSeal,
+    hiddenPrerequisiteLinks: [],
     episodes: [
       ...evidence(plan, selections),
       ...failedEvidence(plan, unlockRoute.objectiveIds[0]),
@@ -289,7 +280,6 @@ test("failure on a side-unlocked bonus main does not erase a completed core rout
   assert.equal(result.mainCompleted, result.mainTotal);
   assert.equal(result.bonusMainCompleted, 0);
   assert.equal(result.bonusMainTotal, 1);
-  assert.equal(result.tier, "良好");
   assert.equal(result.performance?.failedActions, 1);
 });
 
@@ -359,16 +349,16 @@ test("semantic validator rejects model completion, reward, hidden and map-forger
   assert.throws(() => validate(outOfMap), /journey_task_world_object_not_grounded/u);
 });
 
-test("server derives all four completion tiers from signed action evidence", () => {
+test("server evidence produces performance separately from canonical settlement rewards", () => {
   const { plan, hiddenTaskSeal } = fixture();
   const sides = plan.objectives.filter((objective) => objective.kind === "side");
   const choice = plan.objectives.find((objective) => objective.kind === "choice");
   assert.ok(choice);
   const choiceAction = choice.actions[0];
   assert.ok(choiceAction.selectsRouteId);
-  const selectedRoute = plan.routes?.find((route) => route.routeId === choiceAction.selectsRouteId);
+  const selectedRoute = plan.routes.find((route) => route.routeId === choiceAction.selectsRouteId);
   assert.ok(selectedRoute);
-  const routedObjectiveIds = new Set(plan.routes?.flatMap((route) => route.objectiveIds));
+  const routedObjectiveIds = new Set(plan.routes.flatMap((route) => route.objectiveIds));
   const commonMains = plan.objectives.filter((objective) =>
     objective.kind === "main" && !routedObjectiveIds.has(objective.objectiveId));
   const mainPath = [
@@ -381,24 +371,33 @@ test("server derives all four completion tiers from signed action evidence", () 
     [objective?.objectiveId, objective?.objectiveId === choice.objectiveId
       ? choiceAction.optionKey
       : objective?.actions[0].optionKey]));
-  const passing = adjudicateJourneyTask({ plan, hiddenTaskSeal, episodes: evidence(plan, mainSelections) });
-  assert.equal(passing.tier, "及格");
-  assert.deepEqual(passing.reward, JOURNEY_TIER_REWARDS.及格);
-  assert.deepEqual(passing.rewardBundle?.attributes, []);
-  const unlockIds = new Set(plan.routes?.filter((route) => route.kind === "unlock")
+  const passing = adjudicateJourneyTask({
+    plan,
+    hiddenTaskSeal,
+    hiddenPrerequisiteLinks: [],
+    episodes: evidence(plan, mainSelections),
+  });
+  assert.equal(passing.performance?.mainCompletionBps, 10_000);
+  assert.deepEqual(journeyRewardBundleForPlan(plan, "及格").resources, [JOURNEY_TIER_REWARDS.及格]);
+  assert.equal("attributes" in journeyRewardBundleForPlan(plan, "及格"), false);
+  const unlockIds = new Set(plan.routes.filter((route) => route.kind === "unlock")
     .flatMap((route) => route.unlockedByObjectiveIds));
   const ordinarySide = sides.find((side) => !unlockIds.has(side.objectiveId)) ?? sides[0];
   const goodSelections = { ...mainSelections, [ordinarySide.objectiveId]: ordinarySide.actions[0].optionKey };
-  const good = adjudicateJourneyTask({ plan, hiddenTaskSeal, episodes: evidence(plan, goodSelections) });
-  assert.equal(good.tier, "良好");
-  assert.equal(good.rewardBundle?.items.length, 1);
-  assert.equal(good.rewardBundle?.items[0]?.rarity, "common");
-  assert.deepEqual(good.rewardBundle?.attributes, []);
+  const good = adjudicateJourneyTask({
+    plan,
+    hiddenTaskSeal,
+    hiddenPrerequisiteLinks: [],
+    episodes: evidence(plan, goodSelections),
+  });
+  assert.ok((good.performance?.sideCompletionBps ?? 0) > 0);
+  assert.equal(journeyRewardBundleForPlan(plan, "良好").items.length, 1);
+  assert.equal(journeyRewardBundleForPlan(plan, "良好").items[0]?.rarity, "common");
 
   const hidden = deriveJourneyHiddenTask(plan, hiddenTaskSeal);
   const activeObjectives = plan.objectives.filter((objective) => {
     if (objective.kind === "choice" || objective.kind === "side" || commonMains.includes(objective)) return true;
-    const route = plan.routes?.find((candidate) => candidate.objectiveIds.includes(objective.objectiveId));
+    const route = plan.routes.find((candidate) => candidate.objectiveIds.includes(objective.objectiveId));
     return route?.routeId === selectedRoute.routeId || route?.kind === "unlock";
   });
   const perfectSelections = Object.fromEntries(activeObjectives.map((objective) => {
@@ -411,16 +410,16 @@ test("server derives all four completion tiers from signed action evidence", () 
   const ordinaryFullClear = adjudicateJourneyTask({
     plan,
     hiddenTaskSeal,
+    hiddenPrerequisiteLinks: [],
     episodes: evidence(plan, perfectSelections),
   });
-  assert.equal(ordinaryFullClear.tier, "良好");
   assert.equal(ordinaryFullClear.performance?.perfectEligible, false);
   const perfect = adjudicateJourneyTask({
     plan,
     hiddenTaskSeal,
+    hiddenPrerequisiteLinks: [],
     episodes: evidence(plan, perfectSelections, "excellent"),
   });
-  assert.equal(perfect.tier, "优秀");
   assert.equal(perfect.performance?.perfectEligible, true);
 
   const legendarySelections = Object.fromEntries(activeObjectives.map((objective) => {
@@ -431,15 +430,13 @@ test("server derives all four completion tiers from signed action evidence", () 
   const legendary = adjudicateJourneyTask({
     plan,
     hiddenTaskSeal,
+    hiddenPrerequisiteLinks: [],
     episodes: evidence(plan, legendarySelections, "excellent"),
     revealHidden: true,
   });
-  assert.equal(legendary.tier, "惊世");
-  assert.deepEqual(legendary.reward, JOURNEY_TIER_REWARDS.惊世);
-  assert.deepEqual(legendary.rewardBundle?.resources, [JOURNEY_TIER_REWARDS.惊世]);
-  assert.deepEqual(legendary.rewardBundle?.attributes, []);
-  assert.equal(legendary.rewardBundle?.items.length, 1);
-  assert.match(legendary.rewardBundle?.items[0]?.displayName || "", /信物|纪念|记录器|工具包|装备/u);
+  assert.deepEqual(journeyRewardBundleForPlan(plan, "惊世").resources, [JOURNEY_TIER_REWARDS.惊世]);
+  assert.equal(journeyRewardBundleForPlan(plan, "惊世").items.length, 1);
+  assert.match(journeyRewardBundleForPlan(plan, "惊世").items[0]?.displayName || "", /信物|纪念|记录器|工具包|装备/u);
   assert.equal(legendary.hiddenTask.completed, true);
   assert.equal(legendary.hiddenTask.revealed, true);
 });
@@ -453,8 +450,13 @@ test("adjudication fails closed unless evidence carries the matching server sett
     generatedTaskObjective: firstMain,
     serverFacts: { storyBeat: { selectedAction: { optionKey } } },
   }];
-  assert.equal(adjudicateJourneyTask({ plan, hiddenTaskSeal, episodes: forged }).mainCompleted, 0);
-  assert.equal(adjudicateJourneyTask({ plan, hiddenTaskSeal, episodes: skippedEvidence(plan, firstMain.objectiveId) }).mainCompleted, 0);
+  assert.equal(adjudicateJourneyTask({ plan, hiddenTaskSeal, hiddenPrerequisiteLinks: [], episodes: forged }).mainCompleted, 0);
+  assert.equal(adjudicateJourneyTask({
+    plan,
+    hiddenTaskSeal,
+    hiddenPrerequisiteLinks: [],
+    episodes: failedEvidence(plan, firstMain.objectiveId),
+  }).mainCompleted, 0);
 });
 
 test("journey cast changes with the journey and fallback objectives use the supplied dynamic NPCs", () => {
@@ -497,13 +499,19 @@ test("journey cast changes with the journey and fallback objectives use the supp
 
 test("hidden requirement stays sealed until terminal adjudication", () => {
   const { plan, hiddenTaskSeal } = fixture();
-  const before = adjudicateJourneyTask({ plan, hiddenTaskSeal, episodes: [] });
+  const before = adjudicateJourneyTask({ plan, hiddenTaskSeal, hiddenPrerequisiteLinks: [], episodes: [] });
   assert.equal(before.hiddenTask.revealed, false);
   assert.deepEqual(Object.keys(before.hiddenTask).sort(), ["commitment", "revealed"]);
   assert.equal("description" in before.hiddenTask, false);
   assert.equal("requiredActions" in before.hiddenTask, false);
   assert.equal("completed" in before.hiddenTask, false);
-  const after = adjudicateJourneyTask({ plan, hiddenTaskSeal, episodes: [], revealHidden: true });
+  const after = adjudicateJourneyTask({
+    plan,
+    hiddenTaskSeal,
+    hiddenPrerequisiteLinks: [],
+    episodes: [],
+    revealHidden: true,
+  });
   assert.equal(after.hiddenTask.revealed, true);
   assert.ok(after.hiddenTask.description);
   assert.equal(after.hiddenTask.requiredActions?.length, 2);
@@ -520,33 +528,36 @@ test("hidden completion cannot upgrade public adjudication before terminal revea
   const before = adjudicateJourneyTask({
     plan,
     hiddenTaskSeal,
+    hiddenPrerequisiteLinks: [],
     episodes: evidence(plan, hiddenSuccessSelections, "excellent"),
   });
-  assert.equal(before.tier, "优秀");
   assert.deepEqual(before.hiddenTask, {
     commitment: plan.hiddenTaskCommitment,
     revealed: false,
   });
-  assert.notEqual(before.reward?.resourceId, "legend");
-  assert.equal(before.rewardBundle?.items[0]?.rarity, "rare");
+  assert.equal(journeyRewardBundleForPlan(plan, "优秀").items[0]?.rarity, "rare");
 
   const after = adjudicateJourneyTask({
     plan,
     hiddenTaskSeal,
+    hiddenPrerequisiteLinks: [],
     episodes: evidence(plan, hiddenSuccessSelections, "excellent"),
     revealHidden: true,
   });
-  assert.equal(after.tier, "惊世");
   assert.equal(after.hiddenTask.completed, true);
-  assert.equal(after.reward?.resourceId, "legend");
-  assert.equal(after.rewardBundle?.items[0]?.rarity, "legendary");
+  assert.equal(journeyRewardBundleForPlan(plan, "惊世").items[0]?.rarity, "legendary");
 });
 
 test("a serialized sealed task plan cannot be adjudicated without its installation seal", () => {
   const { plan } = fixture();
   const detachedPlan = JSON.parse(JSON.stringify(plan)) as JourneyGeneratedTaskPlan;
   assert.throws(
-    () => adjudicateJourneyTask({ plan: detachedPlan, episodes: [] }),
-    /journey_hidden_task_commitment_invalid/u,
+    () => adjudicateJourneyTask({
+      plan: detachedPlan,
+      hiddenTaskSeal: undefined as never,
+      hiddenPrerequisiteLinks: [],
+      episodes: [],
+    }),
+    /journey_hidden_task_seal_invalid/u,
   );
 });

@@ -3053,8 +3053,8 @@ export interface EpochJourneyActionResolution {
   authority: "server";
   decisionKeyId: string;
   inputHash: `sha256:${string}`;
-  outcome: "exceptional_success" | "success" | "partial_success" | "failure" | "skipped";
-  completionKind: "complete" | "failed" | "skip";
+  outcome: "exceptional_success" | "success" | "partial_success" | "failure";
+  completionKind: "complete" | "failed";
   score: number;
   difficulty: number;
   margin: number;

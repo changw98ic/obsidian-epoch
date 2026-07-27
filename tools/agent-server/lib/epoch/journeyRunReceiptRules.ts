@@ -4,16 +4,12 @@ import {
   type CausalCanonicalJsonValue,
 } from "./causalCanonicalJson.ts";
 
-export const JOURNEY_RUN_RECEIPT_LEGACY_VERSION = "journey_run_receipt.v1" as const;
 export const JOURNEY_RUN_RECEIPT_VERSION = "journey_run_receipt.v2" as const;
 export const JOURNEY_RUN_RECEIPT_AUTHORITY = "server_settled" as const;
 export const JOURNEY_RUN_SCORE_CONTRACT_VERSION = "phase6_score.v2" as const;
 export const JOURNEY_RUN_SCORE_AUTHORITY = "server_authoritative" as const;
 export const JOURNEY_RUN_SCORE_FORMULA =
   "total = sum(dimensions[dimension].contribution) * decay" as const;
-export const JOURNEY_RUN_LEGACY_SCORE_ADAPTER_VERSION =
-  "journey_run_score_legacy_v1_to_phase6_v2.explicit.v1" as const;
-
 export const JOURNEY_RUN_SCORE_DIMENSIONS = [
   "objective",
   "causalImpact",
@@ -23,17 +19,6 @@ export const JOURNEY_RUN_SCORE_DIMENSIONS = [
   "efficiency",
   "survival",
   "antiFarmDecay",
-] as const;
-
-export const JOURNEY_RUN_LEGACY_SCORE_DIMENSIONS = [
-  "objective",
-  "survival",
-  "efficiency",
-  "discovery",
-  "stealth",
-  "diplomacy",
-  "world_impact",
-  "integrity",
 ] as const;
 
 export const JOURNEY_RUN_SUITABILITY_DIMENSIONS = [
@@ -50,7 +35,6 @@ export const JOURNEY_RUN_SUITABILITY_DIMENSIONS = [
 ] as const;
 
 export type JourneyRunScoreDimension = typeof JOURNEY_RUN_SCORE_DIMENSIONS[number];
-export type JourneyRunLegacyScoreDimension = typeof JOURNEY_RUN_LEGACY_SCORE_DIMENSIONS[number];
 export type JourneyRunSuitabilityDimension = typeof JOURNEY_RUN_SUITABILITY_DIMENSIONS[number];
 export type JourneyRunReceiptAuthority = typeof JOURNEY_RUN_RECEIPT_AUTHORITY;
 export type JourneyRunReceiptHash = `sha256:${string}`;
@@ -102,21 +86,7 @@ export interface JourneyRunScore {
   readonly context: JourneyRunScoreContext;
 }
 
-export type JourneyRunLegacyScore = Readonly<Record<JourneyRunLegacyScoreDimension, JourneyRunReceiptMetric>>;
 export type JourneyRunSuitability = Readonly<Record<JourneyRunSuitabilityDimension, JourneyRunReceiptMetric>>;
-
-export interface AdaptedLegacyJourneyRunScore extends Omit<JourneyRunScore, "authority" | "provenance"> {
-  readonly authority: "legacy_read_adapter";
-  readonly provenance: "legacy_v1_explicit_adapter";
-}
-
-export interface JourneyRunLegacyScoreAdapterResult {
-  readonly adapterVersion: typeof JOURNEY_RUN_LEGACY_SCORE_ADAPTER_VERSION;
-  readonly sourceVersion: typeof JOURNEY_RUN_RECEIPT_LEGACY_VERSION;
-  readonly targetContractVersion: typeof JOURNEY_RUN_SCORE_CONTRACT_VERSION;
-  readonly score: AdaptedLegacyJourneyRunScore;
-  readonly warnings: readonly ["legacy_score_has_no_intensity_or_repeat_context"];
-}
 
 export type JourneyRunDeltaOp = "set" | "increment" | "decrement" | "append" | "remove" | "link";
 
@@ -202,6 +172,7 @@ export interface JourneyRunReceipt {
   readonly catalogVersion: string;
   readonly codeVersion: string;
   readonly scenarioMatrixVersion: string;
+  readonly matrixVersion?: string;
   readonly generatedAt: string;
   readonly startedAt: string;
   readonly settledAt: string;
@@ -214,31 +185,6 @@ export interface JourneyRunReceipt {
   readonly eventIds: JourneyRunReceiptEventIds;
   readonly outcome: CausalCanonicalJsonValue;
   readonly integrity: JourneyRunReceiptIntegrity;
-}
-
-export interface LegacyJourneyRunReceiptV1 {
-  readonly receiptType: "journey_run_receipt";
-  readonly version: typeof JOURNEY_RUN_RECEIPT_LEGACY_VERSION;
-  readonly authority: JourneyRunReceiptAuthority;
-  readonly receiptId: string;
-  readonly runId: string;
-  readonly journeyId: string;
-  readonly agentId: string;
-  readonly explorerId: string;
-  readonly generatedAt: string;
-  readonly world: {
-    readonly worldId: string;
-    readonly regionId: string;
-    readonly worldTime: string;
-    readonly snapshotHash: JourneyRunReceiptHash;
-    readonly simulationVersion?: number;
-  };
-  readonly deltas: readonly JourneyRunStructuredDelta[];
-  readonly score: JourneyRunLegacyScore;
-  readonly suitability: JourneyRunSuitability;
-  readonly rag: JourneyRunRagGrounding;
-  readonly eventIds: JourneyRunReceiptEventIds;
-  readonly integrity: unknown;
 }
 
 export interface BuildJourneyRunReceiptInput {
@@ -254,6 +200,7 @@ export interface BuildJourneyRunReceiptInput {
   readonly catalogVersion: string;
   readonly codeVersion: string;
   readonly scenarioMatrixVersion: string;
+  readonly matrixVersion?: string;
   readonly generatedAt: string;
   readonly startedAt: string;
   readonly settledAt: string;
@@ -482,6 +429,7 @@ function receiptBody(receipt: Omit<JourneyRunReceipt, "integrity">) {
     catalogVersion: receipt.catalogVersion,
     codeVersion: receipt.codeVersion,
     scenarioMatrixVersion: receipt.scenarioMatrixVersion,
+    ...(receipt.matrixVersion !== undefined ? { matrixVersion: receipt.matrixVersion } : {}),
     generatedAt: receipt.generatedAt,
     startedAt: receipt.startedAt,
     settledAt: receipt.settledAt,
@@ -547,6 +495,7 @@ export function buildJourneyRunReceipt(input: BuildJourneyRunReceiptInput): Jour
     catalogVersion: input.catalogVersion.trim(),
     codeVersion: input.codeVersion.trim(),
     scenarioMatrixVersion: input.scenarioMatrixVersion.trim(),
+    ...(input.matrixVersion !== undefined ? { matrixVersion: input.matrixVersion } : {}),
     generatedAt: input.generatedAt,
     startedAt: input.startedAt,
     settledAt: input.settledAt,
@@ -584,172 +533,9 @@ export function extractJourneyRunReceiptEventIds(receipt: JourneyRunReceipt): re
   ]).filter(nonEmpty);
 }
 
-export function isLegacyJourneyRunReceiptV1(receipt: unknown): receipt is LegacyJourneyRunReceiptV1 {
-  return isRecord(receipt)
-    && receipt.receiptType === "journey_run_receipt"
-    && receipt.version === JOURNEY_RUN_RECEIPT_LEGACY_VERSION;
-}
-
-export function validateLegacyJourneyRunReceiptRead(receipt: unknown): JourneyRunReceiptValidationResult {
-  if (!isLegacyJourneyRunReceiptV1(receipt)) {
-    return { ok: false, issues: [issue("journey_run_receipt_legacy_v1_invalid", "$")] };
-  }
-  const candidate = receipt as LegacyJourneyRunReceiptV1;
-  const issues: JourneyRunReceiptValidationIssue[] = [];
-  if (candidate.authority !== JOURNEY_RUN_RECEIPT_AUTHORITY) issues.push(issue("journey_run_receipt_authority_invalid", "$.authority"));
-  for (const field of ["receiptId", "runId", "journeyId", "agentId", "explorerId"] as const) {
-    if (!nonEmpty(candidate[field])) issues.push(issue("journey_run_receipt_text_required", `$.${field}`));
-  }
-  if (!isRecord(candidate.world)) {
-    issues.push(issue("journey_run_receipt_world_invalid", "$.world"));
-  } else {
-    for (const field of ["worldId", "regionId", "worldTime"] as const) {
-      if (!nonEmpty(candidate.world[field])) issues.push(issue("journey_run_receipt_world_text_required", `$.world.${field}`));
-    }
-    if (!isSha256(candidate.world.snapshotHash)) issues.push(issue("journey_run_receipt_snapshot_hash_invalid", "$.world.snapshotHash"));
-  }
-  return { ok: issues.length === 0, issues };
-}
-
-function legacyMetricValue(score: JourneyRunLegacyScore, dimension: JourneyRunLegacyScoreDimension): number {
-  const value = score[dimension]?.value;
-  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
-  return Math.max(0, Math.min(100, value));
-}
-
-function legacyEvidence(score: JourneyRunLegacyScore, dimensions: readonly JourneyRunLegacyScoreDimension[]): readonly string[] {
-  const values = dimensions.flatMap((dimension) => score[dimension]?.evidence ?? []);
-  return [...new Set(values.filter(nonEmpty))].sort().length > 0
-    ? [...new Set(values.filter(nonEmpty))].sort()
-    : ["legacy_receipt_v1_score"];
-}
-
-export function adaptLegacyJourneyRunReceiptScoreV1(
-  receipt: LegacyJourneyRunReceiptV1,
-): JourneyRunLegacyScoreAdapterResult {
-  if (!isLegacyJourneyRunReceiptV1(receipt)) {
-    throw new TypeError("journey_run_receipt_legacy_v1_invalid:$");
-  }
-  const old = receipt.score;
-  const definitions: Readonly<Record<JourneyRunScoreDimension, {
-    readonly value: number;
-    readonly formula: string;
-    readonly inputs: Readonly<Record<string, number>>;
-    readonly evidence: readonly string[];
-  }>> = {
-    objective: {
-      value: legacyMetricValue(old, "objective"),
-      formula: "legacy.objective",
-      inputs: { legacyObjective: legacyMetricValue(old, "objective") },
-      evidence: legacyEvidence(old, ["objective"]),
-    },
-    causalImpact: {
-      value: legacyMetricValue(old, "world_impact"),
-      formula: "legacy.world_impact",
-      inputs: { legacyWorldImpact: legacyMetricValue(old, "world_impact") },
-      evidence: legacyEvidence(old, ["world_impact"]),
-    },
-    execution: {
-      value: legacyMetricValue(old, "objective") * 0.5
-        + legacyMetricValue(old, "efficiency") * 0.3
-        + legacyMetricValue(old, "discovery") * 0.2,
-      formula: "legacy.objective * 0.50 + legacy.efficiency * 0.30 + legacy.discovery * 0.20",
-      inputs: {
-        legacyObjective: legacyMetricValue(old, "objective"),
-        legacyEfficiency: legacyMetricValue(old, "efficiency"),
-        legacyDiscovery: legacyMetricValue(old, "discovery"),
-      },
-      evidence: legacyEvidence(old, ["objective", "efficiency", "discovery"]),
-    },
-    risk: {
-      value: legacyMetricValue(old, "stealth") * 0.4
-        + legacyMetricValue(old, "survival") * 0.35
-        + legacyMetricValue(old, "efficiency") * 0.25,
-      formula: "legacy.stealth * 0.40 + legacy.survival * 0.35 + legacy.efficiency * 0.25",
-      inputs: {
-        legacyStealth: legacyMetricValue(old, "stealth"),
-        legacySurvival: legacyMetricValue(old, "survival"),
-        legacyEfficiency: legacyMetricValue(old, "efficiency"),
-      },
-      evidence: legacyEvidence(old, ["stealth", "survival", "efficiency"]),
-    },
-    integrity: {
-      value: legacyMetricValue(old, "integrity"),
-      formula: "legacy.integrity",
-      inputs: { legacyIntegrity: legacyMetricValue(old, "integrity") },
-      evidence: legacyEvidence(old, ["integrity"]),
-    },
-    efficiency: {
-      value: legacyMetricValue(old, "efficiency"),
-      formula: "legacy.efficiency",
-      inputs: { legacyEfficiency: legacyMetricValue(old, "efficiency") },
-      evidence: legacyEvidence(old, ["efficiency"]),
-    },
-    survival: {
-      value: legacyMetricValue(old, "survival"),
-      formula: "legacy.survival",
-      inputs: { legacySurvival: legacyMetricValue(old, "survival") },
-      evidence: legacyEvidence(old, ["survival"]),
-    },
-    antiFarmDecay: {
-      value: 100,
-      formula: "legacy_v1_missing_repeat_context => 100",
-      inputs: { legacyRepeatContextAvailable: 0 },
-      evidence: ["legacy_receipt_v1_score"],
-    },
-  };
-  const dimensions = Object.fromEntries(JOURNEY_RUN_SCORE_DIMENSIONS.map((dimension) => {
-    const definition = definitions[dimension];
-    const value = Math.round(Math.max(0, Math.min(100, definition.value)) * 1e6) / 1e6;
-    const weightBps = JOURNEY_RUN_SCORE_WEIGHT_BPS[dimension];
-    return [dimension, {
-      value,
-      evidence: definition.evidence,
-      events: definition.evidence,
-      weightBps,
-      contribution: value * weightBps / 10_000,
-      reasonCode: `legacy_v1_explicit_adapter_${dimension}`,
-      formula: definition.formula,
-      inputs: definition.inputs,
-      inputContributions: definition.inputs,
-    }];
-  })) as Readonly<Record<JourneyRunScoreDimension, JourneyRunScoreMetric>>;
-  const weightedTotal = Object.values(dimensions).reduce((sum, metric) => sum + metric.contribution, 0);
-  return {
-    adapterVersion: JOURNEY_RUN_LEGACY_SCORE_ADAPTER_VERSION,
-    sourceVersion: JOURNEY_RUN_RECEIPT_LEGACY_VERSION,
-    targetContractVersion: JOURNEY_RUN_SCORE_CONTRACT_VERSION,
-    score: {
-      contractVersion: JOURNEY_RUN_SCORE_CONTRACT_VERSION,
-      authority: "legacy_read_adapter",
-      provenance: "legacy_v1_explicit_adapter",
-      formula: JOURNEY_RUN_SCORE_FORMULA,
-      dimensions,
-      weightedTotal,
-      decay: 1,
-      total: weightedTotal,
-      context: {
-        difficultyBaseline: 0,
-        combatPowerBaseline: 0,
-        expectedPerformanceBaseline: 0,
-        observedPerformance: 0,
-        performanceDeltaFromBaseline: 0,
-        scoringUse: "context_only_not_weighted",
-      },
-    },
-    warnings: ["legacy_score_has_no_intensity_or_repeat_context"],
-  };
-}
-
 export function validateJourneyRunReceipt(receipt: unknown): JourneyRunReceiptValidationResult {
   const issues: JourneyRunReceiptValidationIssue[] = [];
   if (!isRecord(receipt)) return { ok: false, issues: [issue("journey_run_receipt_invalid", "$")] };
-  if (isLegacyJourneyRunReceiptV1(receipt)) {
-    return {
-      ok: false,
-      issues: [issue("journey_run_receipt_legacy_v1_not_strict", "$.version")],
-    };
-  }
   const candidate = receipt as unknown as JourneyRunReceipt;
   if (candidate.receiptType !== "journey_run_receipt") issues.push(issue("journey_run_receipt_type_invalid", "$.receiptType"));
   if (candidate.version !== JOURNEY_RUN_RECEIPT_VERSION) issues.push(issue("journey_run_receipt_version_invalid", "$.version"));

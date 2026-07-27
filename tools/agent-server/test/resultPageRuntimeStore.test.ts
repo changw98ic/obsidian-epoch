@@ -4,11 +4,27 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { projectEpochEvents } from "../lib/epoch/gameCore.ts";
+import {
+  buildFallbackJourneyTaskPlan,
+  type JourneyGeneratedTaskPlan,
+  type JourneyHiddenTaskSealResolver,
+} from "../lib/epoch/journeyGeneratedTaskRules.ts";
+import {
+  generateTaskPlanJourneySceneEpisodes,
+  type JourneyAvailableWorldObject,
+  type JourneyRegionContext,
+} from "../lib/epoch/journeySceneRules.ts";
 import { resultPageReceipt } from "../lib/epoch/resultPageReceiptRules.ts";
 import { createResultPageRuntimeStore } from "../lib/epoch/resultPageRuntimeStore.ts";
 import { resultPageShareTokenHash, stableResultPageJson } from "../lib/epoch/resultPageRuntimeRules.ts";
 import { sha256Hex } from "../lib/epoch/runtimeAuth.ts";
 import { buildPersistedJourneyNarrative, buildServerJourneyEpisodeFacts } from "../lib/epoch/journeyNarrativeRules.ts";
+import { buildGroundedJourneyStoryReport } from "../lib/epoch/journeyStoryReport.ts";
+import {
+  CANON_THRESHOLD_BPS,
+  CONSEQUENCE_SCORE_POLICY_VERSION,
+  SETTLEMENT_POLICY_VERSION,
+} from "../lib/epoch/journeySettlementRules.ts";
 import type { EpochEvent } from "../lib/epoch/events.ts";
 import type { EpochIdFactory } from "../lib/epoch/protocol.ts";
 import type {
@@ -69,34 +85,109 @@ function payload(overrides: Partial<EpochResultPagePayload> = {}): EpochResultPa
 function groundedJourneyFixture() {
   const journeyId = "journey_restore";
   const correlationId = `journey:${journeyId}`;
-  const phases = ["arrival", "main", "return"] as const;
-  const episodes = phases.map((phase, index) => {
-    const episodeId = `${journeyId}:${phase}`;
-    const eventId = `event_${phase}`;
+  const region: JourneyRegionContext = {
+    id: "region_gray_harbor",
+    type: "region",
+    label: "灰港",
+    sourceFactIds: ["world:region:region_gray_harbor"],
+  };
+  const availableWorldObjects: readonly JourneyAvailableWorldObject[] = [
+    region,
+    {
+      id: "location_gray_harbor_civic_ledger",
+      type: "workplace",
+      label: "灰港民务账房",
+      regionId: region.id,
+      sourceFactIds: ["world:location:gray_harbor_civic_ledger"],
+    },
+    {
+      id: "organization_gray_harbor_civic_office",
+      type: "organization",
+      label: "灰港民务所",
+      regionId: region.id,
+      sourceFactIds: ["world:organization:gray_harbor_civic_office"],
+    },
+    {
+      id: "npc_night_clerk_kelan",
+      type: "npc",
+      label: "夜班书记珂岚",
+      regionId: region.id,
+      sourceFactIds: ["world:npc:night_clerk_kelan"],
+    },
+    {
+      id: "document_gray_harbor_salt_ledger",
+      type: "document",
+      label: "灰港盐票账册",
+      regionId: region.id,
+      sourceFactIds: ["world:document:gray_harbor_salt_ledger"],
+    },
+  ];
+  const installation = buildFallbackJourneyTaskPlan({
+    taskType: "验证恢复",
+    scenarioMapId: region.id,
+    availableWorldObjects,
+  });
+  const scenePlan = generateTaskPlanJourneySceneEpisodes({
+    plan: installation.plan,
+    region,
+    availableWorldObjects,
+  });
+  const failedObjectiveId = installation.plan.objectives.find((objective) => objective.kind === "main")?.objectiveId;
+  const episodes = scenePlan.episodes.map((sceneEpisode, index) => {
+    const objective = sceneEpisode.generatedTaskObjective;
+    const failed = objective?.objectiveId === failedObjectiveId;
+    const action = objective?.actions[0];
+    const optionKey = action?.optionKey ?? `${sceneEpisode.phase ?? "scene"}_${index}`;
+    const optionLabel = action?.label ?? `${sceneEpisode.title}行动`;
+    const outcomeSummary = action?.outcomeSummary ?? `${sceneEpisode.title}已由服务器确认。`;
+    const episodeId = `episode_${index + 1}`;
+    const eventId = `event_${index + 1}`;
+    const taskAction = objective
+      ? {
+          optionKey,
+          optionLabel,
+          outcomeSummary,
+          taskObjectiveId: objective.objectiveId,
+          completionKind: failed ? "failed" as const : "complete" as const,
+        }
+      : { optionKey, optionLabel, outcomeSummary };
     const serverFacts = buildServerJourneyEpisodeFacts({
       journeyId,
       episodeId,
-      phase,
-      title: `旅程${index + 1}`,
-      agent: { id: "agent_1" },
-      worldObjectRefs: [],
-      action: { optionLabel: `完成${phase}`, outcomeSummary: `${phase}已结算` },
+      phase: sceneEpisode.phase ?? "main",
+      title: sceneEpisode.title,
+      agent: { id: "agent_1", displayName: "调查员" },
+      worldObjectRefs: sceneEpisode.worldObjectRefs,
+      action: taskAction,
       canonicalEventIds: [eventId],
     });
     return {
+      ...sceneEpisode,
       episodeId,
-      title: `旅程${index + 1}`,
-      outcomeKey: `${phase}_settled`,
-      participants: [],
+      generatedTaskObjective: objective,
       sourceEventIds: [eventId],
       serverFacts,
       narrative: buildPersistedJourneyNarrative({ serverFacts }).value,
+      settlement: {
+        canonicalEventIds: [eventId],
+        outcomeSummary,
+        ...(objective ? {
+          taskObjective: {
+            objectiveId: objective.objectiveId,
+            completionKind: failed ? "failed" as const : "complete" as const,
+          },
+        } : {}),
+      },
     };
   });
   const canonicalEventIds = episodes.flatMap((episode) => episode.serverFacts.sourceEventIds);
   const canonicalEpochEvents = episodes.flatMap((episode, index) => {
     const eventId = canonicalEventIds[index]!;
     const sessionId = `session_${eventId}`;
+    const actionOptionId = `action_${eventId}`;
+    const journeyResolution = episode.generatedTaskObjective
+      ? { completionKind: episode.settlement?.taskObjective?.completionKind }
+      : undefined;
     const common = {
       aggregateType: "hosted_session",
       aggregateId: sessionId,
@@ -113,15 +204,65 @@ function groundedJourneyFixture() {
       eventType: "hosted_session_started",
       payload: {
         sessionId,
-        sceneContract: { journeyId, episodeId: episode.episodeId },
+        sceneContract: {
+          journeyId,
+          episodeId: episode.episodeId,
+          actionOptions: [{ actionOptionId }],
+        },
       },
     }, {
       ...common,
       eventId,
       eventType: "hosted_action_recorded",
-      payload: { sessionId },
+      payload: {
+        sessionId,
+        actionOptionId,
+        ...(journeyResolution ? { journeyResolution } : {}),
+      },
     }] as unknown as readonly EpochEvent[];
   });
+  const worldCommit = {
+    mode: "mirror" as const,
+    status: "discarded" as const,
+    completionTier: "未及格" as const,
+    reason: "main_incomplete" as const,
+    regionId: region.id,
+    committedAtWorldTime: "2026-07-06T00:30:00.000Z",
+    influenceDelta: 0,
+    factionStandings: [],
+    npcRelationships: [],
+    sourceEventIds: [],
+    completionScoreBps: 0,
+    canonThresholdBps: CANON_THRESHOLD_BPS,
+    settlementPolicyVersion: SETTLEMENT_POLICY_VERSION,
+    consequenceScorePolicyVersion: CONSEQUENCE_SCORE_POLICY_VERSION,
+    settlementId: "settlement_restore",
+    consequenceScoreBreakdown: {
+      resultScoreBps: 0,
+      selfLossScoreBps: 0,
+      collateralScoreBps: 0,
+    },
+  };
+  const identity = {
+    status: "active",
+    lifetime: { max: 100, remaining: 80, startedAt: "2026-07-06T00:00:00.000Z" },
+    personality: { traits: [], driftIds: [] },
+  } as const;
+  const storyReport = buildGroundedJourneyStoryReport({
+    journeyId,
+    status: "settled",
+    objective: "验证恢复",
+    regionId: region.id,
+    startedAtWorldTime: "2026-07-06T00:00:00.000Z",
+    dueAtWorldTime: "2026-07-06T00:30:00.000Z",
+    episodes,
+    taskPlan: installation.plan,
+    hiddenTaskSeal: installation.hiddenTaskSeal,
+    hiddenPrerequisiteLinks: [],
+    worldCommit,
+    identity,
+  });
+  assert.ok(storyReport);
   return {
     journey: {
       journeyId,
@@ -129,10 +270,17 @@ function groundedJourneyFixture() {
       status: "settled",
       objective: "验证恢复",
       regionId: "region_gray_harbor",
+      worldMode: "mirror",
+      startedAtWorldTime: "2026-07-06T00:00:00.000Z",
+      dueAtWorldTime: "2026-07-06T00:30:00.000Z",
       episodes,
       canonicalEventIds,
+      taskPlan: installation.plan,
+      worldCommit,
+      storyReport,
     },
     canonicalEpochEvents,
+    hiddenTaskSeal: installation.hiddenTaskSeal,
   };
 }
 
@@ -140,6 +288,7 @@ function createHarness(input: {
   readonly initialPages?: readonly EpochSharedResultPage[];
   readonly nowIso?: string;
   readonly canonicalEpochEvents?: readonly EpochEvent[];
+  readonly resolveJourneyHiddenTaskSeal?: JourneyHiddenTaskSealResolver;
   readonly strictAuth?: boolean;
   readonly recoveryCodes?: Readonly<Record<string, string>>;
 } = {}) {
@@ -154,6 +303,7 @@ function createHarness(input: {
     idFactory,
     initialPages: input.initialPages,
     canonicalEpochEvents: () => input.canonicalEpochEvents || [],
+    resolveJourneyHiddenTaskSeal: input.resolveJourneyHiddenTaskSeal,
     assertExplorerAuth: (request, explorerId) => {
       authCalls += 1;
       const recoveryCode = input.recoveryCodes?.[explorerId]
@@ -365,18 +515,24 @@ test("result page runtime store hydrates initial pages for idempotency and recen
 
 test("result page hydration revalidates Journey grounding, canonical provenance, receipts, and revisions", () => {
   const fixture = groundedJourneyFixture();
-  const created = createHarness({ canonicalEpochEvents: fixture.canonicalEpochEvents }).store.createFromPayload({
+  const resolver: JourneyHiddenTaskSealResolver = (_journeyId: string, _plan: JourneyGeneratedTaskPlan) => fixture.hiddenTaskSeal;
+  const canonicalOptions = {
+    canonicalEpochEvents: fixture.canonicalEpochEvents,
+    resolveJourneyHiddenTaskSeal: resolver,
+  };
+  const created = createHarness(canonicalOptions).store.createFromPayload({
     idempotencyKey: "journey_restore_page",
     actorExplorerId: "explorer_1",
   }, payload({ journey: fixture.journey })).page;
 
   const restored = createHarness({
+    ...canonicalOptions,
     initialPages: [created],
-    canonicalEpochEvents: fixture.canonicalEpochEvents,
   });
   assert.equal(restored.store.get(created.pageId)?.payload?.journey?.status, "settled");
 
   assert.throws(() => createHarness({
+    ...canonicalOptions,
     initialPages: [created],
     canonicalEpochEvents: [],
   }), /result_page_journey_provenance_invalid/);
@@ -390,11 +546,12 @@ test("result page hydration revalidates Journey grounding, canonical provenance,
       : episode),
   };
   assert.throws(() => createHarness({
+    ...canonicalOptions,
     initialPages: [{ ...created, payload: payload({ ...created.payload, journey: pollutedJourney }) }],
-    canonicalEpochEvents: fixture.canonicalEpochEvents,
   }), /result_page_journey_grounding_invalid/);
 
   assert.throws(() => createHarness({
+    ...canonicalOptions,
     initialPages: [{
       ...created,
       payload: { ...created.payload!, receipt: { ...created.payload!.receipt, payloadHash: "sha256:forged" } },
@@ -403,22 +560,27 @@ test("result page hydration revalidates Journey grounding, canonical provenance,
   }), /result_page_receipt_invalid/);
 
   assert.throws(() => createHarness({
+    ...canonicalOptions,
     initialPages: [{ ...created, shareVersion: (created.shareVersion || 1) + 1 }],
     canonicalEpochEvents: fixture.canonicalEpochEvents,
   }), /result_page_revision_invalid/);
   assert.throws(() => createHarness({
+    ...canonicalOptions,
     initialPages: [{ ...created, shareVersion: 0 }],
     canonicalEpochEvents: fixture.canonicalEpochEvents,
   }), /result_page_revision_invalid/);
   assert.throws(() => createHarness({
+    ...canonicalOptions,
     initialPages: [{ ...created, shareVersion: null } as unknown as EpochSharedResultPage],
     canonicalEpochEvents: fixture.canonicalEpochEvents,
   }), /result_page_revision_invalid/);
   assert.throws(() => createHarness({
+    ...canonicalOptions,
     initialPages: [{ ...created, status: "" } as unknown as EpochSharedResultPage],
     canonicalEpochEvents: fixture.canonicalEpochEvents,
   }), /result_page_revision_invalid/);
   assert.throws(() => createHarness({
+    ...canonicalOptions,
     initialPages: [{
       ...created,
       payload: {
@@ -429,6 +591,7 @@ test("result page hydration revalidates Journey grounding, canonical provenance,
     canonicalEpochEvents: fixture.canonicalEpochEvents,
   }), /result_page_receipt_invalid/);
   assert.throws(() => createHarness({
+    ...canonicalOptions,
     initialPages: [{
       ...created,
       payload: {
@@ -442,6 +605,7 @@ test("result page hydration revalidates Journey grounding, canonical provenance,
     canonicalEpochEvents: fixture.canonicalEpochEvents,
   }), /result_page_receipt_invalid/);
   assert.throws(() => createHarness({
+    ...canonicalOptions,
     initialPages: [{
       ...created,
       payload: {
@@ -457,6 +621,7 @@ test("result page hydration revalidates Journey grounding, canonical provenance,
     canonicalEpochEvents: fixture.canonicalEpochEvents,
   }), /result_page_receipt_invalid/);
   assert.throws(() => createHarness({
+    ...canonicalOptions,
     initialPages: [{
       ...created,
       payload: {

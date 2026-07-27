@@ -1,32 +1,39 @@
+export const PHASE6_MATRIX_VERSION = "phase6-matrix-v3" as const;
+
 export const PHASE6_AUTHORITATIVE_SCENARIO_MATRIX = {
   id: "obsidian_epoch.phase6.authoritative_scenario_matrix",
   version: "obsidian-epoch-phase6-scenario-matrix-v0.2.0",
+  matrixVersion: PHASE6_MATRIX_VERSION,
 } as const;
 
 export type Phase6ScenarioIntensity = "low" | "medium" | "high" | "dynamic";
 export type Phase6ScenarioPreparedness = "prepared" | "underprepared" | "borderline" | "mismatched" | "specialist" | "mixed";
+export type Phase6OfferSource = "catalog" | "server_ai" | "region_pool";
+export type Phase6StrategySnapshotHint = "logistics" | "combat" | "support" | "cunning" | "exploration";
 
 export interface Phase6AuthoritativeScenario {
   readonly runIndex: number;
   readonly tag: string;
   readonly intensity: Phase6ScenarioIntensity;
   readonly preparedness: Phase6ScenarioPreparedness;
-  readonly taskType: string;
+  readonly taskFamilyId: string;
+  readonly offerSource: Phase6OfferSource;
+  readonly strategySnapshotHint: Phase6StrategySnapshotHint;
   readonly primaryObjective: string;
   readonly coverage: readonly string[];
 }
 
 export const PHASE6_AUTHORITATIVE_SCENARIOS = [
-  { runIndex: 1, tag: "low-prepared-resource", intensity: "low", preparedness: "prepared", taskType: "resource_acquisition", primaryObjective: "resource_acquisition", coverage: ["warehouse_inflow"] },
-  { runIndex: 2, tag: "low-underprepared-information", intensity: "low", preparedness: "underprepared", taskType: "information_acquisition", primaryObjective: "information_acquisition", coverage: ["conservative_withdrawal"] },
-  { runIndex: 3, tag: "medium-prepared-structured", intensity: "medium", preparedness: "prepared", taskType: "structured_challenge", primaryObjective: "structured_challenge", coverage: ["skill_and_consumable_use"] },
-  { runIndex: 4, tag: "medium-borderline-companion", intensity: "medium", preparedness: "borderline", taskType: "companion_support", primaryObjective: "companion_support", coverage: ["stress_and_route_choice"] },
-  { runIndex: 5, tag: "medium-mismatched-preserve", intensity: "medium", preparedness: "mismatched", taskType: "resource_preservation", primaryObjective: "resource_preservation", coverage: ["suitability_penalty"] },
-  { runIndex: 6, tag: "high-prepared-priority", intensity: "high", preparedness: "prepared", taskType: "priority_commission", primaryObjective: "priority_commission", coverage: ["high_risk_high_cost_success"] },
-  { runIndex: 7, tag: "high-underprepared-crisis", intensity: "high", preparedness: "underprepared", taskType: "crisis_retreat", primaryObjective: "crisis_retreat", coverage: ["failure_injury_insurance"] },
-  { runIndex: 8, tag: "medium-prepared-cultivation", intensity: "medium", preparedness: "prepared", taskType: "cultivation_material", primaryObjective: "cultivation_material", coverage: ["cultivation_progress_or_reason"] },
-  { runIndex: 9, tag: "medium-specialist-crafting", intensity: "medium", preparedness: "specialist", taskType: "crafting_material", primaryObjective: "crafting_material", coverage: ["forging_or_tailoring_input"] },
-  { runIndex: 10, tag: "dynamic-mixed-repeat", intensity: "dynamic", preparedness: "mixed", taskType: "repeated_route_audit", primaryObjective: "repeated_route_audit", coverage: ["world_memory_rag_dedup_antifarm"] },
+  { runIndex: 1, tag: "low-prepared-resource", intensity: "low", preparedness: "prepared", taskFamilyId: "resource_acquisition", offerSource: "catalog", strategySnapshotHint: "logistics", primaryObjective: "resource_acquisition", coverage: ["warehouse_inflow"] },
+  { runIndex: 2, tag: "low-underprepared-information", intensity: "low", preparedness: "underprepared", taskFamilyId: "information_acquisition", offerSource: "region_pool", strategySnapshotHint: "cunning", primaryObjective: "information_acquisition", coverage: ["conservative_withdrawal"] },
+  { runIndex: 3, tag: "medium-prepared-structured", intensity: "medium", preparedness: "prepared", taskFamilyId: "structured_challenge", offerSource: "server_ai", strategySnapshotHint: "combat", primaryObjective: "structured_challenge", coverage: ["skill_and_consumable_use"] },
+  { runIndex: 4, tag: "medium-borderline-companion", intensity: "medium", preparedness: "borderline", taskFamilyId: "companion_support", offerSource: "catalog", strategySnapshotHint: "support", primaryObjective: "companion_support", coverage: ["stress_and_route_choice"] },
+  { runIndex: 5, tag: "medium-mismatched-preserve", intensity: "medium", preparedness: "mismatched", taskFamilyId: "resource_preservation", offerSource: "region_pool", strategySnapshotHint: "logistics", primaryObjective: "resource_preservation", coverage: ["suitability_penalty"] },
+  { runIndex: 6, tag: "high-prepared-priority", intensity: "high", preparedness: "prepared", taskFamilyId: "priority_commission", offerSource: "server_ai", strategySnapshotHint: "combat", primaryObjective: "priority_commission", coverage: ["high_risk_high_cost_success"] },
+  { runIndex: 7, tag: "high-underprepared-crisis", intensity: "high", preparedness: "underprepared", taskFamilyId: "crisis_retreat", offerSource: "catalog", strategySnapshotHint: "cunning", primaryObjective: "crisis_retreat", coverage: ["failure_injury_insurance"] },
+  { runIndex: 8, tag: "medium-prepared-cultivation", intensity: "medium", preparedness: "prepared", taskFamilyId: "cultivation_material", offerSource: "server_ai", strategySnapshotHint: "exploration", primaryObjective: "cultivation_material", coverage: ["cultivation_progress_or_reason"] },
+  { runIndex: 9, tag: "medium-specialist-crafting", intensity: "medium", preparedness: "specialist", taskFamilyId: "crafting_material", offerSource: "region_pool", strategySnapshotHint: "logistics", primaryObjective: "crafting_material", coverage: ["forging_or_tailoring_input"] },
+  { runIndex: 10, tag: "dynamic-mixed-repeat", intensity: "dynamic", preparedness: "mixed", taskFamilyId: "repeated_route_audit", offerSource: "catalog", strategySnapshotHint: "exploration", primaryObjective: "repeated_route_audit", coverage: ["world_memory_rag_dedup_antifarm"] },
 ] as const satisfies readonly Phase6AuthoritativeScenario[];
 
 export function phase6ScenarioForRun(runIndex: number): Phase6AuthoritativeScenario {
@@ -35,9 +42,16 @@ export function phase6ScenarioForRun(runIndex: number): Phase6AuthoritativeScena
   return scenario;
 }
 
-export function assertPhase6ScenarioBinding(runIndex: number, scenarioTag: string, taskType?: string): Phase6AuthoritativeScenario {
+/** Assert the complete scenario binding against the authoritative matrix. */
+export function assertPhase6ScenarioBinding(
+  runIndex: number,
+  scenarioTag: string,
+  taskFamilyId: string,
+): Phase6AuthoritativeScenario {
   const scenario = phase6ScenarioForRun(runIndex);
   if (scenarioTag !== scenario.tag) throw new Error("phase6_scenario_tag_mismatch");
-  if (taskType !== undefined && taskType !== scenario.taskType) throw new Error("phase6_scenario_task_type_mismatch");
+  if (!taskFamilyId || taskFamilyId !== scenario.taskFamilyId) {
+    throw new Error("phase6_scenario_task_family_mismatch");
+  }
   return scenario;
 }

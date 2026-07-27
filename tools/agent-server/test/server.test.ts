@@ -7455,11 +7455,8 @@ test("HTTP renders public world overview with news, result pages and archives", 
     assert.equal(worldOverview.body.publicPages.install, "/epoch/install");
     assert.ok(worldOverview.body.news.some((item: { newsId: string; headline: string }) =>
       item.newsId === news.body.value.newsId && item.headline === news.body.value.headline));
-    assert.ok(worldOverview.body.recentResults.some((page: { pageId: string; urlPath: string; expiresAt?: string; receiptHash: string }) =>
-      page.pageId === resultPage.body.page.pageId
-      && page.urlPath === resultPage.body.page.urlPath
-      && page.expiresAt === resultPage.body.page.expiresAt
-      && page.receiptHash === "legacy:no-receipt"));
+    assert.equal(worldOverview.body.recentResults.some((page: { pageId: string }) =>
+      page.pageId === resultPage.body.page.pageId), false);
     assert.ok(worldOverview.body.legendaryDeaths.some((death: { agentId: string; publicPages: { archive: string } }) =>
       death.agentId === agentId && death.publicPages.archive === `/epoch/archive/${encodeURIComponent(agentId)}`));
     assert.ok(worldOverview.body.recentLoreContributions.some((contribution: {

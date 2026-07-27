@@ -36,7 +36,12 @@ export async function handleEpochIdentityRoutes(context: IdentityRouteContext): 
   if (method === "POST" && pathname === "/api/epoch/recovery/rotate") {
     const result = runtime.epochRotateRecovery(await context.readJsonBody(request, maxBodyBytes));
     await context.persistEpochEvents(result);
-    context.sendJson(request, response, 200, result, allowedOrigins);
+    // Filter out expectedLifePattern from public projection (contains inputHash — zero-info principle)
+    // Use JSON replacer for reliable filtering even on frozen/readonly objects.
+    const filtered = JSON.parse(JSON.stringify(result, (_key: string, value: unknown) =>
+      _key === "expectedLifePattern" ? undefined : value
+    ));
+    context.sendJson(request, response, 200, filtered, allowedOrigins);
     return true;
   }
 

@@ -21,6 +21,8 @@ interface IdentityProfile {
   readonly needs: Readonly<Record<string, number>>;
   readonly strongestNeeds: readonly { readonly key: string; readonly value: number }[];
   readonly resources: Readonly<Record<string, number>>;
+  /** PR6 additive. Primary strategy for approach alignment bonus. */
+  readonly strategyPrimary?: string;
 }
 
 interface SignedActionOption {
@@ -29,7 +31,6 @@ interface SignedActionOption {
   readonly label: string;
   readonly intent: string;
   readonly risk: JourneyRisk;
-  readonly completionKind?: string;
   readonly factionObjectId?: string;
   readonly raw: JsonObject;
 }
@@ -214,7 +215,6 @@ function signedOptions(sceneContract: JsonObject): readonly SignedActionOption[]
       label: stringValue(option.label, `actionOptions[${index}].label`),
       intent: optionalString(option.intent) ?? stringValue(option.label, `actionOptions[${index}].label`),
       risk,
-      ...(optionalString(option.completionKind) ? { completionKind: optionalString(option.completionKind) } : {}),
       ...(optionalString(routeSelection?.factionObjectId)
         ? { factionObjectId: optionalString(routeSelection?.factionObjectId) }
         : {}),
@@ -267,6 +267,77 @@ function preferredRisk(profile: IdentityProfile): number {
   return Math.max(0, Math.min(2, preferred));
 }
 
+// ─── PR6: Approach alignment bonus ──────────────────────────────────────────
+
+/**
+ * Strategy → primary approach affinity map. Mirrors AFFINITY_MATRIX from
+ * journeyStrategyRules.ts: a strategy has affinity 100 for its primary approach,
+ * 50 for secondary approaches, and 0 for unrelated ones.
+ *
+ * This is the SOAK-RUNTIME copy used for non-authoritative scoring. The
+ * authoritative copy lives in journeyStrategyRules.ts.
+ */
+const STRATEGY_PRIMARY_APPROACH: Readonly<Record<string, string>> = Object.freeze({
+  combat: "combat",
+  cunning: "stealth",
+  support: "support",
+  logistics: "logistics",
+  exploration: "scout",
+});
+
+const APPROACH_SIGNAL_SUPPORT = /support|assist|help|aid|protect|shield|heal|支援|协助|帮助|保护|治疗/iu;
+const APPROACH_SIGNAL_STEALTH = /stealth|avoid|sneak|hide|evade|潜行|回避|避开|隐匿|悄|无声/iu;
+const APPROACH_SIGNAL_LOGISTICS = /logistics|supply|carry|transport|stockpile|provision|后勤|补给|搬运|储备|采购/iu;
+const APPROACH_SIGNAL_DIPLOMACY = /diplomacy|negotiate|parley|liaison|外交|谈判|联络|斡旋|交涉/iu;
+const APPROACH_SIGNAL_SCOUT = /scout|recon|explore|survey|discover|侦察|侦察|探索|勘察|发现/iu;
+const APPROACH_SIGNAL_COMBAT = /combat|fight|attack|defend|engage|assault|战斗|攻击|防御|迎击|突击/iu;
+
+/**
+ * Derive the dominant approach tag from action text. Returns the tag string
+ * or undefined if no signal matches. Mirrors the logic in
+ * journeyGeneratedTaskRules.deriveActionApproachTags but without importing it
+ * (soak runtime is standalone).
+ */
+function deriveApproachFromText(text: string): string | undefined {
+  if (APPROACH_SIGNAL_SUPPORT.test(text)) return "support";
+  if (APPROACH_SIGNAL_STEALTH.test(text)) return "stealth";
+  if (APPROACH_SIGNAL_LOGISTICS.test(text)) return "logistics";
+  if (APPROACH_SIGNAL_DIPLOMACY.test(text)) return "diplomacy";
+  if (APPROACH_SIGNAL_SCOUT.test(text)) return "scout";
+  if (APPROACH_SIGNAL_COMBAT.test(text)) return "combat";
+  return undefined;
+}
+
+/**
+ * Compute the approach alignment bonus for a scored action option.
+ *
+ * Primary-strategy-aligned actions get +8 (narrative preference).
+ * Actions that fully violate the primary get -5 (narrative penalty).
+ * Neutral actions get 0.
+ *
+ * Non-hard filter: this is a scoring hint, not a gate.
+ */
+function computeApproachAlignment(text: string, strategyPrimary: string | undefined): number {
+  if (!strategyPrimary) return 0;
+  const primaryApproach = STRATEGY_PRIMARY_APPROACH[strategyPrimary];
+  if (!primaryApproach) return 0;
+  const actionApproach = deriveApproachFromText(text);
+  if (!actionApproach) return 0;
+  // Primary match: +8
+  if (actionApproach === primaryApproach) return 8;
+  // Opposite of primary (hard violation): -5
+  // Map: combat↔stealth, support↔combat, logistics↔scout
+  const violations: Readonly<Record<string, string>> = {
+    combat: "stealth",
+    stealth: "combat",
+    support: "combat",
+    logistics: "scout",
+    exploration: "logistics",
+  };
+  if (violations[strategyPrimary] === actionApproach) return -5;
+  return 0;
+}
+
 function chooseAction(input: {
   readonly agentId: string;
   readonly profile: IdentityProfile;
@@ -281,51 +352,26 @@ function chooseAction(input: {
     optionalString(input.objective.objective),
     optionalString(input.objective.description),
   ].filter(Boolean).join(" ");
-  const pressure = maxPhysiologicalNeed(input.profile);
-  const skipOption = input.options.find((option) => option.completionKind === "skip");
   const isSide = objectiveKind === "side";
-  const aligned = goalAlignment(input.profile, objectiveText) > 0;
-  const resourceStrain = !input.options.some((option) => {
-    if (option.completionKind === "skip") return false;
-    const cost = riskResourceCost(option);
-    return !cost || (input.profile.resources[cost.resourceId] ?? 0) >= cost.amount;
-  });
-  const skipDisposition = stableUnit(input.agentId, objectiveId, input.profile.traits.join("|"));
-  const shouldSkipSide = isSide && Boolean(skipOption) && (
-    pressure >= 6_500
-    || (resourceStrain && !aligned)
-    || (!aligned && skipDisposition >= 0.52)
-  );
-  if (shouldSkipSide && skipOption) {
-    return {
-      selected: skipOption,
-      rationale: `${input.profile.identityName}把当前生理压力、资源余量和人生目标放在额外支线之前，因此不介入该支线。`,
-      scores: input.options.map((option) => ({
-        actionOptionId: option.actionOptionId,
-        label: option.label,
-        score: option.actionOptionId === skipOption.actionOptionId ? 100 : 0,
-      })),
-    };
-  }
+  // PR6: derive strategy primary for approach alignment bonus.
+  const strategyPrimary = input.profile.strategyPrimary;
 
   const wantedRisk = preferredRisk(input.profile);
   const scored = input.options.map((option) => {
     const text = `${objectiveText} ${option.label} ${option.intent}`;
     let score = 35 - Math.abs(RISK_VALUE[option.risk] - wantedRisk) * 18;
-    if (option.completionKind !== "skip") score += goalAlignment(input.profile, text) * 24;
-    if (isSide && option.completionKind !== "skip"
+    score += goalAlignment(input.profile, text) * 24;
+    if (isSide
       && /愿意帮助他人|重情/u.test(input.profile.traits.join(" "))) score += 18;
     score += stableUnit(input.agentId, objectiveId, option.actionOptionId) * 18;
     if (option.factionObjectId) score += stableUnit(input.agentId, option.factionObjectId) * 16;
     score += riskSuccessReward(option) * 6;
     const cost = riskResourceCost(option);
     if (cost && (input.profile.resources[cost.resourceId] ?? 0) < cost.amount) score -= 120;
-    if (option.completionKind === "skip") {
-      score -= isSide ? 12 : 65;
-      if (pressure >= 9_000) score += 90;
-      if (aligned && isSide) score -= 24;
-      if (!aligned && isSide) score += 16;
-    }
+    // PR6: approach alignment bonus. Primary-strategy-aligned actions get +8;
+    // actions that fully violate the primary get -5. Non-hard filter.
+    const approachAlignmentBonus = computeApproachAlignment(text, strategyPrimary);
+    score += approachAlignmentBonus;
     return { option, score: Math.round(score * 100) / 100 };
   }).sort((left, right) => right.score - left.score
     || left.option.actionOptionId.localeCompare(right.option.actionOptionId));
@@ -552,9 +598,7 @@ function aggregateRuns(runs: readonly JsonObject[]) {
     medium: { attempts: 0, successes: 0, failures: 0 },
     high: { attempts: 0, successes: 0, failures: 0 },
   };
-  let skippedActions = 0;
   let sideAttempts = 0;
-  let sideSkips = 0;
   let totalStoryCharacters = 0;
   for (const run of runs) {
     const status = objectValue(run.status, "run.status");
@@ -575,10 +619,6 @@ function aggregateRuns(runs: readonly JsonObject[]) {
       const riskName = optionalString(action.risk);
       const completion = optionalString(resolution.completionKind);
       if (optionalString(objective.kind) === "side") sideAttempts += 1;
-      if (completion === "skip") {
-        skippedActions += 1;
-        if (optionalString(objective.kind) === "side") sideSkips += 1;
-      }
       if (riskName === "low" || riskName === "medium" || riskName === "high") {
         risk[riskName].attempts += 1;
         if (completion === "complete") risk[riskName].successes += 1;
@@ -591,9 +631,7 @@ function aggregateRuns(runs: readonly JsonObject[]) {
     tiers,
     missionStatuses,
     risk,
-    skippedActions,
     sideAttempts,
-    sideSkips,
     averageStoryCharacters: runs.length > 0 ? Math.round(totalStoryCharacters / runs.length) : 0,
   };
 }

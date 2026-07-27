@@ -199,7 +199,7 @@ test("Phase 6 ten-run evidence rejects non-V2 and inconsistent receipt versions"
   withTempRepoDir((root) => {
     const records = goldenSanitizedRecords();
     const target = records.find((record) => record.toolName === "obsidian_epoch.phase6_result" && record.metadata.runIndex === 8).output.runReceipt;
-    target.version = "journey_run_receipt.v1";
+    target.version = "journey_run_receipt.invalid";
     target.codeVersion = "code-other";
     const sqlite = createSqliteFixture(root, records);
     const result = runFixture(root, records, sqlite);
@@ -469,9 +469,9 @@ function goldenSanitizedRecords() {
       journeyId: `journey-${runIndex}`,
       receiptId: `receipt-${runIndex}`,
     };
-    const [scenarioTag, taskType] = scenarioProtocol[runIndex - 1];
+    const [scenarioTag, taskFamilyId] = scenarioProtocol[runIndex - 1];
     records.push(
-      toolRecord(runIndex, "obsidian_epoch.prepare_journey", { ...binding, taskType }, { taskType }),
+      toolRecord(runIndex, "obsidian_epoch.prepare_journey", { ...binding, taskFamilyId, taskType: taskFamilyId }, { taskFamilyId, taskType: taskFamilyId }),
       toolRecord(runIndex, "obsidian_epoch.begin_phase6_run", { ...binding, scenarioTag }, { scenarioTag }),
       toolRecord(runIndex, "obsidian_epoch.player_panel", { ...binding, playerPanel: before }, {}, { playerPanelBefore: true }),
       toolRecord(runIndex, "obsidian_epoch.phase6_result", {
@@ -600,6 +600,8 @@ function runReceipt(runIndex, before, after) {
     rulesetVersion: "rules-v1",
     catalogVersion: "catalog-v1",
     codeVersion: "code-v1",
+    scenarioMatrixVersion: "phase6-matrix-v3",
+    settlementPolicyVersion: "phase6-settlement-policy-v1",
     actions: [{ actionId: `action-${runIndex}` }],
     eventIds: [`event-${runIndex}-receipt`],
     noChangeReason: "server_canonical_domain_stable_by_receipt_hash",

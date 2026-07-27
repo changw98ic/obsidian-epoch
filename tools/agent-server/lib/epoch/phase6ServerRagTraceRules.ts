@@ -7,15 +7,12 @@ import type {
   JourneyRunReceiptHash,
 } from "./journeyRunReceiptRules.ts";
 
-export const PHASE6_SERVER_RAG_TRACE_LEGACY_VERSION = "phase6_server_rag_trace.v1" as const;
 export const PHASE6_SERVER_RAG_TRACE_VERSION = "phase6_server_rag_trace.v2" as const;
 export const PHASE6_SERVER_RAG_TRACE_AUTHORITY = "server_retriever_observed" as const;
 export const PHASE6_SERVER_RAG_EVALUATION_VERSION = "phase6_server_rag_evaluation.v1" as const;
 export const PHASE6_SERVER_RAG_EVALUATION_AUTHORITY = "server_ground_truth_comparison" as const;
 
-export type Phase6ServerRagTraceVersion =
-  | typeof PHASE6_SERVER_RAG_TRACE_LEGACY_VERSION
-  | typeof PHASE6_SERVER_RAG_TRACE_VERSION;
+export type Phase6ServerRagTraceVersion = typeof PHASE6_SERVER_RAG_TRACE_VERSION;
 
 export type Phase6ServerRagTraceStatus =
   | "ok"
@@ -390,7 +387,7 @@ export function capturePhase6ServerRagTrace(input: CapturePhase6ServerRagTraceIn
     : undefined;
   const body = traceBody({
     traceType: "phase6_server_rag_trace",
-    version: evaluation ? PHASE6_SERVER_RAG_TRACE_VERSION : PHASE6_SERVER_RAG_TRACE_LEGACY_VERSION,
+    version: PHASE6_SERVER_RAG_TRACE_VERSION,
     authority: PHASE6_SERVER_RAG_TRACE_AUTHORITY,
     status: statusFor(input),
     ...(query ? { query, queryHash: causalCanonicalJsonHash(query) } : {}),
@@ -444,17 +441,14 @@ export function validatePhase6ServerRagTrace(trace: Phase6ServerRagTrace): Phase
   if (trace.traceType !== "phase6_server_rag_trace") {
     issues.push(issue("phase6_rag_trace_type_invalid", "$.traceType", "Trace type must identify Phase 6 server RAG evidence."));
   }
-  if (trace.version !== PHASE6_SERVER_RAG_TRACE_VERSION && trace.version !== PHASE6_SERVER_RAG_TRACE_LEGACY_VERSION) {
+  if (trace.version !== PHASE6_SERVER_RAG_TRACE_VERSION) {
     issues.push(issue("phase6_rag_trace_version_invalid", "$.version", "Unsupported Phase 6 server RAG trace version."));
   }
-  if (trace.version === PHASE6_SERVER_RAG_TRACE_LEGACY_VERSION && trace.evaluation) {
-    issues.push(issue("phase6_rag_trace_legacy_evaluation_forbidden", "$.evaluation", "Legacy traces cannot claim Phase 6 quality evaluation evidence."));
-  }
-  if (trace.version === PHASE6_SERVER_RAG_TRACE_VERSION && !trace.evaluation) {
+  if (trace.status === "ok" && !trace.evaluation) {
     issues.push(issue("phase6_rag_trace_evaluation_required", "$.evaluation", "Version 2 traces require server-computed RAG evaluation evidence."));
   }
-  if (trace.version === PHASE6_SERVER_RAG_TRACE_VERSION && trace.status !== "ok") {
-    issues.push(issue("phase6_rag_trace_evaluation_status_invalid", "$.status", "Evaluated traces must represent an observed retrieval; no-retrieval remains a separately classified legacy trace."));
+  if (trace.evaluation && trace.status !== "ok") {
+    issues.push(issue("phase6_rag_trace_evaluation_status_invalid", "$.status", "Evaluated traces must represent an observed retrieval."));
   }
   if (trace.authority !== PHASE6_SERVER_RAG_TRACE_AUTHORITY) {
     issues.push(issue("phase6_rag_trace_authority_invalid", "$.authority", "Trace authority must be server retriever observation."));

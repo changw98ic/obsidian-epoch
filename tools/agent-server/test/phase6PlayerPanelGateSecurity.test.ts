@@ -21,18 +21,31 @@ test("Phase 6 player panel gate accumulates every repeated receipt input", () =>
     const badReceipts = [];
 
     for (let runIndex = 1; runIndex <= 10; runIndex += 1) {
-      const before = panel(runIndex, false);
-      const after = panel(runIndex, true);
+      const before = currentPanel(runIndex, false);
+      const after = currentPanel(runIndex, true);
+      const deltas = diffPanels(before, after);
       beforeRecords.push({ runId: `journey-${runIndex}`, playerPanel: before, groups: { primary: true, secondary: true } });
       afterRecords.push({ runId: `journey-${runIndex}`, playerPanel: after, groups: { primary: true, secondary: true } });
       const receipt = {
         runId: `journey-${runIndex}`,
         receiptId: `receipt-${runIndex}`,
-        beforePanelHash: canonicalHash(before),
-        afterPanelHash: canonicalHash(after),
-        panelDiffHash: canonicalHash(diffPanels(before, after)),
+        version: "journey_run_receipt.v2",
+        snapshots: {
+          before: { body: before, hash: canonicalHash(before) },
+          after: { body: after, hash: canonicalHash(after) },
+        },
+        deltas,
+        integrity: { deltasHash: canonicalHash(deltas) },
       };
-      if (runIndex === 1) badReceipts.push({ ...receipt, beforePanelHash: "sha256:0000000000000000" });
+      if (runIndex === 1) {
+        badReceipts.push({
+          ...receipt,
+          snapshots: {
+            ...receipt.snapshots,
+            before: { ...receipt.snapshots.before, hash: "sha256:0000000000000000" },
+          },
+        });
+      }
       else goodReceipts.push(receipt);
     }
 
@@ -94,16 +107,17 @@ test("Phase 6 player panel gate rejects duplicate receipt run identity", () => {
   });
 });
 
-test("Phase 6 player panel gate keeps explicit v1 receipt behavior", () => {
+test("Phase 6 player panel gate rejects a noncanonical receipt version", () => {
   withTempDir((root) => {
     const fixture = validGateFixture();
     fixture.receipts.forEach((receipt) => {
-      receipt.version = "journey_run_receipt.v1";
+      receipt.version = "journey_run_receipt.invalid";
     });
     const result = runGateFixture(root, fixture);
-    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.status, 1, result.stdout + result.stderr);
     const summary = JSON.parse(result.stdout);
-    assert.equal(summary.ok, true);
+    assert.equal(summary.ok, false);
+    assert.ok(summary.errorCodes.includes("E_RECEIPT_VERSION_UNSUPPORTED"));
   });
 });
 
@@ -176,6 +190,7 @@ function validGateFixture() {
     receipts.push({
       runId: `journey-${runIndex}`,
       receiptId: `receipt-${runIndex}`,
+      version: "journey_run_receipt.v2",
       beforePanelHash: canonicalHash(before),
       afterPanelHash: canonicalHash(after),
       panelDiffHash: canonicalHash(diffPanels(before, after)),

@@ -6,9 +6,9 @@ import {
   verifyJourneySceneActionSignature,
   type JourneySceneContractWorldObject,
 } from "../lib/epoch/journeySceneContractRules.ts";
-import { generateThreePhaseJourneySceneEpisodes } from "../lib/epoch/journeySceneRules.ts";
+import { generateTaskPlanJourneySceneEpisodes } from "../lib/epoch/journeySceneRules.ts";
+import { buildFallbackJourneyTaskPlan } from "../lib/epoch/journeyGeneratedTaskRules.ts";
 import {
-  isJourneyTaskCompletionAction,
   journeyTaskRoutes,
 } from "../lib/epoch/journeyTaskCatalog.ts";
 
@@ -53,27 +53,32 @@ test("task catalog exposes many concrete routes instead of three hard-coded vari
   }
 });
 
-test("every task route generates a three-phase plan and a grounded signed main contract", () => {
+test("every task route generates a canonical plan and a grounded signed task contract", () => {
   for (const route of journeyTaskRoutes()) {
     const region = regionObject(route.regionId);
-    const plan = generateThreePhaseJourneySceneEpisodes({
-      mandate: MANDATE,
-      identityHistory: {},
+    const availableWorldObjects = [region, ...route.worldObjects];
+    const installation = buildFallbackJourneyTaskPlan({
+      taskType: route.mission.primaryObjective,
+      scenarioMapId: route.regionId,
+      availableWorldObjects,
+    });
+    const plan = generateTaskPlanJourneySceneEpisodes({
+      plan: installation.plan,
       region: { ...region, label: route.regionId },
-      season: "current",
-      resources: {},
-      unresolvedClues: [],
-      availableWorldObjects: route.worldObjects,
-      episodeCount: 3,
+      availableWorldObjects,
     });
     assert.equal(plan.status, "ready", route.routeKey);
-    assert.equal(plan.episodes.length, 3, route.routeKey);
-    assert.deepEqual(plan.episodes.map((episode) => episode.phase), ["arrival", "main", "return"]);
-    const main = plan.episodes[1];
+    assert.ok(plan.episodes.length >= 3, route.routeKey);
+    assert.equal(plan.episodes[0]?.phase, "arrival", route.routeKey);
+    assert.equal(plan.episodes.at(-1)?.phase, "return", route.routeKey);
+    const main = plan.episodes.find((episode) => episode.phase === "main"
+      && episode.generatedTaskObjective?.sceneType === route.sceneType);
+    assert.ok(main?.generatedTaskObjective, route.routeKey);
     assert.equal(main.type, route.sceneType, route.routeKey);
-    assert.equal(main.worldObjectRefs[0]?.id, route.locationId, route.routeKey);
+    assert.ok(main.worldObjectRefs.some((worldObject) => worldObject.id === route.locationId), route.routeKey);
 
-    const worldObjects = [region, ...route.worldObjects];
+    const generatedTaskObjective = main.generatedTaskObjective;
+    assert.equal(generatedTaskObjective.locationId, route.locationId, route.routeKey);
     const contract = buildJourneySceneContract({
       seed: `seed:${route.routeKey}`,
       agentId: "agent_task_catalog_test",
@@ -83,25 +88,27 @@ test("every task route generates a three-phase plan and a grounded signed main c
       phase: "main",
       title: main.title,
       mandate: MANDATE,
-      worldObjects,
-      sourceFactIds: worldObjects.flatMap((object) => object.sourceFactIds),
+      worldObjects: availableWorldObjects,
+      sourceFactIds: availableWorldObjects.flatMap((object) => object.sourceFactIds),
       expectedVersion: 1,
       expiresAt: "2026-07-15T00:00:00.000Z",
+      generatedTaskObjective,
+      taskRoutes: installation.plan.routes,
     });
     assert.equal(contract.location.id, route.locationId, route.routeKey);
     assert.deepEqual(contract.actionOptions.map((action) => action.optionKey),
-      route.actions.map((action) => action.optionKey), route.routeKey);
+      generatedTaskObjective.actions.map((action) => action.optionKey), route.routeKey);
     assert.equal(contract.actionOptions.find((action) =>
       action.actionOptionId === contract.safeFallbackActionOptionId)?.optionKey,
-    route.safeFallbackOptionKey, route.routeKey);
+    generatedTaskObjective.actions[0]?.optionKey, route.routeKey);
     assert.ok(contract.actionOptions.every((action) => verifyJourneySceneActionSignature({
       agentId: "agent_task_catalog_test",
       contract,
       action,
     })), route.routeKey);
-    assert.ok(contract.actionOptions.filter((action) => isJourneyTaskCompletionAction(action.optionKey)).length >= 2);
+    assert.equal(contract.actionOptions.length, generatedTaskObjective.actions.length, route.routeKey);
     assert.deepEqual(journeySceneHostedActionOptions(contract).map((action) => action.outcomeSummary),
-      route.actions.map((action) => action.outcomeSummary), route.routeKey);
+      generatedTaskObjective.actions.map((action) => action.outcomeSummary), route.routeKey);
   }
 });
 
