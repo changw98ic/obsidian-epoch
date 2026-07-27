@@ -464,7 +464,7 @@ test("ITEM_RARITY_BY_TIER assigns rare to 优秀 and legendary to 惊世", () =>
   assert.equal(ITEM_RARITY_BY_TIER.惊世, 3);
 });
 
-test("未及格 tier produces an empty reward grant (no resource / no item) and is skipped by grantors", () => {
+test("未及格 tier produces an empty reward grant (no resource / no item) and grantors do not call it", () => {
   const decision = makeDecision({ mainLineSucceeded: false });
   assert.equal(decision.tier, "未及格");
   assert.equal(decision.reward.tier, "未及格");

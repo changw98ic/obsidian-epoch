@@ -113,9 +113,8 @@ test("QuestOfferSource / EstimatedDifficulty / RewardPreviewTier unions are exha
     "server_ai",
     "catalog_fallback",
     "model_sampling",
-    "legacy",
   ];
-  assert.equal(new Set(sources).size, 4);
+  assert.equal(new Set(sources).size, 3);
 
   const difficulties: EstimatedDifficulty[] = ["low", "medium", "high"];
   assert.equal(difficulties.length, 3);

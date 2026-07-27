@@ -352,7 +352,7 @@ export function classifyPrimaryViolation(
   observedTags: readonly ApproachTag[],
 ): PrimaryViolationClassification {
   if (observedTags.length === 0) {
-    // No observations: default to normal (legacy compatible).
+    // No observations produce no strategy deviation signal.
     return { kind: "normal", primaryWeightBps: 10000, secondaryWeightBps: 0 };
   }
   let sum = 0;
@@ -397,7 +397,7 @@ export function scoreStrategyConsistency(
     sum += AFFINITY_MATRIX[tag]![snapshot.primary] ?? 0;
   }
   const matchBps = tagCount === 0
-    ? 10000  // no observations: legacy default full match
+    ? 10000  // no observations: no deviation signal
     : clampBps((sum / tagCount) * 100);
   const classification = classifyPrimaryViolation(snapshot.primary, allTags);
   const approachSnapshot: ApproachSnapshot = {

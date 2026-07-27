@@ -1835,31 +1835,25 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
       ...(typeof input.worldSliceHash === "string"
         ? { worldSliceHash: input.worldSliceHash as `sha256:${string}` }
         : {}),
-      ...(Array.isArray(input.mirrorLedgerEntries)
-        ? { mirrorLedgerEntries: input.mirrorLedgerEntries as readonly MirrorConsequenceLedgerEntry[] }
-        : {}),
-      // PR4 additive pass-through. When the caller supplies these, core
-      // validates them as a PR4 contract solidify and the marker carries
-      // the receipt-audit data.
-      ...(typeof input.canonThresholdBps === "number"
-        ? { canonThresholdBps: input.canonThresholdBps }
-        : {}),
-      ...(typeof input.settlementPolicyVersion === "number"
-        ? { settlementPolicyVersion: input.settlementPolicyVersion }
-        : {}),
-      ...(typeof input.consequenceScorePolicyVersion === "number"
-        ? { consequenceScorePolicyVersion: input.consequenceScorePolicyVersion }
-        : {}),
-      ...(typeof input.settlementId === "string" && input.settlementId.trim()
-        ? { settlementId: input.settlementId.trim() }
-        : {}),
-      ...(isRecord(input.consequenceScoreBreakdown)
-        ? { consequenceScoreBreakdown: input.consequenceScoreBreakdown as {
-            readonly resultScoreBps: number;
-            readonly selfLossScoreBps: number;
-            readonly collateralScoreBps: number;
-          } }
-        : {}),
+      mirrorLedgerEntries: Array.isArray(input.mirrorLedgerEntries)
+        ? input.mirrorLedgerEntries as readonly MirrorConsequenceLedgerEntry[]
+        : (() => {
+            throw new Error("journey_mirror_ledger_entries_required");
+          })(),
+      canonThresholdBps: Number(input.canonThresholdBps),
+      settlementPolicyVersion: Number(input.settlementPolicyVersion),
+      consequenceScorePolicyVersion: Number(input.consequenceScorePolicyVersion),
+      settlementId: assertNonEmptyString(input.settlementId, "journey_settlement_id"),
+      consequenceScoreBreakdown: (() => {
+        if (!isRecord(input.consequenceScoreBreakdown)) {
+          throw new Error("journey_consequence_score_breakdown_required");
+        }
+        return input.consequenceScoreBreakdown as {
+          readonly resultScoreBps: number;
+          readonly selfLossScoreBps: number;
+          readonly collateralScoreBps: number;
+        };
+      })(),
     }, maintenanceContext(input, `journey_world_solidified:${String(input.journeyId || "").trim()}`))),
     grantJourneyReward: (input: AnyRecord = {}) => {
       const journeyId = assertNonEmptyString(input.journeyId, "journey_id");
@@ -1869,26 +1863,18 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         throw new Error("journey_reward_tier_invalid");
       }
       const reward = JOURNEY_TIER_REWARDS[tier as keyof typeof JOURNEY_TIER_REWARDS];
-      const taskPlan = isRecord(input.taskPlan)
-        ? input.taskPlan as unknown as JourneyGeneratedTaskPlan
-        : undefined;
-      const hiddenTaskSeal = isRecord(input.hiddenTaskSeal)
-        ? input.hiddenTaskSeal as unknown as JourneyHiddenTaskSeal
-        : undefined;
-      if (taskPlan) deriveJourneyHiddenTask(taskPlan, hiddenTaskSeal);
-      const rewardBundle: JourneyRewardBundle = taskPlan
-        ? journeyRewardBundleForPlan(taskPlan, tier as Exclude<JourneyCompletionTier, "未及格">)
-        : { resources: [reward], items: [], attributes: [], attributeProgression: { mode: "no-direct-gain", evidenceSystem: "progressionRules.attributeEvidenceXp", summary: "journey_completion_no_task_plan" } };
-      // PR4: when a pre-computed settlementId is supplied, scope the
-      // idempotency reason to it so a policy bump re-grants under a new key
-      // and a duplicate call collapses. Legacy path keeps the old
-      // `journey_grade:${journeyId}:${tier}` reason.
-      const settlementId = typeof input.settlementId === "string" && input.settlementId.trim()
-        ? input.settlementId.trim()
-        : undefined;
-      const reason = settlementId
-        ? `journey_grade:${journeyId}:${settlementId}:${tier}`
-        : `journey_grade:${journeyId}:${tier}`;
+      if (!isRecord(input.taskPlan) || !isRecord(input.hiddenTaskSeal)) {
+        throw new Error("journey_reward_task_contract_required");
+      }
+      const taskPlan = input.taskPlan as unknown as JourneyGeneratedTaskPlan;
+      const hiddenTaskSeal = input.hiddenTaskSeal as unknown as JourneyHiddenTaskSeal;
+      deriveJourneyHiddenTask(taskPlan, hiddenTaskSeal);
+      const rewardBundle: JourneyRewardBundle = journeyRewardBundleForPlan(
+        taskPlan,
+        tier as Exclude<JourneyCompletionTier, "未及格">,
+      );
+      const settlementId = assertNonEmptyString(input.settlementId, "journey_settlement_id");
+      const reason = `journey_grade:${journeyId}:${settlementId}:${tier}`;
       const existing = core.project().events.find((event) => event.eventType === "resource_granted"
         && event.agentId === agentId
         && event.payload.reason === reason);
@@ -1917,14 +1903,12 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         rarity: item.rarity,
         sourceEventIds,
       }, maintenanceContext(input, `${reason}:item:${item.itemKey}`))));
-      const attributeGrants: EpochRuntimeResult<unknown>[] = [];
       const persistenceEvents = [
         ...epochEventsForPersistence(resourceGrant),
         ...itemGrants.flatMap((grant) => epochEventsForPersistence(grant)),
-        ...attributeGrants.flatMap((grant) => epochEventsForPersistence(grant)),
       ];
-      const publicEvents = [resourceGrant, ...itemGrants, ...attributeGrants].flatMap((grant) => grant.events);
-      const projection = attributeGrants.at(-1)?.projection ?? itemGrants.at(-1)?.projection ?? resourceGrant.projection;
+      const publicEvents = [resourceGrant, ...itemGrants].flatMap((grant) => grant.events);
+      const projection = itemGrants.at(-1)?.projection ?? resourceGrant.projection;
       return attachEpochEventsForPersistence({
         ...resourceGrant,
         events: publicEvents,
@@ -1932,11 +1916,8 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         reward,
         rewardBundle,
         grantedItems: itemGrants.map((grant) => grant.value),
-        grantedAttributes: attributeGrants.map((grant) => grant.value),
         reason,
-        duplicate: Boolean(existing)
-          && itemGrants.every((grant) => grant.events.length === 0)
-          && attributeGrants.every((grant) => grant.events.length === 0),
+        duplicate: Boolean(existing) && itemGrants.every((grant) => grant.events.length === 0),
       }, persistenceEvents);
     },
     agentBriefing,

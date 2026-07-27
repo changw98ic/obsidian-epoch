@@ -134,21 +134,27 @@ test("public commits survive restart, finalize, and a second restart with readab
   }
 });
 
-test("failed Phase 6 settlement snapshots identity loss before receipt and accepts a verified reincarnation", async () => {
+test("failed Phase 6 settlement keeps identity active until explicit archive, then accepts verified reincarnation", async () => {
   const root = mkdtempSync(join(tmpdir(), "phase6-reincarnation-"));
   const sqlitePath = join(root, "phase6.sqlite");
   try {
     const runtime = await openRuntime(sqlitePath, "reincarnation", true);
-    const journey = await startPhase6Journey(runtime, "reincarnation");
-    const committed = await settleJourney(runtime, journey, false, "skip_first_main");
+    const journey = await startPhase6Journey(runtime, "reincarnation", {
+      runIndex: 7,
+      scenarioTag: "high-underprepared-crisis",
+      taskType: "crisis_retreat",
+    });
+    const committed = await settleJourney(runtime, journey, false, "fail_first_main");
     assert.equal(record(committed.journey).status, "settled");
 
     const status = await statusByJourneyId(runtime, journey);
     const settlement = record(status.phase6Settlement);
     const receipt = record(settlement.receipt);
     assert.equal(settlement.ok, true, JSON.stringify(settlement));
+    assert.equal(record(status.taskAdjudication).mainCompleted, 0);
+    assert.equal(record(record(status.journey).worldCommit).reason, "main_incomplete");
     const afterBody = record(record(record(receipt.snapshots).after).body);
-    assert.equal(record(record(afterBody.identity).playerIdentity).status, "archived");
+    assert.equal(record(record(afterBody.identity).playerIdentity).status, "active");
     const archiveRow = runtime.database.prepare(`
       SELECT event_id AS eventId
       FROM epoch_events
@@ -156,8 +162,16 @@ test("failed Phase 6 settlement snapshots identity loss before receipt and accep
       ORDER BY record_id DESC
       LIMIT 1
     `).get(journey.agentId) as { readonly eventId?: string } | undefined;
-    assert.ok(archiveRow?.eventId);
-    assert.ok(receiptEventIds(receipt).includes(archiveRow.eventId));
+    assert.equal(archiveRow, undefined);
+    assert.equal(receiptEventIds(receipt).some((eventId) => eventId.includes("identity_archived")), false);
+
+    const archived = await callAndPersist(runtime, "obsidian_epoch.archive_identity", {
+      agentId: journey.agentId,
+      archiveReason: "explicit_lifecycle_test",
+      recoveryCode: journey.recoveryCode,
+      idempotencyKey: "phase6-explicit-archive-after-failed-run",
+    });
+    assert.equal(record(archived.value).status, "archived");
 
     const reincarnated = await callAndPersist(runtime, "obsidian_epoch.reincarnate", {
       previousAgentId: journey.agentId,
@@ -316,7 +330,7 @@ test("HTTP remote compact commit has one atomic persistence owner and replays id
     const actionOptions = Array.isArray(sceneContract.actionOptions)
       ? sceneContract.actionOptions.map(record)
       : [];
-    const selected = actionOptions.find((option) => option.taskObjectiveId && option.completionKind === "complete")
+    const selected = actionOptions.find((option) => option.taskObjectiveId)
       ?? actionOptions.find((option) => option.optionKey === "verify_salt_ledger")
       ?? record(actionOptions[0]);
     assert.ok(selected.actionOptionId);
@@ -604,7 +618,15 @@ async function openRuntime(
   };
 }
 
-async function startPhase6Journey(runtime: RuntimeFixture, suffix: string): Promise<StartedPhase6Journey> {
+async function startPhase6Journey(
+  runtime: RuntimeFixture,
+  suffix: string,
+  options: {
+    readonly runIndex?: number;
+    readonly scenarioTag?: string;
+    readonly taskType?: string;
+  } = {},
+): Promise<StartedPhase6Journey> {
   const explorerId = `explorer_phase6_restart_${suffix}`;
   const recoveryCode = Buffer.from(JSON.stringify({
     explorerId,
@@ -622,7 +644,7 @@ async function startPhase6Journey(runtime: RuntimeFixture, suffix: string): Prom
   const prepared = await callAndPersist(runtime, "obsidian_epoch.prepare_journey", {
     agentId,
     destinationRegionId: "灰港",
-    taskType: "resource_acquisition",
+    taskType: options.taskType ?? "resource_acquisition",
     mandate: { objective: "Verify restart-safe settlement", priorities: ["work"] },
     recoveryCode,
     idempotencyKey: `prepare-${suffix}`,
@@ -639,8 +661,8 @@ async function startPhase6Journey(runtime: RuntimeFixture, suffix: string): Prom
   const run = payload(await runtime.mcp.callTool("obsidian_epoch.begin_phase6_run", {
     commandId: `run-${suffix}`,
     experimentId: experiment.experimentId,
-    runIndex: 1,
-    scenarioTag: "low-prepared-resource",
+    runIndex: options.runIndex ?? 1,
+    scenarioTag: options.scenarioTag ?? "low-prepared-resource",
     journeyId,
   }));
   const started = await callAndPersist(runtime, "obsidian_epoch.start_journey_compact", {
@@ -666,7 +688,7 @@ async function settleJourney(
   runtime: RuntimeFixture,
   input: StartedPhase6Journey,
   assertProductionSidecarOrdering: boolean,
-  mode: "complete" | "skip_first_main" = "complete",
+  mode: "complete" | "fail_first_main" = "complete",
 ) {
   let current = input.started;
   for (let step = 1; step <= 12; step += 1) {
@@ -698,7 +720,7 @@ async function nextCommitArgs(
   input: StartedPhase6Journey,
   step: number,
   currentJourney: JsonRecord,
-  mode: "complete" | "skip_first_main" = "complete",
+  mode: "complete" | "fail_first_main" = "complete",
 ) {
   const proposed = await callAndPersist(runtime, "obsidian_epoch.propose_journey_step_compact", {
     journeyId: input.journeyId,
@@ -710,11 +732,12 @@ async function nextCommitArgs(
   const sceneContract = record(proposal.sceneContract);
   const actionOptions = Array.isArray(sceneContract.actionOptions) ? sceneContract.actionOptions : [];
   const options = actionOptions.map(record);
-  const selected = (mode === "skip_first_main" && proposal.generatedTaskObjective?.kind === "main"
+  const taskObjective = record(sceneContract.taskObjective);
+  const selected = (mode === "fail_first_main" && taskObjective.kind === "main"
     ? options.find((option) => option.risk === "high")
-      ?? options.find((option) => option.completionKind === "skip")
+      ?? options.find((option) => option.risk === "medium")
       ?? record(actionOptions[0])
-    : options.find((option) => option.taskObjectiveId && option.completionKind === "complete")
+    : options.find((option) => option.decisionEffect === "attempt_objective")
       ?? options.find((option) => option.optionKey === "verify_salt_ledger")
       ?? record(actionOptions[0]));
   assert.ok(selected.actionOptionId);

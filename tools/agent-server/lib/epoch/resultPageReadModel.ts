@@ -25,6 +25,12 @@ function hasResultPagePayload(
   return Boolean(page.payload);
 }
 
+function hasCanonicalResultPagePayload(
+  page: EpochSharedResultPage,
+): page is EpochSharedResultPage & { readonly payload: EpochResultPagePayload } {
+  return hasResultPagePayload(page) && Boolean(page.payload.receipt);
+}
+
 function resultPagePhase6Sidecar(page: EpochSharedResultPage | undefined): EpochResultPagePhase6Sidecar | undefined {
   if (!page || !hasResultPagePayload(page)) return undefined;
   return (page.payload.receipt as EpochResultPageReceiptWithPhase6 | undefined)?.phase6;
@@ -65,7 +71,7 @@ export function createEpochResultPageReadModel(
     recentResults({ limit, isExpired }) {
       return [...pagesById.values()]
         .filter((page) => (page.status ?? "active") === "active")
-        .filter(hasResultPagePayload)
+        .filter(hasCanonicalResultPagePayload)
         .filter((page) => !isExpired(page))
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.pageId.localeCompare(left.pageId))
         .slice(0, limit)
@@ -82,12 +88,9 @@ export function createEpochResultPageReadModel(
             explorerId: page.payload.progress.explorerId || identity?.explorerId,
             identityName: identity?.identityName,
             publicSafeSummary: page.publicSafeSummary || page.payload.publicSafeSummary,
-            receiptHash: receipt?.payloadHash || "legacy:no-receipt",
-            receiptFocus: receipt?.focus || {
-              kind: "agent_snapshot",
-              id: page.payload.progress.agentId || page.payload.progress.explorerId || page.pageId,
-            },
-            canonicalEventCount: receipt?.canonicalEvents.length || 0,
+            receiptHash: receipt.payloadHash,
+            receiptFocus: receipt.focus,
+            canonicalEventCount: receipt.canonicalEvents.length,
             run: buildEpochGameRunReadModelForResultPage(page),
           };
         });

@@ -516,15 +516,13 @@ test("a mirror Journey objective stays isolated from the shared world before mai
         readonly actionOptions: readonly {
           readonly actionOptionId: string;
           readonly signature: string;
-          readonly completionKind?: "skip";
           readonly risk: "low" | "medium" | "high";
         }[];
       };
     };
   };
-  const selected = proposed.proposal.sceneContract.actionOptions.find((option) =>
-    option.completionKind !== "skip" && option.risk === "low")
-    ?? proposed.proposal.sceneContract.actionOptions.find((option) => option.completionKind !== "skip");
+  const selected = proposed.proposal.sceneContract.actionOptions.find((option) => option.risk === "low")
+    ?? proposed.proposal.sceneContract.actionOptions[0];
   assert.ok(selected);
   await mcp.callTool("obsidian_epoch.commit_journey_action", {
     journeyId: started.journey.journeyId,
@@ -594,7 +592,6 @@ test("mirror Journey timestamps are randomized inside persisted history and carr
   const startedResult = await mcp.callTool("obsidian_epoch.start_journey", {
     journeyId: prepared.journey.journeyId,
     expectedVersion: prepared.journey.version,
-    worldDurationMs: 1_000,
     recoveryCode,
     idempotencyKey: "world-clock-start",
   });

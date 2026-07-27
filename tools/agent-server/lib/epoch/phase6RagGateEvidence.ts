@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 
 export const PHASE6_RAG_GATE_TRACE_VERSION = "phase6_server_rag_trace.v2";
-export const PHASE6_RAG_GATE_TRACE_LEGACY_VERSION = "phase6_server_rag_trace.v1";
 export const PHASE6_RAG_GATE_EVALUATION_VERSION = "phase6_server_rag_evaluation.v1";
 
 const TRACE_AUTHORITY = "server_retriever_observed";
@@ -195,7 +194,7 @@ export function inspectPhase6RagGateEvidence(record: unknown): RagGateInspection
   }
 
   if (trace.status === "legitimate_no_retrieval") {
-    if (trace.version !== PHASE6_RAG_GATE_TRACE_LEGACY_VERSION
+    if (trace.version !== PHASE6_RAG_GATE_TRACE_VERSION
       || !isNonEmptyString(trace.noRetrievalReason)
       || !Array.isArray(trace.retrieved)
       || (trace.retrieved as unknown[]).length !== 0

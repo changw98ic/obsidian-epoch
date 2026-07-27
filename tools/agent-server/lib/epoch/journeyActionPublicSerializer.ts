@@ -26,11 +26,9 @@ import type {
 
 // ── Public surface (zero-bonus whitelist) ─────────────────────────────────
 
-/** Decision effect category derived from the action's completion semantics. */
+/** Decision effect category for a signed objective action. */
 export type ActionDecisionEffect =
-  | "attempt_objective"
-  | "skip_optional_side"
-  | "abandon_required_objective";
+  | "attempt_objective";
 
 /**
  * Public action option — the ONLY fields serialised to client-facing outlets.
@@ -87,7 +85,6 @@ export interface InternalActionOption {
   };
   readonly outcomeSummary?: string;
   readonly taskObjectiveId?: string;
-  readonly completionKind?: "complete" | "skip";
   readonly routeSelection?: {
     readonly routeId: string;
     readonly factionObjectId?: string;
@@ -138,16 +135,12 @@ const RISK_LABELS: Readonly<Record<JourneySceneActionRisk, string>> = Object.fre
 });
 
 /**
- * Derive `decisionEffect` from the action's completion semantics and the
- * owning objective kind.
+ * Derive `decisionEffect` from the owning objective kind.
  */
 export function deriveDecisionEffect(
-  completionKind: "complete" | "skip" | undefined,
   objectiveKind: "main" | "side" | "choice" | undefined,
 ): ActionDecisionEffect {
-  if (completionKind === "skip") {
-    return objectiveKind === "side" ? "skip_optional_side" : "abandon_required_objective";
-  }
+  void objectiveKind;
   return "attempt_objective";
 }
 
@@ -185,7 +178,7 @@ export function splitActionOption(
   expiresAt: string,
 ): SplitActionOptionResult {
   const { available, disabledReason } = deriveAvailability(action);
-  const decisionEffect = deriveDecisionEffect(action.completionKind, objectiveKind);
+  const decisionEffect = deriveDecisionEffect(objectiveKind);
   const riskLabel = RISK_LABELS[action.risk];
 
   const publicOption: PublicActionOption = {
@@ -208,7 +201,6 @@ export function splitActionOption(
     targetEntityIds: [...action.targetEntityIds],
     ...(action.outcomeSummary !== undefined ? { outcomeSummary: action.outcomeSummary } : {}),
     ...(action.taskObjectiveId !== undefined ? { taskObjectiveId: action.taskObjectiveId } : {}),
-    ...(action.completionKind !== undefined ? { completionKind: action.completionKind } : {}),
     ...(action.routeSelection !== undefined ? { routeSelection: action.routeSelection } : {}),
     ...(action.actionObjectImpact !== undefined ? { actionObjectImpact: action.actionObjectImpact } : {}),
   };
@@ -239,9 +231,7 @@ export function splitActionOption(
 // ── Per-outlet serializers ────────────────────────────────────────────────
 
 /**
- * Compact transport (MCP tools). Returns only public fields.
- * Bumps transportVersion from 'v1' to 'v2' — old clients get a clear
- * version mismatch.
+ * Compact transport (MCP tools). Returns only the current public fields.
  */
 export function serializeCompact(
   action: JourneySceneActionOption,

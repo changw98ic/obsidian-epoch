@@ -82,9 +82,8 @@ export interface PromoteMirrorConsequencesSelection {
 }
 
 /**
- * Return an empty ledger scoped to `journeyId`. Used by projection
- * initialisation and by legacy fallback paths that detect
- * `entriesById` being empty.
+ * Return an empty ledger scoped to `journeyId`. Used when a journey has no
+ * mirror consequences yet.
  */
 export function emptyMirrorConsequenceLedger(journeyId: string): MirrorConsequenceLedgerState {
   return {

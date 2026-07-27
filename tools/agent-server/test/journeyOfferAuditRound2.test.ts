@@ -293,7 +293,7 @@ test("Fix 1: prepareWithOffer does NOT roll back an idempotent-replay claim (pri
 
 test("Fix 1: prepareWithOffer does NOT roll back when claim itself throws", async () => {
   // claim throws (token mismatch) — the catch path must observe
-  // claimSucceededInThisCall === false and skip release entirely. The
+  // claimSucceededInThisCall === false and leave release untouched. The
   // lifecycle stays in its pre-call status.
   const { offerRuntime, companion } = buildFixture();
   const offer = buildInternal({

@@ -91,8 +91,7 @@ export type SelfLossSourceKind =
  * derived from {@link ConsequenceBreakdown.totalBps} after applying the
  * {@link HiddenClamp}; it is never re-derived downstream.
  *
- * Legacy label `完美` (carried by {@link JourneyCompletionTier} elsewhere) is
- * absent by design: this contract only emits the five canonical tiers.
+ * `完美` is not a canonical tier and is rejected upstream.
  */
 export type SettlementTier = "未及格" | "及格" | "良好" | "优秀" | "惊世";
 
@@ -238,7 +237,8 @@ export interface ConsequenceScore {
    * {@link SettlementContext.identityViability} and does not populate this
    * summary. The planner integration PR wires both ends (input projection +
    * output population); until then the field carries no runtime data. The
-   * optional `?` keeps the wire shape forward-compatible with that wiring.
+   * optional `?` keeps this audit projection absent until the planner supplies
+   * a post-settlement viability snapshot.
    */
   readonly viabilitySummary?: {
     readonly viabilityScoreBpsBefore: number;
@@ -337,7 +337,7 @@ export type SelfLossCostKind = "resource" | "lifetime";
  * Server-adjudicated breakdown feeding the {@link ConsequenceBreakdown.resultScoreBps}
  * additive bucket. PR4 derives this from {@link JourneyTaskPerformance} (in
  * `journeyGeneratedTaskRules.ts`); the values are the four canonical bps
- * components plus the failed/skipped action penalty.
+ * components plus the failed-action penalty.
  *
  * The composite `scoreBps` summary on `JourneyTaskPerformance` is NOT carried
  * here — only the four physical-adjudication components. This enforces the
@@ -352,7 +352,7 @@ export interface ResultComponentInputs {
   readonly sideCompletionBps: number;
   /** Average execution quality across completed actions, in `[0, 10000]`. */
   readonly executionQualityBps: number;
-  /** Failed-action (750 bps) + skipped-action (250 bps) penalty. */
+  /** Failed-action penalty (750 bps per failed action). */
   readonly penaltyBps: number;
 }
 

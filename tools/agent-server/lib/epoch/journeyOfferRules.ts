@@ -43,22 +43,19 @@ export type QuestOfferStatus = (typeof QUEST_OFFER_LIFECYCLE_STATUSES)[number];
 
 /**
  * Origin of an offer. `server_ai` and `catalog_fallback` are server-authored;
- * `model_sampling` is produced via the rate-limited sampler; `legacy` covers
- * offers migrated from the pre-versioning journey planner.
+ * `model_sampling` is produced via the rate-limited sampler.
  */
 export type QuestOfferSource =
   | "server_ai"
   | "catalog_fallback"
-  | "model_sampling"
-  | "legacy";
+  | "model_sampling";
 
 /** Server-estimated difficulty band shown to explorers in the offer preview. */
 export type EstimatedDifficulty = "low" | "medium" | "high";
 
 /**
  * Region reference attached to an offer. `scenarioMapId` is duplicated at the
- * top level of {@link PublicQuestOffer} for forward-compatibility as the
- * scenario-map lookup surface evolves.
+ * top level of {@link PublicQuestOffer} for direct transport lookup.
  */
 export interface QuestOfferRegionRef {
   /** Stable region identifier matching the world map catalog. */
@@ -115,7 +112,7 @@ export interface PublicQuestOffer {
   readonly scenarioSummary: string;
   /** Region + scenario map the offer is anchored on. */
   readonly region: QuestOfferRegionRef;
-  /** Scenario map id; duplicated for forward-compat top-level lookup. */
+  /** Scenario map id; duplicated for top-level lookup. */
   readonly scenarioMapId: string;
   /** Server-estimated difficulty band. */
   readonly estimatedDifficulty: EstimatedDifficulty;

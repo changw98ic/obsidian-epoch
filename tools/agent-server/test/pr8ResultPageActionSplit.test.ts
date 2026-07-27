@@ -34,7 +34,6 @@ function makeFullActionOption(overrides?: Partial<JourneySceneActionOption>): Jo
     targetEntityIds: ["object_npc_001", "object_item_002"],
     outcomeSummary: "成功调查现场，发现关键线索",
     taskObjectiveId: "obj_main_1",
-    completionKind: "complete",
     contentHash: "sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
     signatureAlgorithm: "Ed25519",
     signatureVersion: 1,
@@ -106,7 +105,6 @@ describe("splitActionOption", () => {
     assert.deepStrictEqual(result.internal.targetEntityIds, ["object_npc_001", "object_item_002"]);
     assert.strictEqual(result.internal.outcomeSummary, "成功调查现场，发现关键线索");
     assert.strictEqual(result.internal.taskObjectiveId, "obj_main_1");
-    assert.strictEqual(result.internal.completionKind, "complete");
     assert.deepStrictEqual(result.internal.approachTags, []);
     assert.ok(result.internal.riskTerms, "riskTerms present");
     assert.strictEqual(result.internal.riskTerms?.resourceCost?.resourceId, "focus");
@@ -136,20 +134,14 @@ describe("splitActionOption", () => {
     assert.ok(!Number.isNaN(Date.parse(signed.issuedAt)), "issuedAt is valid ISO-8601");
   });
 
-  it("decisionEffect for skip on side objective is skip_optional_side", () => {
-    const action = makeFullActionOption({ completionKind: "skip" });
-    const result = splitActionOption(
-      action, TEST_JOURNEY_ID, TEST_SCENE_ID, TEST_CONTRACT_VERSION, "side", TEST_EXPIRES_AT,
-    );
-    assert.strictEqual(result.public.decisionEffect, "skip_optional_side");
-  });
-
-  it("decisionEffect for skip on main objective is abandon_required_objective", () => {
-    const action = makeFullActionOption({ completionKind: "skip" });
-    const result = splitActionOption(
-      action, TEST_JOURNEY_ID, TEST_SCENE_ID, TEST_CONTRACT_VERSION, "main", TEST_EXPIRES_AT,
-    );
-    assert.strictEqual(result.public.decisionEffect, "abandon_required_objective");
+  it("decisionEffect always describes an objective attempt", () => {
+    for (const objectiveKind of ["main", "side", "choice", undefined] as const) {
+      const result = splitActionOption(
+        makeFullActionOption(), TEST_JOURNEY_ID, TEST_SCENE_ID, TEST_CONTRACT_VERSION,
+        objectiveKind, TEST_EXPIRES_AT,
+      );
+      assert.strictEqual(result.public.decisionEffect, "attempt_objective");
+    }
   });
 
   it("internal copies approachTags when present", () => {
@@ -544,22 +536,11 @@ describe("assertPublicActionZeroBonus", () => {
 // ── deriveDecisionEffect ──────────────────────────────────────────────────
 
 describe("deriveDecisionEffect", () => {
-  it("returns attempt_objective for complete", () => {
-    assert.strictEqual(deriveDecisionEffect("complete", "main"), "attempt_objective");
-    assert.strictEqual(deriveDecisionEffect("complete", "side"), "attempt_objective");
-    assert.strictEqual(deriveDecisionEffect(undefined, "main"), "attempt_objective");
-  });
-
-  it("returns skip_optional_side for skip on side", () => {
-    assert.strictEqual(deriveDecisionEffect("skip", "side"), "skip_optional_side");
-  });
-
-  it("returns abandon_required_objective for skip on main", () => {
-    assert.strictEqual(deriveDecisionEffect("skip", "main"), "abandon_required_objective");
-  });
-
-  it("returns abandon_required_objective for skip with undefined kind", () => {
-    assert.strictEqual(deriveDecisionEffect("skip", undefined), "abandon_required_objective");
+  it("returns attempt_objective for every objective kind", () => {
+    assert.strictEqual(deriveDecisionEffect("main"), "attempt_objective");
+    assert.strictEqual(deriveDecisionEffect("side"), "attempt_objective");
+    assert.strictEqual(deriveDecisionEffect("choice"), "attempt_objective");
+    assert.strictEqual(deriveDecisionEffect(undefined), "attempt_objective");
   });
 });
 

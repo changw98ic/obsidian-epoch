@@ -228,18 +228,14 @@ test("identity state, resources, equipment and scene support can clear a high-ri
   });
 });
 
-test("a server-signed skip bypasses the success resolver", () => {
-  const summary = "身份没有完成该目标，服务器记录为主动放弃。";
+test("every non-successful objective action resolves as failed", () => {
   const resolution = resolveJourneyAction({
     ...baseInput,
-    signedCompletionKind: "skip",
-    successOutcomeSummary: summary,
+    risk: "medium",
+    resources: {},
   });
 
-  assert.equal(resolution.outcome, "skipped");
-  assert.equal(resolution.completionKind, "skip");
-  assert.equal(resolution.summary, summary);
-  assert.equal(resolution.score, 0);
-  assert.equal(resolution.difficulty, 0);
-  assert.equal(resolution.resourceCost, undefined);
+  assert.equal(resolution.outcome, "failure");
+  assert.equal(resolution.completionKind, "failed");
+  assert.match(resolution.summary, /未完成/u);
 });

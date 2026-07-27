@@ -78,16 +78,6 @@ export interface Phase6StartRunRuntimeInput
   readonly run: Phase6RegisterRunInput;
 }
 
-export interface Phase6ResultReceiptV2 extends Phase6RunResultReceiptRef {
-  readonly receiptVersion: "v2";
-  readonly experimentId: string;
-  readonly runIndex: Phase6RunIndex;
-  readonly identity: Phase6IdentityBinding;
-  readonly explorer: Phase6ExplorerBinding;
-  readonly versions: Phase6VersionBinding;
-  readonly seed: Phase6SeedBinding;
-}
-
 export interface Phase6ResultReceiptV3 extends Phase6RunResultReceiptRef {
   readonly receiptVersion: "v3";
   readonly experimentId: string;
@@ -101,7 +91,7 @@ export interface Phase6ResultReceiptV3 extends Phase6RunResultReceiptRef {
   readonly matrixVersion: typeof PHASE6_MATRIX_VERSION;
 }
 
-export type Phase6ResultReceipt = Phase6ResultReceiptV2 | Phase6ResultReceiptV3;
+export type Phase6ResultReceipt = Phase6ResultReceiptV3;
 
 export interface Phase6CompleteRunWithReceiptRuntimeInput
   extends Phase6RuntimeCommandInput {
@@ -352,9 +342,7 @@ function assertReceiptMatchesRun(
   run: Phase6Run,
 ): void {
   assertNonEmpty(receipt.receiptId, "receipt.receiptId");
-  if (receipt.receiptVersion !== "v2" && receipt.receiptVersion !== "v3") {
-    throw new Error("Phase 6 result receipt must be v2 or v3");
-  }
+  if (receipt.receiptVersion !== "v3") throw new Error("Phase 6 result receipt must be v3");
   if (receipt.experimentId !== experiment.experimentId) {
     throw new Error("Phase 6 receipt experimentId does not match registration");
   }
@@ -373,14 +361,11 @@ function assertReceiptMatchesRun(
   if (!sameJson(receipt.seed, run.seed)) {
     throw new Error("Phase 6 receipt seed does not match registration");
   }
-  // V3 additional checks
-  if (receipt.receiptVersion === "v3") {
-    if (receipt.matrixVersion !== PHASE6_MATRIX_VERSION) {
-      throw new Error("Phase 6 receipt matrixVersion does not match current matrix");
-    }
-    if (!nonEmpty(receipt.scenarioTag)) {
-      throw new Error("Phase 6 receipt scenarioTag is required for v3");
-    }
+  if (receipt.matrixVersion !== PHASE6_MATRIX_VERSION) {
+    throw new Error("Phase 6 receipt matrixVersion does not match current matrix");
+  }
+  if (!nonEmpty(receipt.scenarioTag)) {
+    throw new Error("Phase 6 receipt scenarioTag is required");
   }
 }
 
@@ -456,26 +441,4 @@ function sortJson(value: unknown): unknown {
 
 function formatNow(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
-}
-
-/**
- * Read-only adapter for legacy V2 receipts. Returns a view that exposes the
- * receipt's fields without allowing it to be used as a new settlement input.
- */
-export function readLegacyReceipt(receipt: Phase6ResultReceiptV2): {
-  readonly receiptVersion: "v2";
-  readonly experimentId: string;
-  readonly runIndex: Phase6RunIndex;
-  readonly scenarioTag: undefined;
-  readonly matrixVersion: undefined;
-  readonly matrixSnapshot: undefined;
-} {
-  return {
-    receiptVersion: "v2",
-    experimentId: receipt.experimentId,
-    runIndex: receipt.runIndex,
-    scenarioTag: undefined,
-    matrixVersion: undefined,
-    matrixSnapshot: undefined,
-  };
 }

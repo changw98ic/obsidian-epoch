@@ -29,6 +29,7 @@ function fixture(initialEvents: readonly import("../lib/epoch/journeyReadModel.t
       regionInfo: () => ({}),
       agentBriefing: () => ({}),
       events: () => ({ events: [] }),
+      hiddenPrerequisiteLinks: () => ({}),
     },
     journeyOptions: {
       idFactory: (kind) => `${kind}_persist_${++sequence}`,
@@ -138,7 +139,7 @@ test("dynamic task plan command events hydrate across a process restart", () => 
   assert.throws(() => createJourneyRuntime({
     idFactory: (kind) => `${kind}_missing_seal`,
     initialEvents: withoutInstallationSeal,
-  }), /journey_hidden_task_commitment_invalid/u);
+  }), /journey_event_hidden_task_seal_required/u);
 });
 
 test("SQLite stores and hydrates Journey event records", async () => {

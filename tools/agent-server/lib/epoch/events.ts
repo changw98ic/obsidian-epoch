@@ -200,18 +200,15 @@ export interface IdentityIssuedPayload {
   readonly viabilityPolicyVersion?: typeof VIABILITY_POLICY_VERSION;
   /**
    * PR5a additive (journeyViabilityRules). Initial viability snapshot frozen
-   * onto the identity at issuance. Required-after-issuance at the apply
-   * layer: the applyEvent path for `identity_issued` always populates
-   * `identityViability` on the identity record from this field (or from
-   * {@link initialIdentityViability} when the emitter is a legacy caller
-   * that did not attach one).
+   * onto the identity at issuance. Every canonical identity event must carry
+   * this snapshot; the applyEvent path projects it without synthesis.
    *
    * Reincarnation reset: on `reincarnation_issued`, the new identity
    * inherits NO viability state from the previous identityId. The issued
    * payload writes a fresh initial snapshot here; the previous identity's
    * projection history is sealed in the archive.
    */
-  readonly identityViability?: IdentityViability;
+  readonly identityViability: IdentityViability;
   /**
    * PR5b additive (journeyRoleplayRules). Server-frozen expected-life-pattern
    * bound to this identity, produced deterministically from the issuance
@@ -220,16 +217,12 @@ export interface IdentityIssuedPayload {
    * roleplay-doubt hook in `submitHostedAction` reads it to classify observed
    * approach tags.
    *
-   * Optional for backwards compatibility: legacy emitters that pre-date PR5b
-   * leave it absent, and the roleplay hook fail-opens (skips) when the
-   * identity has no pattern.
-   *
    * Reincarnation reset: on `reincarnation_issued`, the new identity carries
    * a FRESH pattern built from the new (agentId, explorerId, generation,
    * identityName) tuple. The previous identity's pattern is NOT inherited —
    * by construction the inputHash differs.
    */
-  readonly expectedLifePattern?: ExpectedLifePattern;
+  readonly expectedLifePattern: ExpectedLifePattern;
 }
 
 export interface ExplorerRecoveryRotatedPayload {
@@ -1224,9 +1217,9 @@ export interface JourneyWorldSolidifiedPayload {
   readonly mirrorStartedAtWorldTime: string;
   readonly mirrorEndedAtWorldTime: string;
   /** Canonical shared-world time when this historical mirror was accepted. */
-  readonly committedAtWorldTime?: string;
-  readonly completionTier?: "及格" | "良好" | "优秀" | "惊世";
-  readonly completionScoreBps?: number;
+  readonly committedAtWorldTime: string;
+  readonly completionTier: "及格" | "良好" | "优秀" | "惊世";
+  readonly completionScoreBps: number;
   readonly worldSliceHash?: `sha256:${string}`;
   readonly influenceDelta: number;
   readonly factionStandings: readonly {
@@ -1246,22 +1239,12 @@ export interface JourneyWorldSolidifiedPayload {
   readonly sourceEventIds: readonly string[];
   readonly effectEventIds: readonly string[];
   readonly solidifiedAt: string;
-  /**
-   * PR1 additive. Canon threshold in basis points that the completion score
-   * was compared against. The legacy "quality_below_canon_threshold" discard
-   * reason (pre-PR4) is retained on the type union for back-compat with
-   * persisted records; PR4 emitters write the live "below_canon_threshold"
-   * string instead. Optional for legacy solidify events.
-   *
-   * PR4 rule: on PR4 solidify events (settlementPolicyVersion === 1) this
-   * field is REQUIRED — read adapters MUST treat its absence (combined with
-   * a present settlementPolicyVersion) as a contract violation.
-   */
-  readonly canonThresholdBps?: number;
-  /** PR1 additive. Settlement-policy version under which the journey was adjudicated. */
-  readonly settlementPolicyVersion?: number;
-  /** PR1 additive. Consequence-score policy version used at solidify time. */
-  readonly consequenceScorePolicyVersion?: number;
+  /** Canon threshold in basis points used by the settlement decision. */
+  readonly canonThresholdBps: number;
+  /** Settlement-policy version under which the journey was adjudicated. */
+  readonly settlementPolicyVersion: number;
+  /** Consequence-score policy version used at solidify time. */
+  readonly consequenceScorePolicyVersion: number;
   /** PR1 additive. Strategy-policy version under which the journey was adjudicated. */
   readonly strategyPolicyVersion?: number;
   /**
@@ -1273,23 +1256,15 @@ export interface JourneyWorldSolidifiedPayload {
   readonly offerHash?: `sha256:${string}`;
   /**
    * PR2 additive. Mirror-ledger entry ids promoted into the canonical effect
-   * events listed in {@link effectEventIds}. Present only when the solidify
-   * path consumed a non-empty mirror ledger; absent for the legacy
-   * planJourneyWorldImpactEvents derivation. Carried for replay audit so a
-   * restart-duplicate solidify can detect double-promotion.
+   * events listed in {@link effectEventIds}. An empty array means this
+   * journey produced no promotable mirror collateral. Carried for replay
+   * audit so a restart-duplicate solidify can detect double-promotion.
    */
-  readonly mirrorLedgerPromotedEntryIds?: readonly string[];
-  /**
-   * PR4 additive. Settlement id (idempotency key) linking this solidify to
-   * its SettlementDecision. Required on PR4 events; absent on legacy events.
-   * Read adapters synthesise undefined when reading pre-PR4 events.
-   */
-  readonly settlementId?: string;
-  /**
-   * PR4 additive. Per-bucket breakdown of the completion score, for receipt
-   * audit. Required on PR4 events; absent on legacy events.
-   */
-  readonly consequenceScoreBreakdown?: {
+  readonly mirrorLedgerPromotedEntryIds: readonly string[];
+  /** Settlement id linking this solidify to its SettlementDecision. */
+  readonly settlementId: string;
+  /** Per-bucket breakdown of the completion score, for receipt audit. */
+  readonly consequenceScoreBreakdown: {
     readonly resultScoreBps: number;
     readonly selfLossScoreBps: number;
     readonly collateralScoreBps: number;

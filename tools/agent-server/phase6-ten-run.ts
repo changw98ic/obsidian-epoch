@@ -1364,7 +1364,6 @@ function createRun(index) {
     seeds: new Set(),
     runReceiptSuccessRecords: 0,
     runReceiptV2ValidRecords: 0,
-    runReceiptV1Records: 0,
     runReceiptV2Errors: [],
     phase6ResultSuccessRecords: 0,
     phase6ResultVerifiedRecords: 0,
@@ -1949,12 +1948,8 @@ function validate(options, input) {
     if (hasRunReceipt(record)) {
       run.runReceipt += 1;
     }
-    const receiptObject = runReceiptObjectFromRecord(record);
-    const receiptSchema = receiptSchemaFrom(receiptObject);
-    if (receiptSchema === "journey_run_receipt.v1") {
-      run.runReceiptV1Records += 1;
-    }
     if (isToolSuccessRecord(record, RUN_RECEIPT_TOOL_NAME)) {
+      const receiptObject = runReceiptObjectFromRecord(record);
       run.runReceiptSuccessRecords += 1;
       const receiptValidation = validateRunReceiptV2(receiptObject, run);
       if (receiptValidation.valid) {
@@ -2523,15 +2518,6 @@ function validate(options, input) {
         actual: run.runReceiptSuccessRecords,
       });
     }
-    if (run.runReceiptV1Records > 0) {
-      failures.push({
-        gate: "phase6_run_receipt_no_v1",
-        runIndex: run.runIndex,
-        expected: 0,
-        actual: run.runReceiptV1Records,
-        message: "journey_run_receipt.v1 is not accepted by the Phase 6 RunReceipt v2 gate",
-      });
-    }
     if (run.runReceiptV2ValidRecords < 1) {
       failures.push({
         gate: "phase6_run_receipt_v2_strict",
@@ -2730,7 +2716,6 @@ function validate(options, input) {
       runReceipts: runs.reduce((sum, run) => sum + run.runReceipt, 0),
       runReceiptSuccessRecords: runs.reduce((sum, run) => sum + run.runReceiptSuccessRecords, 0),
       runReceiptV2ValidRecords: runs.reduce((sum, run) => sum + run.runReceiptV2ValidRecords, 0),
-      runReceiptV1Records: runs.reduce((sum, run) => sum + run.runReceiptV1Records, 0),
       resultReceipts: runs.reduce((sum, run) => sum + run.resultReceipt, 0),
       phase6ResultSuccessRecords: runs.reduce((sum, run) => sum + run.phase6ResultSuccessRecords, 0),
       phase6ResultVerifiedRecords: runs.reduce((sum, run) => sum + run.phase6ResultVerifiedRecords, 0),

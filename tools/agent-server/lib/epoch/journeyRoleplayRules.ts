@@ -230,7 +230,7 @@ export const DEVIATION_BPS_BY_CLASSIFICATION: Readonly<
  * First-version classification → doubt strength mapping. Single source for
  * "how bad was this deviation" → {@link DoubtStrength}, used by
  * {@link buildNpcIdentityDoubtEvent}. The 'aligned' case never produces a
- * doubt event (callers MUST skip), so its 'low' entry is a sentinel that
+ * doubt event (callers MUST not emit one), so its 'low' entry is a sentinel that
  * exists only to keep the record exhaustive; {@link buildNpcIdentityDoubtEvent}
  * refuses to emit a doubt with strength 'low'.
  *
@@ -521,7 +521,7 @@ export function buildExpectedLifePattern(
  * filtered-out tag contributes to neither hitsForbidden nor missingExpected
  * nor offPalette — i.e. fail-closed toward "no signal" rather than toward
  * "spurious deviation". (The roleplay hook upstream fails CLOSED at the
- * action level by skipping entirely when approachTags is missing/empty;
+ * action level by returning without producing a signal when approachTags is missing/empty;
  * individual unknown tags inside a valid array are treated as transparent
  * because by the time we reach this function, approachTags has already
  * passed `verifyJourneySceneActionSignature` + `isApproachTag` gating.)
@@ -581,7 +581,7 @@ export function classifyRoleplayDeviation(
 /**
  * Map a classification to a {@link DoubtStrength} for the
  * {@link NpcDoubtEvent}. 'aligned' returns the 'low' sentinel — callers
- * MUST skip producing a doubt event when classification === 'aligned'
+ * MUST not produce a doubt event when classification === 'aligned'
  * ({@link buildNpcIdentityDoubtEvent} enforces this by refusing to emit a
  * 'low'-strength doubt).
  *

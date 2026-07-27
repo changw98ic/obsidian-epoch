@@ -47,10 +47,10 @@ export interface JourneyEpisodeStoryBeat {
     readonly intent?: string;
     readonly risk?: "low" | "medium" | "high";
     readonly targetEntityIds?: readonly string[];
-    /** Server-signed generated-task binding. Absent on legacy journey actions. */
+    /** Server-signed generated-task binding for task objectives. */
     readonly taskObjectiveId?: string;
     /** Server settlement classification; the client/model cannot supply this field. */
-    readonly completionKind?: "complete" | "failed" | "skip";
+    readonly completionKind?: "complete" | "failed";
     /** Exact server resolution copied from the canonical hosted-action event. */
     readonly resolution?: JourneyActionResolution;
   };
@@ -158,7 +158,7 @@ export interface CanonicalJourneyEpisodeFactInput {
     readonly risk?: "low" | "medium" | "high";
     readonly targetEntityIds?: readonly string[];
     readonly taskObjectiveId?: string;
-    readonly completionKind?: "complete" | "failed" | "skip";
+    readonly completionKind?: "complete" | "failed";
     readonly resolution?: JourneyActionResolution;
     readonly outcomeSummary: string;
     readonly reward?: { readonly resourceId?: string; readonly amount?: number };
@@ -470,7 +470,7 @@ function assertServerFacts(input: ServerJourneyEpisodeFacts): void {
         && (!nonEmpty(beat.selectedAction.taskObjectiveId)
           || !["main", "side"].includes(beat.phase)))
       || (beat.selectedAction.completionKind !== undefined
-        && !["complete", "failed", "skip"].includes(beat.selectedAction.completionKind))
+        && !["complete", "failed"].includes(beat.selectedAction.completionKind))
       || (beat.selectedAction.resolution !== undefined
         && (beat.selectedAction.resolution.authority !== "server"
           || beat.selectedAction.resolution.completionKind !== beat.selectedAction.completionKind

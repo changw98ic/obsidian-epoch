@@ -9,23 +9,18 @@ import type {
 } from "./journeyStrategyRules.ts";
 import { buildJourneyMission, type JourneyMission } from "./journeyMissionReadModel.ts";
 import { publicRegionLabel, publicText } from "./publicVocabulary.ts";
-import {
-  journeyTaskActionForOptionKey,
-  journeyTaskRouteForRegion,
-} from "./journeyTaskCatalog.ts";
 import type {
   JourneyCompletionResult,
+  JourneyCompletionTier,
   JourneyGeneratedTaskObjective,
   JourneyGeneratedTaskPlan,
   JourneyHiddenTaskSeal,
   JourneyRewardBundle,
   JourneyTierReward,
 } from "./journeyGeneratedTaskRules.ts";
+import type { HiddenPrerequisiteLink } from "./journeyRoleplayRules.ts";
 import {
   adjudicateJourneyTask,
-  deriveLegacyTerminalTierFromAdjudication,
-  inferJourneyCompletionResult,
-  JOURNEY_TIER_REWARDS,
   journeyRewardBundleForPlan,
   nextJourneyTaskObjective,
 } from "./journeyGeneratedTaskRules.ts";
@@ -90,7 +85,7 @@ export interface GroundedJourneyStoryReport {
   };
   readonly storyContent: string;
   readonly evaluation: {
-    readonly taskCompletionGrade: "C" | "F" | "未及格" | "及格" | "良好" | "优秀" | "惊世";
+    readonly taskCompletionGrade: "未及格" | "及格" | "良好" | "优秀" | "惊世";
     readonly performanceScorePercent?: number;
     readonly gradeReason?: string;
     readonly identityFidelityPercent: number;
@@ -170,7 +165,6 @@ export interface JourneyStoryIdentityInput {
     readonly max?: number;
     readonly remaining?: number;
     readonly startedAt?: string;
-    readonly archivedAt?: string;
     readonly finalTitle?: string;
   };
   readonly personality?: {
@@ -187,8 +181,9 @@ export interface BuildGroundedJourneyStoryReportInput {
   readonly startedAtWorldTime?: string;
   readonly dueAtWorldTime?: string;
   readonly episodes: readonly JourneyStoryEpisodeInput[];
-  readonly taskPlan?: JourneyGeneratedTaskPlan;
-  readonly hiddenTaskSeal?: JourneyHiddenTaskSeal;
+  readonly taskPlan: JourneyGeneratedTaskPlan;
+  readonly hiddenTaskSeal: JourneyHiddenTaskSeal;
+  readonly hiddenPrerequisiteLinks: readonly HiddenPrerequisiteLink[];
   readonly worldCommit?: JourneyWorldCommit;
   readonly identity?: JourneyStoryIdentityInput;
   /**
@@ -248,15 +243,15 @@ function storyFacingGeneratedText(value: string, taskPlan: JourneyGeneratedTaskP
   return clean(value)
     .replace(/暂不介入支线“[^”]+”，继续主线/gu, "不参加这次额外协助")
     .replace(
-      /根据身份需求、资源和长期目标放弃这项可选支线，不把跳过伪装成完成/gu,
+      /根据身份需求、资源和长期目标暂不参加这项可选支线/gu,
       "你决定不参加这次额外协助，把精力留给接下来的行动",
     )
     .replace(
-      /身份衡量当前状态后没有介入支线“[^”]+”，保留精力继续主线；该支线被服务器记录为跳过/gu,
+      /身份衡量当前状态后没有介入支线“[^”]+”，保留精力继续主线；该支线没有形成完成记录/gu,
       "你没有参加这次额外协助，把精力留给接下来的行动",
     )
     .replace(
-      /身份没有完成“[^”]+”，该目标被服务器记录为跳过，并开始收束本局行动/gu,
+      /身份没有完成“[^”]+”，该目标没有形成完成记录，并开始收束本局行动/gu,
       "你没有继续眼前的行动，随后开始准备返程",
     )
     .replace(
@@ -299,39 +294,12 @@ function storyFacingGeneratedText(value: string, taskPlan: JourneyGeneratedTaskP
     .replace(/服务端/gu, "现场记录");
 }
 
-function firstFact(episode: JourneyStoryEpisodeInput): string {
-  return episode.serverFacts?.confirmedFacts[0]?.text?.trim() || "";
-}
-
-function legacyStoryBeat(episode: JourneyStoryEpisodeInput): JourneyEpisodeStoryBeat | undefined {
-  const fact = firstFact(episode);
-  const match = /选择了「([^」]+)」；服务器结算：(.*)$/u.exec(fact);
-  const outcome = episode.serverFacts?.stateChanges.find((change) => change.stateChangeId.endsWith(":outcome"))
-    ?.summary?.trim() || match?.[2]?.trim();
-  const phase = episode.phase;
-  if (!phase || !match?.[1]?.trim() || !outcome) return undefined;
-  return {
-    phase,
-    sceneTitle: episode.title,
-    selectedAction: { label: match[1].trim() },
-    outcomeSummary: outcome,
-  };
-}
-
 function storyBeat(episode: JourneyStoryEpisodeInput): JourneyEpisodeStoryBeat | undefined {
-  return episode.serverFacts?.storyBeat ?? legacyStoryBeat(episode);
+  return episode.serverFacts?.storyBeat;
 }
 
 function episodePhase(episode: JourneyStoryEpisodeInput): JourneyEpisodeStoryBeat["phase"] | undefined {
   return storyBeat(episode)?.phase ?? episode.phase;
-}
-
-function phaseEpisode(
-  episodes: readonly JourneyStoryEpisodeInput[],
-  phase: JourneyEpisodeStoryBeat["phase"],
-  fallbackIndex: number,
-): JourneyStoryEpisodeInput | undefined {
-  return episodes.find((episode) => episodePhase(episode) === phase) ?? episodes[fallbackIndex];
 }
 
 function publicAgentEntity(episodes: readonly JourneyStoryEpisodeInput[]) {
@@ -384,15 +352,6 @@ const RESOURCE_NAMES: Readonly<Record<string, string>> = {
   stamina: "体力",
 };
 
-const ATTRIBUTE_NAMES: Readonly<Record<string, string>> = {
-  strength: "力量",
-  agility: "敏捷",
-  physique: "体魄",
-  intellect: "智识",
-  willpower: "意志",
-  spirituality: "灵性",
-};
-
 const ITEM_RARITY_NAMES: Readonly<Record<string, string>> = {
   common: "普通",
   rare: "稀有",
@@ -418,10 +377,8 @@ function rewardEvaluation(
   }
   const resources = [...resourceTotals].map(([resourceId, amount]) => ({ resourceId, amount }));
   const items = bundle?.items ?? [];
-  const attributes = bundle?.attributes ?? [];
   const parts = [
     ...resources.map((reward) => `${RESOURCE_NAMES[reward.resourceId] ?? reward.resourceId} +${reward.amount}`),
-    ...attributes.map((reward) => `${ATTRIBUTE_NAMES[reward.attributeId] ?? reward.attributeId} +${reward.amount}`),
     ...items.map((item) => `道具“${item.displayName}”（${ITEM_RARITY_NAMES[item.rarity] ?? item.rarity}）`),
   ];
   return {
@@ -432,7 +389,6 @@ function rewardEvaluation(
       evidenceSystem: "progressionRules.attributeEvidenceXp",
       summary: "story_report_no_direct_attribute_gain",
     },
-    attributes,
     summary: parts.length ? parts.join("；") : "未获得独立奖励",
   };
 }
@@ -482,13 +438,7 @@ function playerImpactEvaluation(
     };
   }
   if (worldCommit?.status === "discarded") {
-    // PR4 deriveWorldCommit emits "below_canon_threshold"; the legacy
-    // "quality_below_canon_threshold" name is still permitted on the union
-    // (journeyRules.ts:62) for persisted records, so we branch on both to
-    // keep the below-canon-discard rendering correct regardless of which
-    // emitter produced the reason string.
-    const isBelowCanon = worldCommit.reason === "below_canon_threshold"
-      || worldCommit.reason === "quality_below_canon_threshold";
+    const isBelowCanon = worldCommit.reason === "below_canon_threshold";
     const discardSummary = isBelowCanon
       ? "主线虽已完成，但服务端评分未达到正史固化门槛，镜像结果未写入真实世界"
       : "主线未完成，镜像结果未写入真实世界";
@@ -529,8 +479,7 @@ function worldCommitEvaluation(worldCommit: JourneyWorldCommit | undefined) {
       status: worldCommit.status,
       summary: worldCommit.status === "solidified"
         ? `主线完成并安全返程，本局已固化；地区影响 +${worldCommit.influenceDelta}，NPC 关系 ${worldCommit.npcRelationships.length} 项。`
-        : (worldCommit.reason === "below_canon_threshold"
-            || worldCommit.reason === "quality_below_canon_threshold")
+        : worldCommit.reason === "below_canon_threshold"
           ? "主线已完成，但服务端评分低于正史固化门槛，本局镜像未固化。"
           : "主线未完成或未形成安全返程闭环，本局镜像未固化。",
     },
@@ -583,21 +532,6 @@ function rewardConversionEvaluation(
         });
         break;
     }
-  }
-  for (const reward of rewards.attributes) {
-    const label = `${ATTRIBUTE_NAMES[reward.attributeId] ?? reward.attributeId} +${reward.amount}`;
-    const effectByAttribute: Readonly<Record<string, string>> = {
-      strength: "提升力量属性；服务端高风险判定会读取属性账本，属性总值会作为隐藏能力分的一部分。",
-      agility: "提升敏捷属性；服务端高风险判定会读取属性账本，属性总值会作为隐藏能力分的一部分。",
-      physique: "提升体魄属性；服务端高风险判定会读取属性账本，属性总值会作为隐藏能力分的一部分。",
-      intellect: "提升智识属性；服务端高风险判定会读取属性账本，属性总值会作为隐藏能力分的一部分。",
-      willpower: "提升意志属性；服务端高风险判定会读取属性账本，属性总值会作为隐藏能力分的一部分。",
-      spirituality: "提升灵性属性；服务端高风险判定会读取属性账本，属性总值会作为隐藏能力分的一部分。",
-    };
-    entries.push({
-      source: label,
-      effect: effectByAttribute[reward.attributeId] ?? "已进入人物属性账本，会影响后续服务端能力判定。",
-    });
   }
   for (const item of rewards.items) {
     const rarityName = ITEM_RARITY_NAMES[item.rarity] ?? item.rarity;
@@ -682,19 +616,16 @@ function identityFidelityEvaluation(input: {
     : input.worldCommit?.status === "discarded"
       ? -6
       : 0;
-  const archived = input.identity.status === "archived" || Boolean(input.identity.lifetime?.archivedAt);
   const identityEnded = input.journeyStatus === "identity_ended";
   let percent = clampPercent((lifetimePercent * 0.82) + traitBonus + missionAdjustment + commitAdjustment);
   if (hasLifetime && lifetimeRemaining <= 0) percent = 0;
-  if (archived || identityEnded) percent = Math.min(percent, hasLifetime && lifetimeRemaining <= 0 ? 0 : 20);
+  if (identityEnded) percent = Math.min(percent, hasLifetime && lifetimeRemaining <= 0 ? 0 : 20);
 
   const remainingRatio = hasLifetime ? Math.max(0, lifetimeRemaining) / lifetimeMax : undefined;
   let warning: string | undefined;
   if (identityEnded) warning = "该身份已经终结，无法继续保留。";
-  else if (archived && input.missionStatus === "failed") warning = "本局未及格，身份已经剧情终结并归档，无法继续保留。";
-  else if (archived) warning = "该身份已经归档，后续只能作为历史身份保留。";
   else if (hasLifetime && lifetimeRemaining <= 0) warning = "该身份寿命已耗尽，无法继续保留。";
-  else if (remainingRatio !== undefined && remainingRatio <= 0.15) warning = "该身份寿命濒危，建议尽快归档或转生。";
+  else if (remainingRatio !== undefined && remainingRatio <= 0.15) warning = "该身份寿命濒危，建议尽快转生。";
 
   return {
     identityFidelityPercent: percent,
@@ -770,51 +701,22 @@ function arrivalStoryOutcome(
   }
 }
 
-function mainStoryOutcome(input: {
-  readonly beat: JourneyEpisodeStoryBeat;
-  readonly agentName: string;
-  readonly place: string;
-  readonly organization: string;
-  readonly person: string;
-  readonly item: string;
-  readonly identityName: string;
-}): string {
-  const { beat, agentName, place, organization, person, item, identityName } = input;
-  switch (beat.selectedAction.optionKey) {
-    case "verify_salt_ledger":
-      return `${agentName}依照${organization}的登记逐项核对${item}。核对中出现一处差额，${agentName}把原条目和对应记录标在一起，保留了核对结果。`;
-    case "carry_manifest":
-      return `${agentName}把${item}送到${person}手中，清单内容、递送人和当班接收人完成登记。`;
-    case "report_discrepancy":
-      return `${agentName}把${item}中的差额指给${person}，并对应到${organization}的原始登记。${person}接手复核。`;
-    case "ask_for_shift":
-      return `${person}查阅${organization}的当日登记，向${agentName}指出一项仍需确认工时与条件的短工。`;
-    case "ask_about_recent_travelers":
-      return `${agentName}向${person}询问近日旅人的消息。${person}只说出了公开登记中能对上的姓名和来路。`;
-    case "leave_without_commitment":
-      return `${agentName}没有接受条件尚不清楚的事务。${agentName}向${person}说明决定，随后离开${place}；这次会面没有变成一份工作。`;
-    default:
-      return secondPersonSentence(beat.outcomeSummary, identityName);
-  }
-}
-
 function returnStoryOutcome(
   beat: JourneyEpisodeStoryBeat,
   agentName: string,
   regionName: string,
   identityName: string,
-  completionResult?: JourneyCompletionResult,
+  completionResult: JourneyCompletionResult,
 ): string {
   switch (beat.selectedAction.optionKey) {
     case "return_by_known_route": {
-      const result = completionResult ?? inferJourneyCompletionResult("现场结果");
-      if (result.returnMode === "carry") {
-        return `${agentName}沿来时确认过的路线离开${regionName}，带着${carryObjectText(result.summary)}回到落脚处。`;
+      if (completionResult.returnMode === "carry") {
+        return `${agentName}沿来时确认过的路线离开${regionName}，带着${carryObjectText(completionResult.summary)}回到落脚处。`;
       }
-      if (result.returnMode === "report") {
-        return `${agentName}确认${archivedResultText(result.summary)}，记下交付回执后沿来时确认过的路线离开${regionName}，回到落脚处。`;
+      if (completionResult.returnMode === "report") {
+        return `${agentName}确认${archivedResultText(completionResult.summary)}，记下交付回执后沿来时确认过的路线离开${regionName}，回到落脚处。`;
       }
-      return `${agentName}确认${clean(result.summary).replace(/[。！？!?]+$/u, "")}，随后沿来时确认过的路线离开${regionName}，回到落脚处。`;
+      return `${agentName}确认${clean(completionResult.summary).replace(/[。！？!?]+$/u, "")}，随后沿来时确认过的路线离开${regionName}，回到落脚处。`;
     }
     case "record_verified_facts":
       return `${agentName}在离开前整理好抵达经过、所作选择和直接后果，随后带着这份记录返程。`;
@@ -822,111 +724,6 @@ function returnStoryOutcome(
       return `${agentName}等到安全的返程时机才离开${regionName}，没有为了赶路冒险改道。`;
     default:
       return secondPersonSentence(beat.outcomeSummary, identityName);
-  }
-}
-
-function returnStoryLead(input: {
-  readonly optionKey?: string;
-  readonly item: string;
-  readonly person: string;
-  readonly place: string;
-  readonly resultArtifact?: string;
-}): string {
-  switch (input.optionKey) {
-    case "verify_salt_ledger":
-      return `你带上标着差额的核对记录，离开${input.place}。`;
-    case "carry_manifest":
-      return `确认${input.item}已交到${input.person}手中后，你离开${input.place}。`;
-    case "report_discrepancy":
-      return `你记下${input.person}已接手复核的结果，离开${input.place}。`;
-    case "ask_for_shift":
-      return `你把问到的工时和条件记好，离开${input.place}。`;
-    case "ask_about_recent_travelers":
-      return `你带上能够对上登记的姓名和来路，离开${input.place}。`;
-    case "leave_without_commitment":
-      return `你没有接下任何事，直接离开${input.place}。`;
-    default:
-      return input.resultArtifact
-        ? `你带上${input.resultArtifact}，离开${input.place}。`
-        : `你收好这次留下的记录，离开${input.place}。`;
-  }
-}
-
-function decisionStoryAction(input: {
-  readonly beat: JourneyEpisodeStoryBeat;
-  readonly person: string;
-  readonly item: string;
-  readonly place: string;
-}): string {
-  const taskAction = journeyTaskActionForOptionKey(input.beat.selectedAction.optionKey);
-  if (taskAction) return sentence(taskAction.actionNarrative);
-  switch (input.beat.selectedAction.optionKey) {
-    case "verify_salt_ledger":
-      return `你开始逐项核对${input.item}和原始登记。`;
-    case "carry_manifest":
-      return `你接过${input.item}，核对递送对象后动身交接。`;
-    case "report_discrepancy":
-      return `你把${input.item}和原始登记并排放好，再把差额指给${input.person}。`;
-    case "ask_for_shift":
-      return `你向${input.person}询问当日仍缺人手的班次。`;
-    case "ask_about_recent_travelers":
-      return `你请${input.person}翻查近期公开的旅人登记。`;
-    case "leave_without_commitment":
-      return `你向${input.person}说明决定，随后转身离开${input.place}。`;
-    default:
-      return sentence(clean(input.beat.outcomeSummary).replace(/身份/gu, "你"));
-  }
-}
-
-function aftermathStoryOutcome(input: {
-  readonly optionKey?: string;
-  readonly mainSucceeded: boolean;
-  readonly item: string;
-  readonly person: string;
-  readonly regionName: string;
-  readonly resultArtifact?: string;
-}): string {
-  if (!input.mainSucceeded) {
-    return `你回到落脚处，手里只有沿途记录，没有带回一件已经办完的事情。`;
-  }
-  switch (input.optionKey) {
-    case "verify_salt_ledger":
-      return `你在返程时限前回到落脚处，带回了标着差额的核对记录。`;
-    case "carry_manifest":
-      return `你在返程时限前回到落脚处，带回了${input.item}已经交到${input.person}手中的明确结果。`;
-    case "report_discrepancy":
-      return `你在返程时限前回到落脚处，带回了${input.item}差额已交给${input.person}复核的记录。`;
-    default:
-      return input.resultArtifact
-        ? `你在返程时限前回到落脚处，带回了${input.resultArtifact}。`
-        : `你在返程时限前回到落脚处，把这次在${input.regionName}得到的结果和沿途记录一起带了回来。`;
-  }
-}
-
-function mainChapterTitles(optionKey: string | undefined, fallbackTitle: string) {
-  const taskAction = journeyTaskActionForOptionKey(optionKey);
-  if (taskAction) {
-    return {
-      encounter: `三、${fallbackTitle}`,
-      decision: `四、${taskAction.chapterTitle}`,
-      consequence: "五、行动结果",
-    };
-  }
-  switch (optionKey) {
-    case "verify_salt_ledger":
-      return { encounter: "三、账房里的盐账", decision: "四、核对盐账", consequence: "五、发现差额" };
-    case "carry_manifest":
-      return { encounter: "三、等待递送的清单", decision: "四、接下差事", consequence: "五、完成交接" };
-    case "report_discrepancy":
-      return { encounter: "三、清单上的缺口", decision: "四、指出差额", consequence: "五、进入复核" };
-    case "ask_for_shift":
-      return { encounter: "三、当日短工", decision: "四、询问条件", consequence: "五、尚未落定" };
-    case "ask_about_recent_travelers":
-      return { encounter: "三、登记里的旅人", decision: "四、追问消息", consequence: "五、传闻止步" };
-    case "leave_without_commitment":
-      return { encounter: "三、条件未明的差事", decision: "四、拒绝承诺", consequence: "五、空手离开" };
-    default:
-      return { encounter: `三、${fallbackTitle}`, decision: "四、作出选择", consequence: "五、选择的后果" };
   }
 }
 
@@ -947,9 +744,7 @@ function chapter(input: {
 
 function storyReady(input: BuildGroundedJourneyStoryReportInput): boolean {
   if (!["settled", "completed"].includes(input.status)) return false;
-  if (input.taskPlan) {
-    if (input.episodes.length < 3 || nextJourneyTaskObjective(input.taskPlan, input.episodes)) return false;
-  } else if (input.episodes.length !== 3) return false;
+  if (input.episodes.length < 3 || nextJourneyTaskObjective(input.taskPlan, input.episodes)) return false;
   return input.episodes.every((episode) => episode.serverFacts
     && episode.narrative
     && storyBeat(episode)
@@ -962,241 +757,7 @@ export function buildGroundedJourneyStoryReport(
   input: BuildGroundedJourneyStoryReportInput,
 ): GroundedJourneyStoryReport | undefined {
   if (!storyReady(input)) return undefined;
-  if (input.taskPlan) return buildGeneratedJourneyStoryReport(input, input.taskPlan);
-  const arrival = phaseEpisode(input.episodes, "arrival", 0);
-  const main = phaseEpisode(input.episodes, "main", 1);
-  const returning = phaseEpisode(input.episodes, "return", 2);
-  if (!arrival || !main || !returning) return undefined;
-  const arrivalBeat = storyBeat(arrival);
-  const mainBeat = storyBeat(main);
-  const returnBeat = storyBeat(returning);
-  if (!arrivalBeat || !mainBeat || !returnBeat) return undefined;
-
-  const protagonist = publicAgentEntity(input.episodes);
-  const agentName = publicAgentName(input.episodes);
-  const actorName = "你";
-  const regionName = clean(publicRegionLabel(input.regionId)) || "未知区域";
-  const taskRoute = journeyTaskRouteForRegion(input.regionId);
-  const objective = clean(input.objective) || "完成这次旅程";
-  const profile = storyProfile({
-    agentId: protagonist?.entityId || "",
-    agentName,
-    objective,
-    journeyId: input.journeyId,
-  });
-  const mission = buildJourneyMission({
-    journeyId: input.journeyId,
-    journeyStatus: input.status,
-    playerObjective: objective,
-    regionId: input.regionId,
-    episodes: input.episodes,
-  });
-  const missionObjective = clean(mission.primaryObjective).replace(/[。！？!?]+$/u, "");
-  const mainTitle = clean(mainBeat.sceneTitle) || `${regionName}主事件`;
-  const routeLocation = taskRoute?.worldObjects.find((object) => object.id === taskRoute.locationId)?.label;
-  const mainPlaces = entityLabels(main, "place", true).filter((label) => label !== regionName);
-  const mainPlace = routeLocation || mainPlaces[0] || regionName;
-  const organizations = entityLabels(main, "organization", true);
-  const people = [...new Set([
-    ...entityLabels(main, "person"),
-    ...entityLabels(main, "agent").filter((label) => label !== agentName),
-  ])];
-  const items = entityLabels(main, "item", true);
-  const mainOutcome = withAgentName(mainBeat.outcomeSummary, agentName);
-  const arrivalProse = arrivalStoryOutcome(arrivalBeat, actorName, regionName, agentName);
-  const organization = naturalList(organizations) || "当地任务方";
-  const person = naturalList(people) || "现场负责人";
-  const item = naturalList(items) || "任务对象";
-  const mainProse = mainStoryOutcome({
-    beat: mainBeat,
-    agentName: actorName,
-    place: mainPlace,
-    organization,
-    person,
-    item,
-    identityName: agentName,
-  });
-  const returnProse = returnStoryOutcome(
-    returnBeat,
-    actorName,
-    regionName,
-    agentName,
-    taskRoute?.mission.successResult
-      ? inferJourneyCompletionResult(taskRoute.mission.successResult)
-      : undefined,
-  );
-  const decisionProse = decisionStoryAction({ beat: mainBeat, person, item, place: mainPlace });
-  const returnLead = returnStoryLead({
-    optionKey: mainBeat.selectedAction.optionKey,
-    item,
-    person,
-    place: mainPlace,
-    resultArtifact: taskRoute?.mission.successResult,
-  });
-  const objectiveStatus = mission.status === "completed" ? "progressed" : "unresolved";
-  const unresolved = mission.status === "completed"
-    ? `这次任务已经完成；“${objective}”仍可以在后续旅程中继续展开。`
-    : `这次任务已经失败；“${objective}”仍等待下一次行动。`;
-  const mainSucceeded = mission.status === "completed";
-  const rewards = rewardEvaluation(undefined, input.episodes);
-  const evaluation: GroundedJourneyStoryReport["evaluation"] = {
-    taskCompletionGrade: mainSucceeded ? "C" : "F",
-    ...identityFidelityEvaluation({
-      identity: input.identity,
-      journeyStatus: input.status,
-      missionStatus: mission.status,
-      worldCommit: input.worldCommit,
-    }),
-    rewards,
-    rewardConversion: rewardConversionEvaluation(rewards, input.worldCommit),
-    playerImpact: playerImpactEvaluation(input.episodes, protagonist?.entityId || "", input.worldCommit),
-    ...worldCommitEvaluation(input.worldCommit),
-    // PR6: strategy consistency audit — independent from identityFidelity.
-    ...(input.strategyConsistencySnapshot ? {
-      strategyConsistencyAudit: {
-        matchBps: input.strategyConsistencySnapshot.matchBps,
-        classification: input.strategyConsistencySnapshot.classification.kind,
-      },
-    } : {}),
-    // PR8: roleplay summary — independent from identityFidelity.
-    ...(input.roleplayScore ? {
-      roleplaySummary: {
-        deviationBps: input.roleplayScore.deviationBps,
-        doubtEventCount: input.roleplayScore.npcDoubtEvents.length,
-        exposed: input.roleplayScore.exposed,
-      },
-    } : {}),
-    // PR8: viability summary — independent from identityFidelity.
-    ...(input.viabilityProjection ? {
-      viabilitySummary: {
-        viabilityScoreBpsBefore: input.viabilityProjection.before?.viabilityScoreBps ?? 0,
-        viabilityScoreBpsAfter: input.viabilityProjection.after?.viabilityScoreBps ?? 0,
-        deltaBps: input.viabilityProjection.deltaBps,
-        status: input.viabilityProjection.status,
-      },
-    } : {}),
-  };
-  const chapterTitles = mainChapterTitles(mainBeat.selectedAction.optionKey, mainTitle);
-  const time = storyTime(input.startedAtWorldTime, input.dueAtWorldTime);
-  const aftermathProse = aftermathStoryOutcome({
-    optionKey: mainBeat.selectedAction.optionKey,
-    mainSucceeded,
-    item,
-    person,
-    regionName,
-    resultArtifact: taskRoute?.mission.successResult,
-  });
-  const resultProse = `${returnProse}${aftermathProse}`;
-  const beginning = `你现在已经转生成为${profile.identity}。${time}。你离开落脚处，沿着通往${regionName}的登记路线出发。`;
-  const storyElements: GroundedJourneyStoryReport["storyElements"] = {
-    time,
-    place: `${regionName}、${mainPlace}`,
-    characters: [...new Set([profile.identity, ...people])],
-    beginning,
-    event: mainProse,
-    action: decisionProse,
-    result: resultProse,
-  };
-
-  const chapters = [
-    chapter({
-      key: "departure",
-      title: "一、转生与出发",
-      episodes: [arrival],
-      text: beginning,
-    }),
-    chapter({
-      key: "arrival",
-      title: `二、抵达${regionName}`,
-      episodes: [arrival],
-      text: `你沿登记路线抵达${regionName}入口。${arrivalProse}手续结束后，你没有停留，直接前往${mainPlace}。`,
-    }),
-    chapter({
-      key: "encounter",
-      title: chapterTitles.encounter,
-      episodes: [main],
-      text: `抵达${regionName}后，你来到${mainPlace}。${person}已经在这里等候。`,
-    }),
-    chapter({
-      key: "decision",
-      title: chapterTitles.decision,
-      episodes: [main],
-      text: decisionProse,
-    }),
-    chapter({
-      key: "consequence",
-      title: chapterTitles.consequence,
-      episodes: [main],
-      text: mainProse,
-    }),
-    chapter({
-      key: "return",
-      title: "六、返程",
-      episodes: [returning],
-      text: `${returnLead}${returnProse}`,
-    }),
-    chapter({
-      key: "aftermath",
-      title: "七、结果",
-      episodes: input.episodes,
-      text: aftermathProse,
-    }),
-  ] as const;
-
-  const desire = `${agentName}的长期愿望是“${objective}”，本局主任务是“${missionObjective}”。`;
-  const obstacle = `${agentName}必须完成三项阶段任务，其中核心关卡是在${mainPlace}完成${taskRoute?.title ?? "登记事务"}。`;
-  const choice = `${agentName}选择了「${clean(mainBeat.selectedAction.label)}」。`;
-  const consequence = `${mainProse}${returnProse}`;
-  const summary = mainSucceeded
-    ? `${profile.identity}进入${regionName}，选择了「${clean(mainBeat.selectedAction.label)}」，随后带着处理结果返回。`
-    : `${profile.identity}进入${regionName}后选择了「${clean(mainBeat.selectedAction.label)}」，随后没有带回对应的处理结果。`;
-  const storyContent = chapters.map((entry) => entry.text).join("\n\n");
-  const header = [
-    `代号：${profile.codeName}`,
-    `${profile.reincarnation}。`,
-    `身份：${profile.identity}`,
-    `该局目标：${profile.objective}`,
-  ].join("\n");
-  const evaluationText = [
-    "评价：",
-    `任务完成度：${evaluation.taskCompletionGrade}`,
-    `身份还原度：${evaluation.identityFidelityPercent}%`,
-    `获得奖励：${evaluation.rewards.summary}`,
-    `能力转化：${evaluation.rewardConversion.summary}`,
-    ...(evaluation.worldCommit ? [`世界固化：${evaluation.worldCommit.summary}`] : []),
-    ...(evaluation.npcRelationships?.length ? [
-      `NPC关系：${evaluation.npcRelationships.map((relationship) =>
-        `${relationship.displayName} +${relationship.scoreDelta}（当前 ${relationship.scoreAfter}）`).join("；")}`,
-    ] : []),
-    `其他玩家影响：${evaluation.playerImpact.summary}`,
-    ...(evaluation.warning ? [`警告：${evaluation.warning}`] : []),
-  ].join("\n");
-
-  return {
-    kind: "grounded_story_report",
-    version: 3,
-    storyId: `story:${input.journeyId}`,
-    journeyId: input.journeyId,
-    title: `代号 ${profile.codeName}：${profile.identity}的${profile.reincarnation}`,
-    summary,
-    profile,
-    storyElements,
-    storyContent,
-    evaluation,
-    narrative: [header, "故事内容：", storyContent, evaluationText].join("\n\n"),
-    chapters,
-    mission,
-    structure: { desire, obstacle, choice, consequence },
-    resolution: {
-      journeyStatus: "completed",
-      missionStatus: mission.status === "completed" ? "completed" : "failed",
-      objectiveStatus,
-      confirmedOutcome: mainOutcome,
-      unresolved,
-    },
-    episodeIds: input.episodes.map((episode) => episode.episodeId),
-    sourceEventIds: reportSourceEventIds(input.episodes, input.worldCommit),
-  };
+  return buildGeneratedJourneyStoryReport(input, input.taskPlan);
 }
 
 function buildGeneratedJourneyStoryReport(
@@ -1229,29 +790,21 @@ function buildGeneratedJourneyStoryReport(
     episodes: input.episodes,
     taskPlan,
     hiddenTaskSeal: input.hiddenTaskSeal,
+    hiddenPrerequisiteLinks: input.hiddenPrerequisiteLinks,
+    completionTier: input.worldCommit?.completionTier,
   });
   const adjudication = adjudicateJourneyTask({
     plan: taskPlan,
     episodes: input.episodes,
     hiddenTaskSeal: input.hiddenTaskSeal,
+    hiddenPrerequisiteLinks: input.hiddenPrerequisiteLinks,
     revealHidden: true,
   });
-  // PR4: adjudication no longer carries tier/rewardBundle (the authority tier
-  // lives on SettlementDecision.tier). This story report is for terminal
-  // journey narrative; derive the legacy tier from the physical adjudication
-  // via the legacy helper. PR4 callers reading the worldCommit block read
-  // SettlementDecision.tier through the world commit's reason, not this.
-  const legacyTerminalTier = deriveLegacyTerminalTierFromAdjudication(adjudication, true);
-  // PR4: adjudication no longer carries rewardBundle either; rebuild it via
-  // the legacy helper so the story report's reward evaluation stays aligned
-  // with the public taskAdjudication projection (which goes through the same
-  // journeyRewardBundleForPlan in agentCompanionRuntime.withLegacyTierProjection).
-  const legacyRewardBundle = legacyTerminalTier === "未及格"
+  const completionTier = input.worldCommit?.completionTier;
+  if (completionTier === undefined) throw new Error("journey_settlement_tier_required");
+  const rewardBundle = completionTier === "未及格"
     ? undefined
-    : journeyRewardBundleForPlan(taskPlan, legacyTerminalTier);
-  const legacyReward = legacyTerminalTier === "未及格"
-    ? undefined
-    : JOURNEY_TIER_REWARDS[legacyTerminalTier];
+    : journeyRewardBundleForPlan(taskPlan, completionTier);
   const arrivalBeat = storyBeat(arrival) as JourneyEpisodeStoryBeat;
   const returnBeat = storyBeat(returning) as JourneyEpisodeStoryBeat;
   const time = storyTime(input.startedAtWorldTime, input.dueAtWorldTime);
@@ -1298,7 +851,7 @@ function buildGeneratedJourneyStoryReport(
     ...entityLabels(episode, "person"),
     ...entityLabels(episode, "agent").filter((label) => label !== agentName),
   ]))];
-  const completionResult = taskPlan.completionResult ?? inferJourneyCompletionResult(taskPlan.successResult);
+  const completionResult = taskPlan.completionResult;
   const mainSucceeded = adjudication.mainCompleted === adjudication.mainTotal;
   const returnText = mainSucceeded
     ? returnStoryOutcome(returnBeat, "你", regionName, agentName, completionResult)
@@ -1343,9 +896,9 @@ function buildGeneratedJourneyStoryReport(
       episodes: [returning],
     }),
   ];
-  const rewards = rewardEvaluation(legacyRewardBundle, input.episodes);
+  const rewards = rewardEvaluation(rewardBundle, input.episodes);
   const evaluation: GroundedJourneyStoryReport["evaluation"] = {
-    taskCompletionGrade: legacyTerminalTier,
+    taskCompletionGrade: completionTier,
     ...(adjudication.performance ? {
       performanceScorePercent: Math.round(adjudication.performance.scoreBps / 100),
       gradeReason: adjudication.performance.reasons.join("；"),
@@ -1459,7 +1012,7 @@ function buildGeneratedJourneyStoryReport(
       objectiveStatus: mission.status === "completed" ? "progressed" : "unresolved",
       confirmedOutcome: confirmedOutcomes.join(""),
       unresolved: mission.status === "completed"
-        ? `本局已经结算为“${legacyTerminalTier}”；长期目标仍可在下一世继续。`
+        ? `本局已经结算为“${completionTier}”；长期目标仍可在下一世继续。`
         : "本局主线未闭环，未完成部分不会由叙述补写为成功。",
     },
     episodeIds: input.episodes.map((episode) => episode.episodeId),

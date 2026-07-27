@@ -39,26 +39,12 @@ function clean(value: string): string {
   return publicText(value).trim();
 }
 
-function legacyStoryBeat(input: JourneyInteractionLogEpisodeInput): JourneyEpisodeStoryBeat | undefined {
-  const fact = input.serverFacts?.confirmedFacts[0]?.text?.trim() || "";
-  const match = /选择了「([^\u300d]+)」；服务器结算：(.*)$/u.exec(fact);
-  const outcome = input.serverFacts?.stateChanges.find((change) => change.stateChangeId.endsWith(":outcome"))
-    ?.summary?.trim() || match?.[2]?.trim();
-  if (!input.phase || !match?.[1]?.trim() || !outcome) return undefined;
-  return {
-    phase: input.phase,
-    sceneTitle: input.title,
-    selectedAction: { label: match[1].trim() },
-    outcomeSummary: outcome,
-  };
-}
-
 export function buildJourneyInteractionLog(input: {
   readonly journeyId: string;
   readonly episodes: readonly JourneyInteractionLogEpisodeInput[];
 }): JourneyInteractionLog {
   const entries = input.episodes.flatMap((episode, index): readonly JourneyInteractionLogEntry[] => {
-    const beat = episode.serverFacts?.storyBeat ?? legacyStoryBeat(episode);
+    const beat = episode.serverFacts?.storyBeat;
     if (!beat) return [];
     const objective = episode.generatedTaskObjective;
     return [{

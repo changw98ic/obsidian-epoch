@@ -55,8 +55,7 @@ import {
  * - `7000 ..< 8500` → `优秀`
  * - `>= 8500` AND `hiddenComplete` → `惊世`
  *
- * `完美` is intentionally absent: the legacy label is mapped to `优秀`
- * upstream by `normalizeJourneyCompletionTier`.
+ * `完美` is intentionally absent from the canonical tier vocabulary.
  */
 export const TIER_THRESHOLDS_V1 = Object.freeze({
   未及格_MAX: 4_000,
@@ -233,7 +232,7 @@ function rarityFromInt(value: number): 0 | 1 | 2 | 3 {
  * Derive the {@link RewardGrant} from (tier, score, baseBundle, journeyId).
  *
  * Rules (PR4 rewardPolicy):
- * - `未及格` → no grant (caller skips the call entirely; this function
+ * - `未及格` → no grant (caller does not call this function; this function
  *   throws so the contract is enforced at the type level).
  * - `resourceGrants[rId] = max(base.amount, floor(base.amount * multiplier / 10000))`
  *   so the floor invariant holds: multiplier `<1x` cannot reduce below base.
@@ -388,7 +387,7 @@ export function deriveSettlementDecision(
 /**
  * Build the empty reward grant used when the tier is `未及格`. The grant
  * carries no resources / items and the journey-grade modifier; downstream
- * grantors skip it entirely. The permanent
+ * grantors do not call it. The permanent
  * {@link RewardGrant.negativeRewardForbidden} marker is preserved.
  */
 function makeNoRewardGrant(ctx: SettlementContext, settlementId: string): RewardGrant {

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { EpochAttributeId, EpochResourceId } from "./protocol.ts";
+import type { EpochResourceId } from "./protocol.ts";
 import type { JourneyActionResolution } from "./journeyActionResolutionRules.ts";
 import type { JourneySceneType } from "./journeySceneCatalog.ts";
 import type {
@@ -33,7 +33,6 @@ export type JourneyTaskPlanSource = "model_sampling" | "server_fallback";
 export type JourneyTaskObjectiveKind = "main" | "side" | "choice";
 export type JourneyTaskGraphRouteKind = "choice" | "unlock";
 export type JourneyCompletionTier = "未及格" | "及格" | "良好" | "优秀" | "惊世";
-export type LegacyJourneyCompletionTier = JourneyCompletionTier | "完美";
 export type JourneyCompletionResultKind = "item" | "knowledge" | "world_state" | "service" | "relationship";
 export type JourneyCompletionReturnMode = "carry" | "report" | "none";
 
@@ -48,9 +47,9 @@ export interface JourneyTaskRequest {
   readonly scenarioMapId: string;
   readonly generationRequested?: boolean;
   /**
-   * PR1 additive. Server-side task-family binding for the request; absent on
-   * legacy requests. INTERNAL-only — never surfaces on PublicQuestOffer /
-   * PublicActionOption (zero-bonus boundary).
+   * PR1 additive. Server-side task-family binding for offer-bound requests.
+   * INTERNAL-only — never surfaces on PublicQuestOffer / PublicActionOption
+   * (zero-bonus boundary).
    */
   readonly taskFamilyId?: string;
   /**
@@ -116,10 +115,10 @@ export interface JourneyGeneratedTaskObjective {
   readonly objectiveId: string;
   readonly kind: JourneyTaskObjectiveKind;
   readonly sequence: number;
-  /** Global task-graph order. Legacy linear plans omit this field. */
-  readonly stage?: number;
+  /** Global task-graph order. */
+  readonly stage: number;
   /** All listed objectives must have server completion evidence before this node is available. */
-  readonly prerequisiteObjectiveIds?: readonly string[];
+  readonly prerequisiteObjectiveIds: readonly string[];
   readonly title: string;
   readonly objective: string;
   readonly completionCriteria: string;
@@ -157,18 +156,16 @@ export interface JourneyTaskProposal {
   readonly premise: string;
   readonly primaryObjective: string;
   readonly successResult: string;
-  readonly completionResult?: JourneyCompletionResult;
+  readonly completionResult: JourneyCompletionResult;
   readonly objectives: readonly JourneyGeneratedTaskObjective[];
-  /** Optional additive graph contract. Omitted plans retain legacy linear execution. */
-  readonly routes?: readonly JourneyTaskGraphRoute[];
+  readonly routes: readonly JourneyTaskGraphRoute[];
 }
 
 export interface JourneyGeneratedTaskPlan extends JourneyTaskProposal {
   readonly completionResult: JourneyCompletionResult;
   readonly version: typeof JOURNEY_TASK_PLAN_VERSION;
   readonly source: JourneyTaskPlanSource;
-  /** New plans use multi-factor server adjudication; omitted persisted plans retain v1 count semantics. */
-  readonly adjudicationVersion?: typeof JOURNEY_TASK_ADJUDICATION_VERSION;
+  readonly adjudicationVersion: typeof JOURNEY_TASK_ADJUDICATION_VERSION;
   readonly taskType: string;
   readonly scenarioMapId: string;
   /** SHA-256 commitment only. The hidden requirement is not sent before settlement. */
@@ -246,7 +243,7 @@ export function journeyFallbackRiskForScenario(input: {
 export type JourneyHiddenTaskSealResolver = (
   journeyId: string,
   plan: JourneyGeneratedTaskPlan,
-) => JourneyHiddenTaskSeal | undefined;
+) => JourneyHiddenTaskSeal;
 
 export interface JourneyTierReward {
   readonly resourceId: EpochResourceId;
@@ -259,11 +256,6 @@ export interface JourneyRewardItem {
   readonly rarity: "common" | "rare" | "legendary";
 }
 
-export interface JourneyAttributeReward {
-  readonly attributeId: EpochAttributeId;
-  readonly amount: number;
-}
-
 export interface JourneyRewardBundle {
   readonly resources: readonly JourneyTierReward[];
   readonly items: readonly JourneyRewardItem[];
@@ -272,12 +264,9 @@ export interface JourneyRewardBundle {
     readonly evidenceSystem: "progressionRules.attributeEvidenceXp";
     readonly summary: string;
   };
-  /** Legacy-compatible field. New Journey settlement must keep this empty. */
-  readonly attributes: readonly JourneyAttributeReward[];
 }
 
 export function normalizeJourneyCompletionTier(value: unknown): JourneyCompletionTier | undefined {
-  if (value === "完美") return "优秀";
   return value === "未及格"
     || value === "及格"
     || value === "良好"
@@ -295,7 +284,7 @@ export const JOURNEY_TIER_REWARDS: Readonly<Record<Exclude<JourneyCompletionTier
 };
 
 function rewardItemName(plan: JourneyGeneratedTaskPlan): string {
-  const completion = plan.completionResult ?? inferJourneyCompletionResult(plan.successResult);
+  const completion = plan.completionResult;
   switch (completion.kind) {
     case "knowledge": return `${plan.title}便携记录器`;
     case "relationship": return `${plan.title}引荐信物`;
@@ -329,7 +318,6 @@ export function journeyRewardBundleForPlan(
       evidenceSystem: "progressionRules.attributeEvidenceXp",
       summary: "Journey completion records server evidence and material/resource rewards only; it does not directly grant permanent base attributes.",
     },
-    attributes: [],
     items: itemRarity ? [{
       itemKey: `journey_reward_${itemHash}`,
       displayName: rewardItemName(plan),
@@ -340,14 +328,6 @@ export function journeyRewardBundleForPlan(
 
 export interface JourneyTaskAdjudication {
   readonly authority: "server";
-  /**
-   * Terminal tier for this adjudication. ABSENT on PR4 contract journeys
-   * (post-settlement the authority tier lives on {@link SettlementDecision.tier});
-   * the field stays on the type so legacy read models that still call
-   * {@link deriveLegacyTerminalTier} can carry it without a parallel shape.
-   * PR4 callers MUST NOT read this field — use SettlementDecision.tier.
-   */
-  readonly tier?: JourneyCompletionTier;
   readonly mainCompleted: number;
   readonly mainTotal: number;
   readonly bonusMainCompleted: number;
@@ -355,7 +335,7 @@ export interface JourneyTaskAdjudication {
   readonly sideCompleted: number;
   readonly sideTotal: number;
   readonly completedObjectiveIds: readonly string[];
-  readonly performance?: JourneyTaskPerformance;
+  readonly performance: JourneyTaskPerformance;
   readonly hiddenTask: {
     readonly commitment: string;
     readonly revealed: boolean;
@@ -376,8 +356,6 @@ export interface JourneyTaskAdjudication {
     readonly description?: string;
     readonly requiredActions?: JourneyHiddenTaskSpec["requiredActions"];
   };
-  readonly reward?: JourneyTierReward;
-  readonly rewardBundle?: JourneyRewardBundle;
 }
 
 export interface JourneyTaskPerformance {
@@ -390,7 +368,6 @@ export interface JourneyTaskPerformance {
   readonly completedByRisk: Readonly<Record<JourneyTaskRisk, number>>;
   readonly exceptionalSuccesses: number;
   readonly failedActions: number;
-  readonly skippedActions: number;
   readonly paidResourceCosts: number;
   readonly missingResolutionEvidence: number;
   readonly perfectEligible: boolean;
@@ -398,13 +375,24 @@ export interface JourneyTaskPerformance {
 }
 
 export interface JourneyTaskEvidenceEpisode {
+  readonly phase?: "arrival" | "main" | "side" | "return";
   readonly generatedTaskObjective?: JourneyGeneratedTaskObjective;
+  readonly settlement?: {
+    readonly taskObjective?: {
+      readonly objectiveId: string;
+      readonly completionKind: "complete" | "failed";
+    };
+    readonly reward?: {
+      readonly resourceId?: EpochResourceId;
+      readonly amount?: number;
+    };
+  };
   readonly serverFacts?: {
     readonly storyBeat?: {
       readonly selectedAction: {
         readonly optionKey?: string;
         readonly taskObjectiveId?: string;
-        readonly completionKind?: "complete" | "failed" | "skip";
+        readonly completionKind?: "complete" | "failed";
         readonly resolution?: JourneyActionResolution;
       };
     };
@@ -515,7 +503,6 @@ export function inferJourneyCompletionResult(successResult: string): JourneyComp
 }
 
 function completionResult(value: unknown, successResult: string): JourneyCompletionResult {
-  if (value === undefined) return inferJourneyCompletionResult(successResult);
   if (!isRecord(value)) throw new Error("journey_task_completion_result_invalid");
   assertOnlyFields(value, COMPLETION_RESULT_FIELDS, "journey_task_completion_result_field_not_allowed");
   if (typeof value.kind !== "string" || !ALLOWED_COMPLETION_RESULT_KINDS.has(value.kind as JourneyCompletionResultKind)) {
@@ -609,7 +596,7 @@ function deriveHiddenFromUnsignedPlan(
   plan: Omit<JourneyGeneratedTaskPlan, "hiddenTaskCommitment">,
   entropy: Uint8Array,
 ): JourneyHiddenTaskSpec {
-  const routedObjectiveIds = new Set((plan.routes ?? []).flatMap((route) => route.objectiveIds));
+  const routedObjectiveIds = new Set(plan.routes.flatMap((route) => route.objectiveIds));
   const allMain = plan.objectives.filter((objective) => objective.kind === "main");
   // A hidden requirement must remain achievable regardless of which mutually
   // exclusive route is selected. Graph plans therefore seal a common main node.
@@ -617,7 +604,7 @@ function deriveHiddenFromUnsignedPlan(
   const main = commonMain.length ? commonMain : allMain;
   const allSides = plan.objectives.filter((objective) => objective.kind === "side");
   const routeNeutralSides = allSides.filter((objective) =>
-    !(objective.prerequisiteObjectiveIds ?? []).some((objectiveId) => routedObjectiveIds.has(objectiveId)));
+    !objective.prerequisiteObjectiveIds.some((objectiveId) => routedObjectiveIds.has(objectiveId)));
   const sides = routeNeutralSides.length ? routeNeutralSides : allSides;
   const selected = [
     main[entropy[0] % main.length],
@@ -631,10 +618,6 @@ function deriveHiddenFromUnsignedPlan(
     description: `以服务器封存的特定方式完成“${selected[0].title}”与支线“${selected[1].title}”。`,
     requiredActions,
   };
-}
-
-function legacyHiddenCommitment(spec: JourneyHiddenTaskSpec): `sha256:${string}` {
-  return `sha256:${createHash("sha256").update(stableJson(spec)).digest("hex")}`;
 }
 
 function sealedHiddenCommitment(input: {
@@ -673,7 +656,7 @@ export function normalizeJourneyHiddenTaskSeal(
   seal: JourneyHiddenTaskSeal,
 ): JourneyHiddenTaskSeal {
   const { hiddenTaskCommitment: _commitment, ...unsigned } = plan;
-  if (seal.version !== 1
+  if (!seal || seal.version !== 1
     || !/^[A-Za-z0-9_-]{32,128}$/u.test(seal.nonce)
     || !/^sha256:[a-f0-9]{64}$/u.test(seal.planHash)
     || !/^sha256:[a-f0-9]{64}$/u.test(seal.commitment)
@@ -697,36 +680,11 @@ export function normalizeJourneyHiddenTaskSeal(
   };
 }
 
-function legacyHiddenTaskForPlan(plan: JourneyGeneratedTaskPlan): JourneyHiddenTaskSpec | undefined {
-  const main = plan.objectives.filter((objective) => objective.kind === "main");
-  const sides = plan.objectives.filter((objective) => objective.kind === "side");
-  for (const mainObjective of main) {
-    for (const sideObjective of sides) {
-      for (const mainAction of mainObjective.actions) {
-        for (const sideAction of sideObjective.actions) {
-          const candidate: JourneyHiddenTaskSpec = {
-            description: `以服务器封存的特定方式完成“${mainObjective.title}”与支线“${sideObjective.title}”。`,
-            requiredActions: [
-              { objectiveId: mainObjective.objectiveId, optionKey: mainAction.optionKey },
-              { objectiveId: sideObjective.objectiveId, optionKey: sideAction.optionKey },
-            ],
-          };
-          if (legacyHiddenCommitment(candidate) === plan.hiddenTaskCommitment) return candidate;
-        }
-      }
-    }
-  }
-  return undefined;
-}
-
 export function deriveJourneyHiddenTask(
   plan: JourneyGeneratedTaskPlan,
-  hiddenTaskSeal?: JourneyHiddenTaskSeal,
+  hiddenTaskSeal: JourneyHiddenTaskSeal,
 ): JourneyHiddenTaskSpec {
-  if (hiddenTaskSeal) return normalizeJourneyHiddenTaskSeal(plan, hiddenTaskSeal).hiddenTask;
-  const legacy = legacyHiddenTaskForPlan(plan);
-  if (legacy) return legacy;
-  throw new Error("journey_hidden_task_commitment_invalid");
+  return normalizeJourneyHiddenTaskSeal(plan, hiddenTaskSeal).hiddenTask;
 }
 
 export function validateJourneyTaskProposal(input: {
@@ -758,13 +716,16 @@ export function validateJourneyTaskProposal(input: {
     if (!Number.isSafeInteger(rawObjective.sequence) || Number(rawObjective.sequence) < 1) {
       throw new Error("journey_task_objective_sequence_invalid");
     }
-    const stage = rawObjective.stage === undefined ? undefined : Number(rawObjective.stage);
-    if (stage !== undefined && (!Number.isSafeInteger(stage) || stage < 1 || stage > 32)) {
+    const stage = Number(rawObjective.stage);
+    if (!Number.isSafeInteger(stage) || stage < 1 || stage > 32) {
       throw new Error("journey_task_objective_stage_invalid");
     }
-    const prerequisiteObjectiveIds = rawObjective.prerequisiteObjectiveIds === undefined
-      ? undefined
-      : uniqueTexts(rawObjective.prerequisiteObjectiveIds, `prerequisite_objective_ids_${index}`, 0, 8);
+    const prerequisiteObjectiveIds = uniqueTexts(
+      rawObjective.prerequisiteObjectiveIds,
+      `prerequisite_objective_ids_${index}`,
+      0,
+      8,
+    );
     if (typeof rawObjective.sceneType !== "string" || !ALLOWED_SCENE_TYPES.has(rawObjective.sceneType as JourneyGeneratedTaskObjective["sceneType"])) {
       throw new Error("journey_task_scene_type_invalid");
     }
@@ -858,8 +819,8 @@ export function validateJourneyTaskProposal(input: {
       objectiveId,
       kind: objectiveKind,
       sequence: Number(rawObjective.sequence),
-      ...(stage === undefined ? {} : { stage }),
-      ...(prerequisiteObjectiveIds?.length ? { prerequisiteObjectiveIds } : {}),
+      stage,
+      prerequisiteObjectiveIds,
       title: text(rawObjective.title, `objective_title_${index}`, 180),
       objective: text(rawObjective.objective, `objective_${index}`, 500),
       completionCriteria: text(rawObjective.completionCriteria, `completion_criteria_${index}`, 500),
@@ -888,15 +849,13 @@ export function validateJourneyTaskProposal(input: {
     }
   }
 
-  let routes: readonly JourneyTaskGraphRoute[] | undefined;
-  if (input.proposal.routes !== undefined) {
-    if (!Array.isArray(input.proposal.routes)
-      || input.proposal.routes.length < 1
-      || input.proposal.routes.length > JOURNEY_TASK_OBJECTIVE_LIMITS.routeMax) {
-      throw new Error("journey_task_routes_invalid");
-    }
-    const routeIds = new Set<string>();
-    routes = input.proposal.routes.map((rawRoute, routeIndex): JourneyTaskGraphRoute => {
+  if (!Array.isArray(input.proposal.routes)
+    || input.proposal.routes.length < 1
+    || input.proposal.routes.length > JOURNEY_TASK_OBJECTIVE_LIMITS.routeMax) {
+    throw new Error("journey_task_routes_invalid");
+  }
+  const routeIds = new Set<string>();
+  const routes: readonly JourneyTaskGraphRoute[] = input.proposal.routes.map((rawRoute, routeIndex): JourneyTaskGraphRoute => {
       if (!isRecord(rawRoute)) throw new Error("journey_task_route_invalid");
       assertOnlyFields(rawRoute, ROUTE_FIELDS, "journey_task_route_field_not_allowed");
       const routeId = slug(rawRoute.routeId, `route_id_${routeIndex}`);
@@ -926,27 +885,24 @@ export function validateJourneyTaskProposal(input: {
         objectiveIds: objectiveIdsForRoute,
         unlockedByObjectiveIds,
       };
-    });
+  });
 
-    if (objectives.some((objective) => objective.stage === undefined)) {
-      throw new Error("journey_task_graph_stage_required");
-    }
-    const objectiveById = new Map(objectives.map((objective) => [objective.objectiveId, objective]));
-    const objectiveRouteIds = new Map<string, string>();
-    for (const route of routes) {
+  const objectiveById = new Map(objectives.map((objective) => [objective.objectiveId, objective]));
+  const objectiveRouteIds = new Map<string, string>();
+  for (const route of routes) {
       if (route.kind === "choice" && route.unlockedByObjectiveIds.length > 0) {
         throw new Error("journey_task_choice_route_unlock_invalid");
       }
       if (route.kind === "choice" && route.objectiveIds.length < 2) {
         throw new Error("journey_task_choice_route_too_short");
       }
-      for (const objectiveId of route.objectiveIds) {
+    for (const objectiveId of route.objectiveIds) {
         const objective = objectiveById.get(objectiveId);
         if (!objective || objective.kind !== "main") throw new Error("journey_task_route_objective_invalid");
         if (objectiveRouteIds.has(objectiveId)) throw new Error("journey_task_route_objective_duplicate");
         objectiveRouteIds.set(objectiveId, route.routeId);
       }
-      for (const unlockId of route.unlockedByObjectiveIds) {
+    for (const unlockId of route.unlockedByObjectiveIds) {
         const unlock = objectiveById.get(unlockId);
         if (!unlock || unlock.kind !== "side") throw new Error("journey_task_route_unlock_objective_invalid");
         if (route.objectiveIds.some((objectiveId) =>
@@ -955,51 +911,45 @@ export function validateJourneyTaskProposal(input: {
         }
       }
     }
-    if (!main.some((objective) => !objectiveRouteIds.has(objective.objectiveId))) {
-      throw new Error("journey_task_graph_common_main_required");
-    }
-    const selectedRouteIds = new Set<string>();
-    for (const objective of objectives) {
-      for (const prerequisiteId of objective.prerequisiteObjectiveIds ?? []) {
-        const prerequisite = objectiveById.get(prerequisiteId);
-        if (!prerequisite || prerequisite.objectiveId === objective.objectiveId) {
-          throw new Error("journey_task_prerequisite_invalid");
-        }
-        if (Number(prerequisite.stage) >= Number(objective.stage)) {
-          throw new Error("journey_task_prerequisite_stage_invalid");
-        }
+  if (!main.some((objective) => !objectiveRouteIds.has(objective.objectiveId))) {
+    throw new Error("journey_task_graph_common_main_required");
+  }
+  const selectedRouteIds = new Set<string>();
+  for (const objective of objectives) {
+    for (const prerequisiteId of objective.prerequisiteObjectiveIds) {
+      const prerequisite = objectiveById.get(prerequisiteId);
+      if (!prerequisite || prerequisite.objectiveId === objective.objectiveId) {
+        throw new Error("journey_task_prerequisite_invalid");
       }
-      const routeSelections = objective.actions.map((action) => action.selectsRouteId).filter(Boolean) as string[];
-      if (objective.kind === "choice") {
-        if (routeSelections.length !== objective.actions.length || new Set(routeSelections).size !== routeSelections.length) {
-          throw new Error("journey_task_choice_routes_invalid");
-        }
-        for (const routeId of routeSelections) {
-          const route = routes.find((candidate) => candidate.routeId === routeId);
-          if (!route || route.kind !== "choice") throw new Error("journey_task_choice_route_invalid");
-          if (route.objectiveIds.some((objectiveId) =>
-            Number(objectiveById.get(objectiveId)?.stage) <= Number(objective.stage))) {
-            throw new Error("journey_task_choice_route_stage_invalid");
-          }
-          const factionObjectId = route.factionObjectId;
-          const action = objective.actions.find((candidate) => candidate.selectsRouteId === routeId);
-          if (factionObjectId && !action?.targetObjectIds.includes(factionObjectId)) {
-            throw new Error("journey_task_choice_faction_target_invalid");
-          }
-          selectedRouteIds.add(routeId);
-        }
-      } else if (routeSelections.length > 0) {
-        throw new Error("journey_task_route_selection_not_allowed");
+      if (prerequisite.stage >= objective.stage) {
+        throw new Error("journey_task_prerequisite_stage_invalid");
       }
     }
-    if (routes.some((route) => route.kind === "choice" && !selectedRouteIds.has(route.routeId))) {
-      throw new Error("journey_task_choice_route_unreachable");
+    const routeSelections = objective.actions.map((action) => action.selectsRouteId).filter(Boolean) as string[];
+    if (objective.kind === "choice") {
+      if (routeSelections.length !== objective.actions.length || new Set(routeSelections).size !== routeSelections.length) {
+        throw new Error("journey_task_choice_routes_invalid");
+      }
+      for (const routeId of routeSelections) {
+        const route = routes.find((candidate) => candidate.routeId === routeId);
+        if (!route || route.kind !== "choice") throw new Error("journey_task_choice_route_invalid");
+        if (route.objectiveIds.some((objectiveId) =>
+          Number(objectiveById.get(objectiveId)?.stage) <= Number(objective.stage))) {
+          throw new Error("journey_task_choice_route_stage_invalid");
+        }
+        const factionObjectId = route.factionObjectId;
+        const action = objective.actions.find((candidate) => candidate.selectsRouteId === routeId);
+        if (factionObjectId && !action?.targetObjectIds.includes(factionObjectId)) {
+          throw new Error("journey_task_choice_faction_target_invalid");
+        }
+        selectedRouteIds.add(routeId);
+      }
+    } else if (routeSelections.length > 0) {
+      throw new Error("journey_task_route_selection_not_allowed");
     }
-  } else if (choices.length > 0
-    || objectives.some((objective) => objective.stage !== undefined
-      || objective.prerequisiteObjectiveIds?.length
-      || objective.actions.some((action) => action.selectsRouteId))) {
-    throw new Error("journey_task_routes_required");
+  }
+  if (routes.some((route) => route.kind === "choice" && !selectedRouteIds.has(route.routeId))) {
+    throw new Error("journey_task_choice_route_unreachable");
   }
   const successResult = text(input.proposal.successResult, "success_result", 300);
   const unsigned: Omit<JourneyGeneratedTaskPlan, "hiddenTaskCommitment"> = {
@@ -1013,17 +963,10 @@ export function validateJourneyTaskProposal(input: {
     primaryObjective: text(input.proposal.primaryObjective, "primary_objective", 600),
     successResult,
     completionResult: completionResult(input.proposal.completionResult, successResult),
-    objectives: [
-      ...(routes
-        ? objectives.sort((left, right) => Number(left.stage) - Number(right.stage)
-          || left.sequence - right.sequence
-          || left.objectiveId.localeCompare(right.objectiveId))
-        : [
-            ...main.sort((left, right) => left.sequence - right.sequence),
-            ...side.sort((left, right) => left.sequence - right.sequence),
-          ]),
-    ],
-    ...(routes ? { routes } : {}),
+    objectives: objectives.sort((left, right) => left.stage - right.stage
+      || left.sequence - right.sequence
+      || left.objectiveId.localeCompare(right.objectiveId)),
+    routes,
   };
   const hiddenTask = deriveHiddenFromUnsignedPlan(unsigned, randomBytes(4));
   const nonce = randomBytes(32).toString("base64url");
@@ -1054,8 +997,8 @@ export function validateJourneyTaskProposal(input: {
  *
  * Zero-bonus boundary: this field is INTERNAL — it does NOT surface on
  * `PublicActionOption` / `PublicQuestOffer`. The roleplay-doubt hook in
- * `submitHostedAction` reads it server-side; legacy actions that omit the
- * field cause the roleplay hook to fail-open (skip), never block settlement.
+ * `submitHostedAction` reads it server-side; an action without a matching
+ * signal simply contributes no roleplay deviation.
  *
  * Mapping v1 (PR5b spec §6.9):
  *  - escort/aid/rescue/protect signal → ['support']
@@ -1065,7 +1008,7 @@ export function validateJourneyTaskProposal(input: {
  *  - faction route selection (factionObjectId present) → ['diplomacy']
  *  - diplomacy/negotiate/liaison signal → ['diplomacy']
  *  - combat/fight/strike/hunt signal OR conflict scene → ['combat']
- *  - no signal → [] (legacy action; roleplay hook fail-opens)
+ *  - no signal → [] (no observable roleplay approach)
  *
  * Bumping the signal regexes / ordering MUST bump
  * {@link ROLEPLAY_PATTERN_VERSION} in journeyRoleplayRules so existing
@@ -1088,7 +1031,7 @@ export interface DeriveActionApproachTagsInput {
    * text-only path so generic routing actions (e.g. "接受 faction 提出的
    * 路线") do not drag the acting identity into a roleplay-doubt penalty
    * before the text-mining is calibrated against live telemetry. These
-   * fields are accepted for forward compatibility but not consulted here.
+   * fields are retained as audit context but are not consulted here.
    */
   readonly selectsRouteId?: string;
   readonly routeFactionObjectId?: string;
@@ -1123,7 +1066,7 @@ export function deriveActionApproachTags(input: DeriveActionApproachTagsInput): 
   // text/scene signal matched.
   if (input.allowedEffectKinds.includes("resource_delta")) return filterTags(["logistics"]);
   if (input.allowedEffectKinds.includes("relationship_signal")) return filterTags(["diplomacy"]);
-  // No signal: legacy action — roleplay hook fail-opens.
+  // No observable signal produces no roleplay approach tag.
   return [];
 }
 
@@ -1139,7 +1082,7 @@ function filterTags(tags: readonly string[]): readonly ApproachTag[] {
 /**
  * Extended context for {@link fallbackAction} so the PR5b approach-tag
  * derivation has access to scene / objective / route signals. All fields
- * are optional; when absent the corresponding signal is skipped (the
+ * are optional; when absent the corresponding signal is omitted (the
  * derivation falls back to text + effect-kind signals).
  */
 export interface FallbackActionContext {
@@ -1189,8 +1132,8 @@ function fallbackObjective(input: {
   readonly route: JourneyTaskRoute;
   readonly kind: JourneyTaskObjectiveKind;
   readonly sequence: number;
-  readonly stage?: number;
-  readonly prerequisiteObjectiveIds?: readonly string[];
+  readonly stage: number;
+  readonly prerequisiteObjectiveIds: readonly string[];
   readonly suffix: string;
   readonly title: string;
   readonly objective: string;
@@ -1203,10 +1146,8 @@ function fallbackObjective(input: {
     objectiveId: `${input.kind}_${input.sequence}_${input.suffix}`,
     kind: input.kind,
     sequence: input.sequence,
-    ...(input.stage === undefined ? {} : { stage: input.stage }),
-    ...(input.prerequisiteObjectiveIds?.length
-      ? { prerequisiteObjectiveIds: input.prerequisiteObjectiveIds }
-      : {}),
+    stage: input.stage,
+    prerequisiteObjectiveIds: input.prerequisiteObjectiveIds,
     title: input.title,
     objective: input.objective,
     completionCriteria: input.completionCriteria,
@@ -1255,7 +1196,9 @@ function catalogFallbackRoute(input: {
     catalog.mission.primaryObjective,
     ...catalog.actions.map((action) => `${action.label} ${action.intent}`),
   ].join(" ");
-  if (!CATALOG_TASK_SIGNALS.some((signal) => signal.test(input.taskType) && signal.test(catalogText))) {
+  const taskTypeMatchesCatalogMission = input.taskType.trim() === catalog.mission.primaryObjective.trim();
+  if (!taskTypeMatchesCatalogMission
+    && !CATALOG_TASK_SIGNALS.some((signal) => signal.test(input.taskType) && signal.test(catalogText))) {
     return undefined;
   }
 
@@ -1395,7 +1338,7 @@ export function buildFallbackJourneyTaskPlan(input: {
     // PR5b: a choice action selects a route; when the sponsor is a faction /
     // organization, propagate its id so deriveActionApproachTags emits
     // 'diplomacy' for the roleplay-doubt comparator. The choice action's
-    // risk stays at "low" (matching the pre-PR5b behaviour: stageAction's
+    // risk stays at "low" (stageAction's
     // risk parameter defaults to action.risk where action is the already-
     // merged `{...action, risk: "low"}`).
     const sponsorFactionId = sponsor && ["organization", "faction"].includes(sponsor.type)
@@ -1410,8 +1353,8 @@ export function buildFallbackJourneyTaskPlan(input: {
       sponsor
         ? `身份与${sponsor.label}确认了${routeLabel}，后续行动转入对应路线。`
         : `身份确认采用${routeLabel}，后续行动转入对应路线。`,
-      // Explicit risk "low" preserves pre-PR5b behaviour (the merged action
-      // already sets risk: "low"; passing it explicitly here keeps the
+      // Explicit risk "low" keeps the merged action's risk unambiguous when
+      // the merged action already sets risk: "low" and we also
       // stageAction signature's risk parameter unambiguous when we also
       // pass the new context argument).
       "low",
@@ -1428,7 +1371,7 @@ export function buildFallbackJourneyTaskPlan(input: {
   };
   const objectives: JourneyGeneratedTaskObjective[] = [
     fallbackObjective({
-      route, kind: "main", sequence: 1, stage: 1, suffix: "prepare", title: "确认现场与执行条件",
+      route, kind: "main", sequence: 1, stage: 1, prerequisiteObjectiveIds: [], suffix: "prepare", title: "确认现场与执行条件",
       objective: `抵达${route.title}现场，依据可核验对象完成准备。`,
       completionCriteria: "现场对象、执行顺序与安全边界均完成确认。",
       actions: [
@@ -1631,6 +1574,7 @@ function fallbackRouteFromMap(input: {
     intent: string,
     outcomeSummary: string,
     risk: JourneyTaskRisk,
+    completesMission = true,
   ): JourneyTaskActionDefinition => ({
     optionKey: `${routeKey}_${suffix}`,
     label,
@@ -1639,7 +1583,7 @@ function fallbackRouteFromMap(input: {
     allowedEffectKinds: ["journey_progress", "world_reference"],
     targetObjectIds,
     outcomeSummary,
-    completesMission: true,
+    completesMission,
     chapterTitle: label,
     actionNarrative: intent,
   });
@@ -1667,8 +1611,16 @@ function fallbackRouteFromMap(input: {
         `身份逐项核验了${location.label}的对象状态，并提交了对应记录。`,
         "low",
       ),
+      baseAction(
+        "withdraw",
+        `向现场人员报备后退出${location.label}事务`,
+        `在没有伪造执行结果的前提下退出，把未完成状态留在签名记录中。`,
+        `身份向现场人员报备后退出${location.label}事务；本次任务未完成，也没有生成虚假结果。`,
+        "low",
+        false,
+      ),
     ],
-    safeFallbackOptionKey: `${routeKey}_skip`,
+    safeFallbackOptionKey: `${routeKey}_withdraw`,
     mission: {
       briefing: `${location.label}需要有人完成“${input.taskType}”。`,
       primaryObjective: `在${location.label}完成“${input.taskType}”并取得现场认可的结果。`,
@@ -1683,7 +1635,7 @@ function selectedActionByObjective(
   episodes: readonly JourneyTaskEvidenceEpisode[],
 ): ReadonlyMap<string, {
   readonly optionKey: string;
-  readonly completionKind: "complete" | "failed" | "skip";
+  readonly completionKind: "complete" | "failed";
   readonly resolution?: JourneyActionResolution;
 }> {
   const objectiveIds = new Set(plan.objectives.map((objective) => objective.objectiveId));
@@ -1696,7 +1648,7 @@ function selectedActionByObjective(
     return objectiveId
       && signedObjectiveId === objectiveId
       && optionKey
-      && (completionKind === "complete" || completionKind === "failed" || completionKind === "skip")
+      && (completionKind === "complete" || completionKind === "failed")
       && objectiveIds.has(objectiveId)
       ? [[objectiveId, {
           optionKey,
@@ -1749,14 +1701,12 @@ function journeyTaskPerformance(input: {
   const qualities: number[] = [];
   let exceptionalSuccesses = 0;
   let failedActions = 0;
-  let skippedActions = 0;
   let paidResourceCosts = 0;
   let missingResolutionEvidence = 0;
   for (const objective of relevant) {
     const evidence = input.selected.get(objective.objectiveId);
     if (!evidence) continue;
     if (evidence.completionKind === "failed") failedActions += 1;
-    if (evidence.completionKind === "skip") skippedActions += 1;
     if (evidence.completionKind !== "complete") continue;
     const action = objective.actions.find((candidate) => candidate.optionKey === evidence.optionKey);
     if (!action) continue;
@@ -1773,7 +1723,7 @@ function journeyTaskPerformance(input: {
   const executionQualityBps = qualities.length
     ? Math.round(qualities.reduce((sum, quality) => sum + quality, 0) / qualities.length)
     : 0;
-  const penaltyBps = failedActions * 750 + skippedActions * 250;
+  const penaltyBps = failedActions * 750;
   const scoreBps = Math.max(0, Math.min(10_000, Math.round(
     mainCompletionBps * 0.6 + sideCompletionBps * 0.2 + executionQualityBps * 0.2 - penaltyBps,
   )));
@@ -1781,7 +1731,6 @@ function journeyTaskPerformance(input: {
     && (input.bonusMainObjectiveIds.length === 0 || bonusMainCompletionBps === 10_000)
     && sideCompletionBps === 10_000
     && failedActions === 0
-    && skippedActions === 0
     && missingResolutionEvidence === 0
     && exceptionalSuccesses > 0
     && executionQualityBps >= 7_500
@@ -1795,7 +1744,6 @@ function journeyTaskPerformance(input: {
     `执行质量 ${Math.round(executionQualityBps / 100)}%`,
     `卓越成功 ${exceptionalSuccesses} 次`,
     ...(failedActions ? [`失败行动 ${failedActions} 次`] : []),
-    ...(skippedActions ? [`主动跳过 ${skippedActions} 次`] : []),
     ...(missingResolutionEvidence ? [`缺少服务端行动质量证据 ${missingResolutionEvidence} 项`] : []),
     perfectEligible ? "满足优秀评价条件" : "未满足优秀评价条件",
   ];
@@ -1809,7 +1757,6 @@ function journeyTaskPerformance(input: {
     completedByRisk,
     exceptionalSuccesses,
     failedActions,
-    skippedActions,
     paidResourceCosts,
     missingResolutionEvidence,
     perfectEligible,
@@ -1837,8 +1784,7 @@ export function journeyTaskGraphState(
   const selected = selectedActionByObjective(plan, episodes);
   const validSelection = (objective: JourneyGeneratedTaskObjective) => {
     const evidence = selected.get(objective.objectiveId);
-    return evidence && (objective.actions.some((action) => action.optionKey === evidence.optionKey)
-      || (evidence.completionKind === "skip" && evidence.optionKey === `skip_${objective.objectiveId}`))
+    return evidence && objective.actions.some((action) => action.optionKey === evidence.optionKey)
       ? evidence
       : undefined;
   };
@@ -1850,7 +1796,7 @@ export function journeyTaskGraphState(
     .filter((objective) => validSelection(objective)?.completionKind === "complete")
     .map((objective) => objective.objectiveId);
   const completed = new Set(completedObjectiveIds);
-  const routes = plan.routes ?? [];
+  const routes = plan.routes;
   const routeById = new Map(routes.map((route) => [route.routeId, route]));
   const routeIdByObjectiveId = new Map(routes.flatMap((route) =>
     route.objectiveIds.map((objectiveId) => [objectiveId, route.routeId] as const)));
@@ -1868,11 +1814,10 @@ export function journeyTaskGraphState(
   ])];
   const activeRoutes = new Set(activeRouteIds);
   const lockedRouteIds = routes.filter((route) => !activeRoutes.has(route.routeId)).map((route) => route.routeId);
-  const graph = routes.length > 0;
   const objectiveIsRelevant = (objective: JourneyGeneratedTaskObjective) => {
     const routeId = routeIdByObjectiveId.get(objective.objectiveId);
     if (routeId && !activeRoutes.has(routeId)) return false;
-    return !(objective.prerequisiteObjectiveIds ?? []).some((prerequisiteId) => {
+    return !objective.prerequisiteObjectiveIds.some((prerequisiteId) => {
       const prerequisiteRouteId = routeIdByObjectiveId.get(prerequisiteId);
       return prerequisiteRouteId && !activeRoutes.has(prerequisiteRouteId);
     });
@@ -1890,13 +1835,16 @@ export function journeyTaskGraphState(
   const relevantSideObjectiveIds = plan.objectives.filter((objective) =>
     objective.kind === "side" && objectiveIsRelevant(objective))
     .map((objective) => objective.objectiveId);
-  const availableObjectiveIds = graph
-    ? plan.objectives.filter((objective) =>
+  const recallOnlyMain = episodes.some((episode) =>
+    episode.phase === "main"
+      && episode.settlement?.taskObjective === undefined
+      && episode.serverFacts?.storyBeat?.selectedAction.taskObjectiveId === undefined);
+  const availableObjectiveIds = recallOnlyMain
+    ? []
+    : plan.objectives.filter((objective) =>
         !recorded.has(objective.objectiveId)
         && objectiveIsRelevant(objective)
-        && (objective.prerequisiteObjectiveIds ?? []).every((objectiveId) => completed.has(objectiveId)))
-      .map((objective) => objective.objectiveId)
-    : plan.objectives.filter((objective) => !recorded.has(objective.objectiveId)).slice(0, 1)
+        && objective.prerequisiteObjectiveIds.every((objectiveId) => completed.has(objectiveId)))
       .map((objective) => objective.objectiveId);
   return {
     recordedObjectiveIds,
@@ -1922,21 +1870,10 @@ export function nextJourneyTaskObjective(
 export function adjudicateJourneyTask(input: {
   readonly plan: JourneyGeneratedTaskPlan;
   readonly episodes: readonly JourneyTaskEvidenceEpisode[];
-  readonly hiddenTaskSeal?: JourneyHiddenTaskSeal;
+  readonly hiddenTaskSeal: JourneyHiddenTaskSeal;
   readonly revealHidden?: boolean;
-  /**
-   * PR5c: canonical hidden-prerequisite link snapshot filtered to this plan's
-   * objectiveIds. When provided, the adjudicator consults each link's
-   * `status` to gate `hiddenCompleted` — a destroyed prerequisite makes the
-   * matching required action's hidden tier unreachable even when the action
-   * signature matches.
-   *
-   * Backward-compat: when omitted (or empty), behaviour is bit-identical to
-   * pre-PR5c — the adjudicator falls back to the pure signature match. This
-   * preserves the contract for v1 seal replay, legacy callers, and tests that
-   * do not exercise the canonical projection.
-   */
-  readonly hiddenPrerequisiteLinks?: readonly HiddenPrerequisiteLink[];
+  /** Canonical hidden-prerequisite link snapshot for this installed plan. */
+  readonly hiddenPrerequisiteLinks: readonly HiddenPrerequisiteLink[];
 }): JourneyTaskAdjudication {
   const selected = selectedActionByObjective(input.plan, input.episodes);
   const graphState = journeyTaskGraphState(input.plan, input.episodes);
@@ -1952,12 +1889,9 @@ export function adjudicateJourneyTask(input: {
   const bonusMainCompleted = bonusMain.filter((objective) => completed.has(objective.objectiveId)).length;
   const sideCompleted = sides.filter((objective) => completed.has(objective.objectiveId)).length;
   const hidden = deriveJourneyHiddenTask(input.plan, input.hiddenTaskSeal);
-  // PR5c: wrap the existing signature check with reachability. The link
-  // snapshot is the canonical projection's view of which hidden prereqs are
-  // destroyed. When the array is empty/undefined (legacy callers, v1 seal
-  // replay, pre-PR5c tests), the reachability check is a no-op and behaviour
-  // is bit-identical to pre-PR5c.
-  const links = input.hiddenPrerequisiteLinks ?? [];
+  // The link snapshot is the canonical projection's view of which hidden
+  // prerequisites are destroyed.
+  const links = input.hiddenPrerequisiteLinks;
   const destroyedObjectiveIds = new Set<string>();
   for (const link of links) {
     if (link.status === "destroyed") {
@@ -1978,15 +1912,13 @@ export function adjudicateJourneyTask(input: {
     .filter((required) => destroyedObjectiveIds.has(required.objectiveId))
     .map((required) => required.objectiveId);
   const prerequisiteReachable = destroyedPrerequisiteObjectIds.length === 0;
-  const performance = input.plan.adjudicationVersion === JOURNEY_TASK_ADJUDICATION_VERSION
-    ? journeyTaskPerformance({
-        plan: input.plan,
-        selected,
-        requiredMainObjectiveIds: graphState.requiredMainObjectiveIds,
-        bonusMainObjectiveIds: graphState.bonusMainObjectiveIds,
-        relevantSideObjectiveIds: graphState.relevantSideObjectiveIds,
-      })
-    : undefined;
+  const performance = journeyTaskPerformance({
+    plan: input.plan,
+    selected,
+    requiredMainObjectiveIds: graphState.requiredMainObjectiveIds,
+    bonusMainObjectiveIds: graphState.bonusMainObjectiveIds,
+    relevantSideObjectiveIds: graphState.relevantSideObjectiveIds,
+  });
   const revealHidden = input.revealHidden === true;
   return {
     authority: "server",
@@ -1997,7 +1929,7 @@ export function adjudicateJourneyTask(input: {
     sideCompleted,
     sideTotal: sides.length,
     completedObjectiveIds,
-    ...(performance ? { performance } : {}),
+    performance,
     hiddenTask: revealHidden
       ? {
         commitment: input.plan.hiddenTaskCommitment,
@@ -2013,92 +1945,4 @@ export function adjudicateJourneyTask(input: {
         revealed: false,
       },
   };
-}
-
-/**
- * Derive the legacy terminal tier for a journey task plan from its physical
- * adjudication components. This is the SAME derivation that used to live
- * inside {@link adjudicateJourneyTask}; it has been extracted so that
- * adjudicateJourneyTask no longer computes tier (PR4 spec: "adjudicateJourneyTask
- * 不再算 tier"). The authority tier for PR4 contract journeys lives on
- * {@link SettlementDecision.tier} (computed in deriveSettlementDecision).
- *
- * Callers that need a tier for non-PR4 contexts (e.g. the mission read model
- * for a terminal journey without a settlementDecision, or for tests asserting
- * the legacy tier mapping) SHOULD call this helper. PR4 code paths MUST NOT
- * call this — they read SettlementDecision.tier instead.
- *
- * The `revealHidden` flag mirrors the {@link adjudicateJourneyTask} input:
- * when false, a tier that would be `惊世` is masked down to `优秀` (the
- * hidden task seal stays unrevealed to the player).
- */
-export function deriveLegacyTerminalTier(input: {
-  readonly mainCompleted: number;
-  readonly mainTotal: number;
-  readonly sideCompleted: number;
-  readonly sideTotal: number;
-  readonly hiddenCompleted: boolean;
-  readonly perfectEligible: boolean;
-  readonly revealHidden: boolean;
-  /**
-   * PR5c: when true, the hidden objective's prerequisite object is destroyed
-   * in canonical state, making the hidden objective unreachable. The tier is
-   * clamped to AT MOST '良好' regardless of hiddenCompleted — the agent can
-   * still get 良好 for visible completion but never 惊世.
-   *
-   * Backward-compat: when omitted (or false), behaviour is bit-identical to
-   * pre-PR5c. This preserves the contract for legacy callers and tests.
-   */
-  readonly hiddenObjectiveDestroyed?: boolean;
-}): JourneyCompletionTier {
-  const terminalTier: JourneyCompletionTier = input.mainCompleted < input.mainTotal
-    ? "未及格"
-    : input.sideCompleted === 0
-      ? "及格"
-      : input.sideCompleted < input.sideTotal || !input.perfectEligible
-        ? "良好"
-        : input.hiddenCompleted && !input.hiddenObjectiveDestroyed
-          ? "惊世"
-          : "优秀";
-  // PR5c: when the hidden objective's prereq is destroyed, clamp to AT MOST
-  // '良好'. The agent can still earn 良好 for visible completion; the hidden
-  // tier (惊世/优秀 via hidden) is unreachable because the prereq object is
-  // gone. This is a terminal clamp, not a score recomputation — it mirrors
-  // the PR4 SettlementDecision.tier clamp via `hiddenPrerequisiteDestroyed`
-  // in SettlementContext (no score recompute, just a ceiling).
-  if (input.hiddenObjectiveDestroyed && terminalTier === "优秀") {
-    return input.revealHidden ? "良好" : "良好";
-  }
-  return input.revealHidden
-    ? terminalTier
-    : terminalTier === "惊世" ? "优秀" : terminalTier;
-}
-
-/**
- * Convenience wrapper: derive the legacy terminal tier from an already-built
- * {@link JourneyTaskAdjudication}. Reads the physical components (main/side
- * counts, hidden completion, performance) and forwards to
- * {@link deriveLegacyTerminalTier}. PR4 callers SHOULD NOT use this — read
- * {@link SettlementDecision.tier} directly.
- */
-export function deriveLegacyTerminalTierFromAdjudication(
-  adjudication: JourneyTaskAdjudication,
-  revealHidden: boolean,
-): JourneyCompletionTier {
-  return deriveLegacyTerminalTier({
-    mainCompleted: adjudication.mainCompleted,
-    mainTotal: adjudication.mainTotal,
-    sideCompleted: adjudication.sideCompleted,
-    sideTotal: adjudication.sideTotal,
-    hiddenCompleted: Boolean(adjudication.hiddenTask.completed),
-    perfectEligible: adjudication.performance?.perfectEligible ?? false,
-    revealHidden,
-    // PR5c: forward the destroyed-prereq signal so the tier clamp in
-    // deriveLegacyTerminalTier (line 2069) fires when the hidden objective's
-    // prerequisite object is destroyed in canonical state. When the hidden
-    // task is not revealed, prerequisiteReachable is absent → treat as false
-    // (no clamp) since we cannot know the canonical state.
-    hiddenObjectiveDestroyed: adjudication.hiddenTask.revealed
-      && adjudication.hiddenTask.prerequisiteReachable === false,
-  });
 }

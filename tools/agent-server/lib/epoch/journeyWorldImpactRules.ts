@@ -243,8 +243,8 @@ export function stripObjectTargetEntityId(targetEntityId: string): string | unde
  * Compute the mirror-ledger blueprint for one grounded action's object impact.
  *
  * Returns an empty array when ANY of:
- * (a) `resolution.completionKind !== 'complete'` — failed/skipped actions
- *     never mutate canonical object state.
+ * (a) `resolution.completionKind !== 'complete'` — failed actions never
+ *     mutate canonical object state.
  * (b) `actionObjectImpact` is undefined — the action carries no object impact
  *     (the common case; most actions do not destroy objects).
  * (c) `targetEntityId` is malformed (not `object:${nonEmpty}`) — fail-closed

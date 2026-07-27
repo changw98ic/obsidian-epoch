@@ -24,10 +24,7 @@ import type { EpochJourney, JourneyWorldCommit } from "./journeyRules.ts";
 import {
   adjudicateJourneyTask,
   buildFallbackJourneyTaskPlan,
-  deriveLegacyTerminalTierFromAdjudication,
   type JourneyFallbackRiskProfile,
-  JOURNEY_TIER_REWARDS,
-  journeyRewardBundleForPlan,
   nextJourneyTaskObjective,
   validateJourneyTaskProposal,
 } from "./journeyGeneratedTaskRules.ts";
@@ -39,30 +36,6 @@ import { EPOCH_WORLD_CALENDAR_ORIGIN_YEAR, epochWorldCalendarMoment } from "./wo
 import type { HiddenPrerequisiteLink } from "./journeyRoleplayRules.ts";
 
 type UnknownRecord = Record<string, unknown>;
-
-/**
- * PR4: re-attach the legacy tier / reward / rewardBundle to a public-facing
- * task adjudication projection. adjudicateJourneyTask itself no longer
- * derives these (spec: "adjudicateJourneyTask 不再算 tier"); the authority
- * tier for PR4 contract journeys lives on SettlementDecision.tier. The MCP
- * API contract still exposes `taskAdjudication.tier / reward / rewardBundle`
- * to clients, so this helper rebuilds them from the adjudication's physical
- * components via the legacy derivation. PR4-internal callers MUST read
- * SettlementDecision.tier directly and never touch this projection.
- */
-function withLegacyTierProjection(
-  taskPlan: Parameters<typeof journeyRewardBundleForPlan>[0],
-  adjudication: ReturnType<typeof adjudicateJourneyTask>,
-  revealHidden: boolean,
-) {
-  const tier = deriveLegacyTerminalTierFromAdjudication(adjudication, revealHidden);
-  if (tier === "未及格") {
-    return { ...adjudication, tier };
-  }
-  const reward = JOURNEY_TIER_REWARDS[tier];
-  const rewardBundle = journeyRewardBundleForPlan(taskPlan, tier);
-  return { ...adjudication, tier, reward, rewardBundle };
-}
 
 export interface AgentCompanionEpochSurface {
   readonly progress: (input?: UnknownRecord) => unknown;
@@ -87,7 +60,7 @@ export interface AgentCompanionEpochSurface {
    * Used to pass into adjudicateJourneyTask so destroyed prerequisites gate
    * hidden tier reachability.
    */
-  readonly hiddenPrerequisiteLinks?: () => unknown;
+  readonly hiddenPrerequisiteLinks: () => unknown;
 }
 
 export interface AgentCompanionRuntimeOptions {
@@ -424,7 +397,10 @@ export class AgentCompanionRuntime {
       // PR3: zero-bonus boundary — strip internal source-binding fields
       // (questOfferId/offerHash/marketSnapshotVersion/taskFamilyId/
       // expectedApproach) before crossing into the untrusted response.
-      return { ...scrubJourneyRecordForPublicView(prepared), mission: this.#missionForJourney(prepared.journey) };
+      // Preparation precedes task-plan installation, so it has no mission
+      // read model yet. Do not synthesize the old three-episode mission here;
+      // the installed canonical plan is required before mission data exists.
+      return scrubJourneyRecordForPublicView(prepared);
     });
   }
 
@@ -544,11 +520,7 @@ export class AgentCompanionRuntime {
     this.#authorizeExplorer(input, current.journey.explorerId);
     return this.#idempotently("start", current.journey.explorerId, input, () => {
       let ready = this.#journey.status(journeyId);
-      const generatedPlanRequested = input.taskProposal !== undefined
-        || input.taskGenerationMode === "model_sampling"
-        || input.taskGenerationMode === "server_fallback"
-        || ready.journey.taskRequest?.generationRequested === true;
-      if (!ready.journey.taskPlan && generatedPlanRequested) {
+      if (!ready.journey.taskPlan) {
         const generation = this.#taskGenerationContext(ready.journey);
         const taskPlanInstallation = input.taskProposal === undefined
           ? buildFallbackJourneyTaskPlan({
@@ -567,15 +539,13 @@ export class AgentCompanionRuntime {
         ready = this.#journey.installTaskPlan({
           journeyId,
           expectedVersion: ready.journey.version,
-          taskPlan: taskPlanInstallation.plan,
-          hiddenTaskSeal: taskPlanInstallation.hiddenTaskSeal,
+          installation: taskPlanInstallation,
         });
       }
       const started = this.#journey.start({
         journeyId,
         expectedVersion: ready.journey.version,
         realDurationMs: optionalNumber(input.realDurationMs),
-        worldDurationMs: optionalNumber(input.worldDurationMs),
       });
       const scenePlan = this.#composeThreePhasePlan(started.journey);
       const record = this.#journey.status(journeyId);
@@ -597,7 +567,7 @@ export class AgentCompanionRuntime {
         journeyId,
         expectedVersion: Number(input.expectedVersion),
       });
-      return { ...scrubJourneyRecordForPublicView(reserved), mission: this.#missionForJourney(reserved.journey) };
+      return scrubJourneyRecordForPublicView(reserved);
     });
   }
 
@@ -623,19 +593,18 @@ export class AgentCompanionRuntime {
     const recordedEpisodes = current.journey.episodeIds
       .map((episodeId) => this.#journey.projection().episodes[episodeId])
       .filter(Boolean);
-    const episode = current.journey.taskPlan
-      ? current.journey.status === "returning"
-        ? scenePlan.episodes.find((candidate) => candidate.phase === "return")
-        : recordedEpisodes.length === 0
-          ? scenePlan.episodes.find((candidate) => candidate.phase === "arrival")
-          : (() => {
-              const objective = nextJourneyTaskObjective(current.journey.taskPlan as NonNullable<EpochJourney["taskPlan"]>, recordedEpisodes);
-              return objective
-                ? scenePlan.episodes.find((candidate) =>
-                    candidate.generatedTaskObjective?.objectiveId === objective.objectiveId)
-                : undefined;
-            })()
-      : scenePlan.episodes[current.journey.episodeIds.length];
+    const taskPlan = this.#requiredTaskPlan(current.journey);
+    const episode = current.journey.status === "returning"
+      ? scenePlan.episodes.find((candidate) => candidate.phase === "return")
+      : recordedEpisodes.length === 0
+        ? scenePlan.episodes.find((candidate) => candidate.phase === "arrival")
+        : (() => {
+            const objective = nextJourneyTaskObjective(taskPlan, recordedEpisodes);
+            return objective
+              ? scenePlan.episodes.find((candidate) =>
+                  candidate.generatedTaskObjective?.objectiveId === objective.objectiveId)
+              : undefined;
+          })();
     if (!episode) throw new Error("journey_steps_complete");
     return {
       ...scrubJourneyRecordForPublicView(current),
@@ -690,7 +659,10 @@ export class AgentCompanionRuntime {
     this.#authorizeExplorer(input, current.journey.explorerId);
     return this.#idempotently("settle_completed", current.journey.explorerId, input, () => {
       const settled = this.#journey.settleCompleted(journeyId, Number(input.expectedVersion));
-      return { ...scrubJourneyRecordForPublicView(settled), mission: this.#missionForJourney(settled.journey) };
+      // Settlement freezes the journey before the epoch layer computes the
+      // authoritative SettlementDecision and records worldCommit. Until that
+      // receipt exists, a terminal mission cannot expose a completion tier.
+      return scrubJourneyRecordForPublicView(settled);
     });
   }
 
@@ -718,54 +690,62 @@ export class AgentCompanionRuntime {
       this.#authorizeExplorer(input, record.journey.explorerId);
       const projection = this.#journey.projection();
       const episodes = record.journey.episodeIds.map((episodeId) => projection.episodes[episodeId]).filter(Boolean);
-      const hiddenTaskSeal = record.journey.taskPlan
-        ? this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, record.journey.taskPlan)
-        : undefined;
       const identity = this.#identityForJourney(record.journey);
-      const mission = buildJourneyMission({
-        journeyId: record.journey.journeyId,
-        journeyStatus: record.journey.status,
-        playerObjective: record.journey.mandate.objective,
-        regionId: record.journey.destinationRegionId,
-        episodes,
-        taskPlan: record.journey.taskPlan,
-        hiddenTaskSeal,
-      });
-      const storyReport = this.#filedStoryReport(record.journey) ?? buildGroundedJourneyStoryReport({
-        journeyId: record.journey.journeyId,
-        status: record.journey.status,
-        objective: record.journey.mandate.objective,
-        regionId: record.journey.destinationRegionId,
-        startedAtWorldTime: record.journey.startedAtWorldTime,
-        dueAtWorldTime: record.journey.dueAtWorldTime,
-        worldCommit: record.journey.worldCommit,
-        episodes,
-        taskPlan: record.journey.taskPlan,
-        hiddenTaskSeal,
-        identity,
-      });
+      const taskPlan = record.journey.taskPlan;
+      const hiddenTaskSeal = taskPlan
+        ? this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, taskPlan)
+        : undefined;
+      const hiddenPrerequisiteLinks = taskPlan
+        ? this.#hiddenPrerequisiteLinksForPlan(taskPlan)
+        : [];
+      const terminalMissionReady = !["settled", "completed", "cancelled", "identity_ended"].includes(record.journey.status)
+        || record.journey.worldCommit !== undefined;
+      const mission = taskPlan && hiddenTaskSeal && terminalMissionReady
+        ? buildJourneyMission({
+            journeyId: record.journey.journeyId,
+            journeyStatus: record.journey.status,
+            playerObjective: record.journey.mandate.objective,
+            regionId: record.journey.destinationRegionId,
+            episodes,
+            taskPlan,
+            hiddenTaskSeal,
+            hiddenPrerequisiteLinks,
+            completionTier: record.journey.worldCommit?.completionTier,
+          })
+        : undefined;
+      const storyReport = taskPlan && hiddenTaskSeal && terminalMissionReady
+        ? this.#filedStoryReport(record.journey) ?? buildGroundedJourneyStoryReport({
+            journeyId: record.journey.journeyId,
+            status: record.journey.status,
+            objective: record.journey.mandate.objective,
+            regionId: record.journey.destinationRegionId,
+            startedAtWorldTime: record.journey.startedAtWorldTime,
+            dueAtWorldTime: record.journey.dueAtWorldTime,
+            worldCommit: record.journey.worldCommit,
+            episodes,
+            taskPlan,
+            hiddenTaskSeal,
+            hiddenPrerequisiteLinks,
+            identity,
+          })
+        : undefined;
       const interactionLog = buildJourneyInteractionLog({
         journeyId: record.journey.journeyId,
         episodes,
       });
-      const taskAdjudication = record.journey.taskPlan
-        ? withLegacyTierProjection(
-            record.journey.taskPlan,
-            adjudicateJourneyTask({
-              plan: record.journey.taskPlan,
-              episodes,
-              hiddenTaskSeal,
-              revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
-              hiddenPrerequisiteLinks: this.#hiddenPrerequisiteLinksForPlan(record.journey.taskPlan),
-            }),
-            ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
-          )
-        : undefined;
       return {
         ...scrubJourneyRecordForPublicView(record),
         episodes,
-        mission,
-        ...(taskAdjudication ? { taskAdjudication } : {}),
+        ...(mission ? { mission } : {}),
+        ...(taskPlan && hiddenTaskSeal ? {
+          taskAdjudication: adjudicateJourneyTask({
+            plan: taskPlan,
+            episodes,
+            hiddenTaskSeal,
+            revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
+            hiddenPrerequisiteLinks,
+          }),
+        } : {}),
         interactionLog,
         ...(storyReport ? { storyReport } : {}),
         nextPollAt: record.journey.nextPollAt,
@@ -780,9 +760,8 @@ export class AgentCompanionRuntime {
     const episodes = record.journey.episodeIds
       .map((episodeId) => projection.episodes[episodeId])
       .filter(Boolean);
-    const hiddenTaskSeal = record.journey.taskPlan
-      ? this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, record.journey.taskPlan)
-      : undefined;
+    const taskPlan = this.#requiredTaskPlan(record.journey);
+    const hiddenTaskSeal = this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, taskPlan);
     return {
       ...scrubJourneyRecordForPublicView(record),
       episodes,
@@ -791,19 +770,13 @@ export class AgentCompanionRuntime {
         journeyId: record.journey.journeyId,
         episodes,
       }),
-      ...(record.journey.taskPlan ? {
-        taskAdjudication: withLegacyTierProjection(
-          record.journey.taskPlan,
-          adjudicateJourneyTask({
-            plan: record.journey.taskPlan,
-            episodes,
-            hiddenTaskSeal,
-            revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
-            hiddenPrerequisiteLinks: this.#hiddenPrerequisiteLinksForPlan(record.journey.taskPlan),
-          }),
-          ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
-        ),
-      } : {}),
+      taskAdjudication: adjudicateJourneyTask({
+        plan: taskPlan,
+        episodes,
+        hiddenTaskSeal,
+        revealHidden: ["settled", "cancelled", "identity_ended"].includes(record.journey.status),
+        hiddenPrerequisiteLinks: this.#hiddenPrerequisiteLinksForPlan(taskPlan),
+      }),
       nextPollAt: record.journey.nextPollAt,
     };
   }
@@ -842,9 +815,9 @@ export class AgentCompanionRuntime {
         const episodes = journey.episodeIds
           .map((episodeId) => projection.episodes[episodeId])
           .filter(Boolean);
-        const hiddenTaskSeal = journey.taskPlan
-          ? this.#journey.hiddenTaskSealForJourney(journey.journeyId, journey.taskPlan)
-          : undefined;
+        const taskPlan = this.#requiredTaskPlan(journey);
+        const hiddenTaskSeal = this.#journey.hiddenTaskSealForJourney(journey.journeyId, taskPlan);
+        const hiddenPrerequisiteLinks = this.#hiddenPrerequisiteLinksForPlan(taskPlan);
         return buildGroundedJourneyStoryReport({
           journeyId: journey.journeyId,
           status: journey.status,
@@ -854,8 +827,9 @@ export class AgentCompanionRuntime {
           dueAtWorldTime: journey.dueAtWorldTime,
           worldCommit: journey.worldCommit,
           episodes,
-          taskPlan: journey.taskPlan,
+          taskPlan,
           hiddenTaskSeal,
+          hiddenPrerequisiteLinks,
           identity: this.#identityForJourney(journey),
         });
       },
@@ -971,6 +945,8 @@ export class AgentCompanionRuntime {
         const episodes = record.journey.episodeIds
           .map((episodeId) => journeyProjection.episodes[episodeId])
           .filter(Boolean);
+        const taskPlan = this.#requiredTaskPlan(record.journey);
+        const hiddenPrerequisiteLinks = this.#hiddenPrerequisiteLinksForPlan(taskPlan);
         const storyReport = this.#filedStoryReport(record.journey) ?? buildGroundedJourneyStoryReport({
           journeyId: record.journey.journeyId,
           status: record.journey.status,
@@ -980,10 +956,9 @@ export class AgentCompanionRuntime {
           dueAtWorldTime: record.journey.dueAtWorldTime,
           worldCommit: record.journey.worldCommit,
           episodes,
-          taskPlan: record.journey.taskPlan,
-          hiddenTaskSeal: record.journey.taskPlan
-            ? this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, record.journey.taskPlan)
-            : undefined,
+          taskPlan,
+          hiddenTaskSeal: this.#journey.hiddenTaskSealForJourney(record.journey.journeyId, taskPlan),
+          hiddenPrerequisiteLinks,
           identity: this.#identityForJourney(record.journey),
         });
         return storyReport ? [{
@@ -1037,7 +1012,7 @@ export class AgentCompanionRuntime {
       this.#epoch.getResultPage({ pageId: journey.verification.pageId }),
       journey,
     );
-    return report?.evaluation.warning === "该身份将无法保留" ? undefined : report;
+    return report;
   }
 
   #identityForJourney(journey: EpochJourney) {
@@ -1216,34 +1191,35 @@ export class AgentCompanionRuntime {
   #missionForJourney(journey: EpochJourney) {
     const projection = this.#journey.projection();
     const episodes = journey.episodeIds.map((episodeId) => projection.episodes[episodeId]).filter(Boolean);
+    const taskPlan = this.#requiredTaskPlan(journey);
     return buildJourneyMission({
       journeyId: journey.journeyId,
       journeyStatus: journey.status,
       playerObjective: journey.mandate.objective,
       regionId: journey.destinationRegionId,
       episodes,
-      taskPlan: journey.taskPlan,
-      hiddenTaskSeal: journey.taskPlan
-        ? this.#journey.hiddenTaskSealForJourney(journey.journeyId, journey.taskPlan)
-        : undefined,
+      taskPlan,
+      hiddenTaskSeal: this.#journey.hiddenTaskSealForJourney(journey.journeyId, taskPlan),
+      hiddenPrerequisiteLinks: this.#hiddenPrerequisiteLinksForPlan(taskPlan),
+      completionTier: journey.worldCommit?.completionTier,
     });
+  }
+
+  #requiredTaskPlan(journey: EpochJourney) {
+    if (!journey.taskPlan) throw new Error("journey_task_plan_required");
+    return journey.taskPlan;
   }
 
   #authorizeExplorer(input: UnknownRecord, explorerId: string) {
     return this.#epoch.verifyExplorerAuth({ ...input, explorerId });
   }
 
-  /**
-   * PR5c: extract canonical hidden-prerequisite links from the epoch
-   * projection, filtered to the objectiveIds in the given plan. Returns an
-   * empty array when the surface does not provide the accessor (backward
-   * compat) or when no links match.
-   */
+  /** Extract canonical hidden-prerequisite links for the installed plan. */
   #hiddenPrerequisiteLinksForPlan(
     plan: { readonly objectives: readonly { readonly objectiveId: string }[] },
   ): readonly HiddenPrerequisiteLink[] {
-    const raw = this.#epoch.hiddenPrerequisiteLinks?.();
-    if (!isRecord(raw)) return [];
+    const raw = this.#epoch.hiddenPrerequisiteLinks();
+    if (!isRecord(raw)) throw new Error("journey_hidden_prerequisite_links_invalid");
     const objectiveIds = new Set(plan.objectives.map((o) => o.objectiveId));
     const out: HiddenPrerequisiteLink[] = [];
     for (const value of Object.values(raw)) {
@@ -1312,10 +1288,17 @@ export class AgentCompanionRuntime {
       const record = this.#journey.projection().journeys[command.journeyId];
       if (!record) continue;
       const episodes = record.journey.episodeIds.map((episodeId) => this.#journey.projection().episodes[episodeId]).filter(Boolean);
+      const baseValue = scrubJourneyRecordForPublicView(record);
+      const mission = record.journey.taskPlan
+        ? this.#missionForJourney(record.journey)
+        : undefined;
+      if (command.scope === "start" && !mission) {
+        throw new Error("journey_task_plan_required");
+      }
       const value = command.scope === "start"
         ? {
-            ...scrubJourneyRecordForPublicView(record),
-            mission: this.#missionForJourney(record.journey),
+            ...baseValue,
+            mission: mission as NonNullable<typeof mission>,
             scenePlan: {
               status: episodes.length ? "ready" : "no_verifiable_world_object",
               candidates: [],
@@ -1324,7 +1307,10 @@ export class AgentCompanionRuntime {
             },
             nextPollAt: record.journey.nextPollAt,
           }
-        : { ...scrubJourneyRecordForPublicView(record), mission: this.#missionForJourney(record.journey) };
+        : {
+            ...baseValue,
+            ...(mission ? { mission } : {}),
+          };
       this.#idempotency.set(cacheKey, { subjectHash: command.subjectHash, value });
     }
   }

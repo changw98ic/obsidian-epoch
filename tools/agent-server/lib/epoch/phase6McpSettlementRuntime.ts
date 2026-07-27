@@ -2,7 +2,6 @@ import type {
   Phase6CompleteRunWithReceiptRuntimeInput,
   Phase6ExperimentRuntime,
   Phase6ResultReceipt,
-  Phase6ResultReceiptV2,
   Phase6ResultReceiptV3,
 } from "./phase6ExperimentRuntime.ts";
 import { PHASE6_MATRIX_VERSION } from "./phase6ScenarioMatrixRules.ts";

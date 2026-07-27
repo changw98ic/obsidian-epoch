@@ -13,6 +13,7 @@ function runtimeWithRegionInfo(regionInfo: Record<string, unknown>) {
       regionInfo: () => regionInfo,
       agentBriefing: () => ({}),
       events: () => ({ events: [] }),
+      hiddenPrerequisiteLinks: () => ({}),
     },
     journeyOptions: {
       idFactory: (kind) => `${kind}_public_boundary_${++sequence}`,
@@ -58,10 +59,15 @@ test("Journey scene titles use organization displayName and public region labels
 test("Gray Harbor journey uses concrete public world labels instead of internal region ids", () => {
   const started = startJourney({});
 
-  assert.deepEqual(started.scenePlan.episodes.map((episode) => episode.phase), ["arrival", "main", "return"]);
+  const phases = started.scenePlan.episodes.map((episode) => episode.phase);
+  assert.equal(phases[0], "arrival");
+  assert.equal(phases.at(-1), "return");
+  assert.ok(phases.includes("main"));
   assert.equal(started.scenePlan.episodes[0]?.title, "到达：灰港");
-  assert.match(started.scenePlan.episodes[1]?.title ?? "", /^生计：(?:灰港民务账房|灰港民务所)$/u);
-  assert.equal(started.scenePlan.episodes[2]?.title, "返程：灰港");
+  assert.ok(started.scenePlan.episodes
+    .filter((episode) => episode.phase === "main")
+    .some((episode) => /灰港民务(?:账房|所)/u.test(episode.title)));
+  assert.equal(started.scenePlan.episodes.at(-1)?.title, "返程：灰港");
   assert.doesNotMatch(JSON.stringify(started.scenePlan.episodes.map((episode) => episode.title)), /region_gray_harbor/);
 });
 
@@ -140,6 +146,7 @@ test("foreign Player briefing exposes only an explicit public projection while t
         },
       }),
       events: () => ({ events: [] }),
+      hiddenPrerequisiteLinks: () => ({}),
     },
     journeyOptions: {
       idFactory: (kind) => `${kind}_foreign_briefing`,
@@ -206,6 +213,7 @@ test("foreign briefing fails closed for an unknown canonical identity without ec
         publicPages: { world: "/epoch/world", console: "/epoch/console" },
       }),
       events: () => ({ events: [] }),
+      hiddenPrerequisiteLinks: () => ({}),
     },
     journeyOptions: {
       idFactory: (kind) => `${kind}_unknown_public_boundary`,

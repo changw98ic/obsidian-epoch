@@ -42,30 +42,15 @@ export function phase6ScenarioForRun(runIndex: number): Phase6AuthoritativeScena
   return scenario;
 }
 
-/**
- * Assert that the given runIndex, scenarioTag, and optional taskFamilyId form a
- * valid binding against the authoritative scenario matrix.
- *
- * taskFamilyId is the primary binding field (v3+). The legacy taskType parameter
- * is accepted for backward compatibility with archived v2 experiments but is
- * not checked against the new matrix — only taskFamilyId is authoritative.
- */
+/** Assert the complete scenario binding against the authoritative matrix. */
 export function assertPhase6ScenarioBinding(
   runIndex: number,
   scenarioTag: string,
-  taskFamilyIdOrLegacyTaskType?: string,
+  taskFamilyId: string,
 ): Phase6AuthoritativeScenario {
   const scenario = phase6ScenarioForRun(runIndex);
   if (scenarioTag !== scenario.tag) throw new Error("phase6_scenario_tag_mismatch");
-  // v3: check taskFamilyId when a non-empty string is provided.
-  // The legacy taskType parameter position is reused: callers passing the old
-  // taskType value will see it compared against taskFamilyId.  Archived v2
-  // experiments should not call this function (they are read-only).
-  if (
-    taskFamilyIdOrLegacyTaskType !== undefined &&
-    taskFamilyIdOrLegacyTaskType.length > 0 &&
-    taskFamilyIdOrLegacyTaskType !== scenario.taskFamilyId
-  ) {
+  if (!taskFamilyId || taskFamilyId !== scenario.taskFamilyId) {
     throw new Error("phase6_scenario_task_family_mismatch");
   }
   return scenario;

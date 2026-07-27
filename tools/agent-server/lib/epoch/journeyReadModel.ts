@@ -2,7 +2,6 @@ import type { EpochJourney } from "./journeyRules.ts";
 import type { JourneyPolicyPreview, JourneyPolicySelection } from "./journeyPolicyRules.ts";
 import type { JourneySceneEpisode } from "./journeySceneRules.ts";
 import {
-  deriveJourneyHiddenTask,
   normalizeJourneyHiddenTaskSeal,
   type JourneyHiddenTaskSeal,
 } from "./journeyGeneratedTaskRules.ts";
@@ -141,14 +140,9 @@ export function applyJourneyRuntimeEvent(
   let hiddenTaskSeals = projection.hiddenTaskSeals;
   if (event.eventType === "journey_task_plan_installed") {
     if (!event.journey.taskPlan) throw new Error("journey_event_task_plan_required");
-    if (event.hiddenTaskSeal) {
-      const normalized = normalizeJourneyHiddenTaskSeal(event.journey.taskPlan, event.hiddenTaskSeal);
-      hiddenTaskSeals = { ...hiddenTaskSeals, [event.journeyId]: normalized };
-    } else {
-      // Legacy task-plan events used a directly enumerable commitment. New
-      // sealed plans fail closed when their installation seal is absent.
-      deriveJourneyHiddenTask(event.journey.taskPlan);
-    }
+    if (!event.hiddenTaskSeal) throw new Error("journey_event_hidden_task_seal_required");
+    const normalized = normalizeJourneyHiddenTaskSeal(event.journey.taskPlan, event.hiddenTaskSeal);
+    hiddenTaskSeals = { ...hiddenTaskSeals, [event.journeyId]: normalized };
   } else if (event.hiddenTaskSeal) {
     throw new Error("journey_event_hidden_task_seal_not_allowed");
   }

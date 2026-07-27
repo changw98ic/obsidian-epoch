@@ -257,7 +257,7 @@ export const DOUBT_TO_STANDING_BPS: Readonly<Record<DoubtStrength, number>> = Ob
 
 /**
  * Cap on the "stressed" lifetime-acceleration value (in bps). Prevents a
- * stressed death-spiral from skipping the archive/reincarnation narrative.
+ * stressed death-spiral from bypassing the archive/reincarnation narrative.
  * The single social-death flip is bounded separately at 10_000 bps.
  */
 export const STRESSED_LIFETIME_ACCELERATION_CAP_BPS = 5_000;
@@ -712,7 +712,7 @@ export function applyFactionDoubtPropagation(
  *  - stressed (NOT first-flip into social_death) → quadratic curve
  *    `clamp(round((STRESSED_THRESHOLD_BPS - score)^2 / 10_000), 0, 5_000)`.
  *    Mild stress barely accelerates; severe stress (score near 0) hits the
- *    5_000 bps cap. The cap prevents a stressed death-spiral from skipping
+ *    5_000 bps cap. The cap prevents a stressed death-spiral from bypassing
  *    the archive/reincarnation narrative.
  *  - healthy (or social_death without trigger) → 0.
  *

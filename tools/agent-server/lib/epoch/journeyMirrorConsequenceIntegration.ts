@@ -13,7 +13,7 @@
  *   captures `influenceScoreAfter` per-action at `submitHostedAction` time
  *   using the region score at that instant, without visibility into
  *   concurrent or prior objective influence deltas (mirror-mode
- *   `submitHostedAction` emits no canonical collateral). The legacy
+ *   `submitHostedAction` emits no canonical collateral). The current
  *   solidify path instead recomputes `previousInfluenceScore` against a
  *   running projection that already includes prior objectives' canonical
  *   influence events, yielding cumulative baselines. Integrators that

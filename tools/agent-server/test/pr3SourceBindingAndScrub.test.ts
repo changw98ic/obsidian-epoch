@@ -5,7 +5,7 @@
  *   1. installJourneyTaskPlan treats offer-driven plans by the source-binding
  *      tuple (questOfferId/offerHash/taskFamilyId/marketSnapshotVersion/
  *      worldSliceHash) instead of strict taskType equality.
- *   2. installJourneyTaskPlan keeps the legacy taskType/scenarioMapId equality
+ *   2. installJourneyTaskPlan keeps the direct taskType/scenarioMapId equality
  *      check for non-offer journeys (no break to existing semantics).
  *   3. The fallback installation now carries every PR1 additive source-binding
  *      field, so the lock treats offer-driven and fallback plans uniformly.

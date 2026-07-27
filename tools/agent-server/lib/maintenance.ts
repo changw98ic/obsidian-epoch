@@ -44,8 +44,6 @@ export interface EpochMaintenanceConfig {
   readonly regionControlDecayMinAgeSeconds?: number;
   readonly abuseDecayLimit?: number;
   readonly abuseDecayAmount?: number;
-  /** @deprecated v2 derives elapsed world time from the server clock. */
-  readonly worldAdvanceMinutes?: number;
   readonly runOnStart: boolean;
   readonly operatorKey?: string;
 }
@@ -180,7 +178,6 @@ const DEFAULT_MAINTENANCE_CONFIG: EpochMaintenanceConfig = {
   regionControlDecayMinAgeSeconds: 7 * 24 * 60 * 60,
   abuseDecayLimit: 0,
   abuseDecayAmount: 1,
-  worldAdvanceMinutes: 15,
   runOnStart: false,
 };
 
@@ -342,12 +339,6 @@ export function epochMaintenanceConfigFromEnv(env: Record<string, string | undef
       DEFAULT_MAINTENANCE_CONFIG.abuseDecayAmount || 1,
       1,
       10,
-    ),
-    worldAdvanceMinutes: envPositiveInteger(
-      env.AGENT_SERVER_MAINTENANCE_WORLD_ADVANCE_MINUTES,
-      DEFAULT_MAINTENANCE_CONFIG.worldAdvanceMinutes || 15,
-      1,
-      30 * 24 * 60,
     ),
     runOnStart: envEnabled(env.AGENT_SERVER_MAINTENANCE_RUN_ON_START),
     operatorKey: envOptionalString(env.AGENT_SERVER_OPERATOR_KEY),

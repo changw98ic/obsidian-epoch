@@ -10,8 +10,27 @@ import {
   type EpochTurnCard,
 } from "../lib/epoch/gameCore.ts";
 import { buildEpochResultPagePayload } from "../lib/epoch/resultPagePayloadRules.ts";
+import { buildFallbackJourneyTaskPlan } from "../lib/epoch/journeyGeneratedTaskRules.ts";
 
 const GENERATED_AT = "2026-07-06T00:05:00.000Z";
+const journeyInstallation = buildFallbackJourneyTaskPlan({
+  taskType: "探访灰港",
+  scenarioMapId: "region_gray_harbor",
+  availableWorldObjects: [{
+    id: "region_gray_harbor",
+    type: "region",
+    label: "灰港",
+    regionId: "region_gray_harbor",
+    sourceFactIds: ["world:region:region_gray_harbor"],
+  }, {
+    id: "workplace_gray_harbor",
+    type: "workplace",
+    label: "灰港现场",
+    regionId: "region_gray_harbor",
+    sourceFactIds: ["world:workplace:gray_harbor"],
+  }],
+});
+const journeySealResolver = (_journeyId: string, _plan: unknown) => journeyInstallation.hiddenTaskSeal;
 
 function projection(overrides: Partial<EpochProjection> = {}): EpochProjection {
   return {
@@ -118,6 +137,7 @@ test("result page payload rules build a focused turn-card payload with receipt a
       focusEventIds: ["event_keep"],
     },
     generatedAt: GENERATED_AT,
+    resolveJourneyHiddenTaskSeal: journeySealResolver,
   });
 
   assert.equal(built.pageType, "agent_result");
@@ -146,6 +166,7 @@ test("result page payload rules derive hosted-session focus and next actions", (
       limit: 8,
     },
     generatedAt: GENERATED_AT,
+    resolveJourneyHiddenTaskSeal: journeySealResolver,
   });
 
   assert.equal(built.focusHostedSession?.sessionId, "session_1");
@@ -180,6 +201,7 @@ test("result page payload rules expose only allowlisted Journey reward fields", 
         status: "traveling",
         objective: "探访灰港",
         regionId: "region_gray_harbor",
+        taskPlan: journeyInstallation.plan,
         episodes: [],
         canonicalEventIds: [],
         stateDelta: {
@@ -191,13 +213,18 @@ test("result page payload rules expose only allowlisted Journey reward fields", 
           },
           rewardBundle: {
             resources: [{ resourceId: "coin", amount: 2 }],
-            attributes: [{ attributeId: "intellect", amount: 1 }],
+            attributeProgression: {
+              mode: "no-direct-gain",
+              evidenceSystem: "progressionRules.attributeEvidenceXp",
+              summary: "没有直接增加基础属性。",
+            },
             items: [{ itemKey: "journey_reward_alpha", displayName: "实验核验凭章", rarity: "common" }],
           },
         },
       },
     },
     generatedAt: GENERATED_AT,
+    resolveJourneyHiddenTaskSeal: journeySealResolver,
   });
 
   assert.deepEqual(built.journey?.stateDelta?.reward, {
@@ -206,7 +233,11 @@ test("result page payload rules expose only allowlisted Journey reward fields", 
   });
   assert.deepEqual(built.journey?.stateDelta?.rewardBundle, {
     resources: [{ resourceId: "coin", amount: 2 }],
-    attributes: [{ attributeId: "intellect", amount: 1 }],
+    attributeProgression: {
+      mode: "no-direct-gain",
+      evidenceSystem: "progressionRules.attributeEvidenceXp",
+      summary: "没有直接增加基础属性。",
+    },
     items: [{ itemKey: "journey_reward_alpha", displayName: "实验核验凭章", rarity: "common" }],
   });
   assert.doesNotMatch(JSON.stringify(built), /must-not-leak|internalGrantToken/);
@@ -222,6 +253,7 @@ test("result page payload rules reject malformed Journey reward bundles", () => 
         status: "traveling",
         objective: "探访灰港",
         regionId: "region_gray_harbor",
+        taskPlan: journeyInstallation.plan,
         episodes: [],
         canonicalEventIds: [],
         stateDelta: {
@@ -233,6 +265,7 @@ test("result page payload rules reject malformed Journey reward bundles", () => 
       },
     },
     generatedAt: GENERATED_AT,
+    resolveJourneyHiddenTaskSeal: journeySealResolver,
   }), /result_page_journey_reward_bundle_invalid/u);
 });
 
@@ -251,19 +284,20 @@ test("result page payload preserves authoritative no-direct-gain progression and
         status: "traveling",
         objective: "核验成长证据",
         regionId: "region_forest",
+        taskPlan: journeyInstallation.plan,
         episodes: [],
         canonicalEventIds: [],
         stateDelta: {
           rewardBundle: {
             resources: [{ resourceId: "coin", amount: 5 }],
             attributeProgression,
-            attributes: [],
             items: [{ itemKey: "journey_reward_forest", displayName: "腐林记录器", rarity: "common" }],
           },
         },
       },
     },
     generatedAt: GENERATED_AT,
+    resolveJourneyHiddenTaskSeal: journeySealResolver,
   });
   assert.deepEqual(built.journey?.stateDelta?.rewardBundle?.attributeProgression, attributeProgression);
 
@@ -276,6 +310,7 @@ test("result page payload preserves authoritative no-direct-gain progression and
         status: "traveling",
         objective: "伪造成长模式",
         regionId: "region_forest",
+        taskPlan: journeyInstallation.plan,
         episodes: [],
         canonicalEventIds: [],
         stateDelta: {
@@ -286,13 +321,13 @@ test("result page payload preserves authoritative no-direct-gain progression and
               evidenceSystem: "client_override",
               summary: "forged",
             },
-            attributes: [],
             items: [],
           },
         },
       },
     },
     generatedAt: GENERATED_AT,
+    resolveJourneyHiddenTaskSeal: journeySealResolver,
   }), /result_page_journey_reward_bundle_invalid/u);
 });
 
@@ -306,6 +341,7 @@ test("settled Journey result pages fail closed instead of degrading invalid epis
         status: "settled",
         objective: "伪造已结算旅程",
         regionId: "region_gray_harbor",
+        taskPlan: journeyInstallation.plan,
         canonicalEventIds: ["event_polluted"],
         episodes: [{
           episodeId: "journey_polluted:arrival",
@@ -319,5 +355,6 @@ test("settled Journey result pages fail closed instead of degrading invalid epis
       },
     },
     generatedAt: GENERATED_AT,
+    resolveJourneyHiddenTaskSeal: journeySealResolver,
   }), /result_page_journey_grounding_invalid/);
 });

@@ -199,7 +199,7 @@ test("Phase 6 ten-run evidence rejects non-V2 and inconsistent receipt versions"
   withTempRepoDir((root) => {
     const records = goldenSanitizedRecords();
     const target = records.find((record) => record.toolName === "obsidian_epoch.phase6_result" && record.metadata.runIndex === 8).output.runReceipt;
-    target.version = "journey_run_receipt.v1";
+    target.version = "journey_run_receipt.invalid";
     target.codeVersion = "code-other";
     const sqlite = createSqliteFixture(root, records);
     const result = runFixture(root, records, sqlite);

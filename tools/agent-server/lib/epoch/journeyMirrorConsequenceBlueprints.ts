@@ -301,13 +301,12 @@ export interface PlanJourneyRoleplayDoubtInput {
    * a server-offered action's tags are a subset of this union, so the
    * override fires for any normal chosen action. The roleplay hook therefore
    * classifies offered actions as mission-aligned; doubts only fire when the
-   * action's tags are NOT a subset (e.g. a legacy action with tags outside
+   * action's tags are NOT a subset (e.g. an action with tags outside
    * the offered palette, or a future extension where agents take non-offered
    * actions). This keeps the hook LLM-free and read-only.
    *
    * Optional: when omitted, the planner falls back to the static-pattern
-   * comparison (preserving the legacy contract for unit tests and any caller
-   * that has no scene context).
+   * comparison for callers that have no scene context.
    */
   readonly missionSanctionedApproaches?: readonly ApproachTag[];
 }
@@ -360,18 +359,13 @@ const REASON_FOR_CLASSIFICATION: Readonly<Record<string, string>> = Object.freez
 export function planJourneyRoleplayDoubt(
   input: PlanJourneyRoleplayDoubtInput,
 ): readonly MirrorConsequenceLedgerEntry[] {
-  // Fail-open when the pattern carries no norm (unknown role bucket at
-  // issuance). An empty norm produces no forbidden/expected signal so the
-  // comparator yields all-empty subsets → classification 'aligned'. We
-  // short-circuit here to avoid emitting a doubt entry for an identity that
-  // has no norm to deviate from.
+  // An identity with no expected or forbidden approaches has no norm to
+  // compare against, so no doubt entry can be derived.
   if (input.pattern.expectedApproaches.length === 0 && input.pattern.forbiddenApproaches.length === 0) {
     return [];
   }
-  // Fail-open when the action carried no observable approach tags (legacy
-  // action). The roleplay hook MUST NOT fabricate a doubt from an empty
-  // observation — that would surface every legacy action as 'aligned but
-  // missing all expected' and inflate doubt.
+  // The roleplay hook MUST NOT fabricate a doubt from an empty observation —
+  // an action without observable approach tags carries no deviation signal.
   if (input.observed.length === 0) return [];
 
   // PR5b fix: mission-aligned override. When the caller supplies

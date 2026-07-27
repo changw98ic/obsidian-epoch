@@ -43,9 +43,9 @@ import type { ExpectedLifePattern, HiddenPrerequisiteLink } from "./journeyRolep
 import type { CanonicalWorldObjectState } from "./hiddenPrerequisiteRules.ts";
 import {
   type IdentityViability,
-  initialIdentityViability,
   LIFETIME_REASON_IDENTITY_VIABILITY_ACCELERATION,
   LIFETIME_REASON_IDENTITY_VIABILITY_SOCIAL_DEATH,
+  initialIdentityViability,
 } from "./journeyViabilityRules.ts";
 import { eventFactory } from "./eventFactory.ts";
 import {
@@ -1912,8 +1912,9 @@ export interface EpochGameCoreOptions {
    * canonical world events directly. The integrator (e.g. agent-companion
    * runtime) is responsible for translating the callback into a
    * `JourneyRuntime.recordMirrorConsequences` call so the ledger projection
-   * remains the single in-memory truth. When omitted, mirror-mode journeys
-   * produce no canonical collateral at action time (legacy behaviour).
+   * remains the single in-memory truth. A mirror action that produces
+   * consequence entries fails when no sink is configured; collateral is never
+   * silently discarded.
    *
    * `expectedVersion` sentinel: gameCore always passes `-1` to signal
    * "no compare-and-set check". The submit-time caller does not own the
@@ -2651,18 +2652,18 @@ export interface SolidifyJourneyWorldInput {
   readonly completionScoreBps: number;
   readonly worldSliceHash?: `sha256:${string}`;
   /**
-   * PR2 mirror-consequence ledger entries to promote at solidification. When
-   * supplied (non-empty), the solidify path consumes the entries via
-   * {@link promoteMirrorConsequences} and rebuilds canonical world events
-   * with stable event ids derived from each entryId. When omitted or empty,
-   * the solidify path falls back to the legacy `planJourneyWorldImpactEvents`
-   * derivation so older journeys and tests remain shape-equivalent.
+   * PR2 mirror-consequence ledger entries to promote at solidification. The
+   * solidify path consumes the entries via {@link promoteMirrorConsequences}
+   * and rebuilds canonical world events with stable event ids derived from
+   * each entryId. An empty array is valid when the completed mirror journey
+   * produced no collateral entries; the old direct-impact derivation is not
+   * available on this path.
    *
    * Per-action `influenceScoreAfter` / `standingAfter` snapshots in the
    * entries reflect the region/faction score captured at submit time
    * (non-cumulative). The solidify path rebases these against the running
    * {@link workingProjection} so the promoted canonical events carry
-   * cumulative baselines matching the legacy path; the submit-time
+   * cumulative baselines matching direct canonical planning; the submit-time
    * snapshots are observational only.
    *
    * Only `region_influence_delta`, `trace_created`, and
@@ -2671,28 +2672,17 @@ export interface SolidifyJourneyWorldInput {
    * rejected up-front with `journey_mirror_ledger_kind_not_supported:*`
    * before any canonical events are constructed.
    */
-  readonly mirrorLedgerEntries?: readonly MirrorConsequenceLedgerEntry[];
-  /**
-   * PR4 additive. Canon threshold the score was compared against. Required
-   * when settlementPolicyVersion is present; legacy callers omit it.
-   * Authority validates this matches CANON_THRESHOLD_BPS_AT(policyVersion).
-   */
-  readonly canonThresholdBps?: number;
-  /** PR4 additive. Settlement-policy version under which the solidify is adjudicated. */
-  readonly settlementPolicyVersion?: number;
-  /** PR4 additive. Consequence-score policy version used at solidify time. */
-  readonly consequenceScorePolicyVersion?: number;
-  /**
-   * PR4 additive. Settlement id (idempotency key) linking this solidify to
-   * its SettlementDecision. Required on PR4 solidifies.
-   */
-  readonly settlementId?: string;
-  /**
-   * PR4 additive. Per-bucket breakdown of the completion score, recorded
-   * verbatim on the solidify marker for receipt audit. Required on PR4
-   * solidifies.
-   */
-  readonly consequenceScoreBreakdown?: {
+  readonly mirrorLedgerEntries: readonly MirrorConsequenceLedgerEntry[];
+  /** Canon threshold the score was compared against. */
+  readonly canonThresholdBps: number;
+  /** Settlement-policy version under which the solidify is adjudicated. */
+  readonly settlementPolicyVersion: number;
+  /** Consequence-score policy version used at solidify time. */
+  readonly consequenceScorePolicyVersion: number;
+  /** Settlement id linking this solidify to its SettlementDecision. */
+  readonly settlementId: string;
+  /** Per-bucket breakdown of the completion score, recorded on the marker. */
+  readonly consequenceScoreBreakdown: {
     readonly resultScoreBps: number;
     readonly selfLossScoreBps: number;
     readonly collateralScoreBps: number;
@@ -2874,7 +2864,7 @@ function uniqueValues(values: readonly string[]): string[] {
  *
  * The returned array is reordered against APPROACH_TAGS so the set is
  * canonical and stable across actionOptions iteration order. Empty when
- * the scene carries no approachTags (legacy contracts).
+ * the scene carries no approachTags.
  */
 function collectSceneMissionSanctionedApproaches(
   actionOptions: readonly { readonly approachTags?: readonly ApproachTag[] }[],
@@ -2962,7 +2952,7 @@ function readBlueprintString(
 /**
  * Rebase a mirror-consequence entry's score snapshots against the running
  * {@link EpochProjection} so multi-objective journeys produce cumulative
- * baselines matching the legacy {@link planJourneyWorldImpactEvents} path.
+ * baselines matching canonical cumulative influence planning.
  *
  * Mirror-mode `submitHostedAction` captures `influenceScoreAfter` /
  * `standingAfter` per-action at submit time without visibility into prior
@@ -3011,15 +3001,11 @@ function journeyWorldCommitFromMarker(
   event: Extract<EpochEvent, { readonly eventType: "journey_world_solidified" }>,
 ): JourneyWorldCommit {
   const payload = event.payload as JourneyWorldSolidifiedPayload;
-  // PR4: when the marker carries a settlementPolicyVersion, the commit must
-  // expose the PR4 reason string ("main_completed_and_above_threshold") so
-  // recordJourneyWorldCommit's PR4 invariant check passes. Legacy markers
-  // keep "main_completed_and_returned".
-  const isPr4Marker = payload.settlementPolicyVersion !== undefined;
   return {
     mode: "mirror",
     status: "solidified",
-    reason: isPr4Marker ? "main_completed_and_above_threshold" : "main_completed_and_returned",
+    completionTier: payload.completionTier,
+    reason: "main_completed_and_above_threshold",
     regionId: payload.regionId,
     committedAtWorldTime: payload.committedAtWorldTime ?? payload.mirrorEndedAtWorldTime,
     influenceDelta: payload.influenceDelta,
@@ -3027,17 +3013,15 @@ function journeyWorldCommitFromMarker(
     npcRelationships: payload.npcRelationships,
     commitEventId: event.eventId,
     sourceEventIds: [...payload.effectEventIds, event.eventId],
-    // PR4 additive fields, passed through verbatim so the persisted commit
-    // carries the same receipt-audit data as the marker.
-    ...(payload.completionScoreBps !== undefined ? { completionScoreBps: payload.completionScoreBps } : {}),
-    ...(payload.canonThresholdBps !== undefined ? { canonThresholdBps: payload.canonThresholdBps } : {}),
-    ...(payload.settlementPolicyVersion !== undefined ? { settlementPolicyVersion: payload.settlementPolicyVersion } : {}),
-    ...(payload.consequenceScorePolicyVersion !== undefined ? { consequenceScorePolicyVersion: payload.consequenceScorePolicyVersion } : {}),
+    completionScoreBps: payload.completionScoreBps,
+    canonThresholdBps: payload.canonThresholdBps,
+    settlementPolicyVersion: payload.settlementPolicyVersion,
+    consequenceScorePolicyVersion: payload.consequenceScorePolicyVersion,
     ...(payload.strategyPolicyVersion !== undefined ? { strategyPolicyVersion: payload.strategyPolicyVersion } : {}),
     ...(payload.questOfferId !== undefined ? { questOfferId: payload.questOfferId } : {}),
     ...(payload.offerHash !== undefined ? { offerHash: payload.offerHash } : {}),
-    ...(payload.settlementId !== undefined ? { settlementId: payload.settlementId } : {}),
-    ...(payload.consequenceScoreBreakdown !== undefined ? { consequenceScoreBreakdown: payload.consequenceScoreBreakdown } : {}),
+    settlementId: payload.settlementId,
+    consequenceScoreBreakdown: payload.consequenceScoreBreakdown,
   };
 }
 
@@ -3357,12 +3341,9 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
     case "identity_issued": {
       const payload = event.payload;
       const worldMinute = currentProjectionWorldMinute(projection);
-      // PR5a: required-after-issuance. The payload always carries
-      // identityViability (identityLifecycleRules.identityIssuedPayload
-      // synthesises a fresh snapshot when the emitter omits one). The
-      // defensive fallback guards legacy events persisted before PR5a.
-      const initialViability = payload.identityViability
-        ?? initialIdentityViability(payload.agentId, event.createdAt);
+      const initialViability = payload.identityViability;
+      if (!initialViability) throw new Error("identity_issued_viability_required");
+      if (!payload.expectedLifePattern) throw new Error("identity_issued_expected_life_pattern_required");
       identities[payload.agentId] = {
         agentId: payload.agentId,
         explorerId: payload.explorerId,
@@ -3386,15 +3367,7 @@ function applyEvent(projection: EpochProjection, event: EpochEvent): EpochProjec
         }),
         createdAt: event.createdAt,
         identityViability: initialViability,
-        // PR5b: persist the roleplay pattern onto the identity. Legacy
-        // events persisted before PR5b leave this absent; the roleplay hook
-        // fail-opens (skips) when reading an undefined pattern.
-        ...(payload.expectedLifePattern
-          ? { expectedLifePattern: payload.expectedLifePattern }
-          : {}),
-        // PR6: persist the strategy disposition onto the identity. Legacy
-        // events persisted before PR6 leave this absent; strategy consistency
-        // scoring defaults to normal (10000/0) when no disposition is present.
+        expectedLifePattern: payload.expectedLifePattern,
         ...(payload.strategyDisposition
           ? { strategyDisposition: payload.strategyDisposition }
           : {}),
@@ -6625,6 +6598,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       previousAgentId,
       maxLifetime,
       startedAt,
+      initialViability: initialIdentityViability(agentId, startedAt),
       makeEvent: eventFactory(clock, idFactory, context),
       ...(input.strategyProfile ? { strategyProfile: input.strategyProfile } : {}),
     });
@@ -10099,7 +10073,6 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
           risk: signedJourneyAction.risk,
           objectiveKind: session.sceneContract.taskObjective?.kind,
           journeyPreparationScore,
-          ...(signedJourneyAction.completionKind === "skip" ? { signedCompletionKind: "skip" as const } : {}),
           identity: {
             lifetime: identity.lifetime,
             traits: identity.personality.traits,
@@ -10194,16 +10167,11 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
         if (journeyResolution && signedJourneyAction?.taskObjectiveId
           && session.sceneContract?.taskObjective) {
           if (session.sceneContract.worldMode === "mirror") {
-            // PR2: mirror-mode collateral does NOT enter the canonical epoch
-            // event stream at action time. When the integrator supplies a
-            // journeyMirrorLedgerSink, compute blueprints here (single physical
-            // planner call per actionEventId) and forward them through the
-            // sink so the integrator can append them to the journey runtime
-            // projection's mirrorLedgers. When no sink is configured, the
-            // blueprints are silently dropped — preserving the legacy
-            // "mirror skips canonical collateral" behaviour.
-            if (journeyMirrorLedgerSink) {
-              const physicalBlueprints = planJourneyMirrorConsequenceBlueprints({
+            // Mirror-mode collateral does not enter the canonical epoch event
+            // stream at action time. The ledger sink is mandatory whenever an
+            // action produces entries; collateral must remain available for
+            // settlement and solidification.
+            const physicalBlueprints = planJourneyMirrorConsequenceBlueprints({
                 regionId: session.regionId,
                 agentId: session.agentId,
                 explorerId: session.explorerId,
@@ -10227,17 +10195,16 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
                 actionEventId: actionRecorded.eventId,
                 sourceAggregateId: session.sessionId,
                 recordedAt,
-              });
+            });
               // PR5b: roleplay-doubt hook. Server-side rule logic compares the
               // signed action's approachTags against the identity's frozen
               // ExpectedLifePattern and emits 0 or 1 identity_doubt mirror
               // ledger entries. LLM-free; the hook is read-only with respect
-              // to canonical world state. The hook fail-opens (emits nothing)
-              // when the identity has no pattern (legacy identity issued
-              // before PR5b) or when the action carried no approachTags
-              // (legacy action). The entries join the same ledger sink as
-              // the physical-impact blueprints so solidify-time promotion
-              // handles them uniformly.
+              // to canonical world state. Actions without observable approach
+              // tags, or identities without a comparison norm, produce no
+              // doubt entry. The entries join the same ledger sink as the
+              // physical-impact blueprints so solidify-time promotion handles
+              // them uniformly.
               const approachTags = signedJourneyAction.approachTags;
               // PR5b fix: derive the mission-sanctioned approach palette as
               // the union of approachTags across every actionOption the
@@ -10292,6 +10259,9 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
                 ...objectImpactEntries,
               ];
               if (blueprints.length > 0) {
+                if (!journeyMirrorLedgerSink) {
+                  throw new Error("journey_mirror_ledger_sink_required");
+                }
                 // expectedVersion: -1 is the documented "no CAS check"
                 // sentinel. The integrator owns journey.version and MUST
                 // fetch it from its own projection; see
@@ -10304,7 +10274,6 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
                   entries: blueprints,
                 });
               }
-            }
           } else {
             sideEffects.push(...planJourneyWorldImpactEvents({
               makeEvent,
@@ -10395,14 +10364,8 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       && event.payload.journeyId === journeyId
       && event.payload.agentId === agentId);
     if (existingMarker) {
-      // PR4: a duplicate solidify MUST carry the same settlementId as the
-      // existing marker. A mismatch signals a re-derivation under a different
-      // policy or input snapshot and is rejected so the persisted marker
-      // remains the single source of truth.
       const existingSettlementId = (existingMarker.payload as { readonly settlementId?: string }).settlementId;
-      if (input.settlementId !== undefined
-        && existingSettlementId !== undefined
-        && input.settlementId !== existingSettlementId) {
+      if (existingSettlementId !== input.settlementId) {
         throw new Error("journey_settlement_id_mismatch");
       }
       return { events: [], value: journeyWorldCommitFromMarker(existingMarker), projection: current };
@@ -10443,48 +10406,37 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     if (input.worldSliceHash !== undefined && !/^sha256:[0-9a-f]{64}$/u.test(input.worldSliceHash)) {
       throw new Error("journey_world_slice_hash_invalid");
     }
-    // PR4 authority guards. When settlementPolicyVersion is present, the
-    // caller is on the PR4 contract; the score MUST clear the canon
-    // threshold (kills the legacy "canonEligible = mainLineSucceeded"
-    // dead-code branch where main-completed but low-score runs could still
-    // solidify). The threshold itself MUST match the versioned placeholder
-    // so a forged value cannot bypass the guard.
-    if (input.settlementPolicyVersion !== undefined) {
-      if (input.settlementPolicyVersion !== SETTLEMENT_POLICY_VERSION) {
-        throw new Error(
-          `journey_settlement_policy_version_mismatch:${input.settlementPolicyVersion}:${SETTLEMENT_POLICY_VERSION}`,
-        );
-      }
-      if (input.canonThresholdBps !== CANON_THRESHOLD_BPS) {
-        throw new Error(
-          `journey_canon_threshold_version_mismatch:${input.canonThresholdBps}:${CANON_THRESHOLD_BPS}`,
-        );
-      }
-      if (input.completionScoreBps < input.canonThresholdBps) {
-        throw new Error(
-          `journey_below_canon_threshold:${input.completionScoreBps}:${input.canonThresholdBps}`,
-        );
-      }
-      if (input.consequenceScorePolicyVersion !== CONSEQUENCE_SCORE_POLICY_VERSION) {
-        throw new Error(
-          `journey_consequence_score_policy_version_mismatch:${input.consequenceScorePolicyVersion}:${CONSEQUENCE_SCORE_POLICY_VERSION}`,
-        );
-      }
-      if (typeof input.settlementId !== "string" || !input.settlementId.trim()) {
-        throw new Error("journey_settlement_id_required");
-      }
-      if (!input.consequenceScoreBreakdown) {
-        throw new Error("journey_consequence_score_breakdown_required");
-      }
-      const breakdown = input.consequenceScoreBreakdown;
-      const components = [
-        breakdown.resultScoreBps,
-        breakdown.selfLossScoreBps,
-        breakdown.collateralScoreBps,
-      ];
-      if (components.some((value) => !Number.isSafeInteger(value) || value < -10_000 || value > 10_000)) {
-        throw new Error("journey_consequence_score_breakdown_invalid");
-      }
+    if (input.settlementPolicyVersion !== SETTLEMENT_POLICY_VERSION) {
+      throw new Error(
+        `journey_settlement_policy_version_mismatch:${input.settlementPolicyVersion}:${SETTLEMENT_POLICY_VERSION}`,
+      );
+    }
+    if (input.canonThresholdBps !== CANON_THRESHOLD_BPS) {
+      throw new Error(
+        `journey_canon_threshold_version_mismatch:${input.canonThresholdBps}:${CANON_THRESHOLD_BPS}`,
+      );
+    }
+    if (input.completionScoreBps < input.canonThresholdBps) {
+      throw new Error(
+        `journey_below_canon_threshold:${input.completionScoreBps}:${input.canonThresholdBps}`,
+      );
+    }
+    if (input.consequenceScorePolicyVersion !== CONSEQUENCE_SCORE_POLICY_VERSION) {
+      throw new Error(
+        `journey_consequence_score_policy_version_mismatch:${input.consequenceScorePolicyVersion}:${CONSEQUENCE_SCORE_POLICY_VERSION}`,
+      );
+    }
+    if (!input.settlementId.trim()) {
+      throw new Error("journey_settlement_id_required");
+    }
+    const breakdown = input.consequenceScoreBreakdown;
+    const components = [
+      breakdown.resultScoreBps,
+      breakdown.selfLossScoreBps,
+      breakdown.collateralScoreBps,
+    ];
+    if (components.some((value) => !Number.isSafeInteger(value) || value < -10_000 || value > 10_000)) {
+      throw new Error("journey_consequence_score_breakdown_invalid");
     }
 
     const journeySessions = Object.values(current.hostedSessions).filter((session) =>
@@ -10528,25 +10480,6 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       if (!signedAction || !actionEvent || actionEvent.payload.journeyResolution?.completionKind !== "complete") continue;
       evidenceByObjectiveId.set(objectiveId, { session, action, actionEvent, signedAction });
     }
-    if (completedObjectiveIds.includes("legacy_main") && !evidenceByObjectiveId.has("legacy_main")) {
-      const session = journeySessions.find((candidate) =>
-        candidate.sceneContract?.phase === "main"
-        && !candidate.sceneContract.taskObjective
-        && candidate.actions.length > 0);
-      const action = session?.actions.at(-1);
-      const signedAction = action && session?.sceneContract?.actionOptions.find((candidate) =>
-        candidate.actionOptionId === action.actionOptionId);
-      const actionEvent = action
-        ? current.events.find((event): event is Extract<EpochEvent, {
-            readonly eventType: "hosted_action_recorded";
-          }> => event.eventType === "hosted_action_recorded"
-            && event.payload.actionId === action.actionId
-            && event.correlationId === context.correlationId)
-        : undefined;
-      if (session && action && signedAction && actionEvent) {
-        evidenceByObjectiveId.set("legacy_main", { session, action, actionEvent, signedAction });
-      }
-    }
     if (completedObjectiveIds.some((objectiveId) => !evidenceByObjectiveId.has(objectiveId))) {
       throw new Error("journey_completed_objective_evidence_missing");
     }
@@ -10561,11 +10494,10 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     const orderedEvidence = completedObjectiveIds.map((objectiveId) =>
       evidenceByObjectiveId.get(objectiveId) as NonNullable<ReturnType<typeof evidenceByObjectiveId.get>>);
 
-    // PR2: prefer the mirror-consequence ledger path when the caller supplied
-    // entries to promote. Rebuild canonical events shape-equivalent to the
-    // legacy derivation so downstream region/trace/faction consumers remain
-    // agnostic to the source. Fall back to the legacy derivation when the
-    // ledger is absent so older journeys and replayed fixtures do not break.
+    // PR2: promote the mirror-consequence ledger. Rebuild canonical events
+    // from its entries so downstream region/trace/faction consumers remain
+    // agnostic to the source. The ledger is the only source for mirror-world
+    // collateral at solidification.
     //
     // Promotion persistence contract: the local ledger rebuilt here is for
     // invariant checking ({@link assertNoDuplicatePromotion}) only. This
@@ -10589,7 +10521,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     // {@link markMirrorConsequencePromoted}. mcpTools.ts implements this
     // reconciliation for the agent-companion runtime; this function does
     // not perform integrator-level reconciliation itself.
-    const mirrorLedgerEntries = input.mirrorLedgerEntries ?? [];
+    const mirrorLedgerEntries = input.mirrorLedgerEntries;
     let mirrorLedger: MirrorConsequenceLedgerState | undefined;
     if (mirrorLedgerEntries.length > 0) {
       // Fast-fail before any canonical events are constructed: PR2 only
@@ -10622,8 +10554,8 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
         });
         // Rebase cumulative baselines against the running projection so
         // multi-objective journeys produce the same influenceScoreAfter /
-        // standingAfter that the legacy planJourneyWorldImpactEvents path
-        // would compute. Mirror-mode submitHostedAction captures these
+        // standingAfter that action-time capture cannot compute across
+        // multiple objectives. Mirror-mode submitHostedAction captures these
         // snapshots per-action at submit time without visibility into
         // prior objectives' canonical influence deltas; solidify is the
         // single point where canonical world events commit, so the
@@ -10711,43 +10643,6 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
           workingProjection = applyEvents(workingProjection, [canonicalEvent]);
         }
         assertNoDuplicatePromotion(mirrorLedger);
-      }
-    } else {
-      for (const evidence of orderedEvidence) {
-        const contract = evidence.session.sceneContract as JourneySceneContract;
-        const objective = contract.taskObjective;
-        const resolution = evidence.action.journeyResolution;
-        if (!objective || !resolution) continue;
-        const planned = planJourneyWorldImpactEvents({
-          makeEvent,
-          idFactory,
-          regionId,
-          agentId,
-          explorerId: identity.explorerId,
-          identityName: identity.identityName,
-          journeyId,
-          episodeId: contract.episodeId,
-          objectiveId: objective.objectiveId,
-          objectiveKind: objective.kind,
-          objectiveTitle: objective.title,
-          actionLabel: evidence.signedAction.label,
-          actionRisk: evidence.signedAction.risk,
-          allowedEffectKinds: evidence.signedAction.allowedEffectKinds,
-          resolution,
-          previousInfluenceScore: currentRegionInfluenceScore(workingProjection, regionId, agentId),
-          previousFactionStandingScore: currentAgentFactionStandingScore(
-            workingProjection,
-            agentId,
-            evidence.signedAction.routeSelection?.factionObjectId,
-          ),
-          routeSelection: evidence.signedAction.routeSelection,
-          sourceEventId: evidence.actionEvent.eventId,
-          sourceAggregateId: evidence.session.sessionId,
-          recordedAt: solidifiedAt,
-          worldMinute: currentProjectionWorldMinute(workingProjection),
-        });
-        effectEvents.push(...planned);
-        workingProjection = applyEvents(workingProjection, planned);
       }
     }
 
@@ -10868,25 +10763,14 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       sourceEventIds,
       effectEventIds: effectEvents.map((event) => event.eventId),
       solidifiedAt,
-      ...(mirrorLedger
-        ? {
-            mirrorLedgerPromotedEntryIds: Object.entries(mirrorLedger.promotedCanonicalEventIds).map(
-              ([entryId]) => entryId,
-            ),
-          }
-        : {}),
-      // PR4 additive fields. Only attached when the caller passes the PR4
-      // contract; legacy callers (no settlementPolicyVersion) emit the
-      // legacy shape and downstream read adapters synthesise undefined.
-      ...(input.settlementPolicyVersion !== undefined
-        ? {
-            settlementPolicyVersion: input.settlementPolicyVersion,
-            consequenceScorePolicyVersion: input.consequenceScorePolicyVersion,
-            canonThresholdBps: input.canonThresholdBps,
-            settlementId: input.settlementId,
-            consequenceScoreBreakdown: input.consequenceScoreBreakdown,
-          }
-        : {}),
+      mirrorLedgerPromotedEntryIds: mirrorLedger
+        ? Object.entries(mirrorLedger.promotedCanonicalEventIds).map(([entryId]) => entryId)
+        : [],
+      settlementPolicyVersion: input.settlementPolicyVersion,
+      consequenceScorePolicyVersion: input.consequenceScorePolicyVersion,
+      canonThresholdBps: input.canonThresholdBps,
+      settlementId: input.settlementId,
+      consequenceScoreBreakdown: input.consequenceScoreBreakdown,
     };
     const marker = makeEvent("journey_world_solidified", journeyId, markerPayload, {
       aggregateType: "agent_identity",

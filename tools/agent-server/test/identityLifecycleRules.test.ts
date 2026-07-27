@@ -64,6 +64,19 @@ test("identity lifecycle rules plan issued and recovery payloads", () => {
     previousAgentId: "agent_0",
     maxLifetime: 9,
     startedAt: "2026-07-07T01:02:03.000Z",
+    initialViability: initialIdentityViability("agent_1", "2026-07-07T01:02:03.000Z"),
+    expectedLifePattern: buildExpectedLifePattern({
+      identityId: "agent_1",
+      identityName: "Archivist",
+      explorerId: "explorer_1",
+      generation: 2,
+      personalityTraits: initialIdentityTraits({
+        agentId: "agent_1",
+        identityName: "Archivist",
+        generation: 2,
+      }),
+      frozenAt: "2026-07-07T01:02:03.000Z",
+    }),
   }), {
     agentId: "agent_1",
     explorerId: "explorer_1",
@@ -84,6 +97,18 @@ test("identity lifecycle rules plan issued and recovery payloads", () => {
     },
     viabilityPolicyVersion: VIABILITY_POLICY_VERSION,
     identityViability: initialIdentityViability("agent_1", "2026-07-07T01:02:03.000Z"),
+    expectedLifePattern: buildExpectedLifePattern({
+      identityId: "agent_1",
+      identityName: "Archivist",
+      explorerId: "explorer_1",
+      generation: 2,
+      personalityTraits: initialIdentityTraits({
+        agentId: "agent_1",
+        identityName: "Archivist",
+        generation: 2,
+      }),
+      frozenAt: "2026-07-07T01:02:03.000Z",
+    }),
   });
 
   const firstTraits = initialIdentityTraits({
@@ -125,6 +150,7 @@ test("identity lifecycle rules plan identity issue event sequences", () => {
     previousAgentId: "agent_0",
     maxLifetime: 9,
     startedAt: issuedAt,
+    initialViability: initialIdentityViability("agent_1", issuedAt),
     makeEvent: eventFactory(() => new Date(issuedAt), createSequentialEpochIdFactory("identity_issue"), {
       actorExplorerId: "explorer_1",
       trustClass: "user_verified_web" as const,

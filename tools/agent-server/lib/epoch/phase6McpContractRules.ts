@@ -1,7 +1,6 @@
 import {
   JOURNEY_RUN_RECEIPT_AUTHORITY,
   JOURNEY_RUN_RECEIPT_VERSION,
-  isLegacyJourneyRunReceiptV1,
   validateJourneyRunReceipt,
   type JourneyRunReceipt,
 } from "./journeyRunReceiptRules.ts";
@@ -308,9 +307,6 @@ function validateServerSettledReceipt(
   }
   if (receipt.receiptType !== "journey_run_receipt") {
     return fail("invalid_receipt", "stored receipt has an invalid receiptType", "receipt.receiptType");
-  }
-  if (isLegacyJourneyRunReceiptV1(receipt)) {
-    return fail("invalid_receipt", "stored receipt is legacy v1 and is not strict enough for Phase 6 verified reads", "receipt.version");
   }
   if (receipt.version !== JOURNEY_RUN_RECEIPT_VERSION) {
     return fail("invalid_receipt", "stored receipt has an invalid version", "receipt.version");

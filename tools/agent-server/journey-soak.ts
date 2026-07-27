@@ -31,7 +31,6 @@ interface SignedActionOption {
   readonly label: string;
   readonly intent: string;
   readonly risk: JourneyRisk;
-  readonly completionKind?: string;
   readonly factionObjectId?: string;
   readonly raw: JsonObject;
 }
@@ -216,7 +215,6 @@ function signedOptions(sceneContract: JsonObject): readonly SignedActionOption[]
       label: stringValue(option.label, `actionOptions[${index}].label`),
       intent: optionalString(option.intent) ?? stringValue(option.label, `actionOptions[${index}].label`),
       risk,
-      ...(optionalString(option.completionKind) ? { completionKind: optionalString(option.completionKind) } : {}),
       ...(optionalString(routeSelection?.factionObjectId)
         ? { factionObjectId: optionalString(routeSelection?.factionObjectId) }
         : {}),
@@ -354,33 +352,7 @@ function chooseAction(input: {
     optionalString(input.objective.objective),
     optionalString(input.objective.description),
   ].filter(Boolean).join(" ");
-  const pressure = maxPhysiologicalNeed(input.profile);
-  const skipOption = input.options.find((option) => option.completionKind === "skip");
   const isSide = objectiveKind === "side";
-  const aligned = goalAlignment(input.profile, objectiveText) > 0;
-  const resourceStrain = !input.options.some((option) => {
-    if (option.completionKind === "skip") return false;
-    const cost = riskResourceCost(option);
-    return !cost || (input.profile.resources[cost.resourceId] ?? 0) >= cost.amount;
-  });
-  const skipDisposition = stableUnit(input.agentId, objectiveId, input.profile.traits.join("|"));
-  const shouldSkipSide = isSide && Boolean(skipOption) && (
-    pressure >= 6_500
-    || (resourceStrain && !aligned)
-    || (!aligned && skipDisposition >= 0.52)
-  );
-  if (shouldSkipSide && skipOption) {
-    return {
-      selected: skipOption,
-      rationale: `${input.profile.identityName}把当前生理压力、资源余量和人生目标放在额外支线之前，因此不介入该支线。`,
-      scores: input.options.map((option) => ({
-        actionOptionId: option.actionOptionId,
-        label: option.label,
-        score: option.actionOptionId === skipOption.actionOptionId ? 100 : 0,
-      })),
-    };
-  }
-
   // PR6: derive strategy primary for approach alignment bonus.
   const strategyPrimary = input.profile.strategyPrimary;
 
@@ -388,8 +360,8 @@ function chooseAction(input: {
   const scored = input.options.map((option) => {
     const text = `${objectiveText} ${option.label} ${option.intent}`;
     let score = 35 - Math.abs(RISK_VALUE[option.risk] - wantedRisk) * 18;
-    if (option.completionKind !== "skip") score += goalAlignment(input.profile, text) * 24;
-    if (isSide && option.completionKind !== "skip"
+    score += goalAlignment(input.profile, text) * 24;
+    if (isSide
       && /愿意帮助他人|重情/u.test(input.profile.traits.join(" "))) score += 18;
     score += stableUnit(input.agentId, objectiveId, option.actionOptionId) * 18;
     if (option.factionObjectId) score += stableUnit(input.agentId, option.factionObjectId) * 16;
@@ -400,12 +372,6 @@ function chooseAction(input: {
     // actions that fully violate the primary get -5. Non-hard filter.
     const approachAlignmentBonus = computeApproachAlignment(text, strategyPrimary);
     score += approachAlignmentBonus;
-    if (option.completionKind === "skip") {
-      score -= isSide ? 12 : 65;
-      if (pressure >= 9_000) score += 90;
-      if (aligned && isSide) score -= 24;
-      if (!aligned && isSide) score += 16;
-    }
     return { option, score: Math.round(score * 100) / 100 };
   }).sort((left, right) => right.score - left.score
     || left.option.actionOptionId.localeCompare(right.option.actionOptionId));
@@ -632,9 +598,7 @@ function aggregateRuns(runs: readonly JsonObject[]) {
     medium: { attempts: 0, successes: 0, failures: 0 },
     high: { attempts: 0, successes: 0, failures: 0 },
   };
-  let skippedActions = 0;
   let sideAttempts = 0;
-  let sideSkips = 0;
   let totalStoryCharacters = 0;
   for (const run of runs) {
     const status = objectValue(run.status, "run.status");
@@ -655,10 +619,6 @@ function aggregateRuns(runs: readonly JsonObject[]) {
       const riskName = optionalString(action.risk);
       const completion = optionalString(resolution.completionKind);
       if (optionalString(objective.kind) === "side") sideAttempts += 1;
-      if (completion === "skip") {
-        skippedActions += 1;
-        if (optionalString(objective.kind) === "side") sideSkips += 1;
-      }
       if (riskName === "low" || riskName === "medium" || riskName === "high") {
         risk[riskName].attempts += 1;
         if (completion === "complete") risk[riskName].successes += 1;
@@ -671,9 +631,7 @@ function aggregateRuns(runs: readonly JsonObject[]) {
     tiers,
     missionStatuses,
     risk,
-    skippedActions,
     sideAttempts,
-    sideSkips,
     averageStoryCharacters: runs.length > 0 ? Math.round(totalStoryCharacters / runs.length) : 0,
   };
 }

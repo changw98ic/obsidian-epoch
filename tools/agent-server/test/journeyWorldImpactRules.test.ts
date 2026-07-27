@@ -74,15 +74,15 @@ test("solidification planning turns a server-completed objective into bounded in
   assert.match(trace.payload.summary, /服务器/u);
 });
 
-test("failed or skipped Journey objectives cannot manufacture positive shared-world impact", () => {
+test("failed Journey objectives cannot manufacture positive shared-world impact", () => {
   const base = input();
-  for (const completionKind of ["failed", "skip"] as const) {
+  for (const completionKind of ["failed"] as const) {
     const changed = {
       ...base,
       resolution: {
         ...base.resolution,
         completionKind,
-        outcome: completionKind === "skip" ? "skipped" as const : "failure" as const,
+        outcome: "failure" as const,
       },
     };
     assert.equal(journeyWorldImpactPreview(changed), undefined);

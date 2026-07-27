@@ -96,14 +96,8 @@ export interface IdentityIssuedPayloadInput {
   readonly inheritance?: EpochLineageInheritance;
   readonly maxLifetime: number;
   readonly startedAt: string;
-  /**
-   * PR5a additive. Initial viability snapshot to freeze onto the identity.
-   * Callers SHOULD pass {@link initialIdentityViability}; legacy callers
-   * may omit it and the payload helper synthesises a fresh snapshot at
-   * {@link startedAt}. Reincarnation always passes a fresh snapshot — the
-   * previous identity's viability history is NOT inherited.
-   */
-  readonly initialViability?: IdentityViability;
+  /** Initial viability snapshot to freeze onto the identity. */
+  readonly initialViability: IdentityViability;
   /**
    * PR5b additive. Server-frozen {@link ExpectedLifePattern} to carry on the
    * identity payload. Callers MAY pre-build a pattern and pass it here; when
@@ -112,7 +106,7 @@ export interface IdentityIssuedPayloadInput {
    * the issuance inputs. The payload helper passes this through verbatim — it
    * does not build the pattern itself, preserving the pure-function boundary.
    */
-  readonly expectedLifePattern?: ExpectedLifePattern;
+  readonly expectedLifePattern: ExpectedLifePattern;
   /**
    * PR6 additive. Server-frozen {@link IdentityStrategyDisposition} to carry on
    * the identity payload. When omitted, the identity has no frozen strategy
@@ -122,14 +116,10 @@ export interface IdentityIssuedPayloadInput {
   readonly strategyDisposition?: IdentityStrategyDisposition;
 }
 
-export interface IdentityIssueEventsInput extends IdentityIssuedPayloadInput {
+export interface IdentityIssueEventsInput extends Omit<IdentityIssuedPayloadInput, "expectedLifePattern"> {
   readonly makeEvent: EpochEventFactory;
-  /**
-   * PR6 additive. When present, the planner freezes a strategy disposition
-   * from the profile and forwards it into the issued payload. Legacy callers
-   * that omit this still produce a valid payload (no disposition → strategy
-   * consistency defaults to normal).
-   */
+  /** When present, the planner freezes a strategy disposition from the profile. */
+  readonly expectedLifePattern?: ExpectedLifePattern;
   readonly strategyProfile?: StrategyProfile;
 }
 
@@ -281,8 +271,6 @@ export interface PersonalityDriftConfirmationProjectionInput<TDrift extends Pers
 
 export function identityIssuedPayload(input: IdentityIssuedPayloadInput): IdentityIssuedPayload {
   const includesExplorerSecretHash = Object.prototype.hasOwnProperty.call(input, "explorerSecretHash");
-  const initialViability =
-    input.initialViability ?? initialIdentityViability(input.agentId, input.startedAt);
   return {
     agentId: input.agentId,
     explorerId: input.explorerId,
@@ -303,14 +291,9 @@ export function identityIssuedPayload(input: IdentityIssuedPayloadInput): Identi
       startedAt: input.startedAt,
     },
     viabilityPolicyVersion: VIABILITY_POLICY_VERSION,
-    identityViability: initialViability,
-    // PR5b: transparently forward the caller-supplied pattern (if any). The
-    // helper does not build the pattern — that is the planner's responsibility
-    // so the helper stays pure and deterministic on its other inputs.
-    ...(input.expectedLifePattern ? { expectedLifePattern: input.expectedLifePattern } : {}),
+    identityViability: input.initialViability,
+    expectedLifePattern: input.expectedLifePattern,
     // PR6: transparently forward the caller-supplied disposition (if any).
-    // Legacy callers may omit it; the strategy-consistency pipeline defaults
-    // to normal (10000/0) when no disposition is present.
     ...(input.strategyDisposition ? { strategyDisposition: input.strategyDisposition } : {}),
   };
 }
@@ -357,6 +340,7 @@ export function planIdentityIssueEvents(input: IdentityIssueEventsInput): readon
     inheritance: input.inheritance,
     maxLifetime: input.maxLifetime,
     startedAt: input.startedAt,
+    initialViability: input.initialViability,
     expectedLifePattern,
     ...(strategyDisposition ? { strategyDisposition } : {}),
   });
@@ -524,6 +508,7 @@ export function planIdentityReincarnationEvents(
     inheritance: input.inheritance,
     maxLifetime: input.maxLifetime,
     startedAt: input.startedAt,
+    initialViability: initialIdentityViability(input.nextAgentId, input.startedAt),
     expectedLifePattern,
   });
   const issued = input.makeEvent("identity_issued", input.nextAgentId, issuedPayload, {

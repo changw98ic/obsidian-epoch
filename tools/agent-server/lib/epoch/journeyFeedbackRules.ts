@@ -200,7 +200,7 @@ export function projectFeedbackSignals(
   // ── Doubt-based signals ──
 
   for (const entry of input.doubtEntries) {
-    // Skip if already consumed by identity_exposed
+    // Return if already consumed by identity_exposed
     if (seenEventIds.has(entry.sourceActionEventId)) continue;
 
     // followed: high+ doubt with region context

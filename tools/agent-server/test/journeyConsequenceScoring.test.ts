@@ -462,7 +462,7 @@ test("PR5b identity_doubt uses DOUBT_PENALTY_BPS[strength] capped at IDENTITY_DO
 
 test("PR5b identity_doubt entries without doubtStrength contribute 0 bps (fail-open defence)", () => {
   // Legacy/malformed blueprint without doubtStrength MUST NOT fabricate a
-  // penalty. The scorer reads effectBlueprint.doubtStrength and skips
+  // penalty. The scorer reads effectBlueprint.doubtStrength and does not accumulate
   // accumulation when the field is absent or invalid.
   const entries = [
     makeMirrorEntry({
@@ -807,4 +807,3 @@ test("PR5a residual risk: computeSelfLossBucket is reason-blind — viability-ta
   // appear in the collateral audit list.
   assert.equal(score.breakdown.collateralLedgerEntryIds.length, 0);
 });
-

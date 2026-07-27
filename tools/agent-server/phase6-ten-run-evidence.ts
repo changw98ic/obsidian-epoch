@@ -278,20 +278,17 @@ function validateCdeProtocol(sources, expectedRuns, errors) {
       });
     }
     const prepares = prepareCalls.filter((source) => source.binding.runIndex === runIndex);
-    // v3: prefer taskFamilyId (internal field), fallback to taskType (legacy receipt compat)
+    // The server-issued taskFamilyId is the only authoritative scenario binding.
     const taskFamilyIds = unique(prepares.map((source) => stringValue(firstValue(source.record, [
       ["input", "taskFamilyId"], ["output", "taskFamilyId"],
     ]))).filter(Boolean));
-    const legacyTaskTypes = unique(prepares.map((source) => stringValue(firstValue(source.record, [
-      ["input", "taskType"], ["input", "task_type"], ["output", "taskType"], ["output", "task", "type"],
-    ]))).filter(Boolean));
-    const effectiveFamilyId = taskFamilyIds[0] ?? legacyTaskTypes[0];
+    const effectiveFamilyId = taskFamilyIds[0];
     if (prepares.length !== 1 || !effectiveFamilyId || effectiveFamilyId !== expected?.taskFamilyId) {
       errors.push({
         code: "E_CDE_PREPARE_SCENARIO_PROTOCOL",
         runIndex,
         expected: expected?.taskFamilyId,
-        actual: taskFamilyIds.length > 0 ? taskFamilyIds : legacyTaskTypes,
+        actual: taskFamilyIds,
         calls: prepares.length,
       });
     }

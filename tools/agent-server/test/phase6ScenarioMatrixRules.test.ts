@@ -30,7 +30,7 @@ test("Phase 6 scenario matrix has v3 matrix version", () => {
 });
 
 test("Phase 6 scenario binding rejects client-selected tags and task family ids", () => {
-  assert.throws(() => assertPhase6ScenarioBinding(1, "high-prepared-priority"), /phase6_scenario_tag_mismatch/);
+  assert.throws(() => assertPhase6ScenarioBinding(1, "high-prepared-priority", "resource_acquisition"), /phase6_scenario_tag_mismatch/);
   assert.throws(() => assertPhase6ScenarioBinding(1, "low-prepared-resource", "crisis_retreat"), /phase6_scenario_task_family_mismatch/);
   assert.throws(() => phase6ScenarioForRun(11), /phase6_scenario_run_index_invalid/);
 });
@@ -39,12 +39,6 @@ test("Phase 6 scenario binding accepts matching taskFamilyId", () => {
   // Should not throw when taskFamilyId matches
   assert.doesNotThrow(() => assertPhase6ScenarioBinding(1, "low-prepared-resource", "resource_acquisition"));
   assert.doesNotThrow(() => assertPhase6ScenarioBinding(6, "high-prepared-priority", "priority_commission"));
-});
-
-test("Phase 6 scenario binding accepts undefined taskFamilyId (backward compat)", () => {
-  // Should not throw when taskFamilyId is omitted
-  assert.doesNotThrow(() => assertPhase6ScenarioBinding(1, "low-prepared-resource"));
-  assert.doesNotThrow(() => assertPhase6ScenarioBinding(1, "low-prepared-resource", undefined));
 });
 
 test("Phase 6 fallback risk policy creates distinct low medium high and dynamic choices", () => {

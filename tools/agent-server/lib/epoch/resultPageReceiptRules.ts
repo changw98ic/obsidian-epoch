@@ -4,7 +4,6 @@ import { normalizeTrustClass, type EpochEventType, type EpochTrustClass } from "
 import {
   JOURNEY_RUN_RECEIPT_AUTHORITY,
   JOURNEY_RUN_RECEIPT_VERSION,
-  isLegacyJourneyRunReceiptV1,
   validateJourneyRunReceipt,
   type JourneyRunReceipt,
 } from "./journeyRunReceiptRules.ts";
@@ -84,15 +83,6 @@ function validateJourneyRunReceiptForResultPage(
       "PHASE6_RESULT_PAGE_INPUT_MISSING",
       "JourneyRunReceipt is required for Phase 6 result page sidecar",
       "journeyRunReceipt",
-    ));
-    return findings;
-  }
-  if (isLegacyJourneyRunReceiptV1(receipt as unknown)) {
-    findings.push(resultPagePhase6Finding(
-      "PHASE6_RESULT_PAGE_SECTION_INVALID",
-      "JourneyRunReceipt v1 is legacy read-only and is not strict enough for a verified Phase 6 result page",
-      "journeyRunReceipt.version",
-      { receiptType: (receipt as unknown as { receiptType: string }).receiptType, version: (receipt as unknown as { version: string }).version },
     ));
     return findings;
   }
@@ -202,7 +192,7 @@ function phase6ScoreDetails(receipt: JourneyRunReceipt): readonly Phase6ResultPa
 
 function buildPhase6ResultPageSidecar(
   receipt: JourneyRunReceipt | undefined,
-  legacyReceipt: EpochResultPageReceipt,
+  pageReceipt: EpochResultPageReceipt,
   knownEventIds: ReadonlySet<string>,
 ): EpochResultPagePhase6Sidecar {
   const findings = validateJourneyRunReceiptForResultPage(receipt, knownEventIds);
@@ -267,9 +257,9 @@ function buildPhase6ResultPageSidecar(
       integrity: {
         ok: true,
         receiptPayloadHash: receipt.integrity.bodyHash,
-        resultPagePayloadHash: legacyReceipt.payloadHash,
+        resultPagePayloadHash: pageReceipt.payloadHash,
         canonicalEventIds,
-        checkedAt: legacyReceipt.generatedAt,
+        checkedAt: pageReceipt.generatedAt,
       },
     },
   };

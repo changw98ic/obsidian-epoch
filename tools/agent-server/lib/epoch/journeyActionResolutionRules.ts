@@ -60,13 +60,12 @@ export function journeyRiskPremiumForOutcome(
   return undefined;
 }
 
-export type JourneyActionCompletionKind = "complete" | "failed" | "skip";
+export type JourneyActionCompletionKind = "complete" | "failed";
 export type JourneyActionResolutionOutcome =
   | "exceptional_success"
   | "success"
   | "partial_success"
-  | "failure"
-  | "skipped";
+  | "failure";
 
 export interface JourneyActionResolutionFactors {
   readonly baseCompetence: number;
@@ -118,7 +117,6 @@ export interface ResolveJourneyActionInput {
   readonly risk: JourneyActionRisk;
   readonly objectiveKind?: "main" | "side" | "choice";
   readonly journeyPreparationScore?: number;
-  readonly signedCompletionKind?: "skip";
   readonly identity: {
     readonly lifetime: {
       readonly max: number;
@@ -219,7 +217,6 @@ function resolutionInput(input: ResolveJourneyActionInput) {
       .map(([key, value]) => [key, Math.max(0, Math.min(10_000, Math.round(value)))])
     ) as Partial<Record<EpochAttributeId, number>>,
     risk: input.risk,
-    signedCompletionKind: input.signedCompletionKind,
     traits: [...new Set(input.identity.traits.map((trait) => trait.trim()).filter(Boolean))].sort(),
   };
 }
@@ -269,7 +266,7 @@ function actionSummary(
   gatingFailure?: JourneyActionResolution["gatingFailure"],
 ) {
   const success = normalizedText(input.successOutcomeSummary, "该行动完成，并留下了可核验结果。");
-  if (outcome === "skipped" || outcome === "success" || outcome === "exceptional_success") return success;
+  if (outcome === "success" || outcome === "exceptional_success") return success;
   const action = normalizedText(input.actionLabel, "执行该行动");
   const objective = normalizedText(input.objectiveTitle, "该目标");
   const location = normalizedText(input.locationLabel, "现场");
@@ -301,21 +298,6 @@ export function resolveJourneyAction(input: ResolveJourneyActionInput): JourneyA
     goalAlignment: 0,
     deterministicVariance: 0,
   };
-  if (input.signedCompletionKind === "skip") {
-    return {
-      ruleVersion: JOURNEY_ACTION_RESOLUTION_RULE_VERSION,
-      authority: "server",
-      decisionKeyId: runtimeActionKeyId(),
-      inputHash,
-      outcome: "skipped",
-      completionKind: "skip",
-      score: 0,
-      difficulty: 0,
-      margin: 0,
-      factors: zeroFactors,
-      summary: actionSummary(input, "skipped"),
-    };
-  }
   if (canonicalInput.objectiveKind === "choice") {
     return {
       ruleVersion: JOURNEY_ACTION_RESOLUTION_RULE_VERSION,

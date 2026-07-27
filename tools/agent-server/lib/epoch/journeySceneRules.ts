@@ -113,7 +113,7 @@ export interface JourneySceneEpisode extends Omit<JourneySceneCandidate, "candid
     readonly outcomeSummary?: string;
     readonly taskObjective?: {
       readonly objectiveId: string;
-      readonly completionKind: "complete" | "failed" | "skip";
+      readonly completionKind: "complete" | "failed";
     };
     readonly reward?: {
       readonly resourceId?: EpochResourceId;
@@ -443,10 +443,7 @@ export function generateTaskPlanJourneySceneEpisodes(input: {
       ...input.region.sourceFactIds,
       ...groundedObjects.flatMap((object) => object.sourceFactIds),
     ]);
-    const optionIds = cleaned([
-      ...objective.actions.map((action) => action.optionKey),
-      `skip_${objective.objectiveId}`,
-    ]);
+    const optionIds = cleaned(objective.actions.map((action) => action.optionKey));
     const phase = objective.kind === "side" ? "side" : "main";
     const candidateId = `scene:task:${objective.objectiveId}`;
     return {
