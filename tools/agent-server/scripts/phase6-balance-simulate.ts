@@ -1,10 +1,9 @@
 #!/usr/bin/env -S npx tsx
 /**
- * PR11: Journey-level balance simulation harness.
+ * PR11: Journey-level balance simulation harness (canonical pipeline version).
  *
- * Per-strategy 1000-iteration Monte Carlo with fixed seed.
- * Pure computation (no external AI calls, no canonical store writes).
- * Output: JSONL to temp dir + summary statistics to stdout.
+ * Imports the real settlement pipeline (buildConsequenceScore / deriveSettlementDecision)
+ * and per-strategy behavior distributions to produce statistically valid comparison data.
  *
  * Usage:
  *   npx tsx tools/agent-server/scripts/phase6-balance-simulate.ts [--seed N] [--iterations N] [--output DIR]
@@ -22,48 +21,50 @@ import {
   type StrategyBehaviorDistribution,
 } from "./phase6-balance-samples.js";
 
-// ─── Simulation constants (mirror spec §6 + PR4 thresholds) ─────────────────
+// ─── Canonical imports (tsx resolves .ts extensions) ─────────────────────────
+
+import { buildConsequenceScore } from "../lib/epoch/journeyConsequenceScoring.js";
+import { deriveSettlementDecision } from "../lib/epoch/journeySettlementDecision.js";
+import type {
+  SettlementContext,
+  ConsequenceScore,
+  SettlementDecision,
+  ResultComponentInputs,
+  SelfLossContribution,
+  SelfLossSourceKind,
+  MirrorConsequenceLedgerEntry,
+  BaseRewardBundle,
+  SettlementTier,
+} from "../lib/epoch/journeySettlementRules.js";
+import type { RoleplayScore, ExpectedLifePattern } from "../lib/epoch/journeyRoleplayRules.js";
+import type { IdentityViability } from "../lib/epoch/journeyViabilityRules.js";
+
+// ─── Constants (mirror PR4 thresholds) ──────────────────────────────────────
 
 const CANON_THRESHOLD_BPS = 8500;
-const RESULT_WEIGHT_MAIN = 0.6;
-const RESULT_WEIGHT_SIDE = 0.2;
-const RESULT_WEIGHT_EXEC = 0.2;
+const SELFLOSS_CAP_BPS = 3000;
 const RESOURCE_SELFLOSS_BPS_PER_UNIT = 200;
 const LIFETIME_SELFLOSS_BPS_PER_POINT = 10;
-const SELFLOSS_CAP_BPS = 3000;
-const TIER_THRESHOLDS = [
-  { tier: "未及格", min: 0, max: 4000 },
-  { tier: "及格", min: 4000, max: 5500 },
-  { tier: "良好", min: 5500, max: 7000 },
-  { tier: "优秀", min: 7000, max: 8500 },
-  { tier: "惊世", min: 8500, max: 10001 },
-] as const;
+const TIER_THRESHOLDS: readonly { readonly tier: SettlementTier; readonly min: number; readonly max: number }[] = [
+  { tier: "未及格" as SettlementTier, min: 0, max: 4000 },
+  { tier: "及格" as SettlementTier, min: 4000, max: 5500 },
+  { tier: "良好" as SettlementTier, min: 5500, max: 7000 },
+  { tier: "优秀" as SettlementTier, min: 7000, max: 8500 },
+  { tier: "惊世" as SettlementTier, min: 8500, max: 10001 },
+];
+const ROLEPLAY_DEVIATION_BPS: Record<string, number> = {
+  aligned: 0, minor_deviation: 750, major_deviation: 2000, forbidden_action: 4000,
+};
 const VIABILITY_DEATH_THRESHOLD = 3000;
 const STRESSED_THRESHOLD = 6000;
-const ROLEPLAY_DEVIATION_BPS: Record<string, number> = {
-  aligned: 0,
-  minor_deviation: 750,
-  major_deviation: 2000,
-  forbidden_action: 4000,
-};
-const DOUBT_PENALTY_BPS: Record<string, number> = {
-  low: 250,
-  moderate: 750,
-  high: 2000,
-  severe: 4000,
-};
 const STRATEGY_TO_APPROACH: Record<string, string> = {
-  combat: "combat",
-  cunning: "stealth",
-  support: "support",
-  logistics: "logistics",
-  exploration: "scout",
+  combat: "combat", cunning: "stealth", support: "support", logistics: "logistics", exploration: "scout",
 };
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Simulation types ───────────────────────────────────────────────────────
 
 interface IterationResult {
-  readonly strategy: Strategy;
+  readonly strategy: string;
   readonly iteration: number;
   readonly seed: string;
   readonly mainLineSucceeded: boolean;
@@ -73,16 +74,17 @@ interface IterationResult {
   readonly collateralScoreBps: number;
   readonly totalBps: number;
   readonly tier: string;
-  readonly hiddenClampApplied: boolean;
   readonly worldCommit: string;
+  readonly rewardMultiplierBps: number;
   readonly roleplayDeviation: string;
   readonly roleplayDeviationBps: number;
   readonly viabilityDeath: boolean;
+  readonly hiddenClampApplied: boolean;
   readonly strategyConsistency: string;
 }
 
 interface StrategyStats {
-  readonly strategy: Strategy;
+  readonly strategy: string;
   readonly iterations: number;
   readonly tierCounts: Record<string, number>;
   readonly worldCommitCounts: Record<string, number>;
@@ -94,110 +96,202 @@ interface StrategyStats {
   readonly viabilityDeathRate: number;
   readonly hiddenClampRate: number;
   readonly roleplayDistribution: Record<string, number>;
+  readonly avgRewardMultiplierBps: number;
 }
 
-// ─── Simulation ──────────────────────────────────────────────────────────────
+// ─── Simulation helpers ─────────────────────────────────────────────────────
+
+function buildResultComponentInputs(
+  prng: () => bigint,
+  dist: StrategyBehaviorDistribution,
+  mainSucceeded: boolean,
+  sideCompleted: boolean,
+): ResultComponentInputs {
+  return {
+    mainCompletionBps: mainSucceeded ? 10000 : 0,
+    bonusMainCompletionBps: 0,
+    sideCompletionBps: sideCompleted ? 10000 : 0,
+    executionQualityBps: Math.round(drawUniform(prng, 5000, 10000)),
+    penaltyBps: mainSucceeded ? 0 : 750,
+  };
+}
+
+function buildSelfLossContributions(
+  prng: () => bigint,
+  dist: StrategyBehaviorDistribution,
+): readonly SelfLossContribution[] {
+  const resourceUnits = Math.round(drawUniform(prng, dist.selfLossResourceRange[0], dist.selfLossResourceRange[1]));
+  const lifetimeDelta = Math.round(drawUniform(prng, dist.selfLossLifetimeRange[0], dist.selfLossLifetimeRange[1]));
+  const entries: SelfLossContribution[] = [];
+  if (resourceUnits > 0) {
+    entries.push({
+      costKind: "resource" as const,
+      resourceId: "focus",
+      amount: resourceUnits,
+      bps: Math.min(resourceUnits * RESOURCE_SELFLOSS_BPS_PER_UNIT, SELFLOSS_CAP_BPS),
+      sourceEventId: `sim-resource-${Date.now()}`,
+    });
+  }
+  if (lifetimeDelta < 0) {
+    entries.push({
+      costKind: "lifetime" as const,
+      resourceId: "lifetime",
+      amount: Math.abs(lifetimeDelta),
+      bps: Math.min(Math.abs(lifetimeDelta) * LIFETIME_SELFLOSS_BPS_PER_POINT, SELFLOSS_CAP_BPS),
+      sourceEventId: `sim-lifetime-${Date.now()}`,
+    });
+  }
+  return entries;
+}
+
+function buildMirrorLedgerEntries(
+  prng: () => bigint,
+  dist: StrategyBehaviorDistribution,
+  strategy: string,
+  iteration: number,
+): readonly MirrorConsequenceLedgerEntry[] {
+  const entries: MirrorConsequenceLedgerEntry[] = [];
+  for (const [effectKind, weight] of Object.entries(dist.collateralWeights)) {
+    if (drawUniform(prng, 0, 1) < 0.3) {
+      const magnitude = effectKind.startsWith("object") ? drawUniform(prng, 1, 3) : 1;
+      entries.push({
+        entryId: `mcle-${strategy}-${iteration}-${effectKind}`,
+        journeyId: `sim-${strategy}-${iteration}`,
+        actionEventId: `action-${iteration}-${effectKind}`,
+        effectKind: effectKind as MirrorConsequenceLedgerEntry["effectKind"],
+        targetEntityId: `entity-${effectKind}-${iteration}`,
+        delta: Math.round(weight * magnitude),
+        consequenceType: "collateral" as const,
+        sourceEventIds: [`action-${iteration}-${effectKind}`],
+        effectBlueprint: {},
+        recordedAt: new Date().toISOString(),
+        dedupeKey: `${effectKind}:${iteration}:${strategy}`,
+      });
+    }
+  }
+  // Identity doubt (from roleplay deviation)
+  const roleplayDeviation = drawClassification(prng, dist.roleplayDeviationDistribution);
+  if (roleplayDeviation !== "aligned") {
+    const strength = roleplayDeviation === "forbidden_action" ? "severe" as const
+      : roleplayDeviation === "major_deviation" ? "high" as const
+      : "moderate" as const;
+    entries.push({
+      entryId: `mcle-${strategy}-${iteration}-doubt`,
+      journeyId: `sim-${strategy}-${iteration}`,
+      actionEventId: `action-${iteration}-doubt`,
+      effectKind: "identity_doubt" as const,
+      targetEntityId: `identity-${strategy}-${iteration}`,
+      delta: ROLEPLAY_DEVIATION_BPS[roleplayDeviation] ?? 0,
+      consequenceType: "collateral" as const,
+      sourceEventIds: [`action-${iteration}-doubt`],
+      effectBlueprint: { doubtStrength: strength },
+      recordedAt: new Date().toISOString(),
+      dedupeKey: `identity_doubt:${iteration}:${strategy}`,
+    });
+  }
+  return entries;
+}
+
+function buildBaseRewardBundle(_prng: () => bigint): BaseRewardBundle {
+  return {
+    resources: [{ resourceId: "coin", amount: 3 }],
+    items: [{ itemKey: "common_loot", rarity: "common" }],
+    attributes: [],
+  };
+}
+
+function buildExpectedLifePattern(strategy: string): ExpectedLifePattern {
+  const approach = STRATEGY_TO_APPROACH[strategy] ?? "scout";
+  return {
+    identityId: `sim-identity-${strategy}`,
+    patternVersion: 1,
+    expectedApproaches: [approach],
+    forbiddenApproaches: STRATEGIES.filter(s => s !== strategy).map(s => STRATEGY_TO_APPROACH[s] ?? "scout"),
+    factionRoleNorms: {},
+    inputHash: `sha256:${strategy}-pattern`,
+    frozenAt: new Date().toISOString(),
+  } as unknown as ExpectedLifePattern;
+}
+
+// ─── Core simulation loop ───────────────────────────────────────────────────
 
 function simulateIteration(
   dist: StrategyBehaviorDistribution,
   iteration: number,
   seed: bigint,
 ): IterationResult {
-  const prng = createSeededPrng(seed + BigInt(iteration));
+  const prng = createSeededPrng(seed + BigInt(STRATEGIES.indexOf(dist.strategy) * 100000) + BigInt(iteration));
+  const strategy = dist.strategy;
 
-  // Main/side/hidden completion
-  const mainProb = drawUniform(prng, dist.mainCompletionRange[0], dist.mainCompletionRange[1]);
-  const sideProb = drawUniform(prng, dist.sideCompletionRange[0], dist.sideCompletionRange[1]);
-  const hiddenProb = drawUniform(prng, dist.hiddenCompletionRange[0], dist.hiddenCompletionRange[1]);
-  const mainLineSucceeded = drawUniform(prng, 0, 1) < mainProb;
-  const sideCompleted = drawUniform(prng, 0, 1) < sideProb;
-  const hiddenComplete = drawUniform(prng, 0, 1) < hiddenProb;
+  const mainLineSucceeded = drawUniform(prng, 0, 1) < drawUniform(prng, dist.mainCompletionRange[0], dist.mainCompletionRange[1]);
+  const sideCompleted = drawUniform(prng, 0, 1) < drawUniform(prng, dist.sideCompletionRange[0], dist.sideCompletionRange[1]);
+  const hiddenComplete = drawUniform(prng, 0, 1) < drawUniform(prng, dist.hiddenCompletionRange[0], dist.hiddenCompletionRange[1]);
 
-  // Result score
-  const mainBps = mainLineSucceeded ? 10000 : 0;
-  const sideBps = sideCompleted ? 10000 : 0;
-  const execBps = drawUniform(prng, 5000, 10000); // execution quality variance
-  const resultScoreBps = Math.min(10000, Math.max(0,
-    Math.round(mainBps * RESULT_WEIGHT_MAIN + sideBps * RESULT_WEIGHT_SIDE + execBps * RESULT_WEIGHT_EXEC),
-  ));
+  const resultInputs = buildResultComponentInputs(prng, dist, mainLineSucceeded, sideCompleted);
+  const selfLoss = buildSelfLossContributions(prng, dist);
+  const mirrorEntries = buildMirrorLedgerEntries(prng, dist, strategy, iteration);
+  const baseReward = buildBaseRewardBundle(prng);
+  const pattern = buildExpectedLifePattern(strategy);
 
-  // Self-loss
-  const resourceUnits = Math.round(drawUniform(prng, dist.selfLossResourceRange[0], dist.selfLossResourceRange[1]));
-  const lifetimeDelta = Math.round(drawUniform(prng, dist.selfLossLifetimeRange[0], dist.selfLossLifetimeRange[1]));
-  const rawSelfLoss = resourceUnits * RESOURCE_SELFLOSS_BPS_PER_UNIT + Math.max(0, -lifetimeDelta) * LIFETIME_SELFLOSS_BPS_PER_POINT;
-  const selfLossScoreBps = -Math.min(rawSelfLoss, SELFLOSS_CAP_BPS);
+  const ctx: SettlementContext = {
+    journeyId: `sim-${strategy}-${iteration}`,
+    mainObjectiveIds: ["main-1", "main-2", "main-3"],
+    sideObjectiveIds: ["side-1", "side-2"],
+    hiddenObjectiveIds: ["hidden-1"],
+    mainLineSucceeded,
+    hiddenComplete,
+    actionResolutions: [
+      { actionEventId: `action-${iteration}-main`, resultKind: "objective_complete", succeeded: mainLineSucceeded },
+      { actionEventId: `action-${iteration}-side`, resultKind: "objective_complete", succeeded: sideCompleted },
+    ],
+    selfLossSourceEventsByKind: {
+      resource: selfLoss.filter(s => s.costKind === "resource").map(s => s.sourceEventId),
+      lifetime: selfLoss.filter(s => s.costKind === "lifetime").map(s => s.sourceEventId),
+    } as Record<SelfLossSourceKind, readonly string[]>,
+    mirrorLedgerEntries: mirrorEntries as readonly MirrorConsequenceLedgerEntry[],
+    canonicalActionEventIds: [`action-${iteration}-main`, `action-${iteration}-side`],
+    resultComponentInputs: resultInputs,
+    selfLossContributions: selfLoss,
+    baseRewardBundle: baseReward,
+    expectedLifePattern: pattern,
+  };
 
-  // Collateral
-  let collateralScoreBps = 0;
-  for (const [effectKind, weight] of Object.entries(dist.collateralWeights)) {
-    const triggered = drawUniform(prng, 0, 1) < 0.3; // 30% chance per effect kind
-    if (triggered) {
-      const magnitude = effectKind.startsWith("object") ? drawUniform(prng, 1, 3) : 1;
-      collateralScoreBps += Math.round(weight * magnitude);
-    }
-  }
-  collateralScoreBps = Math.max(-2000, Math.min(1500, collateralScoreBps));
+  const score = buildConsequenceScore(ctx);
+  const decision = deriveSettlementDecision(ctx, score);
 
-  // Roleplay deviation
   const roleplayDeviation = drawClassification(prng, dist.roleplayDeviationDistribution);
   const roleplayDeviationBps = ROLEPLAY_DEVIATION_BPS[roleplayDeviation] ?? 0;
-
-  // Total
-  const totalBps = Math.min(10000, Math.max(0, resultScoreBps + selfLossScoreBps + collateralScoreBps));
-
-  // Tier
-  let tier = "未及格";
-  for (const t of TIER_THRESHOLDS) {
-    if (totalBps >= t.min && totalBps < t.max) { tier = t.tier; break; }
-  }
-  // Hidden clamp
-  let hiddenClampApplied = false;
-  if (!mainLineSucceeded) {
-    tier = "未及格";
-    hiddenClampApplied = true;
-  } else if (!hiddenComplete && (tier === "惊世" || tier === "优秀")) {
-    tier = "优秀";
-    hiddenClampApplied = true;
-  }
-  // 惊世 gate
-  if (tier === "惊世" && !hiddenComplete) tier = "优秀";
-
-  // World commit
-  const worldCommit = mainLineSucceeded && totalBps >= CANON_THRESHOLD_BPS ? "solidified" : "discarded";
-
-  // Viability death (simplified)
-  const viabilityScore = 6000 + drawUniform(prng, -3000, 3000); // rough simulation
+  const viabilityScore = 6000 + drawUniform(prng, -3000, 3000);
   const viabilityDeath = viabilityScore <= VIABILITY_DEATH_THRESHOLD;
-
-  // Strategy consistency
   const strategyConsistency = roleplayDeviation === "aligned" ? "normal" : "fully_violates";
 
   return {
-    strategy: dist.strategy,
+    strategy,
     iteration,
     seed: seed.toString(),
     mainLineSucceeded,
     hiddenComplete,
-    resultScoreBps,
-    selfLossScoreBps,
-    collateralScoreBps,
-    totalBps,
-    tier,
-    hiddenClampApplied,
-    worldCommit,
+    resultScoreBps: score.breakdown.resultScoreBps,
+    selfLossScoreBps: score.breakdown.selfLossScoreBps,
+    collateralScoreBps: score.breakdown.collateralScoreBps,
+    totalBps: score.breakdown.totalBps,
+    tier: decision.tier,
+    worldCommit: decision.worldCommit.status,
+    rewardMultiplierBps: decision.reward.modifier.multiplierBps,
     roleplayDeviation,
     roleplayDeviationBps,
     viabilityDeath,
+    hiddenClampApplied: decision.hiddenClamp.applied,
     strategyConsistency,
   };
 }
 
-function aggregateStats(results: IterationResult[]): StrategyStats {
+function aggregateStats(results: readonly IterationResult[]): StrategyStats {
   const n = results.length;
   const tierCounts: Record<string, number> = {};
   const worldCommitCounts: Record<string, number> = {};
   const roleplayDistribution: Record<string, number> = {};
-  let sumResult = 0, sumSelfLoss = 0, sumCollateral = 0, sumTotal = 0;
+  let sumResult = 0, sumSelfLoss = 0, sumCollateral = 0, sumTotal = 0, sumRewardMult = 0;
   let 惊世Count = 0, viabilityDeathCount = 0, hiddenClampCount = 0;
 
   for (const r of results) {
@@ -208,13 +302,14 @@ function aggregateStats(results: IterationResult[]): StrategyStats {
     sumSelfLoss += r.selfLossScoreBps;
     sumCollateral += r.collateralScoreBps;
     sumTotal += r.totalBps;
+    sumRewardMult += r.rewardMultiplierBps;
     if (r.tier === "惊世") 惊世Count++;
     if (r.viabilityDeath) viabilityDeathCount++;
     if (r.hiddenClampApplied) hiddenClampCount++;
   }
 
   return {
-    strategy: results[0]?.strategy ?? "combat" as Strategy,
+    strategy: results[0]?.strategy ?? "combat",
     iterations: n,
     tierCounts,
     worldCommitCounts,
@@ -226,6 +321,7 @@ function aggregateStats(results: IterationResult[]): StrategyStats {
     viabilityDeathRate: +(viabilityDeathCount / n * 100).toFixed(2),
     hiddenClampRate: +(hiddenClampCount / n * 100).toFixed(2),
     roleplayDistribution,
+    avgRewardMultiplierBps: Math.round(sumRewardMult / n),
   };
 }
 
@@ -242,41 +338,34 @@ const outputDir = outArg >= 0 ? (args[outArg + 1] ?? join(tmpdir(), "balance-sim
 
 mkdirSync(outputDir, { recursive: true });
 
-console.log(`PR11 Balance Simulation`);
+console.log(`PR11 Balance Simulation (canonical pipeline)`);
 console.log(`  Seed: ${BASE_SEED}`);
 console.log(`  Iterations per strategy: ${ITERATIONS}`);
 console.log(`  Output: ${outputDir}`);
 console.log();
 
-const allResults: IterationResult[] = [];
 const allStats: StrategyStats[] = [];
 
 for (const dist of STRATEGY_DISTRIBUTIONS) {
   const results: IterationResult[] = [];
   for (let i = 0; i < ITERATIONS; i++) {
-    results.push(simulateIteration(dist, i, BASE_SEED + BigInt(STRATEGIES.indexOf(dist.strategy) * 100000)));
+    results.push(simulateIteration(dist, i, BASE_SEED));
   }
-  allResults.push(...results);
   allStats.push(aggregateStats(results));
-
-  // Write per-iteration JSONL
   const jsonl = results.map(r => JSON.stringify(r)).join("\n");
   writeFileSync(join(outputDir, `${dist.strategy}-iterations.jsonl`), jsonl + "\n");
 }
 
-// Write summary
 writeFileSync(join(outputDir, "summary.json"), JSON.stringify(allStats, null, 2));
 
-// Print summary table
-console.log("Strategy      | Avg Total | 惊世 Rate | Viab Death | Hidden Clamp | Solidified");
-console.log("------------- | --------- | --------- | ---------- | ------------ | ----------");
+console.log("Strategy      | Avg Total | 惊世 Rate | Viab Death | Solidified | Avg Reward");
+console.log("------------- | --------- | --------- | ---------- | ---------- | ----------");
 for (const s of allStats) {
   const solidified = s.worldCommitCounts["solidified"] ?? 0;
   const solidifiedRate = +(solidified / s.iterations * 100).toFixed(1);
   console.log(
-    `${s.strategy.padEnd(13)} | ${String(s.avgTotalBps).padStart(9)} | ${String(s.惊世Rate + "%").padStart(9)} | ${String(s.viabilityDeathRate + "%").padStart(10)} | ${String(s.hiddenClampRate + "%").padStart(12)} | ${String(solidifiedRate + "%").padStart(10)}`,
+    `${s.strategy.padEnd(13)} | ${String(s.avgTotalBps).padStart(9)} | ${String(s.惊世Rate + "%").padStart(9)} | ${String(s.viabilityDeathRate + "%").padStart(10)} | ${String(solidifiedRate + "%").padStart(10)} | ${String(s.avgRewardMultiplierBps).padStart(10)}`,
   );
 }
 
 console.log(`\nResults written to: ${outputDir}`);
-console.log("Run `npm run agent:balance-simulate` for CI integration.");
