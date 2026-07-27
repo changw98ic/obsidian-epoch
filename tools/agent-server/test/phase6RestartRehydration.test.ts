@@ -710,12 +710,13 @@ async function nextCommitArgs(
   const sceneContract = record(proposal.sceneContract);
   const actionOptions = Array.isArray(sceneContract.actionOptions) ? sceneContract.actionOptions : [];
   const options = actionOptions.map(record);
-  const selected = (mode === "skip_first_main" && step === 1
-    ? options.find((option) => option.completionKind === "skip")
-    : undefined)
-    ?? options.find((option) => option.taskObjectiveId && option.completionKind === "complete")
-    ?? options.find((option) => option.optionKey === "verify_salt_ledger")
-    ?? record(actionOptions[0]);
+  const selected = (mode === "skip_first_main" && proposal.generatedTaskObjective?.kind === "main"
+    ? options.find((option) => option.risk === "high")
+      ?? options.find((option) => option.completionKind === "skip")
+      ?? record(actionOptions[0])
+    : options.find((option) => option.taskObjectiveId && option.completionKind === "complete")
+      ?? options.find((option) => option.optionKey === "verify_salt_ledger")
+      ?? record(actionOptions[0]));
   assert.ok(selected.actionOptionId);
   const signed = record(selected.signed);
   assert.ok(signed.signature);
