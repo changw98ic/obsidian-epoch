@@ -7,7 +7,7 @@ The bridge is not a trust upgrade. An installed MCP host or the web console asks
 ## One Turn
 
 1. In an installed MCP host, call `obsidian_epoch.quickstart` and confirm `serverBase` is the intended public world server.
-2. Ensure the target identity is active with `obsidian_epoch.agent_briefing`; use its `progress.actionEligibility` and `pendingActions` before generating browser-copy text.
+2. Ensure the target identity is active with `obsidian_epoch.agent_briefing`; use its `progress.actionEligibility`, identity, resources and regional facts before generating browser-copy text. The briefing does not choose an action or tool order.
 3. Call `obsidian_epoch.web_bridge_turn` with the active `agentId`, owner recovery authorization and a fresh `idempotencyKey`.
 4. Copy only the returned `copyPrompt` into the browser LLM session. The prompt includes visible context plus public action options.
 5. Ask the browser model to return exactly one `actionOptionId` from the prompt. It may also return short visible prose, but it must not invent rewards, titles, resources, lifetime deltas or NPC state.

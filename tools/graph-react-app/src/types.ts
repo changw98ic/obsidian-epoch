@@ -339,7 +339,7 @@ export interface EpochLoreAuthorityReview {
   lowAuthoritySourceEventIds: readonly string[];
   evidenceQuality: EpochLoreAuthorityEvidenceQuality;
   canHardRefute: boolean;
-  recommendedStatus: "hard_refutation_allowed" | "review_required";
+  refutationStatus: "hard_refutation_allowed" | "review_required";
   oldestSourceRecordedAt?: string;
   latestSourceRecordedAt?: string;
   reason: string;
@@ -3151,14 +3151,6 @@ export interface EpochHostedSession {
   completedAt?: string;
 }
 
-export interface EpochHostedSessionWatchAction {
-  actionId: string;
-  label: string;
-  reason: string;
-  toolName: string;
-  requiresRecoveryCode?: boolean;
-}
-
 export interface EpochHostedSessionWatchInfo {
   generatedAt: string;
   sessionId: string;
@@ -3175,7 +3167,6 @@ export interface EpochHostedSessionWatchInfo {
   };
   session?: EpochHostedSession;
   regionalContext?: EpochResultPageRegionalContext;
-  nextActions: readonly EpochHostedSessionWatchAction[];
   publicPages: {
     world: string;
     console: string;
@@ -3423,7 +3414,6 @@ export interface EpochProgressView {
     reason: string;
     activeOnlyTools: readonly string[];
     blockedTools: readonly string[];
-    recommendedTools: readonly string[];
   };
   claimableLegendNews: readonly EpochClaimableLegendNews[];
   downtimeDiaryEntries: readonly EpochDowntimeDiaryEntry[];
@@ -3575,7 +3565,7 @@ export interface EpochRegionInfo {
   traces: readonly EpochConflictTrace[];
   retaliations: readonly EpochRetaliationOpportunity[];
   raidHeat: EpochRegionRaidHeat;
-  raidTargets: readonly EpochRegionRaidTarget[];
+  eligibleRaidTargets: readonly EpochRegionEligibleRaidTarget[];
   factionPressure: readonly EpochRegionFactionPressure[];
   frontlines: readonly EpochRegionFrontline[];
   diplomacy: readonly EpochDiplomacyRecord[];
@@ -3617,10 +3607,8 @@ export interface EpochRegionRaidHeat {
   latestRaidAt?: string;
 }
 
-export type EpochRegionRaidTargetRecommendationReason = "cross_faction_pressure";
-
-export interface EpochRegionRaidTarget {
-  recommendationId: string;
+export interface EpochRegionEligibleRaidTarget {
+  eligibilityId: string;
   regionId: string;
   attackerAgentId: string;
   attackerExplorerId: string;
@@ -3630,8 +3618,6 @@ export interface EpochRegionRaidTarget {
   targetFactionId: string;
   targetSeasonScore: number;
   targetDefensePower: number;
-  recommendationScore: number;
-  recommendationReason: EpochRegionRaidTargetRecommendationReason;
   sourceSeasonIds: readonly string[];
   latestPairRaidId?: string;
   latestPairRaidAt?: string;
@@ -3654,22 +3640,6 @@ export interface EpochNpcLifecycleTick {
 export interface EpochOrganizationPoliticsTick {
   tickedAt: string;
   politics: readonly EpochOrganizationPoliticsRecord[];
-}
-
-export type EpochResultPageNextActionKind = "continue_turn" | "open_commission" | "resolve_retaliation" | "set_downtime" | "view_archive" | "reincarnate";
-export type EpochResultPageNextActionSourceType = EpochRegionCommissionSourceType | "retaliation";
-
-export interface EpochResultPageNextAction {
-  actionId: string;
-  kind: EpochResultPageNextActionKind;
-  label: string;
-  reason: string;
-  toolName: string;
-  regionId?: string;
-  sourceType?: EpochResultPageNextActionSourceType;
-  sourceId?: string;
-  media?: EpochActivityMedia;
-  requiresRecoveryCode?: boolean;
 }
 
 export type EpochResultPageReceiptFocusKind = "turn_card" | "hosted_session" | "agent_snapshot" | "explorer_snapshot";
@@ -3751,7 +3721,6 @@ export interface EpochResultPage {
   publicSafeSummary: EpochPublicSafeSummary;
   progress: EpochProgressView;
   runSummary?: EpochResultPageRunSummary;
-  nextActions: readonly EpochResultPageNextAction[];
   receipt: EpochResultPageReceipt;
   regionalContext?: EpochResultPageRegionalContext;
   publishToken?: string;
@@ -3773,7 +3742,6 @@ export interface EpochAgentBriefingView {
   regionId?: string;
   progress: EpochProgressView;
   regionalContext?: EpochResultPageRegionalContext;
-  pendingActions: readonly EpochResultPageNextAction[];
   world: EpochAgentBriefingWorldSummary;
   publicPages: {
     world: string;

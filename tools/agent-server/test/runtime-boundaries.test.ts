@@ -56,7 +56,7 @@ const resultPagePayloadRulesPath = new URL("../lib/epoch/resultPagePayloadRules.
 const resultPageReceiptRulesPath = new URL("../lib/epoch/resultPageReceiptRules.ts", import.meta.url);
 const resultPageRuntimeRulesPath = new URL("../lib/epoch/resultPageRuntimeRules.ts", import.meta.url);
 const resultPageRuntimeStorePath = new URL("../lib/epoch/resultPageRuntimeStore.ts", import.meta.url);
-const resultPageNavigationRulesPath = new URL("../lib/epoch/resultPageNavigationRules.ts", import.meta.url);
+const agentSelfStatementRulesPath = new URL("../lib/epoch/agentSelfStatementRules.ts", import.meta.url);
 const serverHostedRuntimeRulesPath = new URL("../lib/epoch/serverHostedRuntimeRules.ts", import.meta.url);
 const serverHostedRuntimePath = new URL("../lib/epoch/serverHostedRuntime.ts", import.meta.url);
 const maintenanceRuntimePath = new URL("../lib/epoch/maintenanceRuntime.ts", import.meta.url);
@@ -86,14 +86,13 @@ test("runtime delegates action eligibility read model to a focused module", () =
   assert.match(actionEligibilityReadModel, /export function actionEligibilityView/);
   assert.match(actionEligibilityReadModel, /export interface EpochActionEligibilityInfo/);
   assert.match(actionEligibilityReadModel, /export const EPOCH_ACTIVE_IDENTITY_TOOL_NAMES/);
-  assert.match(actionEligibilityReadModel, /export const EPOCH_ACTIVE_IDENTITY_RECOMMENDED_TOOLS/);
-  assert.match(actionEligibilityReadModel, /export const EPOCH_ARCHIVED_IDENTITY_RECOMMENDED_TOOLS/);
+  assert.doesNotMatch(actionEligibilityReadModel, /RECOMMENDED_TOOLS/);
+  assert.doesNotMatch(actionEligibilityReadModel, /recommendedTools/);
 
   assert.doesNotMatch(runtime, /function actionEligibilityView/);
   assert.doesNotMatch(runtime, /export interface EpochActionEligibilityInfo/);
   assert.doesNotMatch(runtime, /export const EPOCH_ACTIVE_IDENTITY_TOOL_NAMES/);
-  assert.doesNotMatch(runtime, /export const EPOCH_ACTIVE_IDENTITY_RECOMMENDED_TOOLS/);
-  assert.doesNotMatch(runtime, /export const EPOCH_ARCHIVED_IDENTITY_RECOMMENDED_TOOLS/);
+  assert.doesNotMatch(runtime, /RECOMMENDED_TOOLS/);
 });
 
 test("runtime delegates agent memory and NPC candidate read models to focused modules", () => {
@@ -314,7 +313,7 @@ test("runtime delegates region conflict read model to a focused module", () => {
   assert.match(runtime, /from "\.\/regionConflictReadModel\.ts"/);
   assert.match(regionConflictReadModel, /export function raidsView/);
   assert.match(regionConflictReadModel, /export function regionRaidHeatView/);
-  assert.match(regionConflictReadModel, /export function regionRaidTargetsView/);
+  assert.match(regionConflictReadModel, /export function regionEligibleRaidTargetsView/);
   assert.match(regionConflictReadModel, /export function regionFactionPressureView/);
   assert.match(regionConflictReadModel, /export function regionFrontlinesView/);
   assert.match(regionConflictReadModel, /export function tracesView/);
@@ -324,7 +323,7 @@ test("runtime delegates region conflict read model to a focused module", () => {
 
   assert.doesNotMatch(runtime, /function raidsView/);
   assert.doesNotMatch(runtime, /function regionRaidHeatView/);
-  assert.doesNotMatch(runtime, /function regionRaidTargetsView/);
+  assert.doesNotMatch(runtime, /function regionEligibleRaidTargetsView/);
   assert.doesNotMatch(runtime, /function regionFactionPressureView/);
   assert.doesNotMatch(runtime, /function regionFrontlinesView/);
   assert.doesNotMatch(runtime, /function tracesView/);
@@ -791,8 +790,8 @@ test("runtime delegates hosted session read model to a focused module", () => {
   assert.match(hostedSessionReadModel, /export function publicHostedAction/);
   assert.match(hostedSessionReadModel, /export function publicHostedSession/);
   assert.match(hostedSessionReadModel, /export function publicHostedSessionsView/);
-  assert.match(hostedSessionReadModel, /export function hostedSessionWatchActions/);
-  assert.match(hostedSessionReadModel, /export interface EpochHostedSessionWatchAction/);
+  assert.doesNotMatch(hostedSessionReadModel, /hostedSessionWatchActions/);
+  assert.doesNotMatch(hostedSessionReadModel, /EpochHostedSessionWatchAction/);
 
   assert.doesNotMatch(runtime, /import \{[^}]*publicHostedSessionsView[^}]*\} from "\.\/hostedSessionReadModel\.ts"/s);
   assert.doesNotMatch(runtime, /function hostedSessionsView/);
@@ -1350,34 +1349,30 @@ test("runtime delegates result page lifecycle state to a focused module", () => 
   assert.doesNotMatch(runtime, /function getPublicResultPage/);
 });
 
-test("runtime delegates result page navigation rules to a focused module", () => {
+test("runtime delegates fact-only agent self statements to a focused module", () => {
   assert.ok(
-    existsSync(resultPageNavigationRulesPath),
-    "resultPageNavigationRules.ts should own result-page next actions, action media, commission tool mapping, and self statements",
+    existsSync(agentSelfStatementRulesPath),
+    "agentSelfStatementRules.ts should own fact-only self statements",
   );
   const runtime = readFileSync(runtimePath, "utf8");
-  const resultPageNavigationRules = readFileSync(resultPageNavigationRulesPath, "utf8");
+  const agentSelfStatementRules = readFileSync(agentSelfStatementRulesPath, "utf8");
   const resultPagePayloadRules = readFileSync(resultPagePayloadRulesPath, "utf8");
   const publicWorldReadModel = readFileSync(publicWorldReadModelPath, "utf8");
 
-  assert.match(resultPagePayloadRules, /from "\.\/resultPageNavigationRules\.ts"/);
-  assert.match(publicWorldReadModel, /from "\.\/resultPageNavigationRules\.ts"/);
-  assert.match(resultPageNavigationRules, /export function commissionToolName/);
-  assert.match(resultPageNavigationRules, /export function resultPageNextActionMedia/);
-  assert.match(resultPageNavigationRules, /export function resultPageNextActions/);
-  assert.match(resultPageNavigationRules, /export function agentSelfStatement/);
+  assert.match(publicWorldReadModel, /from "\.\/agentSelfStatementRules\.ts"/);
+  assert.match(agentSelfStatementRules, /export function agentSelfStatement/);
+  assert.doesNotMatch(resultPagePayloadRules, /resultPageNextActions/);
+  assert.doesNotMatch(publicWorldReadModel, /pendingActions/);
+  assert.doesNotMatch(publicWorldReadModel, /nextActions/);
 
-  assert.doesNotMatch(runtime, /from "\.\/resultPageNavigationRules\.ts"/);
-  assert.doesNotMatch(runtime, /function commissionToolName/);
-  assert.doesNotMatch(runtime, /function resultPageNextActionMedia/);
-  assert.doesNotMatch(runtime, /function resultPageNextActions/);
+  assert.doesNotMatch(runtime, /from "\.\/agentSelfStatementRules\.ts"/);
   assert.doesNotMatch(runtime, /function agentSelfStatement/);
 });
 
 test("runtime delegates result page payload assembly to a focused module", () => {
   assert.ok(
     existsSync(resultPagePayloadRulesPath),
-    "resultPagePayloadRules.ts should own result-page progress, focus, context, next-action, run-summary, and receipt assembly",
+    "resultPagePayloadRules.ts should own result-page progress, focus, context, run-summary, and receipt assembly",
   );
   const runtime = readFileSync(runtimePath, "utf8");
   const resultPagePayloadRules = readFileSync(resultPagePayloadRulesPath, "utf8");
@@ -1388,7 +1383,7 @@ test("runtime delegates result page payload assembly to a focused module", () =>
   assert.match(resultPagePayloadRules, /resultPageFocusTurnCard/);
   assert.match(resultPagePayloadRules, /resultPageFocusHostedSession/);
   assert.match(resultPagePayloadRules, /resultPageRegionalContext/);
-  assert.match(resultPagePayloadRules, /resultPageNextActions/);
+  assert.doesNotMatch(resultPagePayloadRules, /resultPageNextActions/);
   assert.match(resultPagePayloadRules, /buildEpochResultPageRunSummary/);
   assert.match(resultPagePayloadRules, /resultPageReceipt/);
 

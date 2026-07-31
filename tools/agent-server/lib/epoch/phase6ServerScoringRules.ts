@@ -322,8 +322,11 @@ function buildEvidenceModel(input: Phase6ServerScoringEvidenceInput): EvidenceMo
     Math.max(0, after.injury - before.injury) / 100,
   ]));
   const performance = clamp01(firstKnown([
-    readNamedNumber(input.outcomeResolution, ["performance", "quality", "executionQuality", "completion"]),
-    readNamedNumber(input.actionResolutions, ["performance", "quality", "executionQuality", "completion"]),
+    // `completion` only says that the settlement record was finalized.  It is
+    // not execution quality, and treating it as such flattened every settled
+    // run to 100 before the real server performance field was reached.
+    readNamedNumber(input.outcomeResolution, ["performance", "quality", "executionQuality"]),
+    readNamedNumber(input.actionResolutions, ["performance", "quality", "executionQuality"]),
     0.5 + (outcome.positive - outcome.negative + actions.positive - actions.negative) / 80,
   ]));
   const objective = clamp01(firstKnown([

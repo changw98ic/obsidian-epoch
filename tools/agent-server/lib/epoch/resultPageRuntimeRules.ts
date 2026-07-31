@@ -95,7 +95,7 @@ export function resultPagePublicPages(progress: EpochProgressView) {
   const explorerId = progress.explorerId || identity?.explorerId;
   return {
     world: "/epoch/world",
-    console: "/epoch/console",
+    console: "/epoch/web-play",
     ...(agentId ? { agent: `/epoch/agent/${encodeURIComponent(agentId)}` } : {}),
     ...(explorerId ? { explorer: `/epoch/explorer/${encodeURIComponent(explorerId)}` } : {}),
   };

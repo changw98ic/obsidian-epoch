@@ -163,6 +163,7 @@ test("world memory runtime degrades to lexical search without a LAN endpoint", a
     const result = await runtime.search({ query: "量子实验" });
     assert.equal(result.retrievalMode, "lexical");
     assert.equal(result.semanticUnavailable, true);
+    assert.equal(result.semanticErrorCode, "qwen_embedding_client_unavailable");
     assert.ok(result.hits.length > 0);
     await assert.rejects(
       () => createAgentWorldMcpRuntime().callTool("obsidian_epoch.world_memory", { query: "量子实验" }),
@@ -279,6 +280,14 @@ test("world memory runtime indexes canonical knowledge and exposes MCP hybrid re
       }),
       { client, worldContentRegistry: registry },
     );
+    const pending = await runtime.searchKnowledge({
+      query: registry.systems[0]!.label,
+      collection: "systems",
+      limit: 2,
+    });
+    assert.equal(pending.retrievalMode, "lexical");
+    assert.equal(pending.semanticUnavailable, true);
+    assert.equal(pending.semanticErrorCode, "world_knowledge_embeddings_pending");
     await runtime.runOnce();
     assert.ok(runtime.status().knowledge.sources > 0);
     assert.equal(runtime.status().knowledge.pending, 0);

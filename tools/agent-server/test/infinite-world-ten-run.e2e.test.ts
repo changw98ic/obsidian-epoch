@@ -250,8 +250,6 @@ function auditFor(item: RunCase, index: number): CausalPlayerRunAuditEntry {
     resourceEfficiencyBps: item.coinDelta >= 80 ? 8500 : item.coinDelta >= 0 ? 6500 : 3500,
     survivalBps: item.outcome === "failure" ? 3000 : item.outcome === "withdrawal" ? 6500 : 9000,
     integrityBps: item.outcome === "clean_success" ? 9000 : 7000,
-    combatPowerFitBps: Math.max(0, Math.min(10000, Math.round((item.playerCombatPower / Math.max(1, item.enemyHostilePower)) * 5000))),
-    overwhelmingForceBps: item.playerCombatPower >= 90 && item.band === "low" ? 10000 : 0,
     recentSimilarCompletionCount: item.playerCombatPower >= 90 && item.band === "low" ? 4 : 0,
     repeatedResolutionFamilyCount: item.playerCombatPower >= 90 && item.band === "low" ? 3 : 0,
   });

@@ -10,7 +10,7 @@ import { createAgentCompanionRuntime } from "../lib/epoch/agentCompanionRuntime.
 import { journeyEventsForPersistence } from "../lib/epoch/journeyPersistence.ts";
 import { createJourneyRuntime } from "../lib/epoch/journeyRuntime.ts";
 import { epochEventsForPersistence } from "../lib/epoch/runtimePublicProjectionRules.ts";
-import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 import { hydrateAgentRuntimeOptions } from "../lib/store.ts";
 import {
   appendSqliteJsonl,

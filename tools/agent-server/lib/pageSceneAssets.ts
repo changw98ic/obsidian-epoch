@@ -190,7 +190,7 @@ export const EPOCH_PAGE_SCENE_ASSETS = [
   {
     sceneKey: "result_page",
     title: "结果页面场景",
-    subtitle: "一次性分享、区域上下文和下一步建议",
+    subtitle: "一次性分享、区域上下文和服务器结算",
     fileName: "result-page-page-scene.png",
     path: "obsidian-epoch/assets/page-scene/result-page-page-scene.png",
     url: "/api/epoch/assets/page-scene/result-page-page-scene.png",

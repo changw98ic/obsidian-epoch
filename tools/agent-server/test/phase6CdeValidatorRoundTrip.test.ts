@@ -216,6 +216,15 @@ function receipt(runIndex) {
     outcome: { summary: `settled ${runIndex}` },
     integrity: { eventIdsHash: `events-hash-${runIndex}`, payloadHash: `payload-hash-${runIndex}` },
     eventIds: [`event-${runIndex}-receipt`],
+    rag: {
+      queryHash: `sha256:${"a".repeat(64)}`,
+      corpusHash: `sha256:${"b".repeat(64)}`,
+      claims: [],
+      importantMemoryCount: 0,
+      ordinaryNodePersistenceExpansion: 0,
+      delta: { entries: [] },
+      noChangeReason: "projection_equal",
+    },
   };
 }
 

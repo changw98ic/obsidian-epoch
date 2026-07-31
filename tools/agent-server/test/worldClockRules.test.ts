@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { epochEventsForPersistence } from "../lib/epoch/runtimePublicProjectionRules.ts";
-import { createAgentWorldMcpRuntime, createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldMcpRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 import { createSequentialEpochIdFactory } from "../lib/epoch/protocol.ts";
 import { loadDefaultWorldContentRegistry } from "../lib/epoch/worldContentRegistry.ts";
 import {

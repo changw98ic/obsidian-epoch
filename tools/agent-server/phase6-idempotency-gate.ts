@@ -39,7 +39,7 @@ const repositoryRoot = path.resolve(scriptDirectory, "../..");
 
 function usage() {
   return [
-    "Usage: node tools/agent-server/phase6-idempotency-gate.mjs --command-audit <jsonl> --settlement-audit <jsonl> --store-audit <jsonl> [options]",
+    "Usage: node --import tsx ../agent-server/phase6-idempotency-gate.ts --command-audit <jsonl> --settlement-audit <jsonl> --store-audit <jsonl> [options]",
     "",
     "Options:",
     "  --command-audit <path>     Command idempotency audit JSON/JSONL. Repeatable.",

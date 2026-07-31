@@ -25,23 +25,15 @@ import {
 } from "./loreReadModel.ts";
 import type {
   EpochPublicSafeSummary,
-  EpochResultPageNextAction,
   EpochResultPageReceipt,
 } from "./runtime.ts";
-import {
-  agentSelfStatement,
-  resultPageNextActions,
-} from "./resultPageNavigationRules.ts";
+import { agentSelfStatement } from "./agentSelfStatementRules.ts";
 import {
   resultPageRegionId,
   resultPageRegionalContext,
   type EpochResultPageRegionalContext,
 } from "./resultPageContextRules.ts";
-import {
-  hostedSessionWatchActions,
-  publicHostedSession,
-  type EpochHostedSessionWatchAction,
-} from "./hostedSessionReadModel.ts";
+import { publicHostedSession } from "./hostedSessionReadModel.ts";
 import {
   latestEvents,
   progressView,
@@ -143,7 +135,6 @@ export interface EpochHostedSessionWatchInfo {
   readonly identity?: EpochHostedSessionWatchIdentity;
   readonly session?: EpochHostedSession;
   readonly regionalContext?: EpochResultPageRegionalContext;
-  readonly nextActions: readonly EpochHostedSessionWatchAction[];
   readonly publicPages: {
     readonly world: string;
     readonly console: string;
@@ -197,7 +188,6 @@ export interface EpochAgentBriefingView {
   readonly lifeGoal?: EpochAgentIdentity["lifeGoal"];
   readonly progress: EpochProgressView;
   readonly regionalContext?: EpochResultPageRegionalContext;
-  readonly pendingActions: readonly EpochResultPageNextAction[];
   readonly world: EpochAgentBriefingWorldSummary;
   readonly publicPages: {
     readonly world: string;
@@ -305,7 +295,7 @@ export function createPublicWorldReadModelRuntime(options: EpochPublicWorldReadM
       publicPages: {
         world: "/epoch/world",
         install: "/epoch/install",
-        console: "/epoch/console",
+        console: "/epoch/web-play",
       },
       news,
       recentResults: resultSummaries,
@@ -332,7 +322,6 @@ export function createPublicWorldReadModelRuntime(options: EpochPublicWorldReadM
     const identity = progress.identity || progress.identities.at(-1);
     const regionId = resultPageRegionId({ input, progress });
     const regionalContext = resultPageRegionalContext(projection, regionId);
-    const pendingActions = resultPageNextActions({ progress, regionId, regionalContext });
     const overview = worldOverview({ limit });
     return {
       generatedAt,
@@ -344,7 +333,6 @@ export function createPublicWorldReadModelRuntime(options: EpochPublicWorldReadM
       ...(identity?.lifeGoal ? { lifeGoal: identity.lifeGoal } : {}),
       progress,
       regionalContext,
-      pendingActions,
       world: {
         publicPages: overview.publicPages,
         news: overview.news,
@@ -415,7 +403,7 @@ export function createPublicWorldReadModelRuntime(options: EpochPublicWorldReadM
       } : {}),
       publicPages: {
         world: "/epoch/world",
-        console: "/epoch/console",
+        console: "/epoch/web-play",
         ...(identity ? { agent: `/epoch/agent/${encodeURIComponent(identity.agentId)}` } : {}),
         ...(identity?.status === "archived" ? { archive: `/epoch/archive/${encodeURIComponent(identity.agentId)}` } : {}),
       },
@@ -431,7 +419,7 @@ export function createPublicWorldReadModelRuntime(options: EpochPublicWorldReadM
     const apiPath = `/api/epoch/hosted/watch?sessionId=${encodeURIComponent(sessionId)}`;
     const basePages = {
       world: "/epoch/world",
-      console: "/epoch/console",
+      console: "/epoch/web-play",
       watch: watchPath,
       api: apiPath,
     };
@@ -440,7 +428,6 @@ export function createPublicWorldReadModelRuntime(options: EpochPublicWorldReadM
       return {
         generatedAt,
         sessionId,
-        nextActions: [],
         publicPages: basePages,
       };
     }
@@ -464,7 +451,6 @@ export function createPublicWorldReadModelRuntime(options: EpochPublicWorldReadM
       } : {}),
       session: publicSession,
       regionalContext: resultPageRegionalContext(projection, session.regionId),
-      nextActions: hostedSessionWatchActions(session),
       publicPages: {
         ...basePages,
         agent: `/epoch/agent/${encodeURIComponent(session.agentId)}`,

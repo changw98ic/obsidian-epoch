@@ -48,8 +48,8 @@ import {
   type MissionScoreInput,
 } from "./lib/epoch/missionConsequenceRules.ts";
 
-export const PHASE6_BALANCE_SIMULATOR_VERSION = "obsidian-epoch-phase6-balance-simulate-v0.1.0" as const;
-export const PHASE6_BALANCE_SAMPLE_SCHEMA_VERSION = "obsidian-epoch.phase6-balance-sample.strict.v1" as const;
+export const PHASE6_BALANCE_SIMULATOR_VERSION = "obsidian-epoch-phase6-balance-simulate-v0.3.0" as const;
+export const PHASE6_BALANCE_SAMPLE_SCHEMA_VERSION = "obsidian-epoch.phase6-balance-sample.strict.v3" as const;
 export const PHASE6_BALANCE_DESIGN_PRIOR_VERSION = "design-prior-v1" as const;
 
 const ALLOWED_RUNS = new Set([10_000, 100_000]);
@@ -156,8 +156,9 @@ export interface Phase6BalanceSample {
       readonly economy: Phase6EconomyAuditInput;
     };
     readonly production: {
+      readonly decisionQuality: number;
       readonly missionFinalScore: number;
-      readonly serverScoreMean: number;
+      readonly serverScoreTotal: number;
       readonly combatSuitability: number;
       readonly economyOk: true;
     };
@@ -168,6 +169,7 @@ interface Options {
   readonly runs: 10_000 | 100_000;
   readonly seed: string;
   readonly outputPath?: string;
+  readonly experimentId?: string;
 }
 
 class SeededPrng {
@@ -196,6 +198,7 @@ export function parseArguments(argv: readonly string[]): Options & { help: boole
   let runs: number | undefined;
   let seed: string | undefined;
   let outputPath: string | undefined;
+  let experimentId: string | undefined;
   let help = false;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -219,20 +222,25 @@ export function parseArguments(argv: readonly string[]): Options & { help: boole
       index += 1;
       continue;
     }
+    if (argument === "--experiment-id") {
+      experimentId = requiredValue(argv, index, "--experiment-id");
+      index += 1;
+      continue;
+    }
     throw new Error(`unknown_argument:${argument}`);
   }
 
-  if (help) return { runs: 10_000, seed: "", outputPath, help };
+  if (help) return { runs: 10_000, seed: "", outputPath, experimentId, help };
   if (!ALLOWED_RUNS.has(runs ?? 0)) throw new Error("--runs must be 10000 or 100000");
   if (!seed) throw new Error("--seed is required");
   if (!outputPath) throw new Error("--output is required");
-  return { runs: runs as 10_000 | 100_000, seed, outputPath, help };
+  return { runs: runs as 10_000 | 100_000, seed, outputPath, experimentId, help };
 }
 
-export function generatePhase6BalanceSamples(options: { readonly runs: number; readonly seed: string }): readonly Phase6BalanceSample[] {
+export function generatePhase6BalanceSamples(options: { readonly runs: number; readonly seed: string; readonly experimentId?: string }): readonly Phase6BalanceSample[] {
   if (!Number.isSafeInteger(options.runs) || options.runs <= 0) throw new Error("runs_must_be_positive_integer");
   const prng = new SeededPrng(options.seed);
-  return Array.from({ length: options.runs }, (_, index) => buildSample(index + 1, options.seed, prng));
+  return Array.from({ length: options.runs }, (_, index) => buildSample(index + 1, options.seed, prng, options.experimentId));
 }
 
 export function stableJson(value: unknown): string {
@@ -258,7 +266,7 @@ export function recomputeSample(sample: Phase6BalanceSample) {
   return { missionIntensity, missionScore, vector, suitability, scoring, economy };
 }
 
-function buildSample(runIndex: number, seed: string, prng: SeededPrng): Phase6BalanceSample {
+function buildSample(runIndex: number, seed: string, prng: SeededPrng, experimentId?: string): Phase6BalanceSample {
   const stratumSeed = `${seed}:run:${runIndex}:strata`;
   const build = weightedPick(BUILDS.map((entry) => ({ value: entry, weight: 1 })), prng);
   const scenario = weightedPick(SCENARIOS.map((entry) => ({ value: entry, weight: 1 })), prng);
@@ -289,17 +297,18 @@ function buildSample(runIndex: number, seed: string, prng: SeededPrng): Phase6Ba
   const missionIntensity = calculateMissionIntensity(missionIntensityInput);
   const outcome = chooseOutcome(missionIntensity.encounterIntensity, combatSuitability.victoryProbabilityBps, outcomePrior, prng);
   const success = outcome === "clean_success" || outcome === "costly_success" || outcome === "partial_success";
-  const objectiveCompletionBps = objectiveForOutcome(outcome, prng);
+  const decisionQualityBps = prng.int(0, 10_000);
+  const outcomeCompletionBps = objectiveForOutcome(outcome, prng);
+  const objectiveCompletionBps = clampBps(Math.round(decisionQualityBps * 0.9 + outcomeCompletionBps * 0.1));
   const injury = injuryForOutcome(outcome, missionIntensity.encounterIntensity, combatSuitability.victoryProbabilityBps, prng);
   const resources = resourceLedger(runIndex, outcome, success, missionIntensity.encounterIntensity, build.id, growthChoice, prng);
   const cost = sumResource(resources.cost) / 100;
   const resourceEfficiencyBps = clampBps(10_000 - Math.round(cost * 520) - Math.round(injury * 90));
   const missionScoreInput: MissionScoreInput = {
     objectiveCompletionBps,
-    pressureReliefBps: clampBps(success ? 4_000 + Math.round(missionIntensity.worldPressure * 54) + prng.int(-800, 1200) : 800 + prng.int(0, 2200)),
-    sideEffectControlBps: clampBps(8_500 - Math.round(injury * 120) - Math.round(cost * 150) + prng.int(-900, 900)),
-    executionQualityBps: clampBps(success ? 5_400 + Math.round(combatSuitability.victoryProbabilityBps * 0.32) + prng.int(-900, 1100) : 2_200 + prng.int(0, 2800)),
-    combatPowerFitBps: clampBps(combatSuitability.victoryProbabilityBps),
+    pressureReliefBps: clampBps(Math.round(decisionQualityBps * 0.95 + (success ? 8_000 : 2_000) * 0.05) + prng.int(-700, 700)),
+    sideEffectControlBps: clampBps(Math.round(decisionQualityBps * 0.95 + resourceEfficiencyBps * 0.05) + prng.int(-700, 700)),
+    executionQualityBps: clampBps(decisionQualityBps + prng.int(-600, 600)),
     meaningfulRiskBps: clampBps(Math.round(missionIntensity.encounterIntensity * 100)),
     riskExposureBps: clampBps(Math.round((missionIntensity.encounterIntensity + injury) * 92)),
     resourceEfficiencyBps,
@@ -322,8 +331,8 @@ function buildSample(runIndex: number, seed: string, prng: SeededPrng): Phase6Ba
   const economy = economyInput(runIndex, resources);
   const economyAudit = auditPhase6EconomyConservation(economy);
   if (!economyAudit.ok) throw new Error(`economy_audit_failed:${runIndex}:${JSON.stringify(economyAudit.findings)}`);
-  const serverScoreMean = mean(Object.values(scoring.score).map((entry) => entry.value));
-  const finalScore = round4(serverScoreMean * 0.4 + combatSuitability.suitability * 1.1 + missionScore.finalScore * 0.05);
+  const serverScoreTotal = scoring.score.total;
+  if (!Number.isFinite(serverScoreTotal)) throw new Error(`server_score_total_invalid:${runIndex}`);
 
   return {
     schemaVersion: PHASE6_BALANCE_SAMPLE_SCHEMA_VERSION,
@@ -355,9 +364,9 @@ function buildSample(runIndex: number, seed: string, prng: SeededPrng): Phase6Ba
       },
     },
     receiptId: `phase6-balance-${shortHash(seed)}-${runIndex}`,
-    experimentId: `phase6-balance-${shortHash(seed)}`,
+    experimentId: experimentId ?? `phase6-balance-${shortHash(seed)}`,
     runIndex,
-    score: finalScore,
+    score: serverScoreTotal,
     intensity: missionIntensity.encounterIntensity,
     suitabilityBand: intensityBand(missionIntensity.encounterIntensity),
     build: build.id,
@@ -371,8 +380,9 @@ function buildSample(runIndex: number, seed: string, prng: SeededPrng): Phase6Ba
     audit: {
       inputs: { missionIntensity: missionIntensityInput, missionScore: missionScoreInput, combatReadiness, scoringEvidence, economy },
       production: {
+        decisionQuality: decisionQualityBps / 100,
         missionFinalScore: missionScore.finalScore,
-        serverScoreMean,
+        serverScoreTotal,
         combatSuitability: combatSuitability.suitability,
         economyOk: true,
       },
@@ -614,7 +624,7 @@ function writeSamples(resolvedPath: string, samples: readonly Phase6BalanceSampl
 
 function usage(): string {
   return [
-    "Usage: node --import tsx tools/agent-server/phase6-balance-simulate.ts --runs <10000|100000> --seed <seed> --output <repo-jsonl-path>",
+    "Usage: node --import tsx tools/agent-server/phase6-balance-simulate.ts --runs <10000|100000> --seed <seed> --output <repo-jsonl-path> [--experiment-id <id>]",
     "",
     "Generates deterministic strict Phase 6 balanceSample JSONL using production scoring, intensity, combat readiness, and economy audit rules.",
   ].join("\n");
@@ -657,10 +667,6 @@ function zeroResources(): ResourceMap {
 
 function sumResource(value: ResourceMap): number {
   return Object.values(value).reduce((sum, entry) => sum + entry, 0);
-}
-
-function mean(values: readonly number[]): number {
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function clamp01(value: number): number {

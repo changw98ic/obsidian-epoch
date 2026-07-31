@@ -199,6 +199,19 @@ test("difficulty changes the expected baseline audit but never directly bonuses 
   assert.equal(routineContext.scoringUse, "context_only_not_weighted");
 });
 
+test("settlement completion does not overwrite the server execution-performance input", () => {
+  const result = successful({
+    ...scenarioInput({ performance: 0.42 }),
+    outcomeResolution: {
+      ...scenarioInput({ performance: 0.42 }).outcomeResolution as Record<string, unknown>,
+      completion: 1,
+      performance: 0.42,
+    },
+  });
+
+  assert.equal(result.score.context.observedPerformance, 42);
+});
+
 test("resource cost and injury penalize score and suitability evidence", () => {
   const clean = successful(scenarioInput({ resourceCost: 0.04, injuryCost: 0.02 }));
   const costly = successful(scenarioInput({ resourceCost: 0.7, injuryCost: 0.55 }));

@@ -132,6 +132,29 @@ test("Phase 6 player panel gate accepts authoritative V2 dimensions without pane
   });
 });
 
+test("Phase 6 player panel gate pairs a receipt by journey when run and journey identifiers differ", () => {
+  withTempDir((root) => {
+    const fixture = validV2GateFixture();
+    const journeyId = "journey-v2-1";
+    fixture.beforeRecords[0] = {
+      journeyId,
+      playerPanel: fixture.beforeRecords[0].playerPanel,
+      groups: fixture.beforeRecords[0].groups,
+    };
+    fixture.afterRecords[0] = {
+      journeyId,
+      playerPanel: fixture.afterRecords[0].playerPanel,
+      groups: fixture.afterRecords[0].groups,
+    };
+    fixture.receipts[0].journeyId = journeyId;
+    fixture.receipts[0].runId = "phase6-run-opaque-1";
+
+    const result = runGateFixture(root, fixture, 1);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(JSON.parse(result.stdout).ok, true);
+  });
+});
+
 test("Phase 6 player panel gate validates V2 snapshot and deltas hashes", () => {
   withTempDir((root) => {
     const beforeTamper = validV2GateFixture();

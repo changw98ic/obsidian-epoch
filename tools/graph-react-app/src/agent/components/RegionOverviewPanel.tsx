@@ -456,11 +456,11 @@ export function RegionOverviewPanel({
             </b>
           </span>
         ) : null}
-        {region?.raidTargets.slice(0, 4).map((target) => (
-          <span key={target.recommendationId}>
-            推荐目标 · {playerAgentLabel(target.attackerAgentId)} 对 {playerAgentLabel(target.targetAgentId)}
+        {region?.eligibleRaidTargets.slice(0, 4).map((target) => (
+          <span key={target.eligibilityId}>
+            可对抗目标 · {playerAgentLabel(target.attackerAgentId)} 对 {playerAgentLabel(target.targetAgentId)}
             <b>
-              {playerFactionLabel(target.attackerFactionId)} 对 {playerFactionLabel(target.targetFactionId)} / 推荐 {target.recommendationScore}
+              {playerFactionLabel(target.attackerFactionId)} 对 {playerFactionLabel(target.targetFactionId)}
               {" "} / 赛季 {target.targetSeasonScore} / 防御 {target.targetDefensePower}
             </b>
           </span>

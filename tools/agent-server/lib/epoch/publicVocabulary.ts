@@ -338,6 +338,13 @@ export function publicText(value: unknown): string {
   return text;
 }
 
+export function publicMcpToolName(value: unknown): string {
+  const toolName = String(value ?? "").trim();
+  return /^obsidian_epoch\.[a-z][a-z0-9_]*$/u.test(toolName)
+    ? toolName
+    : publicText(toolName);
+}
+
 export function publicEventTypeLabel(value: string | undefined): string {
   return publicEventTypeLabels[value || ""] || publicText(value || "公开事件");
 }

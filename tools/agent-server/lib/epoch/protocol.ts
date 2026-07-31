@@ -27,7 +27,7 @@ export interface EpochLoreAuthorityReview {
   readonly lowAuthoritySourceEventIds: readonly string[];
   readonly evidenceQuality: EpochLoreAuthorityEvidenceQuality;
   readonly canHardRefute: boolean;
-  readonly recommendedStatus: "hard_refutation_allowed" | "review_required";
+  readonly refutationStatus: "hard_refutation_allowed" | "review_required";
   readonly oldestSourceRecordedAt?: string;
   readonly latestSourceRecordedAt?: string;
   readonly reason: string;
@@ -213,6 +213,12 @@ export const EPOCH_EVENT_TYPES = [
   "season_resolved",
   "agent_faction_standing_changed",
   "journey_world_solidified",
+  /**
+   * Server-authored roleplay observation promoted from a mirror ledger.
+   * The observation is internal chronicle data; public action/result views
+   * must not expose its pattern or approach fields.
+   */
+  "npc_identity_doubt",
   "region_influence_changed",
   "trace_created",
   "trace_conflict_deployed",
@@ -361,6 +367,8 @@ export const EPOCH_RESOURCE_IDS = [
   "stamina",
   "focus",
   "legend",
+  "material_cultivation_essence",
+  "material_forging_alloy",
 ] as const;
 
 export type EpochResourceId = typeof EPOCH_RESOURCE_IDS[number];

@@ -168,20 +168,8 @@ test("hosted session read model redacts public session internals", async () => {
   assert.equal(publicAction.outcomeSummary, "结算摘要");
 });
 
-test("hosted session read model projects watch-page next actions without debug wording", async () => {
-  assert.ok(existsSync(modulePath), "hostedSessionReadModel.ts should own hosted watch next actions");
+test("hosted session read model contains only session facts and public redaction", async () => {
+  assert.ok(existsSync(modulePath), "hostedSessionReadModel.ts should own hosted session facts");
   const readModel = await import("../lib/epoch/hostedSessionReadModel.ts");
-  const projection = projectionFixture();
-
-  const activeActions = readModel.hostedSessionWatchActions(projection.hostedSessions.session_old_active);
-  assert.equal(activeActions[0].label, "等待结算");
-  assert.equal(activeActions[0].toolName, "obsidian_epoch.hosted_sessions");
-  assert.equal(activeActions[0].requiresRecoveryCode, undefined);
-  assert.doesNotMatch(activeActions[0].reason, /action option IDs|服务器收据|receipt/i);
-
-  const completedActions = readModel.hostedSessionWatchActions(projection.hostedSessions.session_new_completed);
-  assert.equal(completedActions[0].label, "发布托管结果");
-  assert.equal(completedActions[0].toolName, "obsidian_epoch.result_page");
-  assert.equal(completedActions[0].requiresRecoveryCode, true);
-  assert.doesNotMatch(completedActions[0].reason, /action option IDs|服务器收据|receipt/i);
+  assert.equal("hostedSessionWatchActions" in readModel, false);
 });

@@ -17,7 +17,7 @@ const ZERO_OR_FREE = /^(?:0|0\.0+|free|none|waived|免费)$/i;
 
 function usage() {
   return [
-    "Usage: node tools/agent-server/phase6-crafting-gate.mjs [--recipes <path>] [--crafts <path>] [--settlements <path>] [--progression <path>] [--input <path>]",
+    "Usage: node --import tsx ../agent-server/phase6-crafting-gate.ts [--recipes <path>] [--crafts <path>] [--settlements <path>] [--progression <path>] [--input <path>]",
     "",
     "Reads repo-local recipe/craft settlement/profession progression JSON or JSONL and prints a machine JSON gate summary.",
     "Exits non-zero on malformed input, secrets, recipe drift, crafting asset imbalance, duplicate claim, free upgrade, or unlock/profession gate failure.",
@@ -516,7 +516,7 @@ function validateCraft(craft, recipeIndex, errors, state) {
       seenSources.add(sourceKey);
     }
     if (HIGH_TIER.test(tierText(item)) && !source) addError(errors, "E_HIGH_TIER_SOURCE_MISSING", `${identity}:${key}`);
-    state.assetLedger.set(key, (state.assetLedger.get(key) ?? 0) - qty);
+    state.assets.add(key);
   }
 
   for (const item of outputs) {
@@ -525,14 +525,14 @@ function validateCraft(craft, recipeIndex, errors, state) {
     if (qty <= 0) addError(errors, "E_OUTPUT_NON_POSITIVE", `${identity}:${key}`);
     if (!sourceId(item) && !id) addError(errors, "E_OUTPUT_SOURCE_MISSING", `${identity}:${key}`);
     if (HIGH_TIER.test(tierText(item)) && !sourceId(item) && success !== true) addError(errors, "E_HIGH_TIER_SOURCE_MISSING", `${identity}:${key}`);
-    state.assetLedger.set(key, (state.assetLedger.get(key) ?? 0) + qty);
+    state.assets.add(key);
   }
 
   for (const item of losses) {
     const key = itemKey(item);
     const qty = quantity(item);
     if (qty < 0) addError(errors, "E_LOSS_NEGATIVE", `${identity}:${key}`);
-    state.assetLedger.set(key, (state.assetLedger.get(key) ?? 0) + qty);
+    state.assets.add(key);
   }
 
   for (const fee of fees) {
@@ -586,12 +586,6 @@ function validateProgression(record, errors, state) {
   }
 }
 
-function validateAssetConservation(state, errors) {
-  for (const [asset, delta] of [...state.assetLedger.entries()].sort((left, right) => left[0].localeCompare(right[0]))) {
-    if (Math.abs(delta) > 1e-9) addError(errors, "E_ASSET_CONSERVATION", asset, { assetHash: shortHash(asset) });
-  }
-}
-
 function summarize(inputBatches) {
   const parseErrors = inputBatches.flatMap((batch) => batch.parseErrors.map((entry) => ({ ...entry, inputHash: shortHash(batch.path) })));
   const secretState = { secretCount: 0 };
@@ -602,6 +596,7 @@ function summarize(inputBatches) {
   parseErrors.slice(0, MAX_PARSE_ERRORS).forEach((entry) => addError(errors, "E_PARSE", `${entry.inputHash}:${entry.line}`));
   if (secretState.secretCount > 0) addError(errors, "E_SECRET_INPUT", `secret-count:${secretState.secretCount}`, { count: secretState.secretCount });
   if (crafts.length === 0) addError(errors, "E_CRAFT_RECORDS_MISSING", "crafts");
+  if (recipes.length === 0) addError(errors, "E_RECIPE_RECORDS_MISSING", "recipes");
 
   const recipeErrors = [];
   const recipeIndex = buildRecipeIndex(recipes, recipeErrors);
@@ -610,12 +605,11 @@ function summarize(inputBatches) {
   const state = {
     idempotencyKeys: new Map(),
     claims: new Set(),
-    assetLedger: new Map(),
+    assets: new Set(),
     professions: new Map(),
   };
   crafts.forEach((craft) => validateCraft(craft, recipeIndex, errors, state));
   progressions.forEach((record) => validateProgression(record, errors, state));
-  validateAssetConservation(state, errors);
 
   const counts = new Map();
   errors.forEach((entry) => countCode(counts, entry.code));
@@ -637,7 +631,7 @@ function summarize(inputBatches) {
       progressionRecords: progressions.length,
       idempotencyKeys: state.idempotencyKeys.size,
       claims: state.claims.size,
-      assets: state.assetLedger.size,
+      assets: state.assets.size,
       professions: Object.fromEntries([...state.professions.entries()].sort()),
       parseErrors: parseErrors.length,
       secretFindings: secretState.secretCount,

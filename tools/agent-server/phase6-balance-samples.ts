@@ -15,9 +15,9 @@ type Rec = Record<string, unknown>;
 
 function usage(): string {
   return [
-    "Usage: node tools/agent-server/phase6-balance-samples.mjs --input <repo-json-or-jsonl-path> --output <repo-jsonl-path>",
+    "Usage: node --import tsx ../agent-server/phase6-balance-samples.ts --input <repo-json-or-jsonl-path> --output <repo-jsonl-path>",
     "",
-    "Converts strict JourneyRunReceipt balance sample JSON/JSONL into JSONL accepted by phase6-balance-gate.mjs.",
+    "Converts strict JourneyRunReceipt balance sample JSON/JSONL into JSONL accepted by phase6-balance-gate.ts.",
     "Input and output paths must resolve inside the repository. Output refuses non-empty files.",
   ].join("\n");
 }

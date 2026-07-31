@@ -69,6 +69,7 @@ COPY --from=web-build --chown=65532:65532 /runtime-dirs/backups /backups
 COPY --from=web-build --chown=65532:65532 /runtime-dirs/restore /restore
 
 COPY --chown=65532:65532 tools/agent-server/server.ts ./tools/agent-server/server.ts
+COPY --chown=65532:65532 tools/agent-server/world-memory-semantic-preflight.ts ./tools/agent-server/world-memory-semantic-preflight.ts
 COPY --chown=65532:65532 tools/agent-server/backup.ts ./tools/agent-server/backup.ts
 COPY --chown=65532:65532 tools/agent-server/restore-backup.ts ./tools/agent-server/restore-backup.ts
 COPY --chown=65532:65532 tools/agent-server/lib ./tools/agent-server/lib

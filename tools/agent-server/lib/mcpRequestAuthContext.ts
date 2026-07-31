@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
 export type McpRequestAuthContext =
+  | { readonly kind: "anonymous" }
   | { readonly kind: "bootstrap" }
   | {
     readonly kind: "player";

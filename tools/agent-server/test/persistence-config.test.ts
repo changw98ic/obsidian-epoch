@@ -78,9 +78,9 @@ test("createAgentPersistenceFromEnv migrates JSONL data and appends future write
   }
 });
 
-test("createAgentPersistenceFromEnv rejects an unknown store instead of silently using JSONL", async () => {
+test("createAgentPersistenceFromEnv rejects a noncanonical store", async () => {
   await assert.rejects(
     () => createAgentPersistenceFromEnv({ AGENT_SERVER_STORE: "sqllite" }),
-    /AGENT_SERVER_STORE must be jsonl or sqlite/,
+    /AGENT_SERVER_STORE must be sqlite/,
   );
 });

@@ -50,7 +50,7 @@ const SECRET_FRAGMENTS = [
 function usage(message) {
   if (message) console.error(message);
   console.error(
-    "Usage: node phase6-cde-stream-to-jsonl.mjs --input <cde-stream.jsonl> --output <phase6-tools.jsonl>",
+    "Usage: node --import tsx ../agent-server/phase6-cde-stream-to-jsonl.ts --input <cde-stream.jsonl> --output <phase6-tools.jsonl>",
   );
   process.exit(2);
 }

@@ -41,6 +41,13 @@ test("Phase 6 ten-run evidence derives golden gate inputs from sanitized tool ou
     assert.equal(manifest.artifacts["receipts.jsonl"].records, 10);
     assert.equal(manifest.artifacts["economy-audit.jsonl"].records, 10);
     assert.equal(manifest.artifacts["scores.jsonl"].records, 10);
+    assert.equal(manifest.artifacts["world-evidence.jsonl"].records, 10);
+    const worldEvidence = readFileSync(join(outputDir, "world-evidence.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.ok(worldEvidence.every((record) => record.eventType === "phase6_authoritative_world_replay"));
+    assert.ok(worldEvidence.every((record) => record.runReceipt?.receiptType === "journey_run_receipt"));
     assert.equal(manifest.input.sqlite.bytes > 0, true);
     assert.match(manifest.input.sqlite.sha256, /^sha256:[0-9a-f]{64}$/);
     assert.equal(manifest.releaseGateInputs.playerPanel, true);
@@ -471,7 +478,7 @@ function goldenSanitizedRecords() {
     };
     const [scenarioTag, taskFamilyId] = scenarioProtocol[runIndex - 1];
     records.push(
-      toolRecord(runIndex, "obsidian_epoch.prepare_journey", { ...binding, taskFamilyId, taskType: taskFamilyId }, { taskFamilyId, taskType: taskFamilyId }),
+      toolRecord(runIndex, "obsidian_epoch.prepare_journey", { ...binding, taskType: taskFamilyId }, { taskType: taskFamilyId }),
       toolRecord(runIndex, "obsidian_epoch.begin_phase6_run", { ...binding, scenarioTag }, { scenarioTag }),
       toolRecord(runIndex, "obsidian_epoch.player_panel", { ...binding, playerPanel: before }, {}, { playerPanelBefore: true }),
       toolRecord(runIndex, "obsidian_epoch.phase6_result", {
@@ -600,7 +607,7 @@ function runReceipt(runIndex, before, after) {
     rulesetVersion: "rules-v1",
     catalogVersion: "catalog-v1",
     codeVersion: "code-v1",
-    scenarioMatrixVersion: "phase6-matrix-v3",
+    scenarioMatrixVersion: "phase6-matrix-v4",
     settlementPolicyVersion: "phase6-settlement-policy-v1",
     actions: [{ actionId: `action-${runIndex}` }],
     eventIds: [`event-${runIndex}-receipt`],
@@ -611,6 +618,12 @@ function runReceipt(runIndex, before, after) {
       regionId: `region-${runIndex}`,
       snapshotHash: `snapshot-${runIndex}`,
       worldTime: runIndex * 100,
+      canonicalCursor: {
+        sequence: runIndex,
+        eventId: `event-${runIndex}-world`,
+        regionId: `region-${runIndex}`,
+        worldMinute: runIndex * 100,
+      },
       delta: { changed: true },
     },
     deltas,

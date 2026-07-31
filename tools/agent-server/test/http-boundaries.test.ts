@@ -46,8 +46,9 @@ test("HTTP server delegates console and Epoch asset routes to a focused route mo
 
   assert.match(httpServer, /handleEpochAssetRoutes/);
   assert.match(assetRoutes, /export async function handleEpochAssetRoutes/);
-  assert.match(assetRoutes, /\/epoch\/console/);
-  assert.match(assetRoutes, /\/epoch\/console\/assets\//);
+  assert.match(assetRoutes, /\/epoch\/web-play/);
+  assert.match(assetRoutes, /\/epoch\/web-play\/assets\//);
+  assert.match(assetRoutes, /legacy_console_path_removed/);
   assert.match(assetRoutes, /\/api\/epoch\/assets\/boss\//);
   assert.match(assetRoutes, /\/api\/epoch\/assets\/season\//);
 

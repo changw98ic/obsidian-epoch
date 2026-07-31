@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createAgentHttpServer } from "../lib/httpServer.ts";
-import { MCP_PROTOCOL_VERSION, createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { MCP_PROTOCOL_VERSION } from "../lib/mcpConstants.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 import { PlayerMcpAccessTokenStore } from "../lib/playerMcpAccessTokenStore.ts";
 import { hydrateAgentRuntimeOptions } from "../lib/store.ts";
 import {
@@ -132,7 +133,7 @@ function enforcedProtection(
   };
 }
 
-test("public pairing server-issues identity before minting a short-lived player token", async () => {
+test("public pairing page points first identity creation to MCP while server-issued identities retain short-lived player tokens", async () => {
   const runtime = createAgentWorldRuntime();
   const tokenStore = await PlayerMcpAccessTokenStore.open();
   const persistedEpochEvents: Record<string, unknown>[] = [];
@@ -155,12 +156,13 @@ test("public pairing server-issues identity before minting a short-lived player 
     const pairingHtml = await pairingPage.text();
     assert.equal(pairingPage.status, 200);
     assert.match(pairingPage.headers.get("cache-control") || "", /no-store/);
-    assert.match(pairingHtml, /action="\/epoch\/pair\/register"/);
-    assert.doesNotMatch(pairingHtml, /name="identityName"/);
-    assert.match(pairingHtml, /身份名称、初始寿命与第一世经历由服务器规则签发/);
+    assert.match(pairingHtml, /obsidian_epoch\.register_explorer/);
+    assert.match(pairingHtml, /网页不创建身份，也不显示凭证/);
+    assert.doesNotMatch(pairingHtml, /\/epoch\/pair\/register/);
+    assert.doesNotMatch(pairingHtml, /<form/i);
     assert.doesNotMatch(pairingHtml, /<script/i);
 
-    const crossSiteForm = await fetch(`${baseUrl}/epoch/pair/register`, {
+    const removedForm = await fetch(`${baseUrl}/epoch/pair/register`, {
       method: "POST",
       headers: {
         "content-type": "application/x-www-form-urlencoded",
@@ -168,19 +170,7 @@ test("public pairing server-issues identity before minting a short-lived player 
       },
       body: new URLSearchParams({ identityName: "跨站批量注册" }),
     });
-    assert.equal(crossSiteForm.status, 403);
-
-    const formResponse = await fetch(`${baseUrl}/epoch/pair/register`, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams(),
-    });
-    const credentialHtml = await formResponse.text();
-    assert.equal(formResponse.status, 201);
-    assert.match(formResponse.headers.get("cache-control") || "", /no-store/);
-    assert.equal(formResponse.headers.get("referrer-policy"), "no-referrer");
-    assert.match(credentialHtml, /AGENT_WORLD_MCP_TOKEN/);
-    assert.doesNotMatch(credentialHtml, /<script/i);
+    assert.equal(removedForm.status, 404);
 
     const legacyIssue = await postJson(baseUrl, "/api/epoch/identity/issue", {
       explorerId: "explorer_caller_chosen",

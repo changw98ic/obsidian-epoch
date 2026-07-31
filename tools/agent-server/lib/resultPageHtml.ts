@@ -18,6 +18,7 @@ import {
 } from "./epoch/publicVocabulary.ts";
 import { buildPublicResultViewModel } from "./epoch/publicResultViewModel.ts";
 import { epochPageSceneMediaForKey } from "./pageSceneAssets.ts";
+import { obsidianEpochPublicSurfaceMarkerHtml } from "./publicSurfaceContract.ts";
 
 type ResultPagePayload = NonNullable<EpochSharedResultPage["payload"]>;
 type RenderableResultPage = EpochSharedResultPage & {
@@ -83,7 +84,7 @@ function publicNarrativeText(value: unknown) {
   const text = publicText(value)
     .replace(/\s*地点母题偏向：.*$/s, "")
     .replace(/\s*奖励偏向.*$/s, "")
-    .replace(/^服务器记录为一次稳健观察，区域信息被整理。$/, "先观察灰港局势，把可见线索整理成下一步依据。")
+    .replace(/^服务器记录为一次稳健观察，区域信息被整理。$/, "灰港局势与可见线索已整理为服务器记录。")
     .replace(/^服务器结算为一次有效协助，获得少量钱币。$/, "协助处理区域事务，换来少量钱币和更清楚的地方关系。")
     .replace(/^服务器记录了这一段探索。$/, "这一段探索已归入当前历程。")
     .trim();
@@ -134,6 +135,37 @@ function commissionSecretRevealBudgetLabel(commission: { secretRevealBudget: { c
 function resourceRewardLabel(reward?: { readonly resourceId: string; readonly amount: number }) {
   if (!reward) return "无公开奖励";
   return `${resourceLabels[reward.resourceId] || publicText(reward.resourceId)} +${reward.amount}`;
+}
+
+function journeyRewardLabel(journey: NonNullable<ResultPagePayload["journey"]>) {
+  const settlementResources = Object.entries(journey.settlement?.reward?.resourceGrants || {})
+    .filter(([, amount]) => typeof amount === "number" && Number.isFinite(amount) && amount !== 0)
+    .map(([resourceId, amount]) => resourceRewardLabel({ resourceId, amount }));
+  const settlementItems = (journey.settlement?.reward?.itemGrants || [])
+    .filter((item) => item.quantity > 0)
+    .map((item) => `${publicText(item.itemId)} ×${item.quantity}`);
+  const episodeRewards = journey.episodes.flatMap((episode) => {
+    const reward = episode.settlement?.reward;
+    return reward && typeof reward.amount === "number" && reward.amount !== 0
+      ? [resourceRewardLabel(reward)]
+      : [];
+  });
+  const rewards = [
+    ...settlementResources,
+    ...settlementItems,
+    ...(journey.stateDelta?.reward?.resourceId && typeof journey.stateDelta.reward.amount === "number"
+      ? [resourceRewardLabel({
+          resourceId: journey.stateDelta.reward.resourceId,
+          amount: journey.stateDelta.reward.amount,
+        })]
+      : []),
+    ...(journey.stateDelta?.rewardBundle?.resources.map(resourceRewardLabel) || []),
+    ...(journey.stateDelta?.rewardBundle?.items.map((item) =>
+      `${publicText(item.displayName)}（${rarityLabel(item.rarity)}）`) || []),
+    ...episodeRewards,
+  ];
+  const uniqueRewards = [...new Set(rewards)];
+  return uniqueRewards.length > 0 ? uniqueRewards.join("；") : "无公开奖励";
 }
 
 function riskLabel(value: string | undefined) {
@@ -193,6 +225,16 @@ function resultFocusSummary(payload: ResultPagePayload) {
       reward: resourceRewardLabel(latestAction.reward),
       lifetime: lifetimeDeltaLabel(latestAction.lifetimeDelta),
       outcome: latestAction.outcomeSummary,
+    };
+  }
+  if (payload.journey) {
+    return {
+      regionId: payload.journey.regionId,
+      actionLabel: "完整旅程",
+      risk: "已结算",
+      reward: journeyRewardLabel(payload.journey),
+      lifetime: "寿命无公开变化",
+      outcome: payload.journey.stateDelta?.outcomeSummary || payload.publicSafeSummary.text,
     };
   }
   return {
@@ -272,7 +314,7 @@ function resultPageLinks(payload: ResultPagePayload) {
   const identity = payload.progress.identity || payload.progress.identities.at(-1);
   return {
     world: payload.publicPages?.world || "/epoch/world",
-    console: payload.publicPages?.console || "/epoch/console",
+    console: payload.publicPages?.console || "/epoch/web-play",
     agent: payload.publicPages?.agent
       || (payload.progress.agentId || identity?.agentId
         ? `/epoch/agent/${encodeURIComponent(payload.progress.agentId || identity?.agentId || "")}`
@@ -289,8 +331,8 @@ function navigationSection(payload: ResultPagePayload) {
   const tiles = [
     {
       href: links.console,
-      label: "继续操作",
-      detail: "恢复身份后继续派遣或托管。",
+      label: "MCP 观察",
+      detail: "网页只查看进度和凭证；已连接的 Agent 可读取服务器状态，并依据自己的计划决定行动。",
     },
     {
       href: links.world,
@@ -312,7 +354,7 @@ function navigationSection(payload: ResultPagePayload) {
     <section class="journey-navigation">
       <div>
         <span class="eyebrow">页面入口</span>
-        <h2>接下来去哪</h2>
+        <h2>相关页面</h2>
       </div>
       <div class="nav-grid">
         ${tiles.map((tile) => `
@@ -553,34 +595,6 @@ function journeyStorySection(payload: ResultPagePayload) {
           : ""}
       </div>
     </section>`;
-}
-
-function nextActionReason(action: ResultPagePayload["nextActions"][number]) {
-  if (action.kind === "continue_turn") {
-    return "回到控制台，恢复身份后继续派遣这个行动身份探索当前区域。";
-  }
-  if (action.kind === "set_downtime") {
-    return "回到控制台设置托管，让行动身份在服务器时间里继续推进长期历程。";
-  }
-  return publicText(action.reason);
-}
-
-function nextActionRows(actions: ResultPagePayload["nextActions"]) {
-  if (!actions.length) return "<li class=\"empty\">暂无服务器建议行动</li>";
-  return actions
-    .map((action) => {
-      const source = action.sourceType ? ` · ${sourceTypeLabel(action.sourceType)}` : "";
-      const recovery = action.requiresRecoveryCode ? "恢复身份后可继续" : "公开查看";
-      return `
-        <li>
-          ${activityMediaImageHtml(action.media)}
-          <b>${escapeHtml(publicActionLabel(action.label))}</b>
-          <span>${escapeHtml(`${recovery}${source}`)}</span>
-          <em>${escapeHtml(nextActionReason(action))}</em>
-        </li>
-      `;
-    })
-    .join("");
 }
 
 function regionalContextSection(context: ResultPagePayload["regionalContext"]) {
@@ -1042,6 +1056,7 @@ export function renderEpochResultPageHtml(page: RenderableResultPage) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  ${obsidianEpochPublicSurfaceMarkerHtml()}
   <title>${escapeHtml(title)} - 黑曜纪元结果页</title>
   <style>
     :root {
@@ -1496,13 +1511,6 @@ export function renderEpochResultPageHtml(page: RenderableResultPage) {
     ${page.payload.journey ? "" : journeyTimelineSection(page.payload)}
     ${turnCardSection(page.payload.focusTurnCard)}
     ${page.payload.journey ? "" : hostedSessionSection(page.payload.focusHostedSession)}
-    <section class="next-actions">
-      <div>
-        <span class="eyebrow">下一步</span>
-        <h2>下一步建议</h2>
-      </div>
-      <ul>${nextActionRows(page.payload.nextActions)}</ul>
-    </section>
     ${regionalContextSection(page.payload.regionalContext)}
     ${receiptJsonScript(page.payload.receipt)}
     <div class="grid">

@@ -28,12 +28,20 @@ export interface EpochShopCost {
 
 export interface EpochShopOffer {
   readonly offerId: string;
+  /** Version of the server-owned shop catalog entry that set this price and limit. */
+  readonly offerVersion: string;
   readonly regionId?: string;
   readonly priceRegionId?: string;
   readonly itemKey: string;
   readonly displayName: string;
   readonly rarity: string;
   readonly bindOnAcquire?: boolean;
+  /** Available units within the declared stock scope. */
+  readonly stock: number;
+  /** Shop inventory is allocated separately to each explorer identity. */
+  readonly stockScope: "per_explorer";
+  /** Enforced maximum purchases for one explorer identity. */
+  readonly perExplorerLimit: number;
   readonly costs: readonly EpochShopCost[];
   readonly baseCosts?: readonly EpochShopCost[];
   readonly regionalCosts?: Readonly<Record<string, readonly EpochShopCost[]>>;
@@ -142,6 +150,9 @@ export interface InventoryItemBoundPayloadInput {
   readonly boundAt: string;
 }
 
+export const INVENTORY_CRAFT_RECIPE_CATALOG_VERSION = "inventory-craft-recipes.v2";
+export const EPOCH_SHOP_CATALOG_VERSION = "inventory-shop.v2";
+
 export const INVENTORY_CRAFT_RECIPES: readonly InventoryCraftRecipe[] = [
   {
     recipeId: "field-kit",
@@ -173,6 +184,16 @@ export const INVENTORY_CRAFT_RECIPES: readonly InventoryCraftRecipe[] = [
       { resourceId: "coin", amount: 2 },
     ],
   },
+  {
+    recipeId: "phase6-field-blade",
+    itemKey: "crafted:phase6-field-blade",
+    displayName: "星铁野战刃",
+    rarity: "uncommon",
+    costs: [
+      { resourceId: "material_forging_alloy", amount: 1 },
+      { resourceId: "coin", amount: 1 },
+    ],
+  },
 ];
 
 const INVENTORY_CRAFT_RECIPE_BY_ID = Object.fromEntries(
@@ -182,10 +203,14 @@ const INVENTORY_CRAFT_RECIPE_BY_ID = Object.fromEntries(
 export const EPOCH_SHOP_OFFERS: readonly EpochShopOffer[] = [
   {
     offerId: "gray-ration-pack",
+    offerVersion: EPOCH_SHOP_CATALOG_VERSION,
     regionId: "region_gray_harbor",
     itemKey: "shop:gray-ration-pack",
     displayName: "灰市补给包",
     rarity: "common",
+    stock: 1,
+    stockScope: "per_explorer",
+    perExplorerLimit: 1,
     costs: [{ resourceId: "coin", amount: 3 }],
     regionalCosts: {
       region_ash_outpost: [{ resourceId: "coin", amount: 4 }],
@@ -193,10 +218,14 @@ export const EPOCH_SHOP_OFFERS: readonly EpochShopOffer[] = [
   },
   {
     offerId: "aether-survey-lantern",
+    offerVersion: EPOCH_SHOP_CATALOG_VERSION,
     regionId: "region_gray_harbor",
     itemKey: "shop:aether-survey-lantern",
     displayName: "灵质探勘灯",
     rarity: "uncommon",
+    stock: 1,
+    stockScope: "per_explorer",
+    perExplorerLimit: 1,
     costs: [
       { resourceId: "coin", amount: 4 },
       { resourceId: "aether", amount: 1 },
@@ -204,11 +233,15 @@ export const EPOCH_SHOP_OFFERS: readonly EpochShopOffer[] = [
   },
   {
     offerId: "ashen-oath-relic",
+    offerVersion: EPOCH_SHOP_CATALOG_VERSION,
     regionId: "region_gray_harbor",
     itemKey: "shop:ashen-oath-relic",
     displayName: "灰誓遗物",
     rarity: "rare",
     bindOnAcquire: true,
+    stock: 1,
+    stockScope: "per_explorer",
+    perExplorerLimit: 1,
     costs: [
       { resourceId: "coin", amount: 8 },
       { resourceId: "legend", amount: 1 },
@@ -216,10 +249,14 @@ export const EPOCH_SHOP_OFFERS: readonly EpochShopOffer[] = [
   },
   {
     offerId: "pipewarden-valve-kit",
+    offerVersion: EPOCH_SHOP_CATALOG_VERSION,
     regionId: "region_city_pipes",
     itemKey: "shop:pipewarden-valve-kit",
     displayName: "管网阀钥工具",
     rarity: "common",
+    stock: 1,
+    stockScope: "per_explorer",
+    perExplorerLimit: 1,
     costs: [
       { resourceId: "coin", amount: 2 },
       { resourceId: "stamina", amount: 1 },
@@ -227,11 +264,15 @@ export const EPOCH_SHOP_OFFERS: readonly EpochShopOffer[] = [
   },
   {
     offerId: "mine-echo-relic",
+    offerVersion: EPOCH_SHOP_CATALOG_VERSION,
     regionId: "region_abandoned_mine",
     itemKey: "shop:mine-echo-relic",
     displayName: "矿脉回声遗物",
     rarity: "rare",
     bindOnAcquire: true,
+    stock: 1,
+    stockScope: "per_explorer",
+    perExplorerLimit: 1,
     costs: [
       { resourceId: "coin", amount: 6 },
       { resourceId: "focus", amount: 2 },

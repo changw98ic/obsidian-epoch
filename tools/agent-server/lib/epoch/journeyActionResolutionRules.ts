@@ -156,6 +156,20 @@ const RARITY_READINESS: Readonly<Record<string, number>> = {
   legendary: 8,
 };
 
+export const JOURNEY_ACTION_EQUIPMENT_FACTOR_CAP = 12;
+
+export function journeyActionEquipmentFactor(items: readonly {
+  readonly itemId: string;
+  readonly rarity: string;
+  readonly bound: boolean;
+}[]) {
+  return Math.min(JOURNEY_ACTION_EQUIPMENT_FACTOR_CAP, items
+    .map((item) => (RARITY_READINESS[item.rarity] ?? 1) + (item.bound ? 1 : 0))
+    .sort((left, right) => right - left)
+    .slice(0, 2)
+    .reduce((total, value) => total + value, 0));
+}
+
 function nonNegative(value: number) {
   return Number.isFinite(value) ? Math.max(0, value) : 0;
 }
@@ -327,11 +341,7 @@ export function resolveJourneyAction(input: ResolveJourneyActionInput): JourneyA
   const resources = cappedWhole(canonicalInput.resources.focus, 4)
     + cappedWhole(canonicalInput.resources.stamina, 4)
     + cappedWhole(canonicalInput.resources.aether, 4);
-  const equipment = Math.min(12, canonicalInput.inventoryItems
-    .map((item) => (RARITY_READINESS[item.rarity] ?? 1) + (item.bound ? 1 : 0))
-    .sort((left, right) => right - left)
-    .slice(0, 2)
-    .reduce((total, value) => total + value, 0));
+  const equipment = journeyActionEquipmentFactor(canonicalInput.inventoryItems);
   const sceneSupport = Math.min(10, canonicalInput.participantTargetCount * 5);
   const journeyPreparation = canonicalInput.journeyPreparationScore;
   const condition = identityCondition(canonicalInput);

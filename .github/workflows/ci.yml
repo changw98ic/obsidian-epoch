@@ -71,13 +71,13 @@ jobs:
           test -s "$probe_file"
 
       - name: Agent server tests (serial)
-        run: node --import tsx --test --test-concurrency=1 ../agent-server/test/*.test.ts
+        run: node --import tsx --test --test-isolation=process --test-concurrency=1 ../agent-server/test/*.test.ts
 
       - name: Batch tool tests (serial)
-        run: node --import tsx --test --test-concurrency=1 ../chatgpt_creature_image_batch_core.test.ts
+        run: node --import tsx --test --test-isolation=process --test-concurrency=1 ../chatgpt_creature_image_batch_core.test.ts
 
       - name: Web and script tests (serial)
-        run: node --import tsx --test --test-concurrency=1 src/agent/*.test.ts scripts/*.test.ts
+        run: node --import tsx --test --test-isolation=process --test-concurrency=1 src/agent/*.test.ts scripts/*.test.ts
 
       - name: Remove host-generated web artifacts before image build
         working-directory: ${{ github.workspace }}

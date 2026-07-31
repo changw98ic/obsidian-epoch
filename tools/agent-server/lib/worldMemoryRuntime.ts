@@ -56,6 +56,7 @@ export interface WorldMemoryRuntimeConfig {
 export interface WorldMemoryRuntimeStatus {
   readonly enabled: boolean;
   readonly semanticEnabled: boolean;
+  readonly semanticErrorCode?: string;
   readonly inFlight: boolean;
   readonly model: string;
   readonly endpointModel: string;
@@ -182,6 +183,17 @@ function safeErrorCode(error: unknown) {
   if (error instanceof QwenEmbeddingError) return error.code.slice(0, 160);
   if (error instanceof Error && /^[a-z0-9_:-]+$/iu.test(error.message)) return error.message.slice(0, 160);
   return "world_memory_embedding_failed";
+}
+
+function noReadyVectorsErrorCode(
+  scope: "world_memory" | "world_knowledge",
+  status: { readonly pending: number; readonly processing: number; readonly failed: number },
+  lastErrorCode: string | undefined,
+) {
+  if (lastErrorCode) return lastErrorCode;
+  if (status.failed > 0) return `${scope}_embedding_failed`;
+  if (status.pending > 0 || status.processing > 0) return `${scope}_embeddings_pending`;
+  return `${scope}_embeddings_unavailable`;
 }
 
 function optionalString(value: unknown) {
@@ -439,10 +451,19 @@ export function createWorldMemoryRuntime(
       };
     }
     if (!client) {
-      return { ...searchWorldMemory(config.dbPath, searchInput), semanticUnavailable: true as const };
+      return {
+        ...searchWorldMemory(config.dbPath, searchInput),
+        semanticUnavailable: true as const,
+        semanticErrorCode: "qwen_embedding_client_unavailable",
+      };
     }
-    if (worldMemoryIndexStatus(config.dbPath).ready === 0) {
-      return searchWorldMemory(config.dbPath, searchInput);
+    const index = worldMemoryIndexStatus(config.dbPath);
+    if (index.ready === 0) {
+      return {
+        ...searchWorldMemory(config.dbPath, searchInput),
+        semanticUnavailable: true as const,
+        semanticErrorCode: noReadyVectorsErrorCode("world_memory", index, lastErrorCode),
+      };
     }
     try {
       const embedded = await embedQuery(query);
@@ -476,10 +497,19 @@ export function createWorldMemoryRuntime(
       ...(Number.isSafeInteger(input.limit) ? { limit: Number(input.limit) } : {}),
     };
     if (!client) {
-      return { ...searchWorldKnowledge(config.dbPath, searchInput), semanticUnavailable: true as const };
+      return {
+        ...searchWorldKnowledge(config.dbPath, searchInput),
+        semanticUnavailable: true as const,
+        semanticErrorCode: "qwen_embedding_client_unavailable",
+      };
     }
-    if (worldKnowledgeIndexStatus(config.dbPath).ready === 0) {
-      return searchWorldKnowledge(config.dbPath, searchInput);
+    const knowledge = worldKnowledgeIndexStatus(config.dbPath);
+    if (knowledge.ready === 0) {
+      return {
+        ...searchWorldKnowledge(config.dbPath, searchInput),
+        semanticUnavailable: true as const,
+        semanticErrorCode: noReadyVectorsErrorCode("world_knowledge", knowledge, lastErrorCode),
+      };
     }
     try {
       const embedded = await embedQuery(query);
@@ -528,6 +558,11 @@ export function createWorldMemoryRuntime(
       return {
         enabled: true,
         semanticEnabled: Boolean(client),
+        ...(!client
+          ? { semanticErrorCode: "qwen_embedding_client_unavailable" }
+          : lastErrorCode
+            ? { semanticErrorCode: lastErrorCode }
+            : {}),
         inFlight: Boolean(active),
         model: WORLD_MEMORY_EMBEDDING_MODEL,
         endpointModel: config.embeddingModel,

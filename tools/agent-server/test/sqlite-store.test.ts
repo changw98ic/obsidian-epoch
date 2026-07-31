@@ -8,7 +8,7 @@ import { createEpochGameCore } from "../lib/epoch/gameCore.ts";
 import { createSequentialEpochIdFactory } from "../lib/epoch/protocol.ts";
 import { buildEpochResultPagePayload } from "../lib/epoch/resultPagePayloadRules.ts";
 import { resultPageActiveRecord } from "../lib/epoch/resultPageRuntimeRules.ts";
-import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 import {
   appendSqliteEpochEventBatch,
   appendSqliteJsonl,
@@ -462,6 +462,193 @@ test("schema v2 rejects conflicting canonical events without recording or partia
       assert.equal(Number(indexed.count), 0);
     } finally {
       rolledBack.close();
+    }
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("schema v4 appends the missing mirror-promotion snapshot only when a solidified world record proves it", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "epoch-sqlite-v4-mirror-promotion-"));
+  const dbPath = path.join(tempDir, "agent-world.sqlite");
+  const journeyId = "journey_v4_mirror_promotion";
+  const agentId = "agent_v4_mirror_promotion";
+  const explorerId = "explorer_v4_mirror_promotion";
+  const settlementId = "settlement:journey_v4_mirror_promotion:v1";
+  const occurredAt = "2026-07-30T08:00:00.000Z";
+  const settledJourney = {
+    journeyId,
+    agentId,
+    explorerId,
+    version: 23,
+    status: "settled",
+  };
+  const settledEvent = {
+    eventId: "journey_event_v4_settled",
+    eventType: "journey_status_changed",
+    journeyId,
+    agentId,
+    explorerId,
+    occurredAt: "2026-07-30T07:59:00.000Z",
+    journey: settledJourney,
+  };
+  const worldCommitEvent = {
+    eventId: "journey_event_v4_world_commit",
+    eventType: "journey_world_commit_recorded",
+    journeyId,
+    agentId,
+    explorerId,
+    occurredAt: "2026-07-30T08:01:00.000Z",
+    journey: {
+      ...settledJourney,
+      version: 25,
+      worldCommit: {
+        status: "solidified",
+        settlementId,
+      },
+    },
+  };
+  const worldSolidified = {
+    eventId: "epoch_event_v4_world_solidified",
+    eventType: "journey_world_solidified",
+    aggregateType: "journey",
+    aggregateId: journeyId,
+    agentId,
+    trustClass: "system",
+    createdAt: occurredAt,
+    payload: {
+      journeyId,
+      settlementId,
+      mirrorLedgerPromotions: [{
+        entryId: "mirror_entry_v4",
+        canonicalEventId: "epoch_effect_v4",
+      }],
+    },
+  };
+  try {
+    const legacy = new DatabaseSync(dbPath);
+    try {
+      legacy.exec(`
+        CREATE TABLE schema_migrations (
+          version INTEGER PRIMARY KEY,
+          applied_at TEXT NOT NULL
+        );
+        CREATE TABLE jsonl_records (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          file_name TEXT NOT NULL,
+          line_number INTEGER NOT NULL,
+          record_type TEXT,
+          record_json TEXT NOT NULL,
+          inserted_at TEXT NOT NULL,
+          UNIQUE(file_name, line_number)
+        );
+        CREATE TABLE journey_events (
+          event_id TEXT PRIMARY KEY,
+          journey_id TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          explorer_id TEXT NOT NULL,
+          occurred_at TEXT NOT NULL,
+          journey_version INTEGER,
+          record_id INTEGER NOT NULL,
+          event_json TEXT NOT NULL
+        );
+        CREATE TABLE epoch_events (
+          event_id TEXT PRIMARY KEY,
+          event_type TEXT NOT NULL,
+          aggregate_type TEXT NOT NULL,
+          aggregate_id TEXT NOT NULL,
+          agent_id TEXT,
+          trust_class TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          record_id INTEGER NOT NULL,
+          event_json TEXT NOT NULL
+        );
+      `);
+      const insertMigration = legacy.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)");
+      for (const version of [1, 2, 3]) insertMigration.run(version, "2026-07-30T07:00:00.000Z");
+      const insertRecord = legacy.prepare(`
+        INSERT INTO jsonl_records(file_name, line_number, record_type, record_json, inserted_at)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      const insertJourney = legacy.prepare(`
+        INSERT INTO journey_events(
+          event_id, journey_id, event_type, agent_id, explorer_id, occurred_at,
+          journey_version, record_id, event_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const [lineNumber, event] of [settledEvent, worldCommitEvent].entries()) {
+        const record = { type: "journey_event", event };
+        insertRecord.run("journey-events.jsonl", lineNumber + 1, record.type, JSON.stringify(record), event.occurredAt);
+        const recordId = Number((legacy.prepare("SELECT last_insert_rowid() AS id").get() as { id: number | bigint }).id);
+        insertJourney.run(
+          event.eventId,
+          event.journeyId,
+          event.eventType,
+          event.agentId,
+          event.explorerId,
+          event.occurredAt,
+          event.journey.version,
+          recordId,
+          JSON.stringify(event),
+        );
+      }
+      const epochRecord = { type: "epoch_event", event: worldSolidified };
+      insertRecord.run("epoch-events.jsonl", 1, epochRecord.type, JSON.stringify(epochRecord), worldSolidified.createdAt);
+      const epochRecordId = Number((legacy.prepare("SELECT last_insert_rowid() AS id").get() as { id: number | bigint }).id);
+      legacy.prepare(`
+        INSERT INTO epoch_events(
+          event_id, event_type, aggregate_type, aggregate_id, agent_id, trust_class, created_at, record_id, event_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        worldSolidified.eventId,
+        worldSolidified.eventType,
+        worldSolidified.aggregateType,
+        worldSolidified.aggregateId,
+        worldSolidified.agentId,
+        worldSolidified.trustClass,
+        worldSolidified.createdAt,
+        epochRecordId,
+        JSON.stringify(worldSolidified),
+      );
+    } finally {
+      legacy.close();
+    }
+
+    const migrated = readSqliteJsonlRecords(dbPath, "journey-events.jsonl");
+    assert.equal(migrated.length, 3);
+    const repair = migrated.at(-1) as { type: string; event: Record<string, unknown> };
+    assert.equal(repair.type, "journey_event");
+    assert.deepEqual(repair.event, {
+      eventId: `migration:journey-mirror-promotion:${journeyId}:v24`,
+      eventType: "journey_mirror_consequence_promoted",
+      journeyId,
+      agentId,
+      explorerId,
+      occurredAt,
+      journey: { ...settledJourney, version: 24 },
+      mirrorConsequencePromotions: [{
+        entryId: "mirror_entry_v4",
+        canonicalEventId: "epoch_effect_v4",
+      }],
+    });
+
+    assert.equal(readSqliteJsonlRecords(dbPath, "journey-events.jsonl").length, 3);
+    const migratedDb = new DatabaseSync(dbPath);
+    try {
+      assert.ok(migratedDb.prepare("SELECT version FROM schema_migrations WHERE version = 4").get());
+      const indexed = migratedDb.prepare(`
+        SELECT event_type, journey_version
+        FROM journey_events
+        WHERE event_id = ?
+      `).get(`migration:journey-mirror-promotion:${journeyId}:v24`) as {
+        event_type: string;
+        journey_version: number;
+      };
+      assert.equal(indexed.event_type, "journey_mirror_consequence_promoted");
+      assert.equal(indexed.journey_version, 24);
+    } finally {
+      migratedDb.close();
     }
   } finally {
     await rm(tempDir, { recursive: true, force: true });

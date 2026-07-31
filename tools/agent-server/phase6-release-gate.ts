@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { StringDecoder } from "node:string_decoder";
 import {
   ATTESTATION_KEY_ENV,
   loadAttestationKey,
@@ -20,6 +21,25 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, "../..");
 const SECRET_KEY = /(?:secret|token|api[-_]?key|authorization|password|credential|private[-_]?key|access[-_]?key|refresh[-_]?token|session[-_]?key|recovery[-_]?code|operator[-_]?key|client[-_]?secret)/i;
 const SECRET_VALUE = /(?:\b(?:sk-[A-Za-z0-9_-]{12,}|Bearer\s+[A-Za-z0-9._~+/=-]{12,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{16})\b|-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----)/i;
+const SENSITIVE_URL_VALUE = /(?:[?&](?:share[-_]?token|publish[-_]?token|token|authorization|access[-_]?token|refresh[-_]?token|signature|recovery[-_]?code)(?:=|%3d)|\/(?:share[-_]?token|publish[-_]?token)(?:\/|$))/i;
+const SENSITIVE_ASSIGNMENT = /(?:^|[\s,{])(?:"|')?(?:secret|token|api[-_]?key|authorization|password|credential|private[-_]?key|access[-_]?key|refresh[-_]?token|session[-_]?key|client[-_]?secret|recovery[-_]?code|operator[-_]?key)(?:"|')?\s*[:=]/i;
+const SENSITIVE_FIELD_NAMES = new Set([
+  "apikey",
+  "accesskey",
+  "authorization",
+  "credential",
+  "clientsecret",
+  "localsecret",
+  "operatorkey",
+  "password",
+  "privatekey",
+  "recoverycode",
+  "refreshtoken",
+  "secret",
+  "sessionkey",
+  "sharetoken",
+  "token",
+]);
 const REQUIRED_GATES = Object.freeze([
   "tenRun",
   "playerPanel",
@@ -52,7 +72,7 @@ const GATE_SCRIPTS = Object.freeze({
 
 function usage() {
   return [
-    "Usage: node tools/agent-server/phase6-release-gate.mjs --config <repo-json> [--output <repo-json>]",
+    "Usage: node --import tsx ../agent-server/phase6-release-gate.ts --config <repo-json> [--output <repo-json>]",
     "",
     "Runs the fixed Phase 6 release gate sequence with shell:false and prints a redacted aggregate JSON report.",
     "All required gates, fresh progress, and a current evidenceManifest must validate for ok=true.",
@@ -160,6 +180,12 @@ function validateConfig(config, secretCount) {
       errors.push(error("E_GATE_CONFIG_MISSING", { gate: gateName }));
     }
   }
+  const tenRun = config.gates.tenRun;
+  if (isRecord(tenRun) && tenRun.requireMcpHttpTransport === true) {
+    if (typeof tenRun.expectedMcpHttpOrigin !== "string" || !tenRun.expectedMcpHttpOrigin.trim()) {
+      errors.push(error("E_TEN_RUN_MCP_HTTP_ORIGIN_REQUIRED"));
+    }
+  }
   return errors;
 }
 
@@ -224,6 +250,14 @@ function buildGateArgs(gateName, gateConfig) {
         const args = [];
         args.push("--input", bindPath(gateConfig.input, "input"));
         if (gateConfig.experimentId !== undefined) pushStringOption(args, "--experiment-id", gateConfig.experimentId);
+        if (gateConfig.requireMcpHttpTransport !== true) {
+          throw codedError("E_GATE_ARGUMENTS", "tenRun requires requireMcpHttpTransport=true");
+        }
+        if (typeof gateConfig.expectedMcpHttpOrigin !== "string" || !gateConfig.expectedMcpHttpOrigin.trim()) {
+          throw codedError("E_GATE_ARGUMENTS", "tenRun requires expectedMcpHttpOrigin");
+        }
+        args.push("--require-mcp-http-transport");
+        pushStringOption(args, "--expected-mcp-http-origin", gateConfig.expectedMcpHttpOrigin);
         return success(args);
       }
       case "playerPanel":
@@ -245,8 +279,12 @@ function buildGateArgs(gateName, gateConfig) {
           "--store-audit",
           bindPath(gateConfig.storeAudit, "storeAudit"),
         ];
-        if (gateConfig.journey !== undefined) args.push("--journey", bindPath(gateConfig.journey, "journey"));
-        if (gateConfig.result !== undefined) args.push("--result", bindPath(gateConfig.result, "result"));
+        if (gateConfig.journeyEvents !== undefined) {
+          args.push(...repeatBoundOption("--journey-events", pathArray(gateConfig.journeyEvents, "journeyEvents"), "journeyEvents"));
+        }
+        if (gateConfig.resultPages !== undefined) {
+          args.push(...repeatBoundOption("--result-pages", pathArray(gateConfig.resultPages, "resultPages"), "resultPages"));
+        }
         if (gateConfig.epochEvents !== undefined) args.push("--epoch-events", bindPath(gateConfig.epochEvents, "epochEvents"));
         return success(args);
       }
@@ -614,7 +652,7 @@ function validateManifestFiles(entries, field, errors) {
     }
     const stat = fs.statSync(file.real);
     if (stat.size === 0) errors.push(error("E_EVIDENCE_EMPTY_FILE", { field, pathHash: shortHash(normalizedPath) }));
-    const contentSecretCount = countSecretsInText(fs.readFileSync(file.real, "utf8"));
+    const contentSecretCount = countSecretsInFile(file.real);
     if (contentSecretCount > 0) errors.push(error("E_EVIDENCE_FILE_SECRET", { field, pathHash: shortHash(normalizedPath), count: contentSecretCount }));
     if (field === "artifacts" && entry.bytes !== stat.size) errors.push(error("E_EVIDENCE_BYTES_MISMATCH", { pathHash: shortHash(normalizedPath) }));
     const currentHash = `sha256:${sha256File(file.real)}`;
@@ -716,24 +754,31 @@ function validateExperimentBindings({ config, manifestConfig, manifest, gates, g
 }
 
 function inspectFileExperimentIds(filePath) {
-  const text = fs.readFileSync(filePath, "utf8");
-  const ids = new Set();
-  const whole = tryParseJson(text);
-  if (whole !== undefined) {
-    collectExperimentIds(whole, ids);
-    return { ids, unparsedMentions: 0 };
+  if (fs.statSync(filePath).size <= 16 * 1024 * 1024) {
+    const text = fs.readFileSync(filePath, "utf8");
+    const ids = new Set();
+    const whole = tryParseJson(text);
+    if (whole !== undefined) {
+      collectExperimentIds(whole, ids);
+      return { ids, unparsedMentions: 0 };
+    }
   }
 
+  return inspectJsonLinesForExperimentIds(filePath);
+}
+
+function inspectJsonLinesForExperimentIds(filePath) {
+  const ids = new Set();
   let unparsedMentions = 0;
-  for (const line of text.split(/\r?\n/)) {
-    if (!line.trim()) continue;
+  forEachUtf8Line(filePath, (line) => {
+    if (!line.trim()) return;
     const parsed = extractJsonCandidate(line);
     if (parsed === undefined) {
       if (/(?:"|')?experiment(?:Id|_id)(?:"|')?\s*[:=]/i.test(line)) unparsedMentions += 1;
-      continue;
+      return;
     }
     collectExperimentIds(parsed, ids);
-  }
+  });
   return { ids, unparsedMentions };
 }
 
@@ -808,7 +853,19 @@ function evidenceOutputHash(manifest) {
 }
 
 function sha256File(filePath) {
-  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+  const hash = crypto.createHash("sha256");
+  const descriptor = fs.openSync(filePath, "r");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    for (;;) {
+      const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  return hash.digest("hex");
 }
 
 function failureReport(code, message) {
@@ -958,8 +1015,13 @@ function sanitizeSummaryValue(value) {
 function countSecrets(value) {
   let count = 0;
   walk(value, (key, entry) => {
-    if (SECRET_KEY.test(key)) count += 1;
-    if (typeof entry === "string" && SECRET_VALUE.test(entry)) count += 1;
+    if (isSensitiveFieldName(key)) count += 1;
+    if (
+      typeof entry === "string"
+      && (SECRET_VALUE.test(entry) || SENSITIVE_URL_VALUE.test(entry))
+    ) {
+      count += 1;
+    }
   });
   return count;
 }
@@ -967,10 +1029,54 @@ function countSecrets(value) {
 function countSecretsInText(text) {
   let count = 0;
   for (const line of String(text).split(/\r?\n/)) {
-    if (SECRET_KEY.test(line)) count += 1;
-    if (SECRET_VALUE.test(line)) count += 1;
+    count += countSecretsInLine(line);
   }
   return count;
+}
+
+function countSecretsInFile(filePath) {
+  let count = 0;
+  forEachUtf8Line(filePath, (line) => {
+    count += countSecretsInLine(line);
+  });
+  return count;
+}
+
+function countSecretsInLine(line) {
+  try {
+    return countSecrets(JSON.parse(line));
+  } catch {
+    let count = 0;
+    if (SENSITIVE_ASSIGNMENT.test(line)) count += 1;
+    if (SECRET_VALUE.test(line) || SENSITIVE_URL_VALUE.test(line)) count += 1;
+    return count;
+  }
+}
+
+function isSensitiveFieldName(key) {
+  const normalized = String(key).replace(/[^a-z0-9]/giu, "").toLowerCase();
+  return SENSITIVE_FIELD_NAMES.has(normalized)
+    || [...SENSITIVE_FIELD_NAMES].some((suffix) => normalized.endsWith(suffix));
+}
+
+function forEachUtf8Line(filePath, visitor) {
+  const descriptor = fs.openSync(filePath, "r");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  const decoder = new StringDecoder("utf8");
+  let carry = "";
+  try {
+    for (;;) {
+      const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      const lines = `${carry}${decoder.write(buffer.subarray(0, bytesRead))}`.split("\n");
+      carry = lines.pop() ?? "";
+      for (const rawLine of lines) visitor(rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine);
+    }
+    const finalLine = `${carry}${decoder.end()}`;
+    if (finalLine.length > 0) visitor(finalLine.endsWith("\r") ? finalLine.slice(0, -1) : finalLine);
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 function walk(value, visitor, parentKey = "") {

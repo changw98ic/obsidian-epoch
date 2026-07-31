@@ -29,7 +29,7 @@ test("adjudicateRun ignores client-provided score", () => {
   assert.equal(result.trustedClientScore, false);
   assert.ok(result.score < 60);
   assert.equal(result.claimSlots, 0);
-  assert.equal(result.nextAction, "repair");
+  assert.equal(result.disposition, "repair");
 });
 
 test("adjudicateRun does not score client-declared candidate claim quantity", () => {
@@ -88,7 +88,7 @@ test("adjudicateRun rewards complete, evidenced demo reports without world impac
   assert.equal(result.worldImpact, "private_demo");
   assert.ok(result.score >= 70);
   assert.equal(result.claimSlots, 2);
-  assert.equal(result.nextAction, "eligible_for_review");
+  assert.equal(result.disposition, "eligible_for_review");
 });
 
 test("adjudicateRun requires high-risk structure before scoring high-risk reports", () => {
@@ -127,10 +127,10 @@ test("adjudicateRun requires high-risk structure before scoring high-risk report
       : event),
   });
 
-  assert.equal(ornate.nextAction, "repair");
+  assert.equal(ornate.disposition, "repair");
   assert.equal(ornate.claimSlots, 0);
   assert.match(ornate.reasons.join(","), /high_risk_structure_missing/);
-  assert.equal(structured.nextAction, "eligible_for_review");
+  assert.equal(structured.disposition, "eligible_for_review");
   assert.equal(structured.claimSlots, 1);
 });
 

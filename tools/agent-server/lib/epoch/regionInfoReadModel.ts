@@ -79,13 +79,13 @@ import {
   regionFactionPressureView,
   regionFrontlinesView,
   regionRaidHeatView,
-  regionRaidTargetsView,
+  regionEligibleRaidTargetsView,
   retaliationsView,
   tracesView,
   type EpochRegionFactionPressure,
   type EpochRegionFrontline,
   type EpochRegionRaidHeat,
-  type EpochRegionRaidTarget,
+  type EpochRegionEligibleRaidTarget,
 } from "./regionConflictReadModel.ts";
 import { regionLeaderboardView, type EpochRegionLeaderboardEntry } from "./regionLeaderboardReadModel.ts";
 import { regionMediaAsset, type EpochRegionMedia } from "./regionMediaReadModel.ts";
@@ -130,7 +130,7 @@ export interface EpochRegionInfo {
   readonly traces: readonly EpochConflictTrace[];
   readonly retaliations: readonly EpochRetaliationOpportunity[];
   readonly raidHeat: EpochRegionRaidHeat;
-  readonly raidTargets: readonly EpochRegionRaidTarget[];
+  readonly eligibleRaidTargets: readonly EpochRegionEligibleRaidTarget[];
   readonly factionPressure: readonly EpochRegionFactionPressure[];
   readonly frontlines: readonly EpochRegionFrontline[];
   readonly diplomacy: readonly EpochDiplomacyRecord[];
@@ -239,7 +239,7 @@ export function regionInfoView(
     traces: tracesView(projection, { regionId, limit: Number(input.traceLimit || 20) }),
     retaliations: retaliationsView(projection, { regionId, status: typeof input.retaliationStatus === "string" ? input.retaliationStatus : undefined }),
     raidHeat: regionRaidHeatView(projection, { regionId }),
-    raidTargets: regionRaidTargetsView(projection, {
+    eligibleRaidTargets: regionEligibleRaidTargetsView(projection, {
       regionId,
       attackerAgentId: typeof input.raidTargetAttackerAgentId === "string" ? input.raidTargetAttackerAgentId : undefined,
       limit: Number(input.raidTargetLimit || 8),

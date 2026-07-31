@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { migratePublicReleaseEvidenceSchema } from "./publicReleaseReadiness.ts";
 import { type EpochEvent } from "./epoch/events.ts";
 import {
   createEpochEventBatchRecord,
@@ -245,6 +246,25 @@ function initializeSqliteSchema(db: DatabaseSync) {
       throw error;
     }
   }
+  const v4 = db.prepare("SELECT version FROM schema_migrations WHERE version = 4").get();
+  if (!v4) {
+    let migrationStarted = false;
+    try {
+      db.exec("BEGIN IMMEDIATE");
+      migrationStarted = true;
+      const concurrentlyApplied = db.prepare("SELECT version FROM schema_migrations WHERE version = 4").get();
+      if (!concurrentlyApplied) {
+        appendProvenLegacyMirrorPromotionSnapshots(db);
+        db.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)").run(4, nowIso());
+      }
+      db.exec("COMMIT");
+      migrationStarted = false;
+    } catch (error) {
+      if (migrationStarted) db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+  migratePublicReleaseEvidenceSchema(db);
 }
 
 export function createAgentSqlitePersistenceStores(dbPath: string): AgentSqlitePersistenceStores {
@@ -580,6 +600,187 @@ function indexKnownRecord(
       recordId,
       JSON.stringify(record),
     );
+  }
+}
+
+interface IndexedLegacyJourneyEvent {
+  readonly event_id: string;
+  readonly journey_id: string;
+  readonly event_type: string;
+  readonly agent_id: string;
+  readonly explorer_id: string;
+  readonly occurred_at: string;
+  readonly journey_version: number | null;
+  readonly event_json: string;
+}
+
+interface IndexedLegacyEpochEvent {
+  readonly event_id: string;
+  readonly created_at: string;
+  readonly event_json: string;
+}
+
+function nonBlankString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function validTimestamp(value: unknown) {
+  const timestamp = nonBlankString(value);
+  return timestamp && Number.isFinite(Date.parse(timestamp)) ? timestamp : undefined;
+}
+
+function parseSqliteJsonRecord(value: string): JsonRecord | undefined {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function mirrorPromotionMappings(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const entryIds = new Set<string>();
+  const promotions: { entryId: string; canonicalEventId: string }[] = [];
+  for (const valueEntry of value) {
+    const entry = recordValue(valueEntry);
+    const entryId = nonBlankString(entry.entryId);
+    const canonicalEventId = nonBlankString(entry.canonicalEventId);
+    if (!entryId || !canonicalEventId || entryIds.has(entryId)) return undefined;
+    entryIds.add(entryId);
+    promotions.push({ entryId, canonicalEventId });
+  }
+  return promotions;
+}
+
+function matchesIndexedJourneySnapshot(
+  row: IndexedLegacyJourneyEvent,
+  event: JsonRecord,
+  journey: JsonRecord,
+  version: number,
+) {
+  return nonBlankString(event.eventId) === row.event_id
+    && nonBlankString(event.eventType) === row.event_type
+    && nonBlankString(event.journeyId) === row.journey_id
+    && nonBlankString(event.agentId) === row.agent_id
+    && nonBlankString(event.explorerId) === row.explorer_id
+    && nonBlankString(event.occurredAt) === row.occurred_at
+    && nonBlankString(journey.journeyId) === row.journey_id
+    && nonBlankString(journey.agentId) === row.agent_id
+    && nonBlankString(journey.explorerId) === row.explorer_id
+    && numberValue(journey.version) === version;
+}
+
+/**
+ * PR2 persistence briefly advanced the journey version while promoting the
+ * mirror ledger, but did not append that snapshot event. The subsequent world
+ * commit is already durable, so this narrowly reconstructs only the omitted
+ * transition when one canonical solidification record proves every promotion.
+ */
+function appendProvenLegacyMirrorPromotionSnapshots(db: DatabaseSync) {
+  const journeyRows = db.prepare(`
+    SELECT
+      event_id, journey_id, event_type, agent_id, explorer_id, occurred_at,
+      journey_version, event_json
+    FROM journey_events
+    WHERE journey_version IS NOT NULL
+    ORDER BY journey_id ASC, journey_version ASC, rowid ASC
+  `).all() as unknown as IndexedLegacyJourneyEvent[];
+  const epochRows = db.prepare(`
+    SELECT event_id, created_at, event_json
+    FROM epoch_events
+    WHERE event_type = 'journey_world_solidified'
+    ORDER BY record_id ASC, rowid ASC
+  `).all() as unknown as IndexedLegacyEpochEvent[];
+  const versionsByJourney = new Map<string, Map<number, IndexedLegacyJourneyEvent[]>>();
+  for (const row of journeyRows) {
+    const version = numberValue(row.journey_version);
+    if (version === undefined) continue;
+    const versions = versionsByJourney.get(row.journey_id) || new Map<number, IndexedLegacyJourneyEvent[]>();
+    const events = versions.get(version) || [];
+    events.push(row);
+    versions.set(version, events);
+    versionsByJourney.set(row.journey_id, versions);
+  }
+  const solidificationsByJourney = new Map<string, IndexedLegacyEpochEvent[]>();
+  for (const row of epochRows) {
+    const event = parseSqliteJsonRecord(row.event_json);
+    const payload = event ? recordValue(event.payload) : {};
+    const journeyId = nonBlankString(payload.journeyId);
+    if (!journeyId) continue;
+    const markers = solidificationsByJourney.get(journeyId) || [];
+    markers.push(row);
+    solidificationsByJourney.set(journeyId, markers);
+  }
+
+  const repairs: JsonRecord[] = [];
+  for (const [journeyId, versions] of versionsByJourney) {
+    for (const [commitVersion, commitEvents] of versions) {
+      if (commitVersion < 3 || commitEvents.length !== 1) continue;
+      const commitRow = commitEvents[0];
+      if (!commitRow || commitRow.event_type !== "journey_world_commit_recorded") continue;
+      if ((versions.get(commitVersion - 1) || []).length !== 0) continue;
+      const priorEvents = versions.get(commitVersion - 2) || [];
+      if (priorEvents.length !== 1 || priorEvents[0]?.event_type !== "journey_status_changed") continue;
+
+      const priorRow = priorEvents[0];
+      const priorEvent = parseSqliteJsonRecord(priorRow.event_json);
+      const commitEvent = parseSqliteJsonRecord(commitRow.event_json);
+      if (!priorEvent || !commitEvent) continue;
+      const priorJourney = recordValue(priorEvent.journey);
+      const commitJourney = recordValue(commitEvent.journey);
+      if (!matchesIndexedJourneySnapshot(priorRow, priorEvent, priorJourney, commitVersion - 2)
+        || !matchesIndexedJourneySnapshot(commitRow, commitEvent, commitJourney, commitVersion)) continue;
+      if (priorJourney.status !== "settled" || commitJourney.status !== "settled"
+        || Object.hasOwn(priorJourney, "worldCommit")) continue;
+      const worldCommit = recordValue(commitJourney.worldCommit);
+      const settlementId = nonBlankString(worldCommit.settlementId);
+      if (worldCommit.status !== "solidified" || !settlementId) continue;
+
+      const markers = solidificationsByJourney.get(journeyId) || [];
+      if (markers.length !== 1) continue;
+      const markerRow = markers[0];
+      if (!markerRow) continue;
+      const marker = parseSqliteJsonRecord(markerRow.event_json);
+      const payload = marker ? recordValue(marker.payload) : {};
+      const occurredAt = validTimestamp(markerRow.created_at);
+      const promotions = mirrorPromotionMappings(payload.mirrorLedgerPromotions);
+      if (marker?.eventType !== "journey_world_solidified"
+        || nonBlankString(payload.journeyId) !== journeyId
+        || nonBlankString(payload.settlementId) !== settlementId
+        || !occurredAt
+        || !promotions) continue;
+
+      const eventId = `migration:journey-mirror-promotion:${journeyId}:v${commitVersion - 1}`;
+      const existing = db.prepare("SELECT 1 FROM journey_events WHERE event_id = ?").get(eventId);
+      if (existing) continue;
+      repairs.push({
+        type: "journey_event",
+        event: {
+          eventId,
+          eventType: "journey_mirror_consequence_promoted",
+          journeyId,
+          agentId: priorRow.agent_id,
+          explorerId: priorRow.explorer_id,
+          occurredAt,
+          journey: { ...priorJourney, version: commitVersion - 1 },
+          mirrorConsequencePromotions: promotions,
+        },
+      });
+    }
+  }
+
+  if (repairs.length === 0) return;
+  const nextLineRow = db.prepare(`
+    SELECT COALESCE(MAX(line_number), 0) + 1 AS nextLine
+    FROM jsonl_records
+    WHERE file_name = 'journey-events.jsonl'
+  `).get() as { nextLine: number };
+  let nextLine = Number(nextLineRow.nextLine);
+  for (const repair of repairs) {
+    const recordId = insertJsonlRecord(db, "journey-events.jsonl", nextLine, repair);
+    indexKnownRecord(db, recordId, repair, true);
+    nextLine += 1;
   }
 }
 

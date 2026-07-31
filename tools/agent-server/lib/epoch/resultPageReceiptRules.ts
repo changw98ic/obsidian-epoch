@@ -469,7 +469,7 @@ export function resultPageReceipt(
   projection: EpochProjection,
   payload: Omit<EpochResultPagePayload, "receipt">,
   journeyRunReceipt?: JourneyRunReceipt,
-): EpochResultPageReceipt {
+): EpochResultPageReceiptWithPhase6 {
   const focus = resultPageReceiptFocus(payload);
   const canonicalEvents = resultPageReceiptEvents(projection, payload, focus);
   const mode = resultReceiptMode(payload, canonicalEvents);
@@ -495,8 +495,9 @@ export function resultPageReceipt(
     ...payload.progress.latestEvents.map((event) => event.eventId),
     ...canonicalEvents.map((event) => event.eventId),
   ]);
+  if (!journeyRunReceipt) return receipt;
   return {
     ...receipt,
     phase6: buildPhase6ResultPageSidecar(journeyRunReceipt, receipt, knownEventIds),
-  } as EpochResultPageReceiptWithPhase6;
+  };
 }

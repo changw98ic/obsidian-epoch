@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { createSequentialEpochIdFactory } from "../lib/epoch/protocol.ts";
 import { createAgentHttpServer } from "../lib/httpServer.ts";
-import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const graphAppRoot = resolve(repoRoot, "tools/graph-react-app");
@@ -51,7 +51,7 @@ function parseLastJsonLine(stdout: string) {
 
 function assertConsoleSmoke(result: Record<string, any>) {
   assert.equal(result.consolePageVerified, true);
-  assert.equal(result.consolePageUrl, "/epoch/console");
+  assert.equal(result.consolePageUrl, "/epoch/web-play");
   assert.equal(result.consolePageStatus, 200);
   if (result.consoleExternalMediaUrl) {
     assert.equal(result.consoleAssetVerified, false);
@@ -112,6 +112,20 @@ function assertWorldOverviewToolSmoke(result: Record<string, any>) {
   assert.match(result.resultPublicSummary, /已整理为可分享摘要/);
   assert.equal(result.worldOverviewToolVerified, true);
   assert.equal(result.worldOverviewPublicPage, "/epoch/world");
+  assert.match(result.publicSurfaceVersion, /^sha256:[a-f0-9]{64}$/);
+  assert.equal(result.publicSurfaceManifestVerified, true);
+  assert.equal(result.publicSurfacePackageVerified, true);
+  assert.equal(result.installPageVerified, true);
+  assert.equal(result.installPageStatus, 200);
+  assert.equal(result.resultPagePublicSurfaceVerified, true);
+  assert.equal(result.webBridgeResultPagePublicSurfaceVerified, true);
+  assert.equal(result.agentDecisionFactsVerified, true);
+  assert.equal(result.economyFactsVerified, true);
+  assert.equal(result.economyPurchaseVerified, true);
+  assert.equal(result.economyPurchaseActionId, "shop:pipewarden-valve-kit");
+  assert.equal(result.economyPurchaseTool, "obsidian_epoch.purchase_shop_offer");
+  assert.equal(result.economyPurchaseEquipmentFactorDelta, 1);
+  assert.equal(result.economyPostPurchaseAvailability, "purchase_limit_reached");
 }
 
 function assertWebBridgeAuditSmoke(result: Record<string, any>) {
@@ -338,9 +352,12 @@ test("npm install smoke command can target an existing AGENT_WORLD_SERVER", asyn
     assert.doesNotMatch(resultPageHtml, /<p class="public-safe-summary">[^<]*Install Smoke Runner/);
     assert.doesNotMatch(resultPageHtml, /<em>Agent<\/em>/);
     assert.doesNotMatch(resultPageHtml, /<em>Explorer<\/em>/);
-    assert.match(resultPageHtml, /接下来去哪/);
-    assert.match(resultPageHtml, /href="\/epoch\/console"/);
-    assert.match(resultPageHtml, /恢复身份后可继续/);
+    assert.match(resultPageHtml, /相关页面/);
+    assert.match(resultPageHtml, /MCP 观察/);
+    assert.match(resultPageHtml, /依据自己的计划决定行动/);
+    assert.match(resultPageHtml, /href="\/epoch\/web-play"/);
+    assert.doesNotMatch(resultPageHtml, /href="\/epoch\/console"/);
+    assert.doesNotMatch(resultPageHtml, /让 Agent 恢复身份后处理/);
     assert.doesNotMatch(resultPageHtml, /需要身份授权/);
     assert.match(resultPageHtml, /历程时间线/);
     assert.match(resultPageHtml, /完成行动/);

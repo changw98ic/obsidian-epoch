@@ -15,7 +15,7 @@ const DECIMAL_INTEGER = /^-?(0|[1-9]\d*)$/;
 
 function usage() {
   return [
-    "Usage: node tools/agent-server/phase6-economy-gate.mjs --expected-runs <count> [--input <repo-path>]",
+    "Usage: node --import tsx ../agent-server/phase6-economy-gate.ts --expected-runs <count> [--input <repo-path>]",
     "",
     "Reads RunReceipt economy audit JSON/JSONL from --input or stdin and prints a machine JSON summary.",
     "Exits non-zero when run count mismatches, audit.ok is false, or any economy conservation gate fails.",

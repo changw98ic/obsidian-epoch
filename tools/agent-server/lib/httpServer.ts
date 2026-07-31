@@ -1,5 +1,6 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
-import { createAgentWorldMcpRuntime, createAgentWorldRuntime } from "./mcpTools.ts";
+import { createAgentWorldMcpRuntime } from "./mcpTools.ts";
+import { createAgentWorldRuntime } from "./mcpRuntimeCore.ts";
 import { handleEpochAgentProfileRoutes } from "./http/agentProfileRoutes.ts";
 import { handleEpochAuditRoutes } from "./http/auditRoutes.ts";
 import { handleEpochAssetRoutes } from "./http/assetRoutes.ts";
@@ -38,6 +39,10 @@ import { handleEpochSeasonRoutes } from "./http/seasonRoutes.ts";
 import { handleEpochSocietyRoutes } from "./http/societyRoutes.ts";
 import { handleEpochWorldRoutes } from "./http/worldRoutes.ts";
 import { type RecoveryManifest, unavailableRecoveryManifest } from "./recovery.ts";
+import {
+  evaluatePublicReleaseReadiness,
+  type PublicReleaseEvidenceStore,
+} from "./publicReleaseReadiness.ts";
 import { appendJsonl } from "./store.ts";
 import { redactApiKeys } from "./safety.ts";
 import type { EpochMaintenanceSchedulerStatus } from "./maintenance.ts";
@@ -96,6 +101,7 @@ type HttpServerOptions = {
   playerMcpAccessTokens?: PlayerMcpAccessTokenStore;
   playerMcpTokenTtlMs?: number;
   publicRegistrationProtection?: PublicRegistrationProtectionConfig;
+  publicReleaseEvidenceStore?: PublicReleaseEvidenceStore;
   allowLegacyHttpIdentityRegistration?: boolean;
   worldMemorySearch?: (input: AnyRecord) => Promise<unknown>;
   worldKnowledgeSearch?: (input: AnyRecord) => Promise<unknown>;
@@ -159,13 +165,22 @@ function worldMemoryHealth(input: AgentHealthOptions["worldMemory"] | undefined)
   const value = input.status();
   const unrecoveredError = Boolean(value.lastErrorAt
     && (!value.lastSuccessAt || value.lastErrorAt >= value.lastSuccessAt));
+  const hasUnfinishedVectors = value.pending > 0
+    || value.processing > 0
+    || value.knowledge.pending > 0
+    || value.knowledge.processing > 0;
+  const hasFailedVectors = value.failed > 0 || value.knowledge.failed > 0;
   return {
     ...value,
     status: value.semanticEnabled
-      ? unrecoveredError
+      ? unrecoveredError || hasFailedVectors
         ? "degraded"
         : value.inFlight
           ? "running"
+          : hasUnfinishedVectors
+            ? "indexing"
+            : !value.embeddingIdentityVerifiedAt
+              ? "initializing"
           : "ok"
       : "lexical_only",
   };
@@ -764,6 +779,7 @@ export function createAgentHttpServer({
   playerMcpAccessTokens,
   playerMcpTokenTtlMs = DEFAULT_PLAYER_MCP_TOKEN_TTL_MS,
   publicRegistrationProtection = PERMISSIVE_PUBLIC_REGISTRATION_PROTECTION,
+  publicReleaseEvidenceStore,
   allowLegacyHttpIdentityRegistration = false,
   worldMemorySearch,
   worldKnowledgeSearch,
@@ -788,6 +804,32 @@ export function createAgentHttpServer({
     storeHealth(health?.store, persistJsonl),
     health?.recoveryCache,
   );
+  const publicReleaseReadiness = async (packageInfo: {
+    readonly sha256: string;
+    readonly releaseKeyId: string;
+    readonly signingTrust: string;
+  }) => {
+    let evidence;
+    try {
+      evidence = publicReleaseEvidenceStore?.read();
+    } catch {
+      evidence = undefined;
+    }
+    return evaluatePublicReleaseReadiness({
+      health: await serverHealth(
+        runtime,
+        health,
+        persistJsonl,
+        persistenceGuard,
+        publicRegistrationProtection,
+        playerMcpAccessTokens,
+        recoveryCache,
+        mcpHttpSessions.metricsSnapshot(),
+      ),
+      package: packageInfo,
+      evidence,
+    });
+  };
 
   async function handle(request: IncomingMessage, response: ServerResponse) {
     const url = request.url || "/";
@@ -838,6 +880,8 @@ export function createAgentHttpServer({
       mcpMutationCoordinator: mutationCoordinator,
       mcpBearerToken,
       playerMcpAccessTokens,
+      playerMcpTokenTtlMs,
+      publicRegistrationProtection,
       publicServerBase: publicServerBase(request, canonicalPublicServerBase),
       persistMcpJsonRpcPayload: (requestBody, jsonRpcResult) =>
         persistMcpJsonRpcPayload(persistJsonl, persistEpochResult, persistenceGuard, runtime, requestBody, jsonRpcResult),
@@ -968,6 +1012,7 @@ export function createAgentHttpServer({
       sendJson,
       sendHtml,
       queryParams,
+      publicReleaseEvidenceStore,
     })) {
       return;
     }
@@ -1092,6 +1137,7 @@ export function createAgentHttpServer({
       sendBinary,
       queryParams,
       publicServerBase: publicServerBase(request, canonicalPublicServerBase),
+      publicReleaseReadiness,
     })) {
       return;
     }

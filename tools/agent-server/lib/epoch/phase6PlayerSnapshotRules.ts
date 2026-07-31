@@ -10,14 +10,51 @@ import {
   type ProgressionAttributeId,
 } from "./progressionRules.ts";
 
-export const PHASE6_PLAYER_SNAPSHOT_RULESET_VERSION = "phase6-player-authoritative-snapshot.v1" as const;
-export const PHASE6_PLAYER_SNAPSHOT_SCHEMA_VERSION = "phase6-player-snapshot.v1" as const;
+export const PHASE6_PLAYER_SNAPSHOT_RULESET_VERSION = "phase6-player-authoritative-snapshot.v2" as const;
+export const PHASE6_PLAYER_SNAPSHOT_SCHEMA_VERSION = "phase6-player-snapshot.v2" as const;
 
 export type Phase6PlayerSnapshotPhase = "before" | "after";
 export type Phase6PlayerSnapshotNoChangeReason =
   | "hash_equal"
   | "canonical_json_equal"
   | "no_paths_changed";
+
+export const PHASE6_PLAYER_PANEL_DOMAIN_KEYS = [
+  "identity",
+  "attribute.strength",
+  "attribute.agility",
+  "attribute.physique",
+  "attribute.intellect",
+  "attribute.willpower",
+  "attribute.spirituality",
+  "readiness.adaptation",
+  "readiness.control",
+  "readiness.corruptionResistance",
+  "readiness.mobility",
+  "readiness.offense",
+  "readiness.perception",
+  "readiness.protection",
+  "readiness.reserve",
+  "readiness.sustain",
+  "readiness.synergy",
+  "skills",
+  "talents",
+  "methods",
+  "cultivation",
+  "injuries",
+  "warehouse",
+  "currency",
+  "materials",
+  "equipment",
+  "carrySlots",
+  "insurance",
+  "production",
+  "rag",
+  "worldCursor",
+] as const;
+
+export type Phase6PlayerPanelDomainKey = typeof PHASE6_PLAYER_PANEL_DOMAIN_KEYS[number];
+export type Phase6PlayerPanelNoChangeReasons = Readonly<Partial<Record<Phase6PlayerPanelDomainKey, string>>>;
 
 export interface Phase6WorldCursorSnapshot {
   readonly eventId?: string;
@@ -46,6 +83,7 @@ export interface Phase6PlayerSnapshotEnvelope {
   readonly progression: {
     readonly skills: CausalCanonicalJsonValue;
     readonly talents: CausalCanonicalJsonValue;
+    readonly methods: CausalCanonicalJsonValue;
     readonly cultivation: CausalCanonicalJsonValue;
     readonly practice: CausalCanonicalJsonValue;
     readonly injuries: CausalCanonicalJsonValue;
@@ -243,6 +281,7 @@ function extractProgression(input: Phase6PlayerSnapshotInput): Phase6PlayerSnaps
       advancement: sortedJsonArray(requiredArray(skillTree.advancement, "$.player.progression.skillTree.advancement"), "$.skills.advancement", (item) => optionalString(item.methodId) || jsonSortKey(item)),
     }, "$.progression.skills"),
     talents: sortedJsonArray(requiredArray(playerProgression.talents, "$.player.progression.talents"), "$.progression.talents", (item) => optionalString(item.talentId) || jsonSortKey(item)),
+    methods: sortedJsonArray(requiredArray(skillTree.advancement, "$.player.progression.skillTree.advancement"), "$.progression.methods", (item) => optionalString(item.methodId) || jsonSortKey(item)),
     cultivation: asJson(definedRecord({
       powerSystemId: playerProgression.powerSystemId,
       lineageId: playerProgression.lineageId,
@@ -276,7 +315,10 @@ function extractEconomy(input: Phase6PlayerSnapshotInput): Phase6PlayerSnapshotE
   return {
     warehouse: asJson(definedRecord({
       accounts: sortedJsonArray(requiredArray(wallet.accounts, "$.player.wallet.accounts"), "$.economy.accounts"),
-      resources: sortedJsonArray(requiredArray(wallet.resources, "$.player.wallet.resources"), "$.economy.resources", resourceRowKey),
+      resources: sortedJsonArray([
+        ...requiredArray(wallet.resources, "$.player.wallet.resources"),
+        ...requiredArray(wallet.materials, "$.player.wallet.materials"),
+      ], "$.economy.resources", resourceRowKey),
       uniqueItems: sortedJsonArray(requiredArray(wallet.uniqueItems, "$.player.wallet.uniqueItems"), "$.economy.uniqueItems", itemKey),
       inventory,
     }), "$.economy.warehouse"),
@@ -392,6 +434,86 @@ export function buildPhase6PlayerSnapshotDocument(input: Phase6PlayerSnapshotInp
     canonicalJson,
     hash: causalCanonicalJsonHash(snapshot),
   };
+}
+
+function panelReasonSnapshot(value: unknown): Phase6PlayerSnapshotEnvelope | undefined {
+  if (!isRecord(value)
+    || value.schemaVersion !== PHASE6_PLAYER_SNAPSHOT_SCHEMA_VERSION
+    || value.rulesetVersion !== PHASE6_PLAYER_SNAPSHOT_RULESET_VERSION
+    || !isRecord(value.attributes)
+    || !isRecord(value.readiness)
+    || !isRecord(value.progression)
+    || !isRecord(value.economy)) return undefined;
+  const snapshot = value as unknown as Phase6PlayerSnapshotEnvelope;
+  const values = panelDomainValues(snapshot);
+  return PHASE6_PLAYER_PANEL_DOMAIN_KEYS.every((key) => values[key] !== undefined) ? snapshot : undefined;
+}
+
+function panelDomainValues(snapshot: Phase6PlayerSnapshotEnvelope): Readonly<Record<Phase6PlayerPanelDomainKey, CausalCanonicalJsonValue>> {
+  return {
+    identity: snapshot.identity,
+    "attribute.strength": snapshot.attributes.strength,
+    "attribute.agility": snapshot.attributes.agility,
+    "attribute.physique": snapshot.attributes.physique,
+    "attribute.intellect": snapshot.attributes.intellect,
+    "attribute.willpower": snapshot.attributes.willpower,
+    "attribute.spirituality": snapshot.attributes.spirituality,
+    "readiness.adaptation": snapshot.readiness.adaptation,
+    "readiness.control": snapshot.readiness.control,
+    "readiness.corruptionResistance": snapshot.readiness.corruptionResistance,
+    "readiness.mobility": snapshot.readiness.mobility,
+    "readiness.offense": snapshot.readiness.offense,
+    "readiness.perception": snapshot.readiness.perception,
+    "readiness.protection": snapshot.readiness.protection,
+    "readiness.reserve": snapshot.readiness.reserve,
+    "readiness.sustain": snapshot.readiness.sustain,
+    "readiness.synergy": snapshot.readiness.synergy,
+    skills: snapshot.progression.skills,
+    talents: snapshot.progression.talents,
+    methods: snapshot.progression.methods,
+    cultivation: snapshot.progression.cultivation,
+    injuries: snapshot.progression.injuries,
+    warehouse: snapshot.economy.warehouse,
+    currency: snapshot.economy.currencies,
+    materials: snapshot.economy.materials,
+    equipment: snapshot.economy.equipment,
+    carrySlots: snapshot.economy.carry,
+    insurance: snapshot.economy.insurance,
+    production: snapshot.economy.production,
+    rag: snapshot.ragPanel,
+    worldCursor: snapshot.worldCursor as unknown as CausalCanonicalJsonValue,
+  };
+}
+
+function panelDomainNoChangeReason(domain: Phase6PlayerPanelDomainKey): string {
+  if (domain === "identity") return "no_canonical_identity_change";
+  if (domain.startsWith("attribute.")) return "no_canonical_attribute_growth_event";
+  if (domain.startsWith("readiness.")) return "no_canonical_readiness_change";
+  if (["skills", "talents", "methods", "cultivation"].includes(domain)) return "no_eligible_progression_change";
+  if (domain === "injuries") return "no_injury_state_change";
+  if (["warehouse", "currency", "materials", "equipment", "carrySlots", "insurance", "production"].includes(domain)) {
+    return "no_canonical_economy_change";
+  }
+  if (domain === "rag") return "no_persistent_rag_change";
+  return "no_world_cursor_change";
+}
+
+export function phase6PlayerPanelNoChangeReasons(
+  before: unknown,
+  after: unknown,
+): Phase6PlayerPanelNoChangeReasons | undefined {
+  const beforeSnapshot = panelReasonSnapshot(before);
+  const afterSnapshot = panelReasonSnapshot(after);
+  if (!beforeSnapshot || !afterSnapshot) return undefined;
+  const beforeValues = panelDomainValues(beforeSnapshot);
+  const afterValues = panelDomainValues(afterSnapshot);
+  const reasons: Partial<Record<Phase6PlayerPanelDomainKey, string>> = {};
+  for (const domain of PHASE6_PLAYER_PANEL_DOMAIN_KEYS) {
+    if (causalCanonicalJson(beforeValues[domain]) === causalCanonicalJson(afterValues[domain])) {
+      reasons[domain] = panelDomainNoChangeReason(domain);
+    }
+  }
+  return reasons;
 }
 
 export function diffPhase6PlayerSnapshots(

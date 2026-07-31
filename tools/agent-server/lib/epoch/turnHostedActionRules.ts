@@ -548,6 +548,7 @@ export interface TurnCardLifetimeDeltaEventRequest {
   readonly delta: number;
   readonly reason: string;
   readonly finalTitle: string;
+  readonly sourceEventId?: string;
 }
 
 export interface PlanTurnCardResolutionEventsInput extends TurnResolvedPayloadInput {
@@ -577,6 +578,7 @@ export function planTurnCardResolutionEvents(input: PlanTurnCardResolutionEvents
       delta: input.lifetimeDelta,
       reason: "turn_action_risk",
       finalTitle: "高风险回合定档身份",
+      sourceEventId: resolved.eventId,
     }));
   }
   return nextEvents;
@@ -726,6 +728,7 @@ export interface HostedActionLifetimeDeltaEventRequest {
   readonly delta: number;
   readonly reason: string;
   readonly finalTitle: string;
+  readonly sourceEventId?: string;
 }
 
 export interface PlanHostedActionSubmissionEventsInput extends Omit<HostedActionRecordedPayloadInput, "attestationId"> {
@@ -788,6 +791,7 @@ export function planHostedActionSubmissionEvents(input: PlanHostedActionSubmissi
       delta: input.lifetimeDelta,
       reason: "hosted_action_risk",
       finalTitle: "托管行动定档身份",
+      sourceEventId: actionRecorded.eventId,
     }));
   }
   return nextEvents;

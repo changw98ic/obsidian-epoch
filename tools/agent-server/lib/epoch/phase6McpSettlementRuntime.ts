@@ -2,9 +2,9 @@ import type {
   Phase6CompleteRunWithReceiptRuntimeInput,
   Phase6ExperimentRuntime,
   Phase6ResultReceipt,
-  Phase6ResultReceiptV3,
 } from "./phase6ExperimentRuntime.ts";
 import { PHASE6_MATRIX_VERSION } from "./phase6ScenarioMatrixRules.ts";
+import { JOURNEY_RUN_RECEIPT_VERSION } from "./journeyRunReceiptRules.ts";
 import type {
   Phase6JourneyContextRuntimeCaptureStartResult,
   Phase6JourneyContextRuntimeFinalizeResult,
@@ -529,12 +529,12 @@ function completeCommandInput(
 function resultReceiptFromFinalize(
   finalized: Phase6JourneyContextRuntimeFinalizeResult & { readonly ok: true },
   binding: Phase6McpSettlementRunBinding,
-): Phase6ResultReceiptV3 {
+): Phase6ResultReceipt {
   const receiptId = finalized.assembly.assembly.artifacts.receipt.receiptId;
   assertText(receiptId, "receiptId");
   return {
     receiptId,
-    receiptVersion: "v3",
+    receiptVersion: JOURNEY_RUN_RECEIPT_VERSION,
     experimentId: binding.experimentId,
     runIndex: binding.runIndex,
     identity: binding.identity,
@@ -654,7 +654,7 @@ function stableRunId(experimentId: string, runIndex: Phase6RunIndex): string {
 function stableRunReceipt(experimentId: string, runIndex: Phase6RunIndex): Phase6RunReceiptRef {
   return {
     receiptId: `${stableRunId(experimentId, runIndex)}:receipt:v1`,
-    receiptVersion: "phase6-experiment-receipt.v3",
+    receiptVersion: JOURNEY_RUN_RECEIPT_VERSION,
   };
 }
 

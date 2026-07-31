@@ -28,6 +28,14 @@ test("Phase 6 progression ignores practice event history and cursor metadata", (
     attributes: { strength: 10, agility: 11 },
     progression: {
       ...canonicalProgression,
+      cultivation: {
+        ...canonicalProgression.cultivation,
+        resources: {
+          insight: 99,
+          materials: [{ materialId: "cultivation-core", quantity: 1 }],
+        },
+      },
+      injuries: { status: { injured: true }, injuries: [{ id: "injury_after" }] },
       practice: {
         latestEvents: [{ eventId: "event_after" }],
         cursor: { eventId: "event_after", sequence: 7 },

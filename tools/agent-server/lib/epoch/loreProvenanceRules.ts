@@ -254,7 +254,7 @@ export function loreAuthorityReviewForSourceContributions(
     lowAuthoritySourceEventIds,
     evidenceQuality,
     canHardRefute,
-    recommendedStatus: canHardRefute ? "hard_refutation_allowed" : "review_required",
+    refutationStatus: canHardRefute ? "hard_refutation_allowed" : "review_required",
     ...(recordedAts[0] ? { oldestSourceRecordedAt: recordedAts[0] } : {}),
     ...(recordedAts[recordedAts.length - 1] ? { latestSourceRecordedAt: recordedAts[recordedAts.length - 1] } : {}),
     reason: canHardRefute

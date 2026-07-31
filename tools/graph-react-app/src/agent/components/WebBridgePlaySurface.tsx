@@ -1,125 +1,92 @@
 import type {
-  EpochWebBridgeActionOption,
-  EpochWebBridgeActionResult,
-  EpochWebBridgeTurn,
+  EpochAgentBriefingView,
+  EpochWorldOverviewInfo,
 } from "../../types";
-import { playerChannelClassLabel, playerTrustClassLabel } from "../agentPlayerLabels";
+import type { EpochInstallStatus } from "../api";
 
 interface WebBridgePlaySurfaceProps {
+  readonly agentBriefing: EpochAgentBriefingView | null;
   readonly currentAgentId?: string;
-  readonly hostedMandate: string;
-  readonly hostedVisibleText: string;
-  readonly identityDisabledReason?: string;
-  readonly isBusy: boolean;
-  readonly lastAction: EpochWebBridgeActionResult | null;
-  readonly onCopyPrompt: () => void;
-  readonly onIssueIdentity: () => void;
-  readonly onPublishResult: () => void;
-  readonly onStartTurn: () => void;
-  readonly onSubmitAction: (option: EpochWebBridgeActionOption) => void;
-  readonly regionLabel: string;
-  readonly resultPublishAuthorizationCopy: string;
-  readonly setHostedMandate: (value: string) => void;
-  readonly setHostedVisibleText: (value: string) => void;
-  readonly webBridgeTurn: EpochWebBridgeTurn | null;
+  readonly installStatus: EpochInstallStatus | null;
+  readonly isRefreshing: boolean;
+  readonly lastSyncedAt?: string;
+  readonly onCopyInstruction: (instruction: string) => void;
+  readonly onRefresh: () => void;
+  readonly worldOverview: EpochWorldOverviewInfo | null;
+}
+
+function mcpInstruction(currentAgentId: string | undefined) {
+  if (currentAgentId) {
+    return "请连接黑曜纪元 MCP，读取 obsidian_epoch.agent_briefing；根据身份、资源、区域事件、行动限制和你的游戏计划，自行决定是否调用其他工具。";
+  }
+  return "请连接黑曜纪元 MCP，创建我的身份，再读取 obsidian_epoch.agent_briefing；依据服务器事实自主规划本局。";
 }
 
 export function WebBridgePlaySurface({
+  agentBriefing,
   currentAgentId,
-  hostedMandate,
-  hostedVisibleText,
-  identityDisabledReason,
-  isBusy,
-  lastAction,
-  onCopyPrompt,
-  onIssueIdentity,
-  onPublishResult,
-  onStartTurn,
-  onSubmitAction,
-  regionLabel,
-  resultPublishAuthorizationCopy,
-  setHostedMandate,
-  setHostedVisibleText,
-  webBridgeTurn,
+  installStatus,
+  isRefreshing,
+  lastSyncedAt,
+  onCopyInstruction,
+  onRefresh,
+  worldOverview,
 }: WebBridgePlaySurfaceProps) {
+  const instruction = mcpInstruction(currentAgentId);
+
   return (
     <section className="agent-web-play-surface" aria-labelledby="agent-web-play-title">
       <header className="agent-web-play-head">
         <div>
-          <span>Web LLM Relay</span>
-          <h1 id="agent-web-play-title">网页大模型接力</h1>
+          <span>MCP first</span>
+          <h1 id="agent-web-play-title">MCP 行动观察</h1>
         </div>
         <div className="agent-web-play-status">
-          <span>身份 <b>{currentAgentId ? "已签发" : "待签发"}</b></span>
-          <span>区域 <b>{regionLabel}</b></span>
-          <span>结算 <b>服务器受限</b></span>
+          <span>身份 <b>{currentAgentId ? "已同步到此浏览器" : "由 Agent 对话管理"}</b></span>
+          <span>连接 <b>{installStatus?.ok ? "安装检查通过" : "等待检查"}</b></span>
+          <span>世界 <b>{worldOverview ? "公开世界已读取" : "等待读取"}</b></span>
         </div>
       </header>
 
-      {!currentAgentId ? (
-        <div className="agent-web-play-stage">
-          <span>身份</span>
-          <button type="button" disabled={isBusy || Boolean(identityDisabledReason)} onClick={onIssueIdentity}>签发行动身份</button>
-          {identityDisabledReason ? <small>{identityDisabledReason}</small> : null}
-        </div>
-      ) : null}
+      <p className="agent-web-play-observer-note">
+        网页只用于查看进度、凭证和安装信息，不会创建身份、发起行动、领取奖励或提交结果。
+      </p>
 
-      {currentAgentId && !webBridgeTurn && !lastAction ? (
-        <div className="agent-web-play-stage">
-          <label>
-            <span>本轮委托</span>
-            <input value={hostedMandate} onChange={(event) => setHostedMandate(event.target.value)} />
-          </label>
-          <button type="button" disabled={isBusy || !hostedMandate.trim()} onClick={onStartTurn}>生成接力回合</button>
-        </div>
-      ) : null}
-
-      {webBridgeTurn ? (
-        <div className="agent-web-play-columns">
-          <div className="agent-web-play-stage">
-            <div className="agent-web-play-stage-head">
-              <span>接力提示</span>
-              <b>{playerChannelClassLabel(webBridgeTurn.channelClass)} · {playerTrustClassLabel(webBridgeTurn.deliveryTrust)}</b>
-            </div>
-            <textarea className="agent-web-play-prompt" readOnly value={webBridgeTurn.copyPrompt} />
-            <button type="button" disabled={isBusy} onClick={onCopyPrompt}>复制提示</button>
+      <div className="agent-web-play-columns">
+        <section className="agent-web-play-stage" aria-label="给 Agent 的 MCP 指令">
+          <div className="agent-web-play-stage-head">
+            <span>交给 Agent 的上下文请求</span>
+            <b>读取服务器事实</b>
           </div>
-          <div className="agent-web-play-stage">
-            <label>
-              <span>网页模型输出</span>
-              <textarea value={hostedVisibleText} onChange={(event) => setHostedVisibleText(event.target.value)} />
-            </label>
-            <div className="agent-web-play-options">
-              {webBridgeTurn.actionOptions.map((option) => (
-                <button
-                  type="button"
-                  key={option.actionOptionId}
-                  disabled={isBusy || !hostedVisibleText.trim()}
-                  onClick={() => onSubmitAction(option)}
-                >
-                  <b>{option.label}</b>
-                  <span>{option.risk === "high" ? "高风险" : option.risk === "medium" ? "中风险" : "低风险"}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {lastAction && !webBridgeTurn ? (
-        <div className="agent-web-play-stage agent-web-play-result">
-          <div>
-            <span>服务器结算</span>
-            <h2>{lastAction.action.optionLabel}</h2>
-            <p>{lastAction.action.outcomeSummary}</p>
-          </div>
+          <textarea className="agent-web-play-prompt" readOnly value={instruction} />
           <div className="agent-action-row">
-            <button type="button" disabled={isBusy} onClick={onPublishResult}>发布结果</button>
-            <button type="button" disabled={isBusy} onClick={onStartTurn}>下一回合</button>
-            <small>{resultPublishAuthorizationCopy}</small>
+            <button type="button" onClick={() => onCopyInstruction(instruction)}>复制给 Agent</button>
+            <a href="/epoch/install">安装或重连 MCP</a>
           </div>
-        </div>
-      ) : null}
+        </section>
+
+        <section className="agent-web-play-stage" aria-label="服务器观察摘要">
+          <div className="agent-web-play-stage-head">
+            <span>服务器状态</span>
+            <b>{agentBriefing ? "已同步" : "等待 Agent 读取"}</b>
+          </div>
+          {agentBriefing ? (
+            <div className="agent-web-play-summary">
+              <b>{agentBriefing.progress.actionEligibility.canUseActiveTools ? "身份可行动" : "行动权限受限"}</b>
+              <p>{agentBriefing.progress.actionEligibility.reason}</p>
+              <small>区域事实：{agentBriefing.regionalContext?.news.length || 0} 条新闻 / {agentBriefing.regionalContext?.commissions.length || 0} 个开放委托</small>
+            </div>
+          ) : (
+            <p>Agent 读取简报后，这里只显示服务器签发的当前状态与限制。</p>
+          )}
+          <div className="agent-action-row">
+            <button type="button" disabled={isRefreshing} onClick={onRefresh}>
+              {isRefreshing ? "正在刷新观察数据" : "刷新观察数据"}
+            </button>
+            {lastSyncedAt ? <small>最近同步：{lastSyncedAt}</small> : null}
+          </div>
+        </section>
+      </div>
     </section>
   );
 }

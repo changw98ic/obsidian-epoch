@@ -53,28 +53,13 @@ function canonicalProgressionState(snapshotBody: unknown): UnknownRecord {
   const body = asRecord(snapshotBody);
   const progression = asRecord(body.progression);
   const cultivation = asRecord(progression.cultivation);
-  const canonicalCultivation = Object.keys(cultivation).length > 0
-    ? cultivation
-    : compactRecord({
-      powerSystemId: progression.powerSystemId,
-      lineageId: progression.lineageId,
-      functionalStage: progression.functionalStage,
-      stage: progression.stage,
-      bottleneck: progression.bottleneck,
-      bottlenecks: progression.bottlenecks,
-      resources: progression.resources,
-      cultivationResources: progression.cultivationResources,
-    });
+  const functionalStage = cultivation.functionalStage
+    ?? progression.functionalStage;
   return compactRecord({
     attributes: body.attributes ?? progression.attributes,
     skills: progression.skills ?? progression.skillTree,
     talents: progression.talents,
-    cultivation: Object.keys(canonicalCultivation).length > 0 ? canonicalCultivation : undefined,
-    injuries: progression.injuries ?? progression.injuryStates ?? body.injuries ?? body.injuryStates,
-    experience: progression.experience,
-    level: progression.level,
-    skillPoints: progression.skillPoints,
-    talentPoints: progression.talentPoints,
+    cultivation: functionalStage === undefined ? undefined : { functionalStage },
   });
 }
 

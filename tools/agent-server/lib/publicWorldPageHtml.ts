@@ -20,6 +20,7 @@ import {
   publicEventTypeLabel,
   publicFactionLabel,
   publicKindLabel,
+  publicMcpToolName,
   publicRarityLabel,
   publicRegionLabel,
   publicResourceLabel,
@@ -31,6 +32,8 @@ import {
   publicTrustClassLabel,
 } from "./epoch/publicVocabulary.ts";
 import { epochPageSceneMediaForKey, type EpochPageSceneAssetKey, type EpochPageSceneMedia } from "./pageSceneAssets.ts";
+import { type PublicReleaseReadiness } from "./publicReleaseReadiness.ts";
+import { obsidianEpochPublicSurfaceMarkerHtml } from "./publicSurfaceContract.ts";
 
 interface EpochInstallManifestInfo {
   readonly name: string;
@@ -45,6 +48,10 @@ interface EpochInstallManifestInfo {
     readonly sha256: string;
   };
   readonly publicPages: Readonly<Record<string, string>>;
+  readonly publicSurface?: {
+    readonly version: string;
+  };
+  readonly publicRelease?: PublicReleaseReadiness;
   readonly playbooks?: Readonly<Record<string, string>>;
   readonly verification?: {
     readonly installSmokeCommand?: string;
@@ -449,6 +456,7 @@ function pageShell(title: string, eyebrow: string, summary: string, body: string
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  ${obsidianEpochPublicSurfaceMarkerHtml()}
   <title>${escapeHtml(title)} - 黑曜纪元</title>
   <style>
     :root {
@@ -988,7 +996,7 @@ function eventItems(progress: EpochProgressView) {
     `<b>${escapeHtml(eventTypeLabel(event.eventType))}</b><em>${dateLabel(event.createdAt)}</em>`);
 }
 
-type EpochAgentPublicBriefingView = Omit<EpochAgentBriefingView, "progress" | "pendingActions" | "regionalContext"> & {
+type EpochAgentPublicBriefingView = Omit<EpochAgentBriefingView, "progress" | "regionalContext"> & {
   readonly identityExists?: boolean;
   readonly canonicalAgentId?: string;
   readonly publicIdentity?: {
@@ -997,14 +1005,8 @@ type EpochAgentPublicBriefingView = Omit<EpochAgentBriefingView, "progress" | "p
   };
   readonly regionLabel?: string;
   readonly progress?: EpochProgressView;
-  readonly pendingActions?: EpochAgentBriefingView["pendingActions"];
   readonly regionalContext?: EpochAgentPublicRegionalContextView;
 };
-
-function nextActionItems(briefing: EpochAgentPublicBriefingView) {
-  return (briefing.pendingActions || []).slice(0, 6).map((action) =>
-    `<b>${escapeHtml(publicText(action.label))}</b><em>${escapeHtml(publicText(action.reason))}</em>`);
-}
 
 function briefingNewsItems(briefing: EpochAgentPublicBriefingView) {
   return (briefing.regionalContext?.news || []).slice(0, 6).map((news) =>
@@ -1059,24 +1061,18 @@ export function renderEpochAgentPublicPageHtml(briefing: EpochAgentPublicBriefin
         <div class="tile"><em>寿命</em><b>${escapeHtml(lifetimeText)}</b></div>
       </div>`) : section("验证边界", "<p>此页面只展示可公开验证的世界信息；身份进度、资源、背包、托管和最近事件仅向拥有者的对话提供。</p>")}
       ${section("行动简报", `<div class="tiles">
-        <a class="tile" href="${escapeHtml(briefing.publicPages.console)}"><em>控制台</em><b>打开行动身份控制台</b><span>安装后可在这里继续操作。</span></a>
+        <a class="tile" href="${escapeHtml(briefing.publicPages.console)}"><em>智能代理页面</em><b>查看 MCP 连接状态</b><span>网页只观察；智能体根据服务器事实自行决策。</span></a>
         <a class="tile" href="${escapeHtml(briefing.publicPages.world)}"><em>世界</em><b>世界总览</b><span>公开世界总览。</span></a>
         <div class="tile"><em>区域</em><b>${escapeHtml(briefing.regionLabel || regionLabel(briefing.regionId))}</b><span>${briefing.publicPages.region ? "区域公开页可查看" : "暂无区域页"}</span></div>
         ${progress ? `<div class="tile"><em>行动权限</em><b>${progress.actionEligibility.canUseActiveTools ? "可行动" : "已阻断"}</b><span>${escapeHtml(publicText(progress.actionEligibility.reason))}</span></div>` : ""}
-        <div class="tile"><em>同步</em><b>${dateLabel(briefing.generatedAt)}</b><span>${escapeHtml((briefing.pendingActions || []).length)} 个公开推荐下一步</span></div>
+        <div class="tile"><em>同步</em><b>${dateLabel(briefing.generatedAt)}</b><span>身份、资源、区域与限制已由服务器签发。</span></div>
       </div>`)}
-      ${section("下一步", list(nextActionItems(briefing), "暂无推荐行动"))}
       ${section("区域新闻", list(briefingNewsItems(briefing), "暂无区域新闻"))}
       ${section("区域留言", list(briefingMessageItems(briefing), "暂无区域留言"))}
       ${section("开放委托", list(briefingCommissionItems(briefing), "暂无开放委托"))}
       ${ownerOnlySections}
     </div>
   `, pageSceneMedia("agent_status"));
-}
-
-function hostedWatchActionItems(info: EpochHostedSessionWatchInfo) {
-  return info.nextActions.slice(0, 6).map((action) =>
-    `<b>${escapeHtml(publicText(action.label))}</b><span>${escapeHtml(publicText(action.reason))}</span><em>${action.requiresRecoveryCode ? "恢复身份后可继续" : "可继续行动"}</em>`);
 }
 
 function hostedWatchRegionItems(info: EpochHostedSessionWatchInfo) {
@@ -1117,9 +1113,8 @@ export function renderEpochHostedSessionWatchPageHtml(info: EpochHostedSessionWa
         <a class="tile" href="${escapeHtml(info.publicPages.agent || "#")}"><em>行动身份</em><b>${escapeHtml(identityLabel(identity?.identityName))}</b><span>第 ${escapeHtml(identity?.generation || "未知")} 世</span></a>
         <a class="tile" href="${escapeHtml(info.publicPages.explorer || "#")}"><em>玩家档案</em><b>已记录</b><span>同一玩家的世系归档。</span></a>
         <a class="tile" href="${escapeHtml(info.publicPages.region || "#")}"><em>区域</em><b>${escapeHtml(regionLabel(info.regionId))}</b><span>${info.publicPages.region ? "区域公开页可查看" : "暂无区域页"}</span></a>
-        <a class="tile" href="${escapeHtml(info.publicPages.console)}"><em>控制台</em><b>行动身份控制台</b><span>拥有者在控制台选择行动，旁观者只看公开投影。</span></a>
+        <a class="tile" href="${escapeHtml(info.publicPages.console)}"><em>智能代理页面</em><b>MCP 行动观察</b><span>网页展示观察与凭证；行动由拥有者的智能代理通过 MCP 完成。</span></a>
       </div>`)}
-      ${section("下一步", list(hostedWatchActionItems(info), "暂无下一步"))}
       ${section("已结算行动", list(hostedWatchActionResultItems(info), "暂无公开结算行动"))}
       ${section("区域新闻", list(hostedWatchRegionItems(info), "暂无区域新闻"))}
       ${section("区域留言", list(hostedWatchMessageItems(info), "暂无区域留言"))}
@@ -1591,18 +1586,26 @@ export function renderEpochInstallPublicPageHtml(manifest: EpochInstallManifestI
     `<b>${escapeHtml(publicText(asset.title))}</b><span>${escapeHtml(factionLabel(asset.factionId))} · ${escapeHtml(asset.width)}x${escapeHtml(asset.height)}</span><em>公开素材已发布</em>`);
   const seasonBannerAssetItems = (manifest.assets?.seasonBanners || []).map((asset) =>
     `<b>${escapeHtml(publicText(asset.title))}</b><span>${escapeHtml(asset.width)}x${escapeHtml(asset.height)}</span><em>公开素材已发布</em>`);
+  const publicRelease = manifest.publicRelease;
+  const publicReleaseItems = (publicRelease?.requirements || []).map((item) =>
+    `<div class="tile"><em>${escapeHtml(item.label)}</em><b>${escapeHtml(item.status === "pass" ? "已达标" : "未达标")}</b><span>${escapeHtml(item.detail)}</span></div>`);
+  const publicReleaseSection = publicRelease ? section("公开 MMO 状态", `<div class="tiles">
+        <div class="tile"><em>发布门禁</em><b>${escapeHtml(publicRelease.status === "ready" ? "公开 MMO 可以开放" : "公开 MMO 尚未开放")}</b><span>${escapeHtml(publicRelease.summary)}</span></div>
+        ${publicReleaseItems.join("")}
+      </div>`) : "";
   return pageShell(
     "派遣你的智能代理进入黑曜纪元",
     "黑曜纪元 / 安装入口",
     "安装通用接入包，然后在你使用的宿主里开始一次服务器权威的智能代理冒险。",
     `
     <div class="grid">
+      ${publicReleaseSection}
       ${section("安装四步", `<div class="tiles">
-        <a class="tile" href="/epoch/pair"><em>1. 配对身份</em><b>服务器签发</b><span>先领取服务器分配的 Explorer、首个 Agent 和短期个人令牌。</span></a>
+        <a class="tile" href="/epoch/web-play"><em>1. 连接 MCP</em><b>Agent 自动签发</b><span>首次让 Agent 调用 obsidian_epoch.register_explorer；服务器分配 Explorer、首个身份和短期凭证。</span></a>
         <a class="tile" href="${escapeHtml(manifest.packageUrl)}"><em>2. 选择宿主</em><b>${escapeHtml(hostListLabel)}</b><span>下载同一份通用接入包，安装到你正在使用的智能代理宿主。</span></a>
-        <div class="tile"><em>3. 复制配置</em><b>宿主配置已生成</b><span>把配对页给出的个人令牌写入宿主环境；校验材料保留在安装清单里。</span>${firstRunHostConfigList}</div>
-        <a class="tile" href="/epoch/console"><em>4. 开始与查看</em><b>控制台</b><span>启动 Agent 后回控制台查看进度、托管状态、新闻与结果。</span></a>
-        <a class="tile" href="/api/epoch/install-status"><em>完成状态</em><b>安装材料可用</b><span>宿主配置、控制台入口和公开结果页检查已准备好。</span></a>
+        <div class="tile"><em>3. 加载配置</em><b>宿主配置已生成</b><span>发布代理接管首次短期凭证，不把凭证或恢复码显示在对话中；校验材料保留在安装清单里。</span>${firstRunHostConfigList}</div>
+        <a class="tile" href="/epoch/web-play"><em>4. 开始与查看</em><b>Agent 页面</b><span>启动 Agent 后在这里查看进度、托管状态、新闻与结果。</span></a>
+        <a class="tile" href="/api/epoch/install-status"><em>完成状态</em><b>${escapeHtml(publicRelease?.status === "ready" ? "公开发布已达标" : "本地接入材料可用")}</b><span>${escapeHtml(publicRelease?.status === "ready" ? "安装材料与发布门禁均已通过。" : "宿主配置和公开查看页可用于本地试玩；公开 MMO 仍受发布门禁保护。")}</span></a>
       </div>`)}
       ${section("下载", `<div class="tiles">
         <a class="tile" href="${escapeHtml(manifest.packageUrl)}"><em>安装包</em><b>${escapeHtml(manifest.name)} ${escapeHtml(manifest.version)}</b><span>可下载</span></a>

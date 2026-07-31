@@ -1107,7 +1107,6 @@ test("Epoch agent briefing API wraps unified progress and regional context route
             reason: "身份可行动。",
             activeOnlyTools: [],
             blockedTools: [],
-            recommendedTools: ["obsidian_epoch.turn_card"],
           },
           claimableLegendNews: [],
           downtimeDiaryEntries: [],
@@ -1132,20 +1131,11 @@ test("Epoch agent briefing API wraps unified progress and regional context route
           retaliations: [],
           traces: [],
         },
-        pendingActions: [{
-          actionId: "briefing_action_turn",
-          kind: "continue_turn",
-          label: "继续回合",
-          reason: "身份处于可行动状态。",
-          toolName: "obsidian_epoch.turn_card",
-          regionId: "region_gray_harbor",
-          requiresRecoveryCode: true,
-        }],
         world: {
           publicPages: {
             world: "/epoch/world",
             install: "/epoch/install",
-            console: "/epoch/console",
+            console: "/epoch/web-play",
           },
           news: [],
           regionHighlights: [],
@@ -1153,7 +1143,7 @@ test("Epoch agent briefing API wraps unified progress and regional context route
         },
         publicPages: {
           world: "/epoch/world",
-          console: "/epoch/console",
+          console: "/epoch/web-play",
           agent: "/epoch/agent/agent_briefing_1",
           explorer: "/epoch/explorer/explorer_briefing_1",
           region: "/epoch/region/region_gray_harbor",
@@ -1171,7 +1161,7 @@ test("Epoch agent briefing API wraps unified progress and regional context route
       limit: 6,
     });
     assert.equal(briefing.progress.agentId, "agent_briefing_1");
-    assert.equal(briefing.pendingActions[0]?.toolName, "obsidian_epoch.turn_card");
+    assert.equal(Object.hasOwn(briefing, "pendingActions"), false);
     assert.equal(briefing.regionalContext?.messages[0]?.body, "灰港出现新的可行动线索。");
     assert.equal(briefing.publicPages.region, "/epoch/region/region_gray_harbor");
     const call = calls[0];
@@ -1207,19 +1197,17 @@ test("Epoch agent briefing API encodes live cockpit query parameters", async () 
           reason: "身份不存在。",
           activeOnlyTools: [],
           blockedTools: [],
-          recommendedTools: [],
         },
         claimableLegendNews: [],
         downtimeDiaryEntries: [],
         personalityDrifts: [],
         latestEvents: [],
       },
-      pendingActions: [],
       world: {
         publicPages: {
           world: "/epoch/world",
           install: "/epoch/install",
-          console: "/epoch/console",
+          console: "/epoch/web-play",
         },
         news: [],
         regionHighlights: [],
@@ -1227,7 +1215,7 @@ test("Epoch agent briefing API encodes live cockpit query parameters", async () 
       },
       publicPages: {
         world: "/epoch/world",
-        console: "/epoch/console",
+        console: "/epoch/web-play",
       },
     }), { status: 200, headers: { "content-type": "application/json" } });
   };
@@ -1326,7 +1314,7 @@ test("Epoch world overview API wraps canonical public overview route", async () 
         publicPages: {
           world: "/epoch/world",
           install: "/epoch/install",
-          console: "/epoch/console",
+          console: "/epoch/web-play",
         },
         news: [{
           newsId: "news_1",
@@ -1805,7 +1793,6 @@ test("Epoch result page API wraps owner-authorized revoke route", async () => {
             pageType: "agent_result",
             generatedAt: "2026-06-28T00:00:00.000Z",
             progress: { latestEvents: [] },
-            nextActions: [],
             receipt: {
               receiptType: "server_result_receipt",
               payloadHash: "sha256:abc",
@@ -2295,10 +2282,9 @@ test("Epoch hosted spectator APIs use public redacted routes", async () => {
           actions: [],
           startedAt: "2026-06-25T00:00:00.000Z",
         },
-        nextActions: [],
         publicPages: {
           world: "/epoch/world",
-          console: "/epoch/console",
+          console: "/epoch/web-play",
           watch: "/epoch/hosted/hosted_watch_1",
           api: "/api/epoch/hosted/watch?sessionId=hosted_watch_1",
         },
@@ -2309,7 +2295,6 @@ test("Epoch hosted spectator APIs use public redacted routes", async () => {
         pageType: "agent_result",
         generatedAt: "2026-06-25T00:00:00.000Z",
         progress: {},
-        nextActions: [],
         publishToken: "epoch_result_publish_token",
         receipt: {
           receiptType: "server_result_receipt",

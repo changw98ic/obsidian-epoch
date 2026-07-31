@@ -1,5 +1,5 @@
 import { appendJsonl } from "./store.ts";
-import { createAgentWorldRuntime } from "./mcpTools.ts";
+import { createAgentWorldRuntime } from "./mcpRuntimeCore.ts";
 import { MAX_PARTY_RUN_MEMBERS } from "./epoch/combatSettlementRules.ts";
 import { resolveEpochCanonicalRegionId } from "./regionAliases.ts";
 import { epochEventsForPersistence } from "./epoch/runtimePublicProjectionRules.ts";

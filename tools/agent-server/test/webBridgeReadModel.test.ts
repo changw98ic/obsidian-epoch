@@ -8,7 +8,7 @@ const modulePath = new URL("../lib/epoch/webBridgeReadModel.ts", import.meta.url
 
 const explanationFixture: EpochActionExplanation = {
   brief: "观察局势",
-  trigger: "区域需要公开可见的下一步选择。",
+  trigger: "区域需要公开可见的服务器签发行动。",
   choiceReason: "Web Bridge 只能选择服务器签发的行动。",
   rejectedAlternatives: ["不让网页模型自造奖励。"],
   risk: "低风险：只暴露候选行动标签。",

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createCommunityLedger, type CommunityAbuseContextInput } from "../lib/community.ts";
-import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 
 test("community abuse detection prefers a server-owned context over spoofed fields", () => {
   const ledger = createCommunityLedger({

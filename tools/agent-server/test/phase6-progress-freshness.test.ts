@@ -446,3 +446,60 @@ test("updater accepts fresh strong runtime evidence for an explicit verified tra
   const updated = JSON.parse(fs.readFileSync(ledgerPath, "utf8"));
   assert.equal(updated.milestones[0].items[0].status, "verified");
 });
+
+test("updater completes the phase when the final implemented item is verified", (t) => {
+  const harness = createHarness(t);
+  const ledgerPath = harness.writeLedger({
+    status: "implemented",
+    checklistChecked: false,
+    includeSecondImplementedItem: true,
+    evidence: [{
+      kind: "artifact",
+      path: harness.inputPath,
+      observedAt: "2026-07-21T00:00:00.000Z",
+      summary: "Implemented evidence.",
+    }],
+  });
+  const evidence = harness.strongCommandEvidence();
+
+  for (const itemId of ["P6-M1-01", "P6-M1-02"]) {
+    const result = runJson(updateScript, [
+      "--ledger",
+      ledgerPath,
+      "--item",
+      itemId,
+      "--status",
+      "verified",
+      "--evidence-json",
+      JSON.stringify(evidence),
+    ], { keyFile: harness.keyFile });
+    assert.equal(result.payload.ok, true);
+  }
+
+  const updated = JSON.parse(fs.readFileSync(ledgerPath, "utf8"));
+  assert.equal(updated.status, "complete");
+  assert.equal(updated.milestones[0].items.every((item) => item.status === "verified"), true);
+});
+
+test("updater can replace stale runtime evidence while retaining verified source evidence", (t) => {
+  const harness = createHarness(t);
+  const evidence = harness.strongCommandEvidence();
+  const ledgerPath = harness.writeLedger({ evidence: [evidence] });
+
+  const result = runJson(updateScript, [
+    "--ledger",
+    ledgerPath,
+    "--item",
+    "P6-M1-01",
+    "--status",
+    "verified",
+    "--replace-runtime-evidence",
+    "--evidence-json",
+    JSON.stringify(evidence),
+  ], { keyFile: harness.keyFile });
+
+  assert.equal(result.payload.ok, true);
+  assert.equal(result.payload.runtimeEvidenceReplaced, true);
+  const updated = JSON.parse(fs.readFileSync(ledgerPath, "utf8"));
+  assert.equal(updated.milestones[0].items[0].evidence.filter((entry) => entry.kind === "command").length, 1);
+});

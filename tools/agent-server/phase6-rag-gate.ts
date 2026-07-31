@@ -13,6 +13,12 @@ const ROUTE_PRECISION_MIN = 0.9;
 const TRACEABILITY_REQUIRED = 1;
 const IMPORTANT_MEMORY_MIN_PER_RUN = 0;
 const IMPORTANT_MEMORY_MAX_PER_RUN = 3;
+const RAG_NO_CHANGE_REASONS = new Set([
+  "no_canonical_events",
+  "projection_equal",
+  "no_supported_projection_fields",
+  "only_untracked_fields_changed",
+]);
 const MAX_PARSE_FAILURE_HASHES = 20;
 const MAX_FAILURE_HASHES = 50;
 const SECRET_KEY = /(?:secret|token|api[-_]?key|authorization|password|credential|private[-_]?key|access[-_]?key|refresh[-_]?token|session[-_]?key|client[-_]?secret|recovery[-_]?code)/i;
@@ -23,7 +29,7 @@ const repositoryRoot = path.resolve(scriptDirectory, "../..");
 
 function usage() {
   return [
-    "Usage: node tools/agent-server/phase6-rag-gate.mjs --query-evaluations <path> [--query-evaluations <path> ...] --run-receipts <path> [--run-receipts <path> ...]",
+    "Usage: node --import tsx ../agent-server/phase6-rag-gate.ts --query-evaluations <path> [--query-evaluations <path> ...] --run-receipts <path> [--run-receipts <path> ...]",
     "",
     "Reads repository-relative machine JSON/JSONL query evaluations and RunReceipt RAG deltas.",
     "Prints only counts, metrics, and failure ID hashes. Exits non-zero when any gate fails.",
@@ -629,6 +635,8 @@ function buildReport(queryRecords, receiptRecords, parseErrors) {
   const duplicateRouteSamples = [];
   const ordinaryNodeExpansionSamples = [];
   const malformedReceiptIds = [];
+  const ragNoChangeReasonFailures = [];
+  let explicitRagNoChangeReasons = 0;
   const receiptBindingsByRun = new Map();
 
   receiptRecords.forEach((record, index) => {
@@ -719,6 +727,22 @@ function buildReport(queryRecords, receiptRecords, parseErrors) {
     if (explicitImportant === undefined && deltas.length > 0) {
       importantMemoryCountsByRun.set(runIndex, computedImportant);
     }
+    const effectiveImportant = explicitImportant ?? computedImportant;
+    const noChangeReason = stringValue(firstValue(receipt, [
+      ["rag", "noChangeReason"],
+      ["rag", "no_change_reason"],
+      ["ragDelta", "noChangeReason"],
+      ["rag_delta", "no_change_reason"],
+    ]));
+    if (effectiveImportant === 0) {
+      if (!noChangeReason || !RAG_NO_CHANGE_REASONS.has(noChangeReason)) {
+        ragNoChangeReasonFailures.push(idFor(receipt, `receipt:${index}:rag_no_change_reason`));
+      } else {
+        explicitRagNoChangeReasons += 1;
+      }
+    } else if (noChangeReason) {
+      ragNoChangeReasonFailures.push(idFor(receipt, `receipt:${index}:rag_no_change_reason_unexpected`));
+    }
   });
 
   const importantMemoryCounts = [...importantMemoryCountsByRun.values()];
@@ -806,6 +830,9 @@ function buildReport(queryRecords, receiptRecords, parseErrors) {
   if (malformedReceiptIds.length > 0) {
     failures.push(gateFailure("run_receipt_metric_shape", "explicit value or numerator/denominator", malformedReceiptIds.length, malformedReceiptIds));
   }
+  if (ragNoChangeReasonFailures.length > 0) {
+    failures.push(gateFailure("rag_no_change_reason_present", 0, ragNoChangeReasonFailures.length, ragNoChangeReasonFailures));
+  }
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -842,6 +869,7 @@ function buildReport(queryRecords, receiptRecords, parseErrors) {
       importantMemoriesPerRun: numericStats(importantMemoryCounts),
       duplicateRouteDedupRate,
       ordinaryNodePersistenceExpansion,
+      explicitRagNoChangeReasons,
       authorityWriteOrCanonicalOverrideCount: authorityState.authorityOverwriteCount,
       secretFindingCount: secretState.secretFindings,
     },
@@ -857,6 +885,7 @@ function buildReport(queryRecords, receiptRecords, parseErrors) {
         importantMemoryCounts,
         duplicateRouteDedupRate: duplicateRouteDedupRate.value,
         ordinaryNodeExpansionSamples,
+        explicitRagNoChangeReasons,
       },
       failures: failures.map((failure) => [failure.gate, failure.actual]),
     }),

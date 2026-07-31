@@ -88,13 +88,16 @@ function receipt(runIndex: number) {
   };
 }
 
-function runGate(queryRecords: readonly unknown[]) {
+function runGate(
+  queryRecords: readonly unknown[],
+  receiptRecords: readonly unknown[] = Array.from({ length: 10 }, (_, index) => receipt(index + 1)),
+) {
   const root = mkdtempSync(join(testDirectory, ".phase6-rag-gate-"));
   try {
     const queryPath = join(root, "queries.jsonl");
     const receiptPath = join(root, "receipts.jsonl");
     writeFileSync(queryPath, queryRecords.map((value) => JSON.stringify(value)).join("\n") + "\n", "utf8");
-    writeFileSync(receiptPath, Array.from({ length: 10 }, (_, index) => JSON.stringify(receipt(index + 1))).join("\n") + "\n", "utf8");
+    writeFileSync(receiptPath, receiptRecords.map((value) => JSON.stringify(value)).join("\n") + "\n", "utf8");
     const result = spawnSync(process.execPath, [
       gatePath,
       "--query-evaluations", relative(repoRoot, queryPath),
@@ -147,4 +150,39 @@ test("Phase 6 RAG gate fails closed on missing evaluation fields", () => {
   const result = runGate(traces);
   assert.equal(result.status, 1);
   assert.equal(result.report.failures.some((failure: { gate: string }) => failure.gate === "authoritative_rag_evaluation_shape"), true);
+});
+
+test("Phase 6 RAG gate rejects a zero-delta run without an explicit reason", () => {
+  const traces = Array.from({ length: 9 }, (_, index) => capturePhase6ServerRagTrace(traceInput(index + 1)));
+  traces.push(capturePhase6ServerRagTrace({
+    ...traceInput(10),
+    query: undefined,
+    retrievalConfig: undefined,
+    retrievedChunks: [],
+    serverObservedUsedChunkIds: [],
+    serverObservedGroundingHits: [],
+    retrievalExpected: false,
+    noRetrievalReason: "not_needed",
+    serverEvaluation: undefined,
+  }));
+  const receipts = Array.from({ length: 10 }, (_, index) => receipt(index + 1));
+  receipts[0] = {
+    ...receipts[0],
+    importantMemoryCount: 0,
+    ordinaryNodePersistenceExpansion: 0,
+    ragDelta: [],
+  };
+  const result = runGate(traces, receipts);
+  assert.equal(result.status, 1);
+  assert.equal(result.report.failures.some((failure: { gate: string }) => failure.gate === "rag_no_change_reason_present"), true);
+});
+
+test("Phase 6 RAG gate ignores a non-RAG top-level no-change reason", () => {
+  const traces = Array.from({ length: 10 }, (_, index) => capturePhase6ServerRagTrace(traceInput(index + 1)));
+  const receipts = Array.from({ length: 10 }, (_, index) => ({
+    ...receipt(index + 1),
+    noChangeReason: "server_canonical_domain_stable_by_receipt_hash",
+  }));
+  const result = runGate(traces, receipts);
+  assert.equal(result.status, 0, JSON.stringify(result.report.failures, null, 2));
 });

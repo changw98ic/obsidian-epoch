@@ -90,7 +90,7 @@ const repositoryRoot = path.resolve(scriptDirectory, "../..");
 
 function usage() {
   return [
-    "Usage: node tools/agent-server/phase6-ten-run-evidence.mjs --input sanitized.jsonl --output-dir <empty-repo-dir> --expected-runs 10 --sqlite path",
+    "Usage: node --import tsx ../agent-server/phase6-ten-run-evidence.ts --input sanitized.jsonl --output-dir <empty-repo-dir> --expected-runs 10 --sqlite path",
     "",
     "Derives Phase 6 release-gate input JSONL files from sanitized CDE tool JSONL and authoritative SQLite rows.",
     "Fails non-zero when required evidence is missing, mixed across experiments, secret-like material is present, or output would overwrite data.",
@@ -249,9 +249,9 @@ function bindingFor(record, root) {
     runIndex: integerValue(firstValue(root, [["runIndex"], ["run_index"], ["RunReceipt", "runIndex"], ["runReceipt", "runIndex"]])
       ?? firstValue(record, [["metadata", "runIndex"], ["input", "runIndex"], ["runIndex"]])),
     journeyId: stringValue(firstValue(root, [["journeyId"], ["journey_id"], ["runId"], ["RunReceipt", "runId"], ["runReceipt", "runId"], ["journey", "journeyId"]])
-      ?? firstValue(record, [["input", "journeyId"], ["journeyId"]])),
+      ?? firstValue(record, [["metadata", "journeyId"], ["input", "journeyId"], ["journeyId"]])),
     receiptId: stringValue(firstValue(root, [["receiptId"], ["receipt_id"], ["RunReceipt", "receiptId"], ["runReceipt", "receiptId"], ["receipt", "receiptId"], ["journeyRunReceipt", "receiptId"]])
-      ?? firstValue(record, [["input", "receiptId"], ["receiptId"]])),
+      ?? firstValue(record, [["metadata", "receiptId"], ["input", "receiptId"], ["receiptId"]])),
   };
 }
 
@@ -278,9 +278,14 @@ function validateCdeProtocol(sources, expectedRuns, errors) {
       });
     }
     const prepares = prepareCalls.filter((source) => source.binding.runIndex === runIndex);
-    // The server-issued taskFamilyId is the only authoritative scenario binding.
+    // The public prepare contract deliberately exposes taskType instead of the
+    // internal taskFamilyId. Phase 6 taskType values are the authoritative
+    // matrix family identifiers, while older captures may still contain the
+    // server-issued internal field.
     const taskFamilyIds = unique(prepares.map((source) => stringValue(firstValue(source.record, [
       ["input", "taskFamilyId"], ["output", "taskFamilyId"],
+      ["input", "taskType"], ["output", "taskType"],
+      ["output", "journey", "taskRequest", "taskType"],
     ]))).filter(Boolean));
     const effectiveFamilyId = taskFamilyIds[0];
     if (prepares.length !== 1 || !effectiveFamilyId || effectiveFamilyId !== expected?.taskFamilyId) {
@@ -379,10 +384,6 @@ function deriveEvidence({ inputPath, outputDir, sourceText, parseErrors, sources
     ? sqliteReceiptCandidates.filter((candidate) => candidate.binding.experimentId === expectedExperimentId)
     : sqliteReceiptCandidates;
   const authoritativeSources = scopedReceiptCandidates.map((candidate) => candidate.source);
-  const authoritativeWorldSources = [
-    ...authoritativeSources,
-    ...collectSqliteWorldEventSources(sqliteAuthority, scopedReceiptCandidates),
-  ];
   const panelSources = [...collectSqlitePanelSources(scopedReceiptCandidates), ...legacyEvidenceSources];
 
   const legacyEconomy = collectEconomyAudits(legacyEvidenceSources, expectedRuns);
@@ -401,9 +402,9 @@ function deriveEvidence({ inputPath, outputDir, sourceText, parseErrors, sources
     "economy-audit.jsonl": sqliteAuthority.hasResultPageSchema ? formalEconomy : legacyEconomy,
     "progression.jsonl": sqliteAuthority.hasResultPageSchema ? formalProgression : legacyProgression,
     "rag-query-evaluations.jsonl": sqliteAuthority.hasRagTraceSchema ? authoritativeRag : legacyRag,
-    "world-evidence.jsonl": collectWorldEvidence(
-      sqliteAuthority.hasRequiredSchema ? authoritativeWorldSources : legacyEvidenceSources,
-    ),
+    "world-evidence.jsonl": sqliteAuthority.hasRequiredSchema
+      ? collectSqliteWorldEvidence(sqliteAuthority, expectedExperimentId, expectedRuns)
+      : collectWorldEvidence(legacyEvidenceSources),
     "scores.jsonl": sqliteAuthority.hasResultPageSchema ? formalScores : legacyScores,
     "shop.jsonl": collectShop(legacyEvidenceSources),
     "crafting.jsonl": collectCrafting(legacyEvidenceSources),
@@ -509,7 +510,7 @@ function hasCanonicalPhase6PanelFields(panel) {
   return isRecord(panel.identity)
     && ["strength", "agility", "physique", "intellect", "willpower", "spirituality"].every((key) => attributes[key] !== undefined)
     && ["adaptation", "control", "corruptionResistance", "mobility", "offense", "perception", "protection", "reserve", "sustain", "synergy"].every((key) => readiness[key] !== undefined)
-    && ["skills", "talents", "cultivation", "injuries"].every((key) => progression[key] !== undefined)
+    && ["skills", "talents", "methods", "cultivation", "injuries"].every((key) => progression[key] !== undefined)
     && ["warehouse", "currencies", "materials", "equipment", "carry", "insurance", "production"].every((key) => economy[key] !== undefined)
     && panel.ragPanel !== undefined
     && panel.worldCursor !== undefined;
@@ -626,24 +627,6 @@ function collectSqlitePanelSources(receiptCandidates) {
   }));
 }
 
-function collectSqliteWorldEventSources(sqliteAuthority, receiptCandidates) {
-  return receiptCandidates.flatMap((candidate) => receiptEventIds(candidate.receipt).flatMap((eventId) => {
-    const event = sqliteAuthority.eventsByJourneyEvent.get(sqliteEventKey(candidate.binding.journeyId, eventId))
-      ?? sqliteAuthority.eventsById.get(eventId);
-    if (!isRecord(event?.eventJson)) return [];
-    return [{
-      ...candidate.source,
-      sourceKind: "authoritative-sqlite-world-event",
-      root: event.eventJson,
-      candidateSha256: canonicalHash({
-        sourceKind: "authoritative-sqlite-world-event",
-        binding: candidate.binding,
-        event: event.eventJson,
-      }),
-    }];
-  }));
-}
-
 function runForReceipt(sqliteAuthority, receiptId) {
   return [...sqliteAuthority.runsByExperimentRun.values()].find((run) => run.receiptId === receiptId);
 }
@@ -652,6 +635,53 @@ function scopedSqliteRuns(sqliteAuthority, experimentId, expectedRuns = Number.M
   return [...sqliteAuthority.runsByExperimentRun.values()]
     .filter((run) => (!experimentId || run.experimentId === experimentId) && run.runIndex <= expectedRuns)
     .sort((left, right) => left.runIndex - right.runIndex);
+}
+
+function collectSqliteWorldEvidence(sqliteAuthority, experimentId, expectedRuns) {
+  const records = scopedSqliteRuns(sqliteAuthority, experimentId, expectedRuns).flatMap((run) => {
+    const stored = sqliteAuthority.receiptsById.get(run.receiptId);
+    if (!stored) return [];
+    const receipt = stored.receiptJson;
+    const worldTime = firstValue(receipt, [["world", "worldTimeAfter"], ["world", "worldTime"], ["worldTime"]]);
+    const canonicalCursor = receiptCanonicalWorldCursor(receipt);
+    const tick = canonicalWorldTick(worldTime);
+    if (worldTime === undefined || canonicalCursor === undefined || tick === undefined) return [];
+    const source = sqliteEvidenceSource(run, receipt, "authoritative-sqlite-world-replay");
+    return [evidenceRecord(source, {
+      eventType: "phase6_authoritative_world_replay",
+      canonicalCursor,
+      tick,
+      runReceipt: receipt,
+    })];
+  });
+  return { records };
+}
+
+function receiptCanonicalWorldCursor(receipt) {
+  for (const delta of Array.isArray(receipt?.deltas) ? receipt.deltas : []) {
+    const value = firstValue(delta, [
+      ["after", "canonicalCursor"],
+      ["after", "worldCursor"],
+      ["target", "id"],
+    ]);
+    if (value !== undefined && value !== null && value !== "") return value;
+  }
+  return firstValue(receipt, [
+    ["outcome", "worldCursor"],
+    ["world", "canonicalCursor"],
+    ["world", "worldCursor"],
+  ]);
+}
+
+function canonicalWorldTick(worldTime) {
+  if (typeof worldTime === "number" && Number.isFinite(worldTime)) return worldTime;
+  if (typeof worldTime === "string" && worldTime.trim()) {
+    const numeric = Number(worldTime);
+    if (Number.isFinite(numeric)) return numeric;
+    const parsed = Date.parse(worldTime);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
 }
 
 function collectSqliteResultPageEconomy(sqliteAuthority, experimentId, expectedRuns) {
@@ -1237,7 +1267,8 @@ function readSqliteAuthority(sqlitePath) {
     if (hasRequiredSchema) {
       const runs = sqliteSnapshotJson(snapshotFd, [
         "select experiment_id as experimentId, run_index as runIndex, state, journey_id as journeyId,",
-        "coalesce(result_receipt_id, run_receipt_id) as receiptId, run_receipt_version as runReceiptVersion,",
+        "coalesce(result_receipt_id, run_receipt_id) as receiptId, coalesce(result_receipt_version, run_receipt_version) as receiptVersion,",
+        "run_receipt_version as runReceiptVersion,",
         "result_receipt_version as resultReceiptVersion, rules_version as rulesVersion, catalog_version as catalogVersion, code_version as codeVersion",
         "from phase6_experiment_runs order by experiment_id, run_index;",
       ].join(" "));
@@ -1248,9 +1279,7 @@ function readSqliteAuthority(sqlitePath) {
           state: stringValue(row.state),
           journeyId: String(row.journeyId),
           receiptId: String(row.receiptId),
-          receiptVersion: stringValue(row.resultReceiptVersion) === "v2"
-            ? RUN_RECEIPT_V2_VERSION
-            : stringValue(row.runReceiptVersion),
+          receiptVersion: stringValue(row.receiptVersion),
           runReceiptVersion: stringValue(row.runReceiptVersion),
           resultReceiptVersion: stringValue(row.resultReceiptVersion),
           rulesVersion: stringValue(row.rulesVersion),
@@ -1514,10 +1543,10 @@ function isStrictSha256(value) {
 function receiptEventIds(receipt) {
   const ids = [];
   const direct = firstValue(receipt, [["eventIds"], ["event_ids"]]);
-  if (Array.isArray(direct)) ids.push(...direct);
+  ids.push(...compactReceiptEventIdValues(direct));
   if (isRecord(direct)) {
     for (const group of [direct.source, direct.settlement, direct.derived]) {
-      if (Array.isArray(group)) ids.push(...group);
+      ids.push(...compactReceiptEventIdValues(group));
     }
   }
   const world = firstValue(receipt, [["worldDelta", "eventIds"], ["world_delta", "event_ids"], ["world", "eventIds"], ["world", "event_ids"]]);
@@ -1530,6 +1559,12 @@ function receiptEventIds(receipt) {
     }
   }
   return unique(ids.map(stringValue).filter(Boolean));
+}
+
+function compactReceiptEventIdValues(value) {
+  if (Array.isArray(value)) return value;
+  if (isRecord(value) && Array.isArray(value.values)) return value.values;
+  return [];
 }
 
 function sqliteRunKey(experimentId, runIndex) {

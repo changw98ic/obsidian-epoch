@@ -163,6 +163,8 @@ export interface LifetimeAdjustedPayloadInput {
   readonly reason: string;
   readonly previousRemaining: number;
   readonly remaining: number;
+  /** Canonical action event that caused this adjustment, when action-scoped. */
+  readonly sourceEventId?: string;
   /**
    * PR5a additive. Server-attested reference to the viability projection
    * that triggered this adjustment. Required when `reason` is one of the
@@ -272,6 +274,7 @@ export interface PersonalityDriftConfirmationProjectionInput<TDrift extends Pers
 export function identityIssuedPayload(input: IdentityIssuedPayloadInput): IdentityIssuedPayload {
   const includesExplorerSecretHash = Object.prototype.hasOwnProperty.call(input, "explorerSecretHash");
   return {
+    schemaVersion: 2,
     agentId: input.agentId,
     explorerId: input.explorerId,
     ...(includesExplorerSecretHash ? { explorerSecretHash: input.explorerSecretHash } : {}),
@@ -410,6 +413,7 @@ export function lifetimeAdjustedPayload(input: LifetimeAdjustedPayloadInput): Li
     reason: input.reason,
     previousRemaining: input.previousRemaining,
     remaining: input.remaining,
+    ...(input.sourceEventId ? { sourceEventId: input.sourceEventId } : {}),
     ...(input.viabilityTriggerRef ? { viabilityTriggerRef: input.viabilityTriggerRef } : {}),
   };
 }
@@ -420,6 +424,7 @@ export function planLifetimeAdjustmentEvents(input: LifetimeAdjustmentEventsInpu
     reason: input.reason,
     previousRemaining: input.previousRemaining,
     remaining: input.remaining,
+    ...(input.sourceEventId ? { sourceEventId: input.sourceEventId } : {}),
     ...(input.viabilityTriggerRef ? { viabilityTriggerRef: input.viabilityTriggerRef } : {}),
   });
   const adjusted = input.makeEvent("lifetime_adjusted", input.agentId, adjustedPayload, {

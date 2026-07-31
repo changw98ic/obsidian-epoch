@@ -356,16 +356,12 @@ function explorationRating(input: {
   readonly repeatedRunCount: number;
 }): ExplorationScoreBreakdown {
   const completedRatio = input.stepCount > 0 ? input.actions.length / input.stepCount : 0;
-  const trivialOvermatch = input.intensityBreakdown.playerCombatRatio > 2.2
-    && input.riskBreakdown.high === 0
-    && input.riskBreakdown.medium === 0;
-  const objectiveCompletionBps = clampPercent(completedRatio * 100 * (trivialOvermatch ? 0.42 : 1)) * 100;
+  const objectiveCompletionBps = clampPercent(completedRatio * 100) * 100;
   const nonEvidenceCount = input.actions.filter((action) => action.nonEvidence).length;
   const serverEvidenceCount = input.actions.filter((action) => action.channelClass === "server_hosted" && !action.nonEvidence).length;
-  const evidenceQualityBps = clampPercent((serverEvidenceCount / Math.max(1, input.actions.length)) * (trivialOvermatch ? 60 : 100)) * 100;
+  const evidenceQualityBps = clampPercent((serverEvidenceCount / Math.max(1, input.actions.length)) * 100) * 100;
   const meaningfulRiskBps = clampPercent(
-    ((input.riskBreakdown.medium * 48 + input.riskBreakdown.high * 86 + input.riskBreakdown.low * 18) / Math.max(1, input.stepCount))
-      + input.intensityBreakdown.encounterIntensity * 0.35,
+    (input.riskBreakdown.medium * 48 + input.riskBreakdown.high * 86 + input.riskBreakdown.low * 18) / Math.max(1, input.stepCount),
   ) * 100;
   const riskExposureBps = clampPercent(
     (input.riskBreakdown.medium * 45 + input.riskBreakdown.high * 85 + input.riskBreakdown.low * 16) / Math.max(1, input.stepCount),
@@ -373,7 +369,7 @@ function explorationRating(input: {
   const resourceLoss = Object.values(input.resourceDelta).reduce((total, value) => total + Math.max(0, -value), 0);
   const resourceEfficiencyBps = clampPercent(100 - resourceLoss * 5 - nonEvidenceCount * 6) * 100;
   const survivalBps = input.actions.length === input.stepCount
-    ? (trivialOvermatch ? 6_000 : 10_000)
+    ? 10_000
     : clampPercent(completedRatio * 85) * 100;
   const causalImpactBps = clampPercent(
     input.memoryDelta.confirmed * 9
@@ -381,13 +377,10 @@ function explorationRating(input: {
       + input.memoryDelta.private * 3
       + input.intensityBreakdown.worldPressure * 0.35,
   ) * 100;
-  const sideEffectControlBps = clampPercent((trivialOvermatch ? 60 : 100) - resourceLoss * 4 - nonEvidenceCount * 8) * 100;
+  const sideEffectControlBps = clampPercent(100 - resourceLoss * 4 - nonEvidenceCount * 8) * 100;
   const combatFitBps = clampPercent(
     100 - Math.min(70, Math.abs(input.intensityBreakdown.playerCombatRatio - 1) * 28),
   ) * 100;
-  const overwhelmingForceBps = input.intensityBreakdown.playerCombatRatio > 2.2 && input.riskBreakdown.high === 0
-    ? clampPercent((input.intensityBreakdown.playerCombatRatio - 2.2) * 18) * 100
-    : 0;
   const score = scoreMission({
     objectiveCompletionBps,
     pressureReliefBps: causalImpactBps,
@@ -398,8 +391,6 @@ function explorationRating(input: {
     resourceEfficiencyBps,
     survivalBps,
     integrityBps: evidenceQualityBps,
-    combatPowerFitBps: combatFitBps,
-    overwhelmingForceBps,
     recentSimilarCompletionCount: input.repeatedRunCount,
     repeatedResolutionFamilyCount: runIntensity(input.riskBreakdown) === "low" ? input.repeatedRunCount : 0,
   });
@@ -411,7 +402,7 @@ function explorationRating(input: {
     resourceConservation: score.efficiency,
     causalConsequences: score.causalImpact,
     combatReadinessFit: clampPercent(combatFitBps / 100),
-    combatReadinessMaxContribution: 25,
+    combatReadinessMaxContribution: 0,
     antiFarmDecay: score.antiFarmDecay,
     rawScore: score.rawScore,
     finalScore: score.finalScore,

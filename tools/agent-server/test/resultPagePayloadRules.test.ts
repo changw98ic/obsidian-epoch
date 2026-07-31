@@ -154,7 +154,7 @@ test("result page payload rules build a focused turn-card payload with receipt a
   assert.equal(built.receipt.canonicalEvents.some((item) => item.eventId === "event_keep"), true);
 });
 
-test("result page payload rules derive hosted-session focus and next actions", () => {
+test("result page payload rules derive hosted-session focus without prescribing an action", () => {
   const built = buildEpochResultPagePayload({
     projection: projection({
       identities: { agent_1: identity() },
@@ -173,8 +173,8 @@ test("result page payload rules derive hosted-session focus and next actions", (
   assert.equal(built.regionalContext?.regionId, "region_gray_harbor");
   assert.equal(built.receipt.focus.kind, "hosted_session");
   assert.equal(built.receipt.focus.id, "session_1");
-  assert.equal(built.nextActions.some((action) => action.kind === "continue_turn"), true);
-  assert.equal(built.nextActions.some((action) => action.kind === "set_downtime"), true);
+  assert.equal(Object.hasOwn(built, "nextActions"), false);
+  assert.deepEqual(built.regionalContext?.commissions, []);
 });
 
 test("result page payload rules reject conflicting focus inputs", () => {

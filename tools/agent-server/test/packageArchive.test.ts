@@ -50,7 +50,7 @@ test("raw package install manifests stay synchronized with host config generator
     assert.deepEqual(manifest.hostConfigFiles, epochHostConfigManifestEntries(serverBase));
     assert.equal(manifest.transport.streamableHttp.endpoint, `${serverBase}/mcp`);
     assert.deepEqual(manifest.health, expectedSurface.health);
-    assert.deepEqual(manifest.pairing, expectedSurface.pairing);
+    assert.deepEqual(manifest.bootstrap, expectedSurface.bootstrap);
     assert.deepEqual(manifest.publicPages, expectedSurface.publicPages);
     assert.deepEqual(manifest.playbooks, expectedSurface.playbooks);
     assert.deepEqual(manifest.hostSupport, expectedSurface.hostSupport);
@@ -65,7 +65,7 @@ test("raw package install manifests stay synchronized with host config generator
       Object.keys(manifest.publicPages).sort(),
       Object.keys(OBSIDIAN_EPOCH_PUBLIC_PAGES).sort(),
     );
-    for (const page of ["pairing", "webPlay", "directTrade", "partyRun"]) {
+    for (const page of ["webPlay", "directTrade", "partyRun"]) {
       assert.equal(typeof manifest.publicPages[page], "string", `missing public page ${page}`);
     }
     assert.ok(manifest.hostSupport.hosts.every(
@@ -583,14 +583,22 @@ test("Obsidian Epoch downloadable package contains skill and plugin manifests", 
     epochReadiness: "/api/epoch/health",
   });
   assert.deepEqual(skillManifest.health, rootManifest.health);
-  assert.equal(rootManifest.publicPages.console, "/epoch/console");
-  assert.equal(skillManifest.publicPages.console, "/epoch/console");
+  assert.equal(rootManifest.publicPages.console, "/epoch/web-play");
+  assert.equal(skillManifest.publicPages.console, "/epoch/web-play");
   assert.equal(rootManifest.publicPages.webPlay, "/epoch/web-play");
   assert.equal(skillManifest.publicPages.webPlay, "/epoch/web-play");
   assert.equal(rootManifest.publicPages.install, "/epoch/install");
   assert.equal(skillManifest.publicPages.install, "/epoch/install");
-  assert.equal(rootManifest.publicPages.pairing, "/epoch/pair");
-  assert.equal(skillManifest.publicPages.pairing, "/epoch/pair");
+  assert.equal(rootManifest.publicPages.pairing, undefined);
+  assert.equal(skillManifest.publicPages.pairing, undefined);
+  assert.deepEqual(rootManifest.bootstrap, {
+    tool: "obsidian_epoch.register_explorer",
+    authentication: "anonymous_mcp_bootstrap",
+    credentialHandoff: "package_stdio_proxy",
+    nextTool: "obsidian_epoch.agent_briefing",
+    serverEnvironmentVariable: "AGENT_WORLD_SERVER",
+  });
+  assert.deepEqual(skillManifest.bootstrap, rootManifest.bootstrap);
   assert.equal(rootManifest.publicPages.world, "/epoch/world");
   assert.equal(skillManifest.publicPages.world, "/epoch/world");
   assert.equal(rootManifest.publicPages.hosted, "/epoch/hosted/{sessionId}");
@@ -1282,7 +1290,7 @@ test("Obsidian Epoch downloadable package contains skill and plugin manifests", 
   assert.equal(webBridgeEntry.bridge?.entryTool, "obsidian_epoch.web_bridge_turn");
   assert.equal(webBridgeEntry.bridge?.submitTool, "obsidian_epoch.submit_web_bridge_action");
   assert.equal(webBridgeEntry.bridge?.playbook, "obsidian-epoch/references/web-llm-bridge-playbook.md");
-  assert.equal(webBridgeEntry.bridge?.publicPages?.console, "/epoch/console");
+  assert.equal(webBridgeEntry.bridge?.publicPages?.console, "/epoch/web-play");
   assert.equal(webBridgeEntry.bridge?.publicPages?.install, "/epoch/install");
   assert.equal(webBridgeEntry.bridge?.publicPages?.world, "/epoch/world");
   assert.equal(webBridgeEntry.bridge?.publicPages?.auditIndex, "/epoch/audit");
@@ -1295,7 +1303,7 @@ test("Obsidian Epoch downloadable package contains skill and plugin manifests", 
   assert.equal(bridgeSnippet.pathHint, "obsidian-epoch/host-config/web-llm-bridge-sequence.json");
   const bridgeConfig = JSON.parse(entries.get(bridgeSnippet.pathHint)?.toString("utf8") || "{}");
   assert.deepEqual(bridgeConfig, bridgeSnippet.body);
-  assert.equal(bridgeSnippet.body?.publicPages?.console, "/epoch/console");
+  assert.equal(bridgeSnippet.body?.publicPages?.console, "/epoch/web-play");
   assert.equal(bridgeSnippet.body?.publicPages?.install, "/epoch/install");
   assert.equal(bridgeSnippet.body?.publicPages?.world, "/epoch/world");
   assert.equal(bridgeSnippet.body?.publicPages?.auditIndex, "/epoch/audit");
@@ -1357,7 +1365,8 @@ test("Obsidian Epoch downloadable package contains skill and plugin manifests", 
   assert.match(packagedSkill, /returned hosted action declares[\s\S]*signedEnvelope[\s\S]*contentHash[\s\S]*signature/);
   const hostInstallReference = entries.get("obsidian-epoch/references/host-install.md")?.toString("utf8") || "";
   assert.match(hostInstallReference, /Claude Code[\s\S]*Codex[\s\S]*Cursor[\s\S]*Hermes[\s\S]*OpenClaw[\s\S]*Web LLM Bridge/);
-  assert.match(hostInstallReference, /\/epoch\/console/);
+  assert.match(hostInstallReference, /\/epoch\/web-play/);
+  assert.doesNotMatch(hostInstallReference, /\/epoch\/console/);
   assert.match(hostInstallReference, /package\.sha256[\s\S]*sha256/);
   assert.match(hostInstallReference, /package-integrity\.json[\s\S]*obsidian-epoch\/bin\/mcp-proxy\.ts/);
   assert.match(hostInstallReference, /agent:release-rehearsal[\s\S]*productionReleaseRehearsalCommand/);
@@ -1642,31 +1651,55 @@ test("Obsidian Epoch downloadable package runs its bundled MCP proxy from the ex
       },
     }, childOutput);
     const proposed = JSON.parse(proposedCall.result.content[0].text);
-    const selected = proposed.proposal.sceneContract.actionOptions[0];
-    const committedCall = await requestJsonRpc(lines, child, 7, "tools/call", {
-      name: "obsidian_epoch.commit_journey_action",
-      arguments: {
-        journeyId: prepared.journey.journeyId,
-        sceneId: proposed.proposal.sceneContract.sceneId,
-        episodeId: proposed.proposal.episode.episodeId,
-        expectedVersion: proposed.proposal.expectedVersion,
-        actionOptionId: selected.actionOptionId,
-        signature: selected.signature,
-        recoveryCode: registration.recoveryCode,
-        idempotencyKey: "package-proxy-commit",
-      },
-    }, childOutput);
-    const committed = JSON.parse(committedCall.result.content[0].text);
-    assert.deepEqual([committed.mainEpisode.phase, committed.returnEpisode.phase], ["main", "return"]);
+    let currentProposal = proposed;
+    let requestId = 7;
+    let committed: Record<string, any>;
+    while (true) {
+      const selected = currentProposal.proposal.sceneContract.actionOptions[0];
+      const committedCall = await requestJsonRpc(lines, child, requestId, "tools/call", {
+        name: "obsidian_epoch.commit_journey_action",
+        arguments: {
+          journeyId: prepared.journey.journeyId,
+          sceneId: currentProposal.proposal.sceneContract.sceneId,
+          episodeId: currentProposal.proposal.episode.episodeId,
+          expectedVersion: currentProposal.proposal.expectedVersion,
+          actionOptionId: selected.actionOptionId,
+          signature: selected.signature,
+          recoveryCode: registration.recoveryCode,
+          idempotencyKey: requestId === 7 ? "package-proxy-commit" : `package-proxy-commit-${requestId}`,
+        },
+      }, childOutput);
+      committed = JSON.parse(committedCall.result.content[0].text) as Record<string, any>;
+      if (committed.journey.status !== "awaiting_agent") break;
+
+      requestId += 1;
+      const nextProposalCall = await requestJsonRpc(lines, child, requestId, "tools/call", {
+        name: "obsidian_epoch.propose_journey_step",
+        arguments: {
+          journeyId: prepared.journey.journeyId,
+          expectedVersion: committed.journey.version,
+          recoveryCode: registration.recoveryCode,
+          idempotencyKey: `package-proxy-propose-${requestId}`,
+        },
+      }, childOutput);
+      currentProposal = JSON.parse(nextProposalCall.result.content[0].text) as Record<string, any>;
+      requestId += 1;
+    }
+    assert.ok(["main", "side"].includes(committed.mainEpisode.phase));
+    assert.equal(committed.returnEpisode.phase, "return");
     realNow = "2026-07-12T00:45:00.000Z";
     worldNow = "2026-01-01T09:30:00.000Z";
-    const statusCall = await requestJsonRpc(lines, child, 8, "tools/call", {
+    const statusCall = await requestJsonRpc(lines, child, requestId + 1, "tools/call", {
       name: "obsidian_epoch.journey_status",
       arguments: { journeyId: prepared.journey.journeyId, recoveryCode: registration.recoveryCode },
     }, childOutput);
     const status = JSON.parse(statusCall.result.content[0].text);
     assert.equal(status.journey.status, "settled");
-    assert.equal(status.episodes.length, 3);
+    assert.ok(status.episodes.length >= 3);
+    assert.equal(status.episodes[0].phase, "arrival");
+    assert.equal(status.episodes.at(-1).phase, "return");
+    assert.ok(status.episodes.slice(1, -1)
+      .every((episode: { phase: string }) => episode.phase === "main" || episode.phase === "side"));
     const publicResult = await fetch(`${baseUrl}${status.finalVerification.page.urlPath}`);
     assert.equal(publicResult.status, 200);
     const publicResultHtml = await publicResult.text();

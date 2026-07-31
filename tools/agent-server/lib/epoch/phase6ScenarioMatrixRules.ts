@@ -1,8 +1,9 @@
-export const PHASE6_MATRIX_VERSION = "phase6-matrix-v3" as const;
+export const PHASE6_MATRIX_VERSION = "phase6-matrix-v4" as const;
+export const PHASE6_SCENARIO_READINESS_RULE_VERSION = "phase6-scenario-readiness.v1" as const;
 
 export const PHASE6_AUTHORITATIVE_SCENARIO_MATRIX = {
   id: "obsidian_epoch.phase6.authoritative_scenario_matrix",
-  version: "obsidian-epoch-phase6-scenario-matrix-v0.2.0",
+  version: "obsidian-epoch-phase6-scenario-matrix-v0.3.0",
   matrixVersion: PHASE6_MATRIX_VERSION,
 } as const;
 
@@ -23,6 +24,32 @@ export interface Phase6AuthoritativeScenario {
   readonly coverage: readonly string[];
 }
 
+/**
+ * A server-issued preflight readiness record for a single Phase 6 scenario.
+ *
+ * The score deliberately uses the same 0..16 scale as ordinary completed
+ * journey preparation.  It is not client input and is later embedded in the
+ * signed, persisted scene contract so action settlement can audit exactly why
+ * a prepared scenario was treated as prepared.
+ */
+export interface Phase6ScenarioReadiness {
+  readonly authority: "phase6_authoritative_matrix";
+  readonly ruleVersion: typeof PHASE6_SCENARIO_READINESS_RULE_VERSION;
+  readonly runIndex: number;
+  readonly scenarioTag: string;
+  readonly preparedness: Phase6ScenarioPreparedness;
+  readonly journeyPreparationScore: number;
+}
+
+const PHASE6_PREPARATION_SCORE_BY_STATE: Readonly<Record<Phase6ScenarioPreparedness, number>> = {
+  prepared: 12,
+  specialist: 10,
+  mixed: 6,
+  borderline: 4,
+  mismatched: 0,
+  underprepared: 0,
+};
+
 export const PHASE6_AUTHORITATIVE_SCENARIOS = [
   { runIndex: 1, tag: "low-prepared-resource", intensity: "low", preparedness: "prepared", taskFamilyId: "resource_acquisition", offerSource: "catalog", strategySnapshotHint: "logistics", primaryObjective: "resource_acquisition", coverage: ["warehouse_inflow"] },
   { runIndex: 2, tag: "low-underprepared-information", intensity: "low", preparedness: "underprepared", taskFamilyId: "information_acquisition", offerSource: "region_pool", strategySnapshotHint: "cunning", primaryObjective: "information_acquisition", coverage: ["conservative_withdrawal"] },
@@ -40,6 +67,29 @@ export function phase6ScenarioForRun(runIndex: number): Phase6AuthoritativeScena
   const scenario = PHASE6_AUTHORITATIVE_SCENARIOS.find((entry) => entry.runIndex === runIndex);
   if (!scenario) throw new Error("phase6_scenario_run_index_invalid");
   return scenario;
+}
+
+/**
+ * Builds the only allowed readiness value for a Phase 6 run.  Callers pass
+ * the server-issued run index and tag; the score itself is never accepted
+ * from a request.
+ */
+export function phase6ScenarioReadinessForRun(
+  runIndex: number,
+  scenarioTag?: string,
+): Phase6ScenarioReadiness {
+  const scenario = phase6ScenarioForRun(runIndex);
+  if (scenarioTag !== undefined && scenarioTag !== scenario.tag) {
+    throw new Error("phase6_scenario_readiness_tag_mismatch");
+  }
+  return {
+    authority: "phase6_authoritative_matrix",
+    ruleVersion: PHASE6_SCENARIO_READINESS_RULE_VERSION,
+    runIndex: scenario.runIndex,
+    scenarioTag: scenario.tag,
+    preparedness: scenario.preparedness,
+    journeyPreparationScore: PHASE6_PREPARATION_SCORE_BY_STATE[scenario.preparedness],
+  };
 }
 
 /** Assert the complete scenario binding against the authoritative matrix. */

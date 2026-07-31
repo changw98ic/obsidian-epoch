@@ -539,12 +539,20 @@ export function buildConsequenceScore(ctx: SettlementContext): ConsequenceScore 
   };
 
   const hiddenClamp = deriveHiddenClamp(ctx);
+  const roleplaySummary = ctx.roleplayScore
+    ? {
+        deviationBps: ctx.roleplayScore.deviationBps,
+        doubtEventCount: ctx.roleplayScore.npcDoubtEvents.length,
+        exposed: ctx.roleplayScore.exposed,
+      }
+    : undefined;
 
   return {
     breakdown,
     mainLineSucceeded: ctx.mainLineSucceeded,
     hiddenComplete: ctx.hiddenComplete,
     hiddenClamp,
+    ...(roleplaySummary ? { roleplaySummary } : {}),
     policyVersion: CONSEQUENCE_SCORE_POLICY_VERSION,
     computedAt: canonicalTimestamp(ctx),
   };

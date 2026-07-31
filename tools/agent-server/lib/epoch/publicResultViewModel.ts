@@ -4,7 +4,6 @@ import {
   publicRegionLabel,
   publicResourceDescriptions,
   publicResourceLabel,
-  publicSourceTypeLabel,
   publicText,
 } from "./publicVocabulary.ts";
 
@@ -23,12 +22,6 @@ export interface PublicResultConsequence {
   readonly note?: string;
 }
 
-export interface PublicResultNextAction {
-  readonly label: string;
-  readonly href: string;
-  readonly note: string;
-}
-
 export interface PublicResultVerificationSummary {
   readonly label: string;
   readonly note: string;
@@ -45,7 +38,6 @@ export interface PublicResultViewModel {
   readonly generatedAt: string;
   readonly timeline: readonly PublicResultTimelineItem[];
   readonly consequences: readonly PublicResultConsequence[];
-  readonly nextActions: readonly PublicResultNextAction[];
   readonly verification: PublicResultVerificationSummary;
 }
 
@@ -159,53 +151,6 @@ function consequences(payload: ResultPagePayload): readonly PublicResultConseque
   return [{ label: "结果", value: "已记录", note: "本局没有公开资源变化。" }];
 }
 
-function pageLinks(payload: ResultPagePayload) {
-  const identity = payload.progress.identity || payload.progress.identities.at(-1);
-  return {
-    world: payload.publicPages?.world || "/epoch/world",
-    console: payload.publicPages?.console || "/epoch/console",
-    agent: payload.publicPages?.agent
-      || (payload.progress.agentId || identity?.agentId
-        ? `/epoch/agent/${encodeURIComponent(payload.progress.agentId || identity?.agentId || "")}`
-        : undefined),
-    explorer: payload.publicPages?.explorer
-      || (payload.progress.explorerId || identity?.explorerId
-        ? `/epoch/explorer/${encodeURIComponent(payload.progress.explorerId || identity?.explorerId || "")}`
-        : undefined),
-  };
-}
-
-function nextActions(payload: ResultPagePayload): readonly PublicResultNextAction[] {
-  const links = pageLinks(payload);
-  return [
-    {
-      label: "继续这个 agent",
-      href: links.console,
-      note: "确认这是你的档案后，可以继续消耗寿命或处理后续行动。",
-    },
-    ...(links.agent ? [{
-      label: "查看 agent 档案",
-      href: links.agent,
-      note: "查看公开身份档案和近期记录。",
-    }] : []),
-    {
-      label: "返回世界入口",
-      href: links.world,
-      note: "查看世界新闻、区域和其他公开战报。",
-    },
-    {
-      label: "安装或连接",
-      href: "/epoch/install",
-      note: "把黑曜纪元接到你的 coding agent。",
-    },
-    ...payload.nextActions.slice(0, 3).map((action) => ({
-      label: publicText(action.label),
-      href: links.console,
-      note: `${action.requiresRecoveryCode ? "恢复身份后可继续" : "公开查看"}${action.sourceType ? ` · ${publicSourceTypeLabel(action.sourceType)}` : ""}`,
-    })),
-  ];
-}
-
 export function buildPublicResultViewModel(page: EpochSharedResultPage & { readonly payload: ResultPagePayload }): PublicResultViewModel {
   const payload = page.payload;
   const title = heroTitle(payload);
@@ -228,7 +173,6 @@ export function buildPublicResultViewModel(page: EpochSharedResultPage & { reado
     generatedAt: payload.generatedAt,
     timeline: eventTimeline(payload),
     consequences: consequences(payload),
-    nextActions: nextActions(payload),
     verification: {
       label: statusLabel,
       note: "这些信息用于确认本页来自服务器结算，不影响阅读故事。",

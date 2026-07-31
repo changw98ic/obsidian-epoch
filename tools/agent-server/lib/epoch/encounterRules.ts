@@ -35,6 +35,8 @@ export const OBJECTIVE_SCORE_WEIGHT: Readonly<Record<EpochResourceId, number>> =
   stamina: 2,
   focus: 3,
   legend: 8,
+  material_cultivation_essence: 6,
+  material_forging_alloy: 6,
 };
 export const ANOMALY_FOCUS_SCORE = 3;
 

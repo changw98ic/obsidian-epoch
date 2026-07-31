@@ -19,6 +19,13 @@ const BEGIN_PHASE6_RUN_TOOL_NAME = "obsidian_epoch.begin_phase6_run";
 const PHASE6_EXPERIMENT_STATUS_TOOL_NAME = "obsidian_epoch.phase6_experiment_status";
 const JOURNEY_STATUS_TOOL_NAME = "obsidian_epoch.journey_status";
 const PLAYER_PANEL_TOOL_NAME = "obsidian_epoch.player_panel";
+const PHASE6_READ_ONLY_TOOL_NAMES = new Set([
+  RUN_RECEIPT_TOOL_NAME,
+  PHASE6_RESULT_TOOL_NAME,
+  PHASE6_EXPERIMENT_STATUS_TOOL_NAME,
+  JOURNEY_STATUS_TOOL_NAME,
+  PLAYER_PANEL_TOOL_NAME,
+]);
 const EXPECTED_SCENARIO_TAGS = Object.freeze([
   "low-prepared-resource",
   "low-underprepared-information",
@@ -53,6 +60,13 @@ const COMPACT_ONLY_TOOL_NAMES = new Set([
   PHASE6_RESULT_TOOL_NAME,
 ]);
 const RUN_RECEIPT_V2_SCHEMA = "journey_run_receipt.v2";
+const MCP_HTTP_TRANSPORT_PATH = "/api/epoch/mcp/tools/call";
+const RAG_NO_CHANGE_REASONS = new Set([
+  "no_canonical_events",
+  "projection_equal",
+  "no_supported_projection_fields",
+  "only_untracked_fields_changed",
+]);
 const SERVER_ISSUED_START_FIELDS = [
   "experimentId",
   "experiment_id",
@@ -78,7 +92,7 @@ const SERVER_ISSUED_START_FIELDS = [
 
 function usage() {
   return [
-    "Usage: node tools/agent-server/phase6-ten-run.mjs [--input <path>] [--experiment-id <id>]",
+    "Usage: node --import tsx ../agent-server/phase6-ten-run.ts [--input <path>] [--experiment-id <id>] [--require-mcp-http-transport] [--expected-mcp-http-origin <http(s)-origin>]",
     "",
     "Reads JSONL or command output from --input or stdin and prints a machine JSON summary.",
     "Exits non-zero when any Phase 6 ten-run gate fails.",
@@ -86,7 +100,13 @@ function usage() {
 }
 
 function parseArguments(argv) {
-  const options = { inputPath: undefined, experimentId: undefined, help: false };
+  const options = {
+    inputPath: undefined,
+    experimentId: undefined,
+    requireMcpHttpTransport: false,
+    expectedMcpHttpOrigin: undefined,
+    help: false,
+  };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--help" || argument === "-h") {
@@ -111,7 +131,23 @@ function parseArguments(argv) {
       index += 1;
       continue;
     }
+    if (argument === "--require-mcp-http-transport") {
+      options.requireMcpHttpTransport = true;
+      continue;
+    }
+    if (argument === "--expected-mcp-http-origin") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("--expected-mcp-http-origin requires an http(s) origin");
+      }
+      options.expectedMcpHttpOrigin = canonicalMcpHttpOrigin(value);
+      index += 1;
+      continue;
+    }
     throw new Error(`Unknown argument: ${argument}`);
+  }
+  if (options.expectedMcpHttpOrigin && !options.requireMcpHttpTransport) {
+    throw new Error("--expected-mcp-http-origin requires --require-mcp-http-transport");
   }
   return options;
 }
@@ -313,7 +349,16 @@ function canonicalProjection(record) {
   setIfPresent(projected, "rulesetVersion", projected.versions?.rulesetVersion ?? projected.versions?.rulesVersion);
   setIfPresent(projected, "catalogVersion", projected.versions?.catalogVersion);
   setIfPresent(projected, "codeVersion", projected.versions?.codeVersion);
-  setIfPresent(projected, "scenarioMatrixVersion", projected.versions?.scenarioMatrixVersion);
+  setIfPresent(projected, "scenarioMatrixVersion", projected.versions?.scenarioMatrixVersion ?? firstProjectedValue(sources, [
+    ["scenarioMatrixVersion"],
+    ["scenario_matrix_version"],
+    ["scenarioMatrix", "version"],
+    ["scenario_matrix", "version"],
+    ["matrix", "version"],
+    ["receipt", "scenarioMatrixVersion"],
+    ["runReceipt", "scenarioMatrixVersion"],
+    ["result", "receipt", "scenarioMatrixVersion"],
+  ]));
   setIfPresent(projected, "scenarioTag", firstProjectedValue(sources, [
     ["scenarioTag"],
     ["scenario_tag"],
@@ -324,6 +369,8 @@ function canonicalProjection(record) {
     ["startJourneyBinding", "scenarioMatrix", "scenarioTag"],
   ]));
   setIfPresent(projected, "binding", firstProjectedValue(sources, [["startJourneyBinding"], ["start_journey_binding"], ["binding"], ["runBinding"], ["run_binding"], ["runReceipt"], ["run_receipt"], ["receipt"]]));
+  setIfPresent(projected, "pageId", firstProjectedValue(sources, [["pageId"], ["page_id"], ["resultPageId"], ["result_page_id"], ["page", "pageId"], ["resultPage", "pageId"], ["phase6Settlement", "pageId"], ["finalVerification", "pageId"], ["finalVerification", "page", "pageId"], ["result", "pageId"]]));
+  setIfPresent(projected, "receiptId", firstProjectedValue(sources, [["receiptId"], ["receipt_id"], ["receipt", "receiptId"], ["runReceipt", "receiptId"], ["run_receipt", "receiptId"], ["phase6Settlement", "receiptId"], ["resultPage", "receiptId"], ["page", "receiptId"], ["result", "receiptId"], ["result", "receipt", "receiptId"]]));
   setIfPresent(projected, "eventType", firstProjectedValue(sources, [["eventType"], ["event_type"], ["type"], ["kind"], ["name"], ["stage"], ["phase"], ["message"]]));
   setIfPresent(projected, "status", firstProjectedValue(sources, [["status"], ["state"], ["outcome"]]));
   setIfPresent(projected, "verified", firstProjectedValue(sources, [["verified"], ["isVerified"], ["sidecar", "verified"]]));
@@ -343,7 +390,8 @@ function canonicalProjection(record) {
   setIfPresent(projected, "resourceConservation", firstProjectedValue(sources, [["resourceConservation"], ["resource_conservation"], ["resources", "conservation"], ["resourceLedger", "conservation"], ["resourceLedger", "conserved"], ["result", "sections", "settlement", "economyConservation"]]));
   setIfPresent(projected, "ragDelta", firstProjectedValue(sources, [["ragDelta"], ["rag_delta"], ["worldDelta"], ["world_delta"], ["knowledgeDelta"], ["world", "delta"], ["rag", "delta"], ["result", "sections", "world", "changes"], ["result", "sections", "rag", "changes"]]));
   setIfPresent(projected, "noChangeReason", firstProjectedValue(sources, [["noChangeReason"], ["no_change_reason"], ["worldNoChangeReason"], ["ragNoChangeReason"], ["result", "sections", "world", "noChangeReason"], ["result", "sections", "rag", "noChangeReason"]]));
-  setIfPresent(projected, "scoreBreakdown", firstProjectedValue(sources, [["scoreBreakdown"], ["score", "breakdown"], ["scoring", "breakdown"], ["result", "score", "breakdown"], ["receipt", "score"], ["runReceipt", "score"]]));
+  setIfPresent(projected, "progressionDelta", firstProjectedValue(sources, [["progressionDelta"], ["progression_delta"], ["progression", "delta"], ["result", "sections", "identityProgression", "progression"], ["result", "sections", "progression"]]));
+  setIfPresent(projected, "scoreBreakdown", firstProjectedValue(sources, [["scoreBreakdown"], ["score", "breakdown"], ["scoring", "breakdown"], ["result", "score", "breakdown"], ["result", "sections", "scores"], ["receipt", "score"], ["runReceipt", "score"]]));
   return projected;
 }
 
@@ -386,6 +434,59 @@ function normalizeCanonicalRecords(records) {
     return isCanonicalCdeRecord(record) ? canonicalProjection(record) : record;
   });
   return { records: normalized, metadataConflicts };
+}
+
+function canonicalMcpHttpOrigin(value) {
+  let origin;
+  try {
+    origin = new URL(value);
+  } catch {
+    throw new Error("--expected-mcp-http-origin must be a valid http(s) origin");
+  }
+  if ((origin.protocol !== "http:" && origin.protocol !== "https:")
+    || origin.origin !== value
+    || origin.username
+    || origin.password
+    || origin.search
+    || origin.hash) {
+    throw new Error("--expected-mcp-http-origin must be a canonical http(s) origin");
+  }
+  return origin.origin;
+}
+
+function mcpHttpTransportFinding(record, index, expectedMcpHttpOrigin) {
+  if (!isCanonicalCdeRecord(record)) {
+    return { index, reason: "canonical_record_required" };
+  }
+  const transport = record.metadata?.transport;
+  if (!transport || typeof transport !== "object" || Array.isArray(transport)) {
+    return { index, reason: "transport_required" };
+  }
+  if (transport.kind !== "mcp_http" || transport.path !== MCP_HTTP_TRANSPORT_PATH || typeof transport.origin !== "string") {
+    return { index, reason: "transport_shape_invalid" };
+  }
+  try {
+    const origin = new URL(transport.origin);
+    if ((origin.protocol !== "http:" && origin.protocol !== "https:")
+      || origin.origin !== transport.origin
+      || origin.username
+      || origin.password
+      || origin.search
+      || origin.hash) {
+      return { index, reason: "transport_origin_invalid" };
+    }
+  } catch {
+    return { index, reason: "transport_origin_invalid" };
+  }
+  if (expectedMcpHttpOrigin && transport.origin !== expectedMcpHttpOrigin) {
+    return {
+      index,
+      reason: "transport_origin_mismatch",
+      expected: expectedMcpHttpOrigin,
+      actual: transport.origin,
+    };
+  }
+  return undefined;
 }
 
 function inspectForForbidden(value, path, state) {
@@ -1022,6 +1123,19 @@ function fieldValue(receipt, paths) {
   return nonEmptyValue(value) ? value : undefined;
 }
 
+function eventIdList(value) {
+  if (Array.isArray(value)) {
+    return value.map(String).filter(Boolean);
+  }
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+  if (Array.isArray(value.values)) {
+    return value.values.map(String).filter(Boolean);
+  }
+  return ["source", "settlement", "derived"].flatMap((key) => eventIdList(value[key]));
+}
+
 function validateReceiptField(errors, receipt, field, paths) {
   const value = fieldValue(receipt, paths);
   if (value === undefined) {
@@ -1030,7 +1144,19 @@ function validateReceiptField(errors, receipt, field, paths) {
   return value;
 }
 
-function validateRunReceiptV2(receipt, run) {
+function isCompactRunReceiptTransport(record) {
+  const transportVersion = stringifyId(firstValue(record, [
+    ["transportVersion"],
+    ["output", "transportVersion"],
+    ["payload", "transportVersion"],
+  ]));
+  if (transportVersion === "phase6_run_receipt.compact.v1") {
+    return true;
+  }
+  return sourceToolNamesFromRecord(record).some((sourceToolName) => /run_receipt_compact$/i.test(sourceToolName));
+}
+
+function validateRunReceiptV2(receipt, run, record) {
   const errors = [];
   if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
     return { valid: false, errors: ["receipt"] };
@@ -1082,9 +1208,14 @@ function validateRunReceiptV2(receipt, run) {
   validateReceiptField(errors, receipt, "settledAt", [["settledAt"], ["settled_at"], ["timing", "settledAt"]]);
   validateReceiptField(errors, receipt, "worldTimeBefore", [["world", "worldTimeBefore"], ["worldTimeBefore"], ["world_time_before"], ["worldTime", "before"], ["before", "worldTime"]]);
   validateReceiptField(errors, receipt, "worldTimeAfter", [["world", "worldTimeAfter"], ["worldTimeAfter"], ["world_time_after"], ["worldTime", "after"], ["after", "worldTime"]]);
-  validateReceiptField(errors, receipt, "before.body", [["snapshots", "before", "body"], ["before", "body"], ["beforeBody"]]);
+  const compactTransport = isCompactRunReceiptTransport(record);
+  if (!compactTransport) {
+    validateReceiptField(errors, receipt, "before.body", [["snapshots", "before", "body"], ["before", "body"], ["beforeBody"]]);
+  }
   validateReceiptField(errors, receipt, "before.hash", [["snapshots", "before", "hash"], ["before", "hash"], ["beforeHash"]]);
-  validateReceiptField(errors, receipt, "after.body", [["snapshots", "after", "body"], ["after", "body"], ["afterBody"]]);
+  if (!compactTransport) {
+    validateReceiptField(errors, receipt, "after.body", [["snapshots", "after", "body"], ["after", "body"], ["afterBody"]]);
+  }
   validateReceiptField(errors, receipt, "after.hash", [["snapshots", "after", "hash"], ["after", "hash"], ["afterHash"]]);
   validateReceiptField(errors, receipt, "outcome", [["outcome"], ["result", "outcome"]]);
   const integrity = validateReceiptField(errors, receipt, "integrity", [["integrity"]]);
@@ -1095,11 +1226,37 @@ function validateRunReceiptV2(receipt, run) {
     validateReceiptField(errors, integrity, "integrity.payloadHash", [["payloadHash"], ["payload_hash"]]);
   }
   const receiptEventIds = fieldValue(receipt, [["eventIds"], ["event_ids"]]);
-  const flattenedReceiptEventIds = receiptEventIds && typeof receiptEventIds === "object" && !Array.isArray(receiptEventIds)
-    ? ["source", "settlement", "derived"].flatMap((key) => Array.isArray(receiptEventIds[key]) ? receiptEventIds[key] : [])
-    : Array.isArray(receiptEventIds) ? receiptEventIds : [];
+  const flattenedReceiptEventIds = eventIdList(receiptEventIds);
   if (flattenedReceiptEventIds.length < 1) {
     errors.push("eventIds");
+  }
+  const rag = validateReceiptField(errors, receipt, "rag", [["rag"]]);
+  if (!rag || typeof rag !== "object" || Array.isArray(rag)) {
+    errors.push("rag_object");
+  } else {
+    const importantMemoryCount = rag.importantMemoryCount;
+    if (!Number.isInteger(importantMemoryCount) || importantMemoryCount < 0 || importantMemoryCount > 3) {
+      errors.push("rag.importantMemoryCount");
+    }
+    const ordinaryExpansion = rag.ordinaryNodePersistenceExpansion;
+    if (!Number.isInteger(ordinaryExpansion) || ordinaryExpansion < 0) {
+      errors.push("rag.ordinaryNodePersistenceExpansion");
+    }
+    const ragDelta = rag.delta;
+    if (!ragDelta || typeof ragDelta !== "object" || Array.isArray(ragDelta) || !Array.isArray(ragDelta.entries)) {
+      errors.push("rag.delta.entries");
+    } else {
+      if (Number.isInteger(importantMemoryCount) && importantMemoryCount !== ragDelta.entries.length) {
+        errors.push("rag.importantMemoryCount_match");
+      }
+      if (ragDelta.entries.length === 0) {
+        if (typeof rag.noChangeReason !== "string" || !RAG_NO_CHANGE_REASONS.has(rag.noChangeReason)) {
+          errors.push("rag.noChangeReason");
+        }
+      } else if (rag.noChangeReason !== undefined) {
+        errors.push("rag.noChangeReason_unexpected");
+      }
+    }
   }
 
   const expectedValues = [
@@ -1181,6 +1338,7 @@ function isCompleteRecord(record) {
 }
 
 function isMutationRecord(record) {
+  if (PHASE6_READ_ONLY_TOOL_NAMES.has(toolNameFromRecord(record))) return false;
   const name = eventName(record);
   const action = stringifyId(firstValue(record, [
     ["action"],
@@ -1220,14 +1378,8 @@ function eventIdsFrom(record) {
     ["payload", "RunReceipt", "eventIds"],
     ["payload", "runReceipt", "eventIds"],
   ]);
-  if (Array.isArray(value)) {
-    return value.map(String).filter(Boolean);
-  }
-  if (value && typeof value === "object") {
-    return ["source", "settlement", "derived"]
-      .flatMap((key) => Array.isArray(value[key]) ? value[key] : [])
-      .map(String)
-      .filter(Boolean);
+  if (Array.isArray(value) || (value && typeof value === "object")) {
+    return eventIdList(value);
   }
   if (typeof value === "string" && value.trim()) {
     return [value.trim()];
@@ -1311,6 +1463,27 @@ function hasWorldDeltaOrNoChange(record) {
 }
 
 function scoreBreakdown(record) {
+  const compactScores = firstValue(record, [
+    ["result", "sections", "scores"],
+    ["output", "result", "sections", "scores"],
+    ["payload", "result", "sections", "scores"],
+  ]);
+  if (Array.isArray(compactScores)) {
+    const numeric = {};
+    for (const entry of compactScores) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        continue;
+      }
+      const dimension = stringifyId(entry.dimension);
+      const score = entry.score;
+      if (dimension && typeof score === "number" && Number.isFinite(score)) {
+        numeric[dimension] = score;
+      }
+    }
+    if (Object.keys(numeric).length > 0) {
+      return numeric;
+    }
+  }
   const value = firstValue(record, [
     ["score"],
     ["score", "breakdown"],
@@ -1387,7 +1560,7 @@ function createRun(index) {
     verifiedResults: [],
     beforePanelSnapshots: [],
     afterPanelSnapshots: [],
-    explicitNoChangeReasons: new Set(),
+    panelNoChangeReasons: new Set(),
   };
 }
 
@@ -1425,7 +1598,7 @@ function summarizeRun(run) {
     resourceConservationPassed: run.resourceConservationPassed,
     ragOrWorldDeltaOrNoChange: run.ragOrWorldDeltaOrNoChange,
     scoreBreakdowns: run.scoreBreakdowns.length,
-    explicitNoChangeReasons: [...run.explicitNoChangeReasons].sort(),
+    panelNoChangeReasons: [...run.panelNoChangeReasons].sort(),
   };
 }
 
@@ -1554,12 +1727,16 @@ function startJourneyIssuedFields(record) {
       || versionsFromRecord(candidate)
       || bindingFromRecord(candidate)
   )) || record;
+  const binding = bindingFromRecord(source);
+  const bindingRecord = binding && typeof binding === "object" && !Array.isArray(binding)
+    ? binding
+    : undefined;
   return {
-    experimentId: experimentIdFromRecord(source),
-    runIndex: runIndexFromRecord(source),
-    seed: seedFromRecord(source),
-    versions: versionsFromRecord(source),
-    binding: bindingFromRecord(source),
+    experimentId: experimentIdFromRecord(source) ?? experimentIdFromRecord(bindingRecord),
+    runIndex: runIndexFromRecord(source) ?? runIndexFromRecord(bindingRecord),
+    seed: seedFromRecord(source) ?? seedFromRecord(bindingRecord),
+    versions: versionsFromRecord(source) ?? versionsFromRecord(bindingRecord),
+    binding,
   };
 }
 
@@ -1600,7 +1777,7 @@ function collectFailClosedFindings(value, path, findings) {
     const normalizedKey = key.replace(/[-_]/g, "").toLowerCase();
     if ((normalizedKey === "iserror" || normalizedKey === "toolerror") && valueIsError(entry)) {
       findings.push({ path: nextPath, reason: key });
-    } else if (normalizedKey === "ok" && entry === false) {
+    } else if (normalizedKey === "ok" && entry === false && !/\.sampling$/i.test(path)) {
       findings.push({ path: nextPath, reason: "ok_false" });
     } else if (normalizedKey === "toolerror" && nonEmptyValue(entry)) {
       findings.push({ path: nextPath, reason: "toolError" });
@@ -1664,6 +1841,15 @@ function receiptIdFrom(value) {
     ["result", "receiptId"],
     ["result", "receipt", "receiptId"],
   ]));
+}
+
+function sameReceiptReference(left, right) {
+  const leftId = receiptIdFrom(left);
+  const rightId = receiptIdFrom(right);
+  if (leftId && rightId) {
+    return leftId === rightId;
+  }
+  return sameBinding(left, right);
 }
 
 function pageIdFrom(value) {
@@ -1800,29 +1986,28 @@ function panelDiffProof(before, after) {
   };
 }
 
-function explicitNoChangeReasonsFrom(record) {
+function panelNoChangeReasonsFrom(record) {
   const reasons = [];
-  const seen = new WeakSet();
-  const walk = (value, path = [], depth = 0) => {
-    if (!value || typeof value !== "object" || depth > 12 || seen.has(value)) return;
-    seen.add(value);
-    for (const [key, entry] of Object.entries(value)) {
-      const nextPath = [...path, key];
-      const normalized = key.replace(/[-_]/g, "").toLowerCase();
-      const directReason = /^(?:stablereason|nochangereason|nogrowthreason|nodeltareason)$/.test(normalized);
-      const contextualReason = normalized === "reason" && (
-        value.changed === false
-        || value.changed === 0
-        || value.count === 0
-        || /(?:progression|rag|delta|changeset)/i.test(path.join("."))
-      );
-      if ((directReason || contextualReason) && typeof entry === "string" && entry.trim()) {
-        reasons.push(`${nextPath.join(".")}:${entry.trim()}`);
-      }
-      walk(entry, nextPath, depth + 1);
+  const paths = [
+    ["playerPanelNoChangeReason"],
+    ["panelNoChangeReason"],
+    ["playerPanel", "noChangeReason"],
+    ["panel", "noChangeReason"],
+    ["playerPanel", "stableReason"],
+    ["panel", "stableReason"],
+    ["progressionDelta", "noChangeReason"],
+    ["progressionDelta", "stableReason"],
+    ["progression", "noChangeReason"],
+    ["progression", "stableReason"],
+    ["result", "sections", "identityProgression", "progression", "noChangeReason"],
+    ["result", "sections", "progression", "noChangeReason"],
+  ];
+  for (const path of paths) {
+    const reason = firstValue(record, [path]);
+    if (typeof reason === "string" && reason.trim()) {
+      reasons.push(`${path.join(".")}:${reason.trim()}`);
     }
-  };
-  walk(record);
+  }
   return reasons;
 }
 
@@ -1843,6 +2028,9 @@ function validate(options, input) {
     collectFailClosedFindings(record, `records[${index}]`, failClosedFindings);
   });
   const compactToolFindings = collectCompactToolFindings(records);
+  const mcpHttpTransportFindings = options.requireMcpHttpTransport
+    ? records.map((record, index) => mcpHttpTransportFinding(record, index, options.expectedMcpHttpOrigin)).filter(Boolean)
+    : [];
 
   const beginExperimentOutputs = phase6ExperimentBeginOutputs(records);
   const beginRunOutputs = phase6RunBeginOutputs(records);
@@ -1951,7 +2139,7 @@ function validate(options, input) {
     if (isToolSuccessRecord(record, RUN_RECEIPT_TOOL_NAME)) {
       const receiptObject = runReceiptObjectFromRecord(record);
       run.runReceiptSuccessRecords += 1;
-      const receiptValidation = validateRunReceiptV2(receiptObject, run);
+      const receiptValidation = validateRunReceiptV2(receiptObject, run, record);
       if (receiptValidation.valid) {
         run.runReceiptV2ValidRecords += 1;
         run.receiptV2Proofs.push({
@@ -2019,8 +2207,8 @@ function validate(options, input) {
     if (breakdown) {
       run.scoreBreakdowns.push(breakdown);
     }
-    for (const reason of explicitNoChangeReasonsFrom(record)) {
-      run.explicitNoChangeReasons.add(reason);
+    for (const reason of panelNoChangeReasonsFrom(record)) {
+      run.panelNoChangeReasons.add(reason);
     }
     if (isCompleteRecord(record)) {
       completedRunIndexes.add(runIndex);
@@ -2118,7 +2306,7 @@ function validate(options, input) {
       }
       const issued = issuedRunsByIndex.get(runIndex);
       const receipt = statusReceiptFromRunView(runView);
-      if (issued && sameBinding(receipt, issued.binding)) {
+      if (issued && sameReceiptReference(receipt, issued.binding)) {
         run.phase6ExperimentStatusReceiptMatches += 1;
       } else if (receipt !== undefined || /^(complete|completed)$/i.test(state || "")) {
         statusReceiptMismatches.push({ runIndex, state: state || null });
@@ -2184,6 +2372,16 @@ function validate(options, input) {
       actual: metadataConflicts.length,
       conflicts: metadataConflicts.slice(0, 30),
       message: "canonical extractor metadata may project input/output values but must not contradict them",
+    });
+  }
+  if (mcpHttpTransportFindings.length > 0) {
+    addFailure(failures, "phase6_mcp_http_transport_evidence", {
+      expected: options.expectedMcpHttpOrigin
+        ? `every canonical record has metadata.transport.kind=mcp_http, origin=${options.expectedMcpHttpOrigin}, and path=${MCP_HTTP_TRANSPORT_PATH}`
+        : `every canonical record has metadata.transport.kind=mcp_http, a canonical http(s) origin, and path=${MCP_HTTP_TRANSPORT_PATH}`,
+      actual: mcpHttpTransportFindings.length,
+      findings: mcpHttpTransportFindings.slice(0, 30),
+      message: "strict real-run evidence must retain the safe MCP HTTP transport origin and route",
     });
   }
   if (beginExperimentOutputs.length !== 1) {
@@ -2525,7 +2723,7 @@ function validate(options, input) {
         expected: `>=1 strict ${RUN_RECEIPT_V2_SCHEMA} receipt`,
         actual: run.runReceiptV2ValidRecords,
         missingOrInvalid: [...new Set(run.runReceiptV2Errors)].slice(0, 30),
-        message: "obsidian_epoch.run_receipt must return a strict journey_run_receipt.v2 receipt with required bindings, timing, world time, before/after body+hash, outcome, and integrity.eventIds",
+        message: "obsidian_epoch.run_receipt must return a strict journey_run_receipt.v2 receipt with required bindings, timing, world time, snapshot hashes, outcome, and integrity.eventIds; full transport also requires snapshot bodies",
       });
     }
     if (run.phase6ResultSuccessRecords < 1) {
@@ -2623,7 +2821,7 @@ function validate(options, input) {
       });
     } else {
       const proof = panelDiffProof(beforePanel, afterPanel);
-      if (!proof.anyChanged && run.explicitNoChangeReasons.size === 0) {
+      if (!proof.anyChanged && run.panelNoChangeReasons.size === 0) {
         failures.push({
           gate: "phase6_player_panel_delta_or_no_change_reason",
           runIndex: run.runIndex,

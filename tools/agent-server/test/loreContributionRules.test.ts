@@ -431,7 +431,7 @@ test("lore contribution rules build target adjudication payloads", () => {
       lowAuthoritySourceEventIds: [],
       evidenceQuality: "strong",
       canHardRefute: true,
-      recommendedStatus: "hard_refutation_allowed",
+      refutationStatus: "hard_refutation_allowed",
       reason: "来源包含 core/official 权威资料，可进入硬反驳裁定。",
     },
     operatorId: "operator_1",

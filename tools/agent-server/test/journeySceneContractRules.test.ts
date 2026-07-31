@@ -176,6 +176,45 @@ test("builds a deterministic signed scene contract from seed, mandate, world sta
     first.actionOptions.map((action) => action.actionOptionId));
 });
 
+test("Phase 6 scene readiness is matrix-derived, persisted, and bound to the action signature", () => {
+  const forgedReadiness = {
+    runIndex: 6,
+    scenarioTag: "high-prepared-priority",
+    journeyPreparationScore: 0,
+  } as unknown as NonNullable<JourneySceneContractBuildInput["phase6Readiness"]>;
+  const contract = buildJourneySceneContract(input({ phase6Readiness: forgedReadiness }));
+
+  assert.deepEqual(contract.phase6Readiness, {
+    authority: "phase6_authoritative_matrix",
+    ruleVersion: "phase6-scenario-readiness.v1",
+    runIndex: 6,
+    scenarioTag: "high-prepared-priority",
+    preparedness: "prepared",
+    journeyPreparationScore: 12,
+  });
+  assert.ok(contract.actionOptions.every((action) => verifyJourneySceneActionSignature({
+    agentId: input().agentId,
+    contract,
+    action,
+  })));
+
+  const tamperedContract = {
+    ...contract,
+    phase6Readiness: {
+      ...contract.phase6Readiness!,
+      journeyPreparationScore: 0,
+    },
+  };
+  assert.equal(verifyJourneySceneActionSignature({
+    agentId: input().agentId,
+    contract: tamperedContract,
+    action: contract.actionOptions[0],
+  }), false);
+  assert.throws(() => buildJourneySceneContract(input({
+    phase6Readiness: { runIndex: 6, scenarioTag: "high-underprepared-crisis" },
+  })), /phase6_scenario_readiness_tag_mismatch/);
+});
+
 test("runtime action signatures use a purpose-bound key independent from package releases", () => {
   const packageKey = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }).toString();
   const actionKey = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }).toString();

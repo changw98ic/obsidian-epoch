@@ -127,7 +127,6 @@ function payload(overrides: Partial<Omit<EpochResultPagePayload, "receipt">> = {
       resources: {},
       latestEvents: [],
     },
-    nextActions: [],
     ...overrides,
   } as unknown as Omit<EpochResultPagePayload, "receipt">;
 }
@@ -180,6 +179,7 @@ test("result page receipt rules build attested hosted-session receipts", () => {
   assert.equal(receipt.trustTier, "verified_autonomous");
   assert.equal(receipt.channelClass, "server_hosted");
   assert.equal(receipt.deliveryTrust, "remote_attested_runner");
+  assert.equal("phase6" in receipt, false);
   assert.deepEqual(
     receipt.canonicalEvents.map((canonicalEvent) => canonicalEvent.eventId),
     ["epoch_event_attestation", "epoch_event_action", "epoch_event_session"],

@@ -31,10 +31,24 @@
  * promotion back through {@link markMirrorConsequencePromoted}.
  */
 
-import type { EpochEvent } from "./events.ts";
+import type {
+  EpochEvent,
+  NpcIdentityDoubtPayload,
+} from "./events.ts";
 import type { EpochEventFactory } from "./eventFactory.ts";
 import type { EpochIdFactory } from "./protocol.ts";
 import type { MirrorConsequenceLedgerEntry } from "./journeySettlementRules.ts";
+import {
+  APPROACH_TAGS,
+  type ApproachTag,
+} from "./journeyStrategyRules.ts";
+import {
+  buildNpcIdentityDoubtEvent,
+  roleplayScoreFromLedger,
+  type DoubtStrength,
+  type NpcDoubtEvent,
+  type RoleplayScore,
+} from "./journeyRoleplayRules.ts";
 import {
   regionInfluenceChangedEvent,
   traceCreatedEvent,
@@ -68,6 +82,127 @@ function requireField<T>(blueprint: Readonly<Record<string, unknown>>, key: stri
   return value as T;
 }
 
+const DOUBT_STRENGTHS: readonly DoubtStrength[] = ["low", "moderate", "high", "severe"];
+
+function readApproachTags(
+  blueprint: Readonly<Record<string, unknown>>,
+): readonly ApproachTag[] {
+  const value = blueprint.approachTags;
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("journey_mirror_consequence_blueprint_approach_tags_invalid");
+  }
+  const tags: ApproachTag[] = [];
+  for (const candidate of value) {
+    if (typeof candidate !== "string" || !APPROACH_TAGS.includes(candidate as ApproachTag)) {
+      throw new Error(`journey_mirror_consequence_blueprint_approach_tag_invalid:${String(candidate)}`);
+    }
+    tags.push(candidate as ApproachTag);
+  }
+  return tags;
+}
+
+/**
+ * Reconstruct the server-authored doubt observation carried by one mirror
+ * entry. This is deliberately strict: a malformed blueprint cannot invent an
+ * NPC, identity, source action, or approach observation during promotion.
+ */
+export function npcDoubtEventFromMirrorEntry(input: {
+  readonly entryId: string;
+  readonly entry: MirrorConsequenceLedgerEntry;
+  /** Optional settlement scope asserted by the caller that owns the ledger. */
+  readonly journeyId?: string;
+}): NpcDoubtEvent {
+  if (input.entry.effectKind !== "identity_doubt") {
+    throw new Error(`journey_mirror_consequence_not_identity_doubt:${input.entry.effectKind}`);
+  }
+  const blueprint = input.entry.effectBlueprint;
+  const agentId = requireField<string>(blueprint, "agentId");
+  const identityId = requireField<string>(blueprint, "identityId");
+  const journeyId = requireField<string>(blueprint, "journeyId");
+  const npcId = requireField<string>(blueprint, "npcId");
+  const regionId = requireField<string>(blueprint, "regionId");
+  const doubtStrength = requireField<DoubtStrength>(blueprint, "doubtStrength");
+  const reason = requireField<string>(blueprint, "reason");
+  const sourceActionEventId = requireField<string>(blueprint, "sourceActionEventId");
+  const mirrorLedgerEntryId = requireField<string>(blueprint, "mirrorLedgerEntryId");
+  const recordedAt = requireField<string>(blueprint, "recordedAt");
+  const factionId = blueprint.factionId;
+  const approachTags = readApproachTags(blueprint);
+  if (!DOUBT_STRENGTHS.includes(doubtStrength)) {
+    throw new Error(`journey_mirror_consequence_blueprint_doubt_strength_invalid:${String(doubtStrength)}`);
+  }
+  if (doubtStrength === "low") {
+    throw new Error("journey_mirror_consequence_blueprint_aligned_doubt_forbidden");
+  }
+  if (input.entry.targetEntityId !== `identity:${agentId}`) {
+    throw new Error("journey_mirror_consequence_identity_target_mismatch");
+  }
+  if (agentId !== identityId || (input.journeyId !== undefined && journeyId !== input.journeyId)) {
+    throw new Error("journey_mirror_consequence_identity_scope_mismatch");
+  }
+  if (sourceActionEventId !== input.entry.actionEventId) {
+    throw new Error("journey_mirror_consequence_identity_source_action_mismatch");
+  }
+  if (mirrorLedgerEntryId !== input.entryId) {
+    throw new Error("journey_mirror_consequence_identity_entry_mismatch");
+  }
+  if (recordedAt !== input.entry.recordedAt) {
+    throw new Error("journey_mirror_consequence_identity_recorded_at_mismatch");
+  }
+  if (!npcId.startsWith("npc:roleplay:") || npcId !== `npc:roleplay:${regionId}`) {
+    throw new Error(`journey_mirror_consequence_identity_npc_invalid:${npcId}`);
+  }
+  if (factionId !== undefined && (typeof factionId !== "string" || factionId.length === 0)) {
+    throw new Error("journey_mirror_consequence_identity_faction_invalid");
+  }
+  const doubtEvent = buildNpcIdentityDoubtEvent({
+    journeyId,
+    identityId,
+    npcId,
+    regionId,
+    doubtStrength,
+    sourceActionEventId,
+    reason,
+    ...(typeof factionId === "string" ? { factionId } : {}),
+    mirrorLedgerEntryId,
+    recordedAt,
+  });
+  const blueprintDoubtEventId = requireField<string>(blueprint, "doubtEventId");
+  if (blueprintDoubtEventId !== doubtEvent.doubtEventId) {
+    throw new Error("journey_mirror_consequence_identity_doubt_id_mismatch");
+  }
+  // Keep the approach validation in the promotion boundary even though the
+  // compact NpcDoubtEvent does not carry those tags; the canonical event does.
+  void approachTags;
+  return doubtEvent;
+}
+
+/**
+ * Build the one roleplay projection from the final mirror-ledger snapshot.
+ * The same helper is used by settlement and the result page so the page
+ * cannot silently count a different set of doubt entries.
+ */
+export function roleplayScoreFromMirrorLedger(input: {
+  readonly entries: readonly MirrorConsequenceLedgerEntry[];
+  readonly journeyId: string;
+  readonly recordedAt: string;
+}): RoleplayScore {
+  const doubtEvents = input.entries
+    .filter((entry) => entry.effectKind === "identity_doubt")
+    .map((entry) => {
+      const entryId = entry.effectBlueprint.mirrorLedgerEntryId;
+      if (typeof entryId !== "string" || !entryId.trim()) {
+        throw new Error("journey_mirror_consequence_identity_entry_id_missing");
+      }
+      return npcDoubtEventFromMirrorEntry({
+        entryId,
+        entry,
+        journeyId: input.journeyId,
+      });
+    });
+  return roleplayScoreFromLedger(doubtEvents, input.recordedAt);
+}
+
 /**
  * Construct the canonical epoch event for one promoted ledger entry.
  *
@@ -80,9 +215,10 @@ function requireField<T>(blueprint: Readonly<Record<string, unknown>>, key: stri
  *   (world_object_state aggregate). PR5c additive.
  * - `hidden_prerequisite_destroyed` → `hidden_prerequisite_link_changed`
  *   (hidden_prerequisite_graph aggregate). PR5c additive.
+ * - `identity_doubt` → `npc_identity_doubt` (agent_identity aggregate).
  *
- * Other effect kinds (`npc_relationship_delta`, `identity_doubt`) are
- * out of scope and rejected. Self-loss kinds (`resource_spent`,
+ * Other effect kind (`npc_relationship_delta`) is out of scope and rejected.
+ * Self-loss kinds (`resource_spent`,
  * `lifetime_adjusted`) are unreachable by ledger construction and also
  * rejected here as a defensive guard.
  */
@@ -235,13 +371,36 @@ export function buildCanonicalEventFromMirrorEntry(
         eventId: linkEventId,
       });
     }
+    case "identity_doubt": {
+      const doubtEvent = npcDoubtEventFromMirrorEntry({ entryId, entry });
+      const blueprint = entry.effectBlueprint;
+      const approachTags = readApproachTags(blueprint);
+      const payload: NpcIdentityDoubtPayload = {
+        journeyId: doubtEvent.journeyId,
+        agentId: doubtEvent.identityId,
+        identityId: doubtEvent.identityId,
+        npcId: doubtEvent.npcId,
+        ...(doubtEvent.factionId ? { factionId: doubtEvent.factionId } : {}),
+        regionId: doubtEvent.regionId,
+        doubtStrength: doubtEvent.doubtStrength,
+        reason: doubtEvent.reason,
+        sourceActionEventId: doubtEvent.sourceActionEventId,
+        approachTags,
+        mirrorLedgerEntryId: doubtEvent.mirrorLedgerEntryId,
+        recordedAt: doubtEvent.recordedAt,
+      };
+      return makeEvent("npc_identity_doubt", doubtEvent.identityId, payload, {
+        aggregateType: "agent_identity",
+        agentId: doubtEvent.identityId,
+        eventId: idFactory("event", `promote:${entryId}`),
+      });
+    }
     case "resource_spent":
     case "lifetime_adjusted":
       throw new Error(
         `journey_mirror_consequence_promote_self_loss_forbidden:${entry.effectKind}`,
       );
     case "npc_relationship_delta":
-    case "identity_doubt":
       throw new Error(
         `journey_mirror_consequence_promote_kind_not_supported:${entry.effectKind}`,
       );

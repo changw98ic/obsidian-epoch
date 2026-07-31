@@ -9,7 +9,7 @@ import {
 
 test("failed runs produce repair guidance and resubmission path", () => {
   const feedback = createRunFeedback({
-    adjudication: { score: 54, rating: "repair", claimSlots: 0, nextAction: "repair" },
+    adjudication: { score: 54, rating: "repair", claimSlots: 0, disposition: "repair" },
     lore: { decisions: [] },
     progression: { pointsAwarded: 0 },
   });
@@ -22,7 +22,7 @@ test("failed runs produce repair guidance and resubmission path", () => {
 
 test("near miss runs explain the shortest path to passing", () => {
   const feedback = createRunFeedback({
-    adjudication: { score: 59, rating: "repair", claimSlots: 0, nextAction: "repair" },
+    adjudication: { score: 59, rating: "repair", claimSlots: 0, disposition: "repair" },
     lore: { decisions: [] },
     progression: { pointsAwarded: 0 },
   });
@@ -33,7 +33,7 @@ test("near miss runs explain the shortest path to passing", () => {
 
 test("successful runs surface concrete rewards", () => {
   const feedback = createRunFeedback({
-    adjudication: { score: 82, rating: "strong", claimSlots: 3, nextAction: "eligible_for_review" },
+    adjudication: { score: 82, rating: "strong", claimSlots: 3, disposition: "eligible_for_review" },
     lore: { decisions: [{ status: "canonical" }, { status: "shadow" }], accepted: [{ status: "canonical" }] },
     progression: { pointsAwarded: 12, factionId: "腐林档案会", rank: "field_agent" },
   });
@@ -50,7 +50,7 @@ test("repair tickets preserve run ticket and suggested actions", () => {
   const ticket = createRepairTicket({
     runTicket: "rt_repair",
     feedback: createRunFeedback({
-      adjudication: { score: 51, rating: "repair", claimSlots: 0, nextAction: "repair" },
+      adjudication: { score: 51, rating: "repair", claimSlots: 0, disposition: "repair" },
       lore: { decisions: [] },
       progression: { pointsAwarded: 0 },
     }),

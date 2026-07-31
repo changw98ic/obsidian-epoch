@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { createEpochPersistenceGuard } from "../lib/epochPersistence.ts";
 import { createAgentHttpServer } from "../lib/httpServer.ts";
-import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 import { PlayerMcpAccessTokenStore } from "../lib/playerMcpAccessTokenStore.ts";
 
 test("community persistence failure fails closed before another mutation can be served", async () => {
