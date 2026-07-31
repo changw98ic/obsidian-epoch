@@ -428,6 +428,7 @@ test("turn hosted action rules plan turn card creation and resolution event sequ
     delta: -2,
     reason: "turn_action_risk",
     finalTitle: "高风险回合定档身份",
+    sourceEventId: "turn_resolved_2",
   }]);
 });
 
@@ -529,6 +530,7 @@ test("turn hosted action rules plan hosted session and action event sequences", 
     delta: -2,
     reason: "hosted_action_risk",
     finalTitle: "托管行动定档身份",
+    sourceEventId: "hosted_action_recorded_6",
   }]);
 });
 

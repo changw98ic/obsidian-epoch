@@ -232,13 +232,10 @@ export interface ConsequenceScore {
    * {@link IdentityViability} computed AFTER settlement; never re-feeds this
    * score.
    *
-   * PR5a: this field is declared on the contract but INERT —
-   * {@link buildConsequenceScore} does not read
-   * {@link SettlementContext.identityViability} and does not populate this
-   * summary. The planner integration PR wires both ends (input projection +
-   * output population); until then the field carries no runtime data. The
-   * optional `?` keeps this audit projection absent until the planner supplies
-   * a post-settlement viability snapshot.
+   * The pre-settlement scorer intentionally leaves this optional display field
+   * unset: the before/after pair does not exist until the settlement pipeline
+   * emits `identity_viability_projected`. Result-page assembly copies that
+   * persisted event into this summary without changing the additive score.
    */
   readonly viabilitySummary?: {
     readonly viabilityScoreBpsBefore: number;
@@ -463,12 +460,10 @@ export interface SettlementContext {
   /**
    * Optional identity viability; projects the {@link ConsequenceScore.viabilitySummary}.
    *
-   * PR5a: INERT input. {@link buildConsequenceScore} does not read this
-   * field and does not populate the matching output summary. The planner
-   * integration PR is responsible for handing the post-settlement snapshot
-   * in here and for populating `viabilitySummary` on the output score; the
-   * algorithm-only PR5a leaves both ends unwired so the field cannot leak
-   * into the additive breakdown (zero-affinity / anti-loop invariant).
+   * This field is retained for typed chronicle adapters. The authoritative
+   * settlement path supplies the paired before/after data through the
+   * persisted `identity_viability_projected` event, after the score is frozen;
+   * it never changes `breakdown.totalBps`.
    */
   readonly identityViability?: IdentityViability;
   /**

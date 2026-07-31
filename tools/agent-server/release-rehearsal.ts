@@ -1,6 +1,6 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { runEpochInstallSmoke } from "./install-smoke.ts";
 import { isDirectEntrypoint } from "./lib/cliEntrypoint.ts";
 import {
@@ -10,12 +10,11 @@ import {
   RECOVERY_BACKUP_VERIFICATION_PUBLIC_KEY_FILE_ENV_VAR,
   createRecoveryBackup,
   restoreRecoveryBackup,
-  runJsonlToSqliteRecoveryDrill,
   runSqliteRecoveryDrill,
 } from "./lib/recovery.ts";
 import { OBSIDIAN_EPOCH_PACKAGE_FILE } from "./lib/packageArchive.ts";
+import { type PublicReleaseEvidence } from "./lib/publicReleaseReadiness.ts";
 import { verifyReleaseSource } from "./lib/releaseSource.ts";
-import { dataDir } from "./lib/store.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -33,10 +32,8 @@ export interface ReleaseRehearsalOptions {
   readonly sourceRevision?: string;
   readonly sourceRepositoryUrl?: string;
   readonly sourceWorkspaceRoot?: string;
-  readonly sourceDataDir?: string;
   readonly sqlitePath?: string;
   readonly backupRoot?: string;
-  readonly restoreTargetDataDir?: string;
   readonly restoreTargetSqlitePath?: string;
   readonly playerMcpTokenJsonlPath?: string;
   readonly restoreTargetPlayerMcpTokenJsonlPath?: string;
@@ -119,8 +116,29 @@ async function verifyOperatorOverview(serverBase: string, operatorKey: string) {
   };
 }
 
-async function defaultRestoreDataDir() {
-  return mkdtemp(join(tmpdir(), "epoch-release-rehearsal-restore-jsonl-"));
+async function recordPublicReleaseEvidence(
+  serverBase: string,
+  operatorKey: string,
+  evidence: PublicReleaseEvidence,
+) {
+  const response = await fetch(`${serverBase}/api/epoch/operator/public-release-evidence`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-epoch-operator-key": operatorKey,
+    },
+    body: JSON.stringify(evidence),
+  });
+  const body = await readJsonResponse(response);
+  if (response.status !== 200 || body.ok !== true) {
+    const error = typeof body.error === "string" ? body.error : `status_${response.status}`;
+    throw new Error(`release_rehearsal_public_release_evidence_failed:${error}`);
+  }
+  const stored = isRecord(body.evidence) ? body.evidence : {};
+  return {
+    recorded: true,
+    recordedAt: typeof stored.recordedAt === "string" ? stored.recordedAt : evidence.recordedAt,
+  } as const;
 }
 
 function defaultRestoreSqlitePath() {
@@ -158,11 +176,7 @@ export async function runEpochReleaseRehearsal(options: ReleaseRehearsalOptions 
   if (!operatorKey) throw new Error("release_rehearsal_operator_key_required");
 
   const serverBase = normalizeServerBase(options.serverBase || process.env.AGENT_WORLD_SERVER);
-  const sourceDataDir = options.sourceDataDir || process.env.AGENT_SERVER_DATA_DIR || dataDir;
-  const sqlitePath = options.sqlitePath || process.env.AGENT_SERVER_SQLITE_PATH || join(sourceDataDir, "agent-world.sqlite");
-  const backupRoot = options.backupRoot || process.env.AGENT_SERVER_BACKUP_DIR || join(sourceDataDir, "backups");
-  const restoreTargetDataDir = options.restoreTargetDataDir || process.env.AGENT_SERVER_RESTORE_DATA_DIR || await defaultRestoreDataDir();
-  const restoreTargetSqlitePath = options.restoreTargetSqlitePath || process.env.AGENT_SERVER_RESTORE_SQLITE_PATH || defaultRestoreSqlitePath();
+  const sqlitePath = options.sqlitePath || process.env.AGENT_SERVER_SQLITE_PATH;
   const playerMcpTokenJsonlPath = options.playerMcpTokenJsonlPath
     || process.env.AGENT_SERVER_MCP_PLAYER_TOKEN_JSONL_PATH;
   const restoreTargetPlayerMcpTokenJsonlPath = options.restoreTargetPlayerMcpTokenJsonlPath
@@ -187,6 +201,9 @@ export async function runEpochReleaseRehearsal(options: ReleaseRehearsalOptions 
   if (production && !backupVerificationPublicKey?.trim()) {
     throw new Error("release_rehearsal_backup_verification_public_key_required");
   }
+  if (!sqlitePath) throw new Error("release_rehearsal_sqlite_path_required");
+  const backupRoot = options.backupRoot || process.env.AGENT_SERVER_BACKUP_DIR || join(dirname(sqlitePath), "backups");
+  const restoreTargetSqlitePath = options.restoreTargetSqlitePath || process.env.AGENT_SERVER_RESTORE_SQLITE_PATH || defaultRestoreSqlitePath();
   const keepLast = options.keepLast || positiveInteger(process.env.AGENT_SERVER_BACKUP_KEEP_LAST, 7);
   const releaseSource = production
     ? verifyReleaseSource({
@@ -209,17 +226,13 @@ export async function runEpochReleaseRehearsal(options: ReleaseRehearsalOptions 
   });
   const operatorOverview = await verifyOperatorOverview(serverBase, operatorKey);
   const expectedResultPageId = resultPageIdFromUrl(installSmoke.resultPageUrl);
-  let recoveryDrill = production
-    ? undefined
-    : await runJsonlToSqliteRecoveryDrill({
-      sourceDataDir,
-      sqlitePath,
-      expectedAgentId: installSmoke.agentId,
-      expectedResultPageId,
-    });
-  if (recoveryDrill && !recoveryDrill.ok) throw new Error("release_rehearsal_recovery_drill_failed");
+  let recoveryDrill = await runSqliteRecoveryDrill({
+    sqlitePath,
+    expectedAgentId: installSmoke.agentId,
+    expectedResultPageId,
+  });
+  if (!recoveryDrill.ok) throw new Error("release_rehearsal_recovery_drill_failed");
   const backup = await createRecoveryBackup({
-    sourceDataDir: production ? undefined : sourceDataDir,
     sqlitePath,
     playerMcpTokenJsonlPath,
     backupRoot,
@@ -230,7 +243,6 @@ export async function runEpochReleaseRehearsal(options: ReleaseRehearsalOptions 
   if (!backup.ok) throw new Error("release_rehearsal_backup_failed");
   const restore = await restoreRecoveryBackup({
     backupPath: backup.backupPath,
-    targetDataDir: production ? undefined : restoreTargetDataDir,
     targetSqlitePath: restoreTargetSqlitePath,
     targetPlayerMcpTokenJsonlPath: restoreTargetPlayerMcpTokenJsonlPath,
     verificationPublicKey: backupVerificationPublicKey,
@@ -239,29 +251,74 @@ export async function runEpochReleaseRehearsal(options: ReleaseRehearsalOptions 
     requireReplayProtection: production,
   });
   if (!restore.ok) throw new Error("release_rehearsal_restore_failed");
+  recoveryDrill = await runSqliteRecoveryDrill({
+    sqlitePath: restoreTargetSqlitePath,
+    expectedAgentId: installSmoke.agentId,
+    expectedResultPageId,
+  });
+  if (!recoveryDrill?.ok) throw new Error("release_rehearsal_recovery_drill_failed");
+  const backupSignatureVerified = restore.verification.signature?.verified === true;
+  const backupReplayProtectionVerified = restore.verification.checkpoint?.verified === true;
+
+  const checks = {
+    installSmoke: installSmoke.ok === true,
+    operatorOverview: operatorOverview.verified,
+    recoveryDrill: recoveryDrill.ok,
+    backup: backup.ok,
+    restore: restore.ok,
+    artifactDigests: /^[a-f0-9]{64}$/.test(installSmoke.packageSha256)
+      && (!production || imageDigest !== undefined),
+    ...(releaseSource ? { releaseSource: releaseSource.verified } : {}),
+  };
+  let publicReleaseEvidence: { readonly recorded: true; readonly recordedAt: string } | undefined;
   if (production) {
-    recoveryDrill = await runSqliteRecoveryDrill({
-      sqlitePath: restoreTargetSqlitePath,
-      expectedAgentId: installSmoke.agentId,
-      expectedResultPageId,
+    if (
+      checks.installSmoke !== true
+      || checks.operatorOverview !== true
+      || checks.recoveryDrill !== true
+      || checks.backup !== true
+      || checks.restore !== true
+      || checks.artifactDigests !== true
+      || checks.releaseSource !== true
+      || installSmoke.packageSigningTrust !== "operator_configured"
+      || !installSmoke.packageReleaseKeyId
+      || !imageDigest
+      || !backupSignatureVerified
+      || !backupReplayProtectionVerified
+    ) {
+      throw new Error("release_rehearsal_public_release_evidence_invalid");
+    }
+    publicReleaseEvidence = await recordPublicReleaseEvidence(serverBase, operatorKey, {
+      schemaVersion: 1,
+      mode: "production",
+      recordedAt: new Date().toISOString(),
+      package: {
+        sha256: installSmoke.packageSha256,
+        releaseKeyId: installSmoke.packageReleaseKeyId,
+        signingTrust: "operator_configured",
+      },
+      image: { digest: imageDigest },
+      checks: {
+        installSmoke: true,
+        operatorOverview: true,
+        recoveryDrill: true,
+        backup: true,
+        restore: true,
+        artifactDigests: true,
+        releaseSource: true,
+      },
+      recovery: {
+        signatureVerified: true,
+        replayProtectionVerified: true,
+      },
     });
   }
-  if (!recoveryDrill?.ok) throw new Error("release_rehearsal_recovery_drill_failed");
 
   return {
     ok: true,
     serverBase,
     mode: production ? "production" : "rehearsal",
-    checks: {
-      installSmoke: installSmoke.ok === true,
-      operatorOverview: operatorOverview.verified,
-      recoveryDrill: recoveryDrill.ok,
-      backup: backup.ok,
-      restore: restore.ok,
-      artifactDigests: /^[a-f0-9]{64}$/.test(installSmoke.packageSha256)
-        && (!production || imageDigest !== undefined),
-      ...(releaseSource ? { releaseSource: releaseSource.verified } : {}),
-    },
+    checks,
     installSmoke: {
       ok: installSmoke.ok,
       mode: installSmoke.mode,
@@ -270,6 +327,14 @@ export async function runEpochReleaseRehearsal(options: ReleaseRehearsalOptions 
       resultPageUrl: installSmoke.resultPageUrl,
       webBridgeDeliveryTrust: installSmoke.webBridgeDeliveryTrust,
       webBridgePostResultMutationRejected: installSmoke.webBridgePostResultMutationRejected,
+      publicSurfaceVersion: installSmoke.publicSurfaceVersion,
+      publicSurfaceManifestVerified: installSmoke.publicSurfaceManifestVerified,
+      publicSurfacePackageVerified: installSmoke.publicSurfacePackageVerified,
+      installPageVerified: installSmoke.installPageVerified,
+      resultPagePublicSurfaceVerified: installSmoke.resultPagePublicSurfaceVerified,
+      webBridgeResultPagePublicSurfaceVerified: installSmoke.webBridgeResultPagePublicSurfaceVerified,
+      agentDecisionFactsVerified: installSmoke.agentDecisionFactsVerified,
+      worldPageVerified: installSmoke.worldPageVerified,
       packageSigningTrust: installSmoke.packageSigningTrust,
       packageReleaseKeyId: installSmoke.packageReleaseKeyId,
       releaseKeyPinned: installSmoke.releaseKeyPinned,
@@ -308,17 +373,17 @@ export async function runEpochReleaseRehearsal(options: ReleaseRehearsalOptions 
       manifestPath: backup.manifestPath,
       fileCount: backup.files.length,
       retention: backup.retention,
-      signatureVerified: restore.verification.signature?.verified === true,
+      signatureVerified: backupSignatureVerified,
       signatureKeyId: restore.verification.signature?.keyId || null,
-      replayProtectionVerified: restore.verification.checkpoint?.verified === true,
+      replayProtectionVerified: backupReplayProtectionVerified,
     },
     restore: {
       ok: restore.ok,
       backupId: restore.backupId,
-      jsonlRestored: Boolean(restore.restored.jsonl),
       sqliteRestored: Boolean(restore.restored.sqlite),
       playerMcpTokensRestored: Boolean(restore.restored.playerMcpAccessTokens),
     },
+    ...(publicReleaseEvidence ? { publicReleaseEvidence } : {}),
   };
 }
 
@@ -337,10 +402,8 @@ function optionsFromArgs(args: readonly string[]): ReleaseRehearsalOptions {
     sourceRevision: valueAfterFlag(args, "--source-revision"),
     sourceRepositoryUrl: valueAfterFlag(args, "--source-repository"),
     sourceWorkspaceRoot: valueAfterFlag(args, "--source-workspace"),
-    sourceDataDir: valueAfterFlag(args, "--source"),
     sqlitePath: valueAfterFlag(args, "--sqlite"),
     backupRoot: valueAfterFlag(args, "--backup-root"),
-    restoreTargetDataDir: valueAfterFlag(args, "--restore-target-source"),
     restoreTargetSqlitePath: valueAfterFlag(args, "--restore-target-sqlite"),
     playerMcpTokenJsonlPath: valueAfterFlag(args, "--player-mcp-tokens"),
     restoreTargetPlayerMcpTokenJsonlPath: valueAfterFlag(args, "--restore-target-player-mcp-tokens"),

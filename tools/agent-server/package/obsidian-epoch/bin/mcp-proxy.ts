@@ -23,7 +23,7 @@ interface RemoteResponse {
 const protocolVersion = "2025-06-18";
 const serverBase = (process.env.AGENT_WORLD_SERVER || "http://127.0.0.1:8787").replace(/\/+$/, "");
 const endpoint = new URL("/mcp", `${serverBase}/`);
-const mcpToken = (process.env.AGENT_WORLD_MCP_TOKEN || "").trim();
+let activeMcpToken = (process.env.AGENT_WORLD_MCP_TOKEN || "").trim();
 const recoveryCodeFile = (process.env.PHASE6_MCP_RECOVERY_CODE_FILE || "").trim();
 const recoveryCodeTools = new Set([
   "obsidian_epoch.player_panel",
@@ -54,6 +54,7 @@ let remoteClosing = false;
 let writeTail: Promise<void> = Promise.resolve();
 let clientMessageTail: Promise<void> = Promise.resolve();
 let cachedRecoveryCode = "";
+let initializeMessage: JsonRpcMessage | undefined;
 
 function privateRecoveryCode() {
   if (!recoveryCodeFile) return "";
@@ -119,7 +120,7 @@ function destroyRemoteAgents() {
 }
 
 function authorizationHeaders() {
-  return mcpToken ? { authorization: `Bearer ${mcpToken}` } : {};
+  return activeMcpToken ? { authorization: `Bearer ${activeMcpToken}` } : {};
 }
 
 function sessionHeaders() {
@@ -353,6 +354,63 @@ async function closeRemoteSession() {
   remoteSessionId = "";
 }
 
+function recordValue(value: unknown): AnyRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as AnyRecord : {};
+}
+
+function bootstrapRegistrationToolName(message: JsonRpcMessage) {
+  if (message.method !== "tools/call") return "";
+  return typeof message.params?.name === "string" ? message.params.name : "";
+}
+
+function bootstrapRegistrationPayload(message: JsonRpcMessage, remoteBody: AnyRecord) {
+  if (bootstrapRegistrationToolName(message) !== "obsidian_epoch.register_explorer") return undefined;
+  const result = recordValue(remoteBody.result);
+  const content = Array.isArray(result.content) ? result.content : [];
+  const first = recordValue(content[0]);
+  if (typeof first.text !== "string") return undefined;
+  try {
+    const payload = recordValue(JSON.parse(first.text));
+    const credential = recordValue(payload.proxyCredential);
+    const accessToken = typeof credential.accessToken === "string" ? credential.accessToken.trim() : "";
+    if (!accessToken) return undefined;
+    delete payload.proxyCredential;
+    return { accessToken, payload, result, content, first };
+  } catch {
+    return undefined;
+  }
+}
+
+async function initializeRemoteSession(message: JsonRpcMessage) {
+  const remote = await requestRemote("POST", message);
+  if (remote.status !== 200 || !remote.body) throw new Error(remoteError(remote));
+  const sessionHeader = remote.headers["mcp-session-id"];
+  remoteSessionId = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader || "";
+  const versionHeader = remote.headers["mcp-protocol-version"];
+  remoteProtocolVersion = (Array.isArray(versionHeader) ? versionHeader[0] : versionHeader) || protocolVersion;
+  if (!remoteSessionId) throw new Error("remote_mcp_session_missing");
+  return remote.body;
+}
+
+async function adoptBootstrapCredentials(accessToken: string) {
+  if (!initializeMessage) throw new Error("remote_mcp_initialize_missing");
+  await closeRemoteSession();
+  activeMcpToken = accessToken;
+  remoteClosing = false;
+  await initializeRemoteSession(initializeMessage);
+  await postRemote({ jsonrpc: "2.0", method: "notifications/initialized" });
+  await openEventStream();
+}
+
+async function redactAndAdoptBootstrapCredentials(message: JsonRpcMessage, remoteBody: AnyRecord) {
+  const registration = bootstrapRegistrationPayload(message, remoteBody);
+  if (!registration) return remoteBody;
+  await adoptBootstrapCredentials(registration.accessToken);
+  const nextFirst = { ...registration.first, text: JSON.stringify(registration.payload, null, 2) };
+  const nextResult = { ...registration.result, content: [nextFirst, ...registration.content.slice(1)] };
+  return { ...remoteBody, result: nextResult };
+}
+
 function isJsonRpcResponse(message: JsonRpcMessage) {
   return message.jsonrpc === "2.0"
     && typeof message.method !== "string"
@@ -374,14 +432,8 @@ export async function handleJsonRpcMessage(message: JsonRpcMessage) {
   }
   if (message.method === "initialize") {
     remoteClosing = false;
-    const remote = await requestRemote("POST", message);
-    if (remote.status !== 200 || !remote.body) throw new Error(remoteError(remote));
-    const sessionHeader = remote.headers["mcp-session-id"];
-    remoteSessionId = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader || "";
-    const versionHeader = remote.headers["mcp-protocol-version"];
-    remoteProtocolVersion = (Array.isArray(versionHeader) ? versionHeader[0] : versionHeader) || protocolVersion;
-    if (!remoteSessionId) throw new Error("remote_mcp_session_missing");
-    return remote.body;
+    initializeMessage = message;
+    return initializeRemoteSession(message);
   }
   if (!remoteSessionId) return errorResponse(message.id, -32002, "mcp_session_not_initialized");
   const remote = await postRemote(withPrivateRecoveryCode(message));
@@ -389,7 +441,8 @@ export async function handleJsonRpcMessage(message: JsonRpcMessage) {
     await openEventStream();
     return null;
   }
-  return remote.body || (Object.prototype.hasOwnProperty.call(message, "id")
+  const body = remote.body ? await redactAndAdoptBootstrapCredentials(message, remote.body) : undefined;
+  return body || (Object.prototype.hasOwnProperty.call(message, "id")
     ? errorResponse(message.id, -32603, "remote_mcp_empty_response")
     : null);
 }

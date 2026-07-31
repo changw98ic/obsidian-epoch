@@ -6,6 +6,7 @@ import {
   PHASE6_MATRIX_VERSION,
   assertPhase6ScenarioBinding,
   phase6ScenarioForRun,
+  phase6ScenarioReadinessForRun,
 } from "../lib/epoch/phase6ScenarioMatrixRules.ts";
 import { journeyFallbackRiskForScenario } from "../lib/epoch/journeyGeneratedTaskRules.ts";
 
@@ -20,13 +21,30 @@ test("Phase 6 scenario matrix binds ten unique server scenarios", () => {
   }
 });
 
-test("Phase 6 scenario matrix has v3 matrix version", () => {
-  assert.equal(PHASE6_MATRIX_VERSION, "phase6-matrix-v3");
+test("Phase 6 scenario matrix has v4 matrix version", () => {
+  assert.equal(PHASE6_MATRIX_VERSION, "phase6-matrix-v4");
   for (const scenario of PHASE6_AUTHORITATIVE_SCENARIOS) {
     assert.ok(scenario.taskFamilyId.length > 0, `runIndex ${scenario.runIndex} must have taskFamilyId`);
     assert.ok(["catalog", "server_ai", "region_pool"].includes(scenario.offerSource), `runIndex ${scenario.runIndex} has invalid offerSource`);
     assert.ok(["logistics", "combat", "support", "cunning", "exploration"].includes(scenario.strategySnapshotHint), `runIndex ${scenario.runIndex} has invalid strategySnapshotHint`);
   }
+});
+
+test("Phase 6 readiness is derived from the authoritative scenario, never a client score", () => {
+  assert.deepEqual(phase6ScenarioReadinessForRun(6), {
+    authority: "phase6_authoritative_matrix",
+    ruleVersion: "phase6-scenario-readiness.v1",
+    runIndex: 6,
+    scenarioTag: "high-prepared-priority",
+    preparedness: "prepared",
+    journeyPreparationScore: 12,
+  });
+  assert.equal(phase6ScenarioReadinessForRun(7).journeyPreparationScore, 0);
+  assert.equal(phase6ScenarioReadinessForRun(9).journeyPreparationScore, 10);
+  assert.throws(
+    () => phase6ScenarioReadinessForRun(6, "high-underprepared-crisis"),
+    /phase6_scenario_readiness_tag_mismatch/,
+  );
 });
 
 test("Phase 6 scenario binding rejects client-selected tags and task family ids", () => {

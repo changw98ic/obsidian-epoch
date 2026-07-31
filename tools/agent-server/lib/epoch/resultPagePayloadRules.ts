@@ -7,7 +7,6 @@ import {
   resultPageRegionId,
   resultPageRegionalContext,
 } from "./resultPageContextRules.ts";
-import { resultPageNextActions } from "./resultPageNavigationRules.ts";
 import { resultPageReceipt } from "./resultPageReceiptRules.ts";
 import {
   focusedResultPageProgress,
@@ -569,7 +568,9 @@ function resultPageStrategyConsistency(value: unknown): EpochResultPageJourney["
   if (typeof record.matchBps !== "number" || !Number.isSafeInteger(record.matchBps) || record.matchBps < 0 || record.matchBps > 10_000) {
     throw new Error("result_page_strategy_consistency_invalid");
   }
-  if (typeof record.classification !== "string") throw new Error("result_page_strategy_consistency_invalid");
+  if (record.classification !== "normal" && record.classification !== "fully_violates") {
+    throw new Error("result_page_strategy_consistency_invalid");
+  }
   const snapshot = record.snapshot && typeof record.snapshot === "object" && !Array.isArray(record.snapshot)
     ? (() => {
         const s = record.snapshot as Record<string, unknown>;
@@ -630,6 +631,83 @@ function resultPageHiddenPrerequisites(value: unknown): EpochResultPageJourney["
       observedAt: record.observedAt,
     };
   });
+}
+
+function resultPageWorldImpact(value: unknown): EpochResultPageJourney["worldImpact"] | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("result_page_world_impact_invalid");
+  }
+  const record = value as Record<string, unknown>;
+  const objectChanges = record.objectChanges === undefined
+    ? undefined
+    : Array.isArray(record.objectChanges)
+      ? record.objectChanges.map((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            throw new Error("result_page_world_impact_object_invalid");
+          }
+          const object = entry as Record<string, unknown>;
+          if (typeof object.objectId !== "string" || !object.objectId.trim()
+            || typeof object.regionId !== "string" || !object.regionId.trim()
+            || !["intact", "degraded", "destroyed"].includes(String(object.status))
+            || typeof object.degree !== "number" || !Number.isSafeInteger(object.degree)
+            || object.degree < 1 || object.degree > 5
+            || typeof object.sourceActionEventId !== "string" || !object.sourceActionEventId.trim()
+            || typeof object.observedAt !== "string" || !Number.isFinite(Date.parse(object.observedAt))) {
+            throw new Error("result_page_world_impact_object_invalid");
+          }
+          return {
+            objectId: object.objectId.trim(),
+            regionId: object.regionId.trim(),
+            status: object.status as "intact" | "degraded" | "destroyed",
+            degree: object.degree,
+            sourceActionEventId: object.sourceActionEventId.trim(),
+            observedAt: object.observedAt,
+          };
+        })
+      : (() => {
+          throw new Error("result_page_world_impact_object_invalid");
+        })();
+  const npcRelationships = record.npcRelationships === undefined
+    ? undefined
+    : Array.isArray(record.npcRelationships)
+      ? record.npcRelationships.map((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            throw new Error("result_page_world_impact_relationship_invalid");
+          }
+          const relationship = entry as Record<string, unknown>;
+          if (typeof relationship.npcId !== "string" || !relationship.npcId.trim()
+            || typeof relationship.scoreDelta !== "number" || !Number.isSafeInteger(relationship.scoreDelta)
+            || typeof relationship.scoreAfter !== "number" || !Number.isSafeInteger(relationship.scoreAfter)
+            || !Array.isArray(relationship.sourceEventIds)
+            || relationship.sourceEventIds.length === 0
+            || relationship.sourceEventIds.some((eventId) => typeof eventId !== "string" || !eventId.trim())
+            || typeof relationship.observedAt !== "string"
+            || !Number.isFinite(Date.parse(relationship.observedAt))) {
+            throw new Error("result_page_world_impact_relationship_invalid");
+          }
+          return {
+            npcId: relationship.npcId.trim(),
+            scoreDelta: relationship.scoreDelta,
+            scoreAfter: relationship.scoreAfter,
+            sourceEventIds: relationship.sourceEventIds.map((eventId) => (eventId as string).trim()),
+            observedAt: relationship.observedAt,
+          };
+        })
+      : (() => {
+          throw new Error("result_page_world_impact_relationship_invalid");
+        })();
+  const hiddenPrerequisiteLinks = record.hiddenPrerequisiteLinks === undefined
+    ? undefined
+    : resultPageHiddenPrerequisites(record.hiddenPrerequisiteLinks);
+  if (objectChanges === undefined && npcRelationships === undefined && hiddenPrerequisiteLinks === undefined) {
+    throw new Error("result_page_world_impact_invalid");
+  }
+  return {
+    ...(objectChanges ? { objectChanges } : {}),
+    ...(npcRelationships ? { npcRelationships } : {}),
+    ...(hiddenPrerequisiteLinks ? { hiddenPrerequisiteLinks } : {}),
+  };
 }
 
 export interface BuildEpochResultPagePayloadInput {
@@ -758,6 +836,11 @@ function resultPageJourney(
   const viability = isSettled ? resultPageViability(source.viability) : undefined;
   const strategyConsistency = isSettled ? resultPageStrategyConsistency(source.strategyConsistency) : undefined;
   const hiddenPrerequisites = isSettled ? resultPageHiddenPrerequisites(source.hiddenPrerequisites) : undefined;
+  const worldImpact = isSettled ? resultPageWorldImpact(source.worldImpact) : undefined;
+  if (hiddenPrerequisites && worldImpact?.hiddenPrerequisiteLinks
+    && stableResultPageJson(hiddenPrerequisites) !== stableResultPageJson(worldImpact.hiddenPrerequisiteLinks)) {
+    throw new Error("result_page_world_impact_hidden_prerequisites_mismatch");
+  }
   const hiddenPrerequisiteLinks = hiddenPrerequisites ?? [];
   const groundedEventIds = [...new Set(episodes.flatMap((episode) => episode.serverFacts.sourceEventIds))];
   const episodePathComplete = episodes.length >= 3 && !nextJourneyTaskObjective(taskPlan, episodes);
@@ -778,6 +861,22 @@ function resultPageJourney(
     hiddenTaskSeal,
     hiddenPrerequisiteLinks,
     identity,
+    ...(strategyConsistency ? {
+      strategyConsistencySummary: {
+        matchBps: strategyConsistency.matchBps,
+        classification: strategyConsistency.classification === "fully_violates"
+          ? "fully_violates" as const
+          : "normal" as const,
+      },
+    } : {}),
+    ...(roleplay ? {
+      roleplaySummary: {
+        deviationBps: roleplay.deviationBps,
+        doubtEventCount: roleplay.npcDoubtEvents?.length ?? 0,
+        exposed: roleplay.exposed,
+      },
+    } : {}),
+    ...(viability ? { viabilityProjection: viability } : {}),
   });
   if (["settled", "completed"].includes(status) && !storyReport) {
     throw new Error("result_page_journey_grounding_invalid");
@@ -823,12 +922,79 @@ function resultPageJourney(
     ...(viability ? { viability } : {}),
     ...(strategyConsistency ? { strategyConsistency } : {}),
     ...(hiddenPrerequisites ? { hiddenPrerequisites } : {}),
+    ...(worldImpact ? { worldImpact } : {}),
   } as EpochResultPageJourney;
 }
 
 function sameIds(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && new Set(left).size === left.length
     && left.every((id) => right.includes(id));
+}
+
+function sortedResultPageJson(value: readonly unknown[]): string {
+  return stableResultPageJson([...value].sort((left, right) =>
+    stableResultPageJson(left).localeCompare(stableResultPageJson(right))));
+}
+
+function canonicalHiddenPrerequisiteLinksFromEvents(
+  events: readonly EpochEvent[],
+): readonly NonNullable<EpochResultPageJourney["hiddenPrerequisites"]>[number][] {
+  const latestByLink = new Map<string, NonNullable<EpochResultPageJourney["hiddenPrerequisites"]>[number]>();
+  for (const event of events) {
+    if (event.eventType !== "hidden_prerequisite_link_changed") continue;
+    const key = `${event.payload.objectiveId}:${event.payload.prerequisiteObjectId}`;
+    latestByLink.set(key, {
+      objectiveId: event.payload.objectiveId,
+      prerequisiteObjectId: event.payload.prerequisiteObjectId,
+      status: event.payload.statusAfter,
+      ...(event.payload.statusAfter === "destroyed"
+        ? { destroyedAtActionEventId: event.payload.sourceActionEventId }
+        : {}),
+      sourceLedgerEntryId: event.payload.sourceLedgerEntryId,
+      observedAt: event.payload.changedAt,
+    });
+  }
+  return [...latestByLink.values()].sort((left, right) =>
+    `${left.objectiveId}:${left.prerequisiteObjectId}`.localeCompare(
+      `${right.objectiveId}:${right.prerequisiteObjectId}`,
+    ));
+}
+
+function assertResultPageWorldImpactGrounding(
+  journey: EpochResultPageJourney,
+  effectEvents: readonly EpochEvent[],
+): void {
+  const worldImpact = journey.worldImpact;
+  const expectedObjectChanges = effectEvents.flatMap((event) => event.eventType === "world_object_state_changed"
+    ? [{
+        objectId: event.payload.objectId,
+        regionId: event.payload.regionId,
+        status: event.payload.statusAfter,
+        degree: event.payload.degree,
+        sourceActionEventId: event.payload.sourceActionEventId,
+        observedAt: event.payload.changedAt,
+      }]
+    : []);
+  const expectedNpcRelationships = effectEvents.flatMap((event) => event.eventType === "agent_npc_bond_updated"
+    ? [{
+        npcId: event.payload.npcId,
+        scoreDelta: event.payload.scoreDelta,
+        scoreAfter: event.payload.scoreAfter,
+        sourceEventIds: [event.eventId],
+        observedAt: event.payload.updatedAt,
+      }]
+    : []);
+  const expectedHiddenPrerequisiteLinks = canonicalHiddenPrerequisiteLinksFromEvents(effectEvents);
+  const pageObjectChanges = worldImpact?.objectChanges ?? [];
+  const pageNpcRelationships = worldImpact?.npcRelationships ?? [];
+  const pageWorldHiddenLinks = worldImpact?.hiddenPrerequisiteLinks ?? [];
+  const pageHiddenLinks = journey.hiddenPrerequisites ?? [];
+  if (sortedResultPageJson(pageObjectChanges) !== sortedResultPageJson(expectedObjectChanges)
+    || sortedResultPageJson(pageNpcRelationships) !== sortedResultPageJson(expectedNpcRelationships)
+    || sortedResultPageJson(pageWorldHiddenLinks) !== sortedResultPageJson(expectedHiddenPrerequisiteLinks)
+    || sortedResultPageJson(pageHiddenLinks) !== sortedResultPageJson(expectedHiddenPrerequisiteLinks)) {
+    throw new Error("result_page_journey_world_impact_invalid");
+  }
 }
 
 export function assertEpochResultPagePayload(
@@ -972,7 +1138,9 @@ export function assertEpochResultPagePayload(
     }> => event.eventType === "journey_world_solidified"
       && event.payload.journeyId === journey.journeyId);
     if (worldCommit.status === "discarded") {
-      if (markers.length) throw new Error("result_page_journey_world_commit_invalid");
+      if (markers.length || journey.worldImpact || (journey.hiddenPrerequisites?.length ?? 0) > 0) {
+        throw new Error("result_page_journey_world_commit_invalid");
+      }
     } else {
       if (markers.length !== 1 || markers[0].eventId !== worldCommit.commitEventId
         || markers[0].correlationId !== journey.correlationId) {
@@ -1013,6 +1181,11 @@ export function assertEpochResultPagePayload(
         "npc_canonicalized",
         "agent_npc_bond_updated",
         "npc_memory_recorded",
+        "world_object_state_changed",
+        "hidden_prerequisite_link_changed",
+        "npc_identity_doubt",
+        "identity_viability_projected",
+        "lifetime_adjusted",
       ]);
       const effectEvents = marker.payload.effectEventIds.map((eventId) => eventsById.get(eventId));
       if (effectEvents.some((event) => !event
@@ -1020,6 +1193,7 @@ export function assertEpochResultPagePayload(
         || !allowedEffectTypes.has(event.eventType))) {
         throw new Error("result_page_journey_world_commit_invalid");
       }
+      assertResultPageWorldImpactGrounding(journey, effectEvents.filter((event): event is EpochEvent => event !== undefined));
     }
   }
 }
@@ -1077,7 +1251,6 @@ export function buildEpochResultPagePayload(options: BuildEpochResultPagePayload
       journey,
     }),
     publicPages: resultPagePublicPages(progress),
-    nextActions: resultPageNextActions({ progress, regionId, regionalContext }),
     ...(regionalContext ? { regionalContext } : {}),
     ...(focusTurnCard ? { focusTurnCard } : {}),
     ...(focusHostedSession ? { focusHostedSession } : {}),

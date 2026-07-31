@@ -33,6 +33,7 @@ function fail(code, errors) {
 function parseArguments(argv) {
   const options = {
     ledgerPath: path.join(repositoryRoot, DEFAULT_LEDGER),
+    replaceRuntimeEvidence: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -68,12 +69,19 @@ function parseArguments(argv) {
       index += 1;
       continue;
     }
+    if (argument === "--replace-runtime-evidence") {
+      options.replaceRuntimeEvidence = true;
+      continue;
+    }
     fail("usage", `Unknown argument: ${argument}`);
   }
 
   if (!options.itemId) fail("usage", "--item is required");
   if (!options.status) fail("usage", "--status is required");
   if (!ITEM_STATUSES.has(options.status)) fail("usage", `Unsupported status: ${options.status}`);
+  if (options.replaceRuntimeEvidence && options.status !== "verified") {
+    fail("usage", "--replace-runtime-evidence requires --status verified");
+  }
   return options;
 }
 
@@ -567,6 +575,11 @@ function findItem(ledger, itemId) {
   return undefined;
 }
 
+function allItemsVerified(ledger) {
+  const items = (ledger.milestones || []).flatMap((milestone) => milestone.items || []);
+  return items.length > 0 && items.every((item) => item.status === "verified");
+}
+
 function assertTransition(fromStatus, toStatus) {
   if (fromStatus === toStatus) {
     return;
@@ -696,6 +709,10 @@ try {
 const nextLedger = structuredClone(ledger);
 const nextLocated = findItem(nextLedger, options.itemId);
 nextLocated.item.status = options.status;
+if (options.replaceRuntimeEvidence) {
+  nextLocated.item.evidence = (Array.isArray(nextLocated.item.evidence) ? nextLocated.item.evidence : [])
+    .filter((entry) => !isRuntimeEvidenceKind(entry?.kind));
+}
 nextLocated.item.evidence = [...(Array.isArray(nextLocated.item.evidence) ? nextLocated.item.evidence : []), ...newEvidence];
 if (options.status === "blocked") {
   if (!newBlocker || typeof newBlocker !== "object" || Array.isArray(newBlocker)) {
@@ -704,6 +721,9 @@ if (options.status === "blocked") {
   nextLocated.item.blocker = newBlocker;
 } else if (options.status === "in_progress" && previousStatus === "blocked") {
   delete nextLocated.item.blocker;
+}
+if (allItemsVerified(nextLedger)) {
+  nextLedger.status = "complete";
 }
 nextLedger.lastUpdatedAt = new Date().toISOString();
 
@@ -739,5 +759,6 @@ emit({
   checklistPath: nextLedger.checklistPath,
   lastUpdatedAt: nextLedger.lastUpdatedAt,
   evidenceAdded: newEvidence.length,
+  runtimeEvidenceReplaced: options.replaceRuntimeEvidence,
   blockerUpdated: options.status === "blocked",
 });

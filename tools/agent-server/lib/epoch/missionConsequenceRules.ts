@@ -1,6 +1,6 @@
 import type { CausalEffectV1, CausalEntityRef } from "./causalContracts.ts";
 
-export const MISSION_CONSEQUENCE_RULES_VERSION = "mission_consequence_rules_v1" as const;
+export const MISSION_CONSEQUENCE_RULES_VERSION = "mission_consequence_rules_v2" as const;
 
 export const MISSION_STATUSES = [
   "offered",
@@ -190,7 +190,7 @@ export interface MissionIntensityBreakdown extends MissionThreatBudget {
   readonly worldIntensity: number;
   readonly encounterIntensity: number;
   readonly band: MissionIntensityBand;
-  readonly recommendedBand: MissionIntensityBand;
+  readonly worldPressureBand: MissionIntensityBand;
   readonly playerCombatRatio: number;
   readonly explanation: readonly string[];
 }
@@ -274,8 +274,6 @@ export interface MissionScoreInput {
   readonly resourceEfficiencyBps: number;
   readonly survivalBps: number;
   readonly integrityBps?: number;
-  readonly combatPowerFitBps?: number;
-  readonly overwhelmingForceBps?: number;
   readonly recentSimilarCompletionCount?: number;
   readonly repeatedResolutionFamilyCount?: number;
 }
@@ -593,13 +591,13 @@ export function calculateMissionIntensity(input: MissionIntensityInput): Mission
     readinessGap,
   };
   const band = intensityBand(encounterIntensity);
-  const recommendedBand = intensityBand(clampPercent(worldIntensity * 0.7 + worldPressure * 0.3));
+  const worldPressureBand = intensityBand(clampPercent(worldIntensity * 0.7 + worldPressure * 0.3));
   return {
     ...threatBudget,
     worldIntensity,
     encounterIntensity,
     band,
-    recommendedBand,
+    worldPressureBand,
     playerCombatRatio,
     explanation: [
       `客观世界强度 ${worldIntensity}/100；对局显示强度 ${encounterIntensity}/100。`,
@@ -622,15 +620,13 @@ export function scoreMission(input: MissionScoreInput): MissionScoreBreakdown {
   const pressureRelief = clampPercent(input.pressureReliefBps / 100);
   const sideEffectControl = clampPercent(input.sideEffectControlBps / 100);
   const causalImpact = clampPercent(pressureRelief * 0.7 + sideEffectControl * 0.3);
-  const combatFit = clampPercent(input.combatPowerFitBps ?? 5_000);
-  const execution = clampPercent((input.executionQualityBps / 100) * 0.85 + combatFit * 0.15);
+  const execution = clampPercent(input.executionQualityBps / 100);
   const meaningfulRisk = clampPercent(input.meaningfulRiskBps / 100);
   const riskExposure = clampPercent(input.riskExposureBps / 100);
   const risk = clampPercent(meaningfulRisk * 0.7 + Math.min(riskExposure, meaningfulRisk + 20) * 0.3);
   const efficiency = clampPercent(input.resourceEfficiencyBps / 100);
   const survival = clampPercent(input.survivalBps / 100);
   const integrity = clampPercent((input.integrityBps ?? 10_000) / 100);
-  const overwhelmingPenalty = clampPercent((input.overwhelmingForceBps ?? 0) / 100) * 0.08;
   const rawScore = clampPercent(
     objective * SCORE_WEIGHTS.objective
       + causalImpact * SCORE_WEIGHTS.causalImpact
@@ -638,8 +634,7 @@ export function scoreMission(input: MissionScoreInput): MissionScoreBreakdown {
       + risk * SCORE_WEIGHTS.risk
       + integrity * SCORE_WEIGHTS.integrity
       + efficiency * SCORE_WEIGHTS.efficiency
-      + survival * SCORE_WEIGHTS.survival
-      - overwhelmingPenalty,
+      + survival * SCORE_WEIGHTS.survival,
   );
   const antiFarmDecay = clampPercent(
     (input.recentSimilarCompletionCount ?? 0) * 7
@@ -675,10 +670,9 @@ export function scoreMission(input: MissionScoreInput): MissionScoreBreakdown {
       "execution",
       {
         executionQualityBps: clampBps(input.executionQualityBps),
-        combatPowerFitBps: clampBps(input.combatPowerFitBps ?? 5_000),
       },
       execution,
-      "mission_score_execution_quality_and_fit",
+      "mission_score_execution_quality",
     ),
     scoreDimension(
       "risk",
@@ -712,13 +706,12 @@ export function scoreMission(input: MissionScoreInput): MissionScoreBreakdown {
       inputs: {
         recentSimilarCompletionCount: Math.max(0, Math.trunc(input.recentSimilarCompletionCount ?? 0)),
         repeatedResolutionFamilyCount: Math.max(0, Math.trunc(input.repeatedResolutionFamilyCount ?? 0)),
-        overwhelmingForceBps: clampBps(input.overwhelmingForceBps ?? 0),
         cappedDecayPercent: Math.min(35, antiFarmDecay),
       },
       weightBps: 0,
       score: antiFarmDecay,
       contribution: finalScore - weightedPositiveContribution,
-      reasonCode: "mission_score_anti_farm_and_overwhelming_force_decay",
+      reasonCode: "mission_score_anti_farm_decay",
     },
   ];
   return {
@@ -738,7 +731,7 @@ export function scoreMission(input: MissionScoreInput): MissionScoreBreakdown {
     explanation: [
       `目标 ${objective}/100，因果影响 ${causalImpact}/100，执行 ${execution}/100。`,
       `风险 ${risk}/100，效率 ${efficiency}/100，存活 ${survival}/100，完整性 ${integrity}/100。`,
-      `战斗力只进入执行适配，直接评分权重为 0；反刷衰减 ${Math.min(35, antiFarmDecay)}%。`,
+      `任务评分不读取战斗适配或任务强度；反刷衰减 ${Math.min(35, antiFarmDecay)}%。`,
     ],
   };
 }

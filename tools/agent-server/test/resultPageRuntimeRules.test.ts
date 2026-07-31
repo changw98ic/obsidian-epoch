@@ -83,7 +83,6 @@ function payload(overrides: Partial<EpochResultPagePayload> = {}): EpochResultPa
       resources: {},
       latestEvents: [],
     },
-    nextActions: [],
     receipt: receipt(),
     ...overrides,
   } as EpochResultPagePayload;
@@ -285,7 +284,7 @@ test("result page runtime rules build public-safe summary and public pages", () 
   assert.equal(publicSafeSummaryLabel("region_gray_harbor_hidden_constraint_prompt", "fallback"), "灰港 公开摘要");
   assert.deepEqual(resultPagePublicPages(progress), {
     world: "/epoch/world",
-    console: "/epoch/console",
+    console: "/epoch/web-play",
     agent: "/epoch/agent/agent%2Fone",
     explorer: "/epoch/explorer/explorer%20one",
   });

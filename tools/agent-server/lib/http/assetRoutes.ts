@@ -16,13 +16,14 @@ import { readEpochDowntimeAssetByFileName, readEpochResourceAssetByFileName } fr
 import { readEpochSceneVariantByFileName } from "../sceneVariantAssets.ts";
 import { readEpochWorldSurfaceAssetByFileName } from "../worldSurfaceAssets.ts";
 import { readEpochWorldSceneByFileName } from "../worldSceneAssets.ts";
+import { obsidianEpochPublicSurfaceMarkerHtml } from "../publicSurfaceContract.ts";
 import { type EpochHttpRouteContext, type SendBinary } from "./httpRouteTypes.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const VAULT_ROOT = path.resolve(__dirname, "../../../..");
 const EPOCH_CONSOLE_HTML_PATH = path.resolve(VAULT_ROOT, "00_总览/黑曜纪元3D世界地图.html");
 const EPOCH_CONSOLE_ASSETS_DIR = path.resolve(VAULT_ROOT, "00_总览/assets");
-const EPOCH_CONSOLE_ASSET_PREFIX = "/epoch/console/assets/";
+const EPOCH_WEB_PLAY_ASSET_PREFIX = "/epoch/web-play/assets/";
 
 type AssetRouteContext = EpochHttpRouteContext & {
   readonly consoleAssetBaseUrl?: string;
@@ -75,8 +76,15 @@ function consoleAssetContentType(filePath: string) {
 }
 
 function consoleHtmlWithBase(html: string) {
-  if (html.includes("<base href=\"/epoch/console/\">")) return html;
-  return html.replace("<head>", "<head>\n    <base href=\"/epoch/console/\">");
+  const withCanonicalBase = html.includes("<base href=\"/epoch/web-play/\">")
+    ? html
+    : html.replace("<base href=\"/epoch/console/\">", "").replace(
+      "<head>",
+      "<head>\n    <base href=\"/epoch/web-play/\">",
+    );
+  const marker = obsidianEpochPublicSurfaceMarkerHtml();
+  if (withCanonicalBase.includes(marker)) return withCanonicalBase;
+  return withCanonicalBase.replace("<head>", `<head>\n    ${marker}`);
 }
 
 function normalizedConsoleAssetBaseUrl(baseUrl: string | undefined) {
@@ -97,7 +105,7 @@ async function readEpochConsoleHtml(consoleAssetBaseUrl?: string) {
 }
 
 async function readEpochConsoleAsset(pathname: string) {
-  const relativePath = decodeURIComponent(pathname.slice(EPOCH_CONSOLE_ASSET_PREFIX.length));
+  const relativePath = decodeURIComponent(pathname.slice(EPOCH_WEB_PLAY_ASSET_PREFIX.length));
   if (!relativePath || relativePath.includes("\0")) return null;
   const assetPath = path.resolve(EPOCH_CONSOLE_ASSETS_DIR, relativePath);
   const relativeToAssets = path.relative(EPOCH_CONSOLE_ASSETS_DIR, assetPath);
@@ -138,17 +146,20 @@ async function sendEpochAssetRoute(context: AssetRouteContext, assetRoute: Epoch
 export async function handleEpochAssetRoutes(context: AssetRouteContext): Promise<boolean> {
   const { allowedOrigins, method, pathname, request, response } = context;
 
+  if (method === "GET" && (pathname === "/epoch/console" || pathname === "/epoch/console/")) {
+    context.sendJson(request, response, 404, { error: "legacy_console_path_removed" }, allowedOrigins);
+    return true;
+  }
+
   if (method === "GET" && (
-    pathname === "/epoch/console"
-    || pathname === "/epoch/console/"
-    || pathname === "/epoch/web-play"
+    pathname === "/epoch/web-play"
     || pathname === "/epoch/web-play/"
   )) {
     context.sendHtml(request, response, 200, await readEpochConsoleHtml(context.consoleAssetBaseUrl), allowedOrigins);
     return true;
   }
 
-  if (method === "GET" && pathname.startsWith(EPOCH_CONSOLE_ASSET_PREFIX)) {
+  if (method === "GET" && pathname.startsWith(EPOCH_WEB_PLAY_ASSET_PREFIX)) {
     const asset = await readEpochConsoleAsset(pathname);
     if (!asset) {
       context.sendJson(request, response, 404, { error: "console_asset_not_found" }, allowedOrigins);

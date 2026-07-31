@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createEpochPersistenceGuard } from "../lib/epochPersistence.ts";
 import { createAgentHttpServer } from "../lib/httpServer.ts";
-import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 
 async function listen(server: ReturnType<typeof createAgentHttpServer>) {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

@@ -51,6 +51,15 @@ function receipt(runIndex: number): JsonRecord {
     outcome: { summary: `settled ${runIndex}` },
     integrity: { eventIdsHash: `events-hash-${runIndex}`, payloadHash: `payload-hash-${runIndex}` },
     eventIds: [`event-${runIndex}-receipt`],
+    rag: {
+      queryHash: `sha256:${"a".repeat(64)}`,
+      corpusHash: `sha256:${"b".repeat(64)}`,
+      claims: [],
+      importantMemoryCount: 0,
+      ordinaryNodePersistenceExpansion: 0,
+      delta: { entries: [] },
+      noChangeReason: "projection_equal",
+    },
   };
 }
 
@@ -185,9 +194,17 @@ function goldenRecords(): JsonRecord[] {
   return records;
 }
 
-function validateRecords(records: JsonRecord[]) {
-  return validate({}, `${records.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+function validateRecords(records: JsonRecord[], options: JsonRecord = {}) {
+  return validate(options, `${records.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
 }
+
+test("strict MCP HTTP provenance rejects records from a different explicit origin", () => {
+  const summary = validateRecords(canonicalGoldenRecords(), {
+    requireMcpHttpTransport: true,
+    expectedMcpHttpOrigin: "http://127.0.0.1:19002",
+  });
+  assert.ok(summary.failures.some((failure: { gate?: string }) => failure.gate === "phase6_mcp_http_transport_evidence"));
+});
 
 function canonicalRecordFrom(body: JsonRecord, sequence: number): JsonRecord {
   const input: JsonRecord = {
@@ -214,6 +231,11 @@ function canonicalRecordFrom(body: JsonRecord, sequence: number): JsonRecord {
     metadata: {
       experimentId: body.experimentId,
       ...(body.runIndex ? { runIndex: body.runIndex } : {}),
+      transport: {
+        kind: "mcp_http",
+        origin: "http://127.0.0.1:8787",
+        path: "/api/epoch/mcp/tools/call",
+      },
     },
   };
 }
@@ -241,6 +263,112 @@ test("Phase 6 ten-run validator accepts extractor canonical output-layer fields"
   assert.equal(summary.gates.runReceiptV2ValidRecords, 10);
   assert.equal(summary.gates.phase6ResultVerifiedRecords, 10);
   assert.equal(summary.gates.serverIssuedStartMatches, 10);
+});
+
+test("Phase 6 ten-run validator requires explicit MCP HTTP transport when requested", () => {
+  const complete = validateRecords(canonicalGoldenRecords(), { requireMcpHttpTransport: true });
+  assert.equal(complete.ok, true, JSON.stringify(complete.failures, null, 2));
+
+  const missingTransport = canonicalGoldenRecords();
+  delete ((missingTransport[0].metadata as JsonRecord).transport);
+  const failed = validateRecords(missingTransport, { requireMcpHttpTransport: true });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.failures.some((failure: { code: string }) => failure.code === "phase6_mcp_http_transport_evidence"), true);
+});
+
+test("Phase 6 ten-run validator keeps compact result bindings through final readbacks", () => {
+  const records = canonicalGoldenRecords();
+  const finalResult = records.find((entry) => entry.toolName === "obsidian_epoch.phase6_result"
+    && (entry.metadata as JsonRecord).runIndex === 10) as JsonRecord;
+  delete (finalResult.output as JsonRecord).resultPage;
+  finalResult.formalResultPage = true;
+  const finalPublishedIndex = records.findIndex((entry) => (entry.output as JsonRecord).eventType === "formal_result_page_published"
+    && (entry.metadata as JsonRecord).runIndex === 10);
+  records.splice(finalPublishedIndex, 1);
+
+  const finalStatusIndex = records.findIndex((entry) => entry.toolName === "obsidian_epoch.phase6_experiment_status"
+    && (entry.metadata as JsonRecord).runIndex === 10);
+  const [finalStatus] = records.splice(finalStatusIndex, 1);
+  (finalStatus.output as JsonRecord).state = "complete";
+  const finalReceiptIndex = records.findIndex((entry) => entry.toolName === "obsidian_epoch.run_receipt"
+    && (entry.metadata as JsonRecord).runIndex === 10);
+  records.splice(finalReceiptIndex, 0, finalStatus);
+
+  const summary = validateRecords(records);
+  assert.equal(summary.ok, true, JSON.stringify(summary.failures, null, 2));
+  assert.equal(summary.gates.phase6MutationAfterComplete, 0);
+});
+
+test("Phase 6 ten-run validator accepts compact receipt hashes without snapshot bodies", () => {
+  const compactRecords = canonicalGoldenRecords();
+  for (const entry of compactRecords) {
+    if (entry.toolName !== "obsidian_epoch.run_receipt") continue;
+    const output = entry.output as JsonRecord;
+    const receipt = output.receipt as JsonRecord;
+    delete (receipt.before as JsonRecord).body;
+    delete (receipt.after as JsonRecord).body;
+    output.transportVersion = "phase6_run_receipt.compact.v1";
+  }
+  const compactSummary = validateRecords(compactRecords);
+  assert.equal(compactSummary.ok, true, JSON.stringify(compactSummary.failures, null, 2));
+
+  const fullRecords = canonicalGoldenRecords();
+  for (const entry of fullRecords) {
+    if (entry.toolName !== "obsidian_epoch.run_receipt") continue;
+    entry.sourceToolName = launcherSourceToolName("run_receipt");
+    entry.originalToolName = entry.sourceToolName;
+    const receipt = (entry.output as JsonRecord).receipt as JsonRecord;
+    delete (receipt.before as JsonRecord).body;
+    delete (receipt.after as JsonRecord).body;
+  }
+  assertFailure(fullRecords, "phase6_run_receipt_v2_strict");
+});
+
+test("Phase 6 ten-run validator accepts grouped compact receipt event IDs", () => {
+  const records = canonicalGoldenRecords();
+  for (const entry of records) {
+    if (entry.toolName !== "obsidian_epoch.run_receipt") continue;
+    const output = entry.output as JsonRecord;
+    const receipt = output.receipt as JsonRecord;
+    const runIndex = receipt.runIndex as number;
+    receipt.eventIds = {
+      source: { count: 1, values: [`event-${runIndex}-source`] },
+      settlement: { count: 1, values: [`event-${runIndex}-settlement`] },
+      derived: { count: 1, values: [`event-${runIndex}-derived`] },
+    };
+    output.transportVersion = "phase6_run_receipt.compact.v1";
+  }
+  const summary = validateRecords(records);
+  assert.equal(summary.ok, true, JSON.stringify(summary.failures, null, 2));
+  assert.equal(summary.gates.runReceiptV2ValidRecords, 10);
+});
+
+test("Phase 6 ten-run validator projects a compact receipt matrix version", () => {
+  const records = canonicalGoldenRecords();
+  for (const entry of records) {
+    const output = entry.output as JsonRecord;
+    const outputVersions = output.versions as JsonRecord | undefined;
+    if (outputVersions) {
+      output.versions = { ...outputVersions };
+      delete (output.versions as JsonRecord).scenarioMatrixVersion;
+    }
+    const input = entry.input as JsonRecord;
+    const inputVersions = input.versions as JsonRecord | undefined;
+    if (inputVersions) {
+      input.versions = { ...inputVersions };
+      delete (input.versions as JsonRecord).scenarioMatrixVersion;
+    }
+  }
+  const summary = validateRecords(records);
+  assert.equal(summary.ok, true, JSON.stringify(summary.failures, null, 2));
+});
+
+test("Phase 6 ten-run validator permits the documented no-sampling fallback", () => {
+  const records = canonicalGoldenRecords();
+  const started = records.find((entry) => entry.toolName === "obsidian_epoch.start_journey") as JsonRecord;
+  (started.output as JsonRecord).sampling = { ok: false, source: "server_fallback" };
+  const summary = validateRecords(records);
+  assert.equal(summary.ok, true, JSON.stringify(summary.failures, null, 2));
 });
 
 test("Phase 6 ten-run validator rejects contradictory canonical metadata without treating consistent metadata as override", () => {

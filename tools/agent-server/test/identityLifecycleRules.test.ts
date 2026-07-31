@@ -78,6 +78,7 @@ test("identity lifecycle rules plan issued and recovery payloads", () => {
       frozenAt: "2026-07-07T01:02:03.000Z",
     }),
   }), {
+    schemaVersion: 2,
     agentId: "agent_1",
     explorerId: "explorer_1",
     explorerSecretHash: "hash_1",
@@ -167,6 +168,7 @@ test("identity lifecycle rules plan identity issue event sequences", () => {
   assert.equal(issued.aggregateId, "agent_1");
   assert.equal(issued.agentId, "agent_1");
   assert.deepEqual(issued.payload, {
+    schemaVersion: 2,
     agentId: "agent_1",
     explorerId: "explorer_1",
     explorerSecretHash: "hash_1",
@@ -374,6 +376,7 @@ test("identity lifecycle rules plan reincarnation event sequences", () => {
   assert.equal(issued.aggregateId, "agent_2");
   assert.equal(issued.agentId, "agent_2");
   assert.deepEqual(issued.payload, {
+    schemaVersion: 2,
     agentId: "agent_2",
     explorerId: "explorer_1",
     identityName: "Second Archivist",

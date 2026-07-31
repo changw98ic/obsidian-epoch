@@ -89,7 +89,18 @@ import {
   sourceEventsMentionAgent,
   traceConflictTemplateCatalog,
 } from "./gameCore.ts";
+import {
+  INVENTORY_CRAFT_RECIPE_CATALOG_VERSION,
+  normalizeShopRegionId,
+  requireCraftRecipe,
+  requireShopOffer,
+  resolveEpochShopOfferForRegion,
+  type EpochShopOffer,
+  type InventoryCraftRecipe,
+} from "./inventoryRules.ts";
+import { epochEconomyActionOptions } from "./economyActionReadModel.ts";
 import type { JourneySceneContractSeed } from "./journeySceneContractRules.ts";
+import type { NpcDoubtEvent } from "./journeyRoleplayRules.ts";
 import { JOURNEY_FIRST_ENTRY_RESERVE } from "./journeyActionResolutionRules.ts";
 import {
   adaptPhase6JourneySettlementInput,
@@ -165,6 +176,7 @@ import {
   type JourneyHiddenTaskSealResolver,
   type JourneyRewardBundle,
 } from "./journeyGeneratedTaskRules.ts";
+import { phase6JourneyMaterialRewardForTaskFamily } from "./phase6MaterialRewardRules.ts";
 import type { MirrorConsequenceLedgerEntry } from "./journeySettlementRules.ts";
 import {
   anomalyEventInputFromOperatorInput,
@@ -258,7 +270,7 @@ import {
   regionFactionPressureView,
   regionFrontlinesView,
   regionRaidHeatView,
-  regionRaidTargetsView,
+  regionEligibleRaidTargetsView,
   tracesView,
   type EpochRegionFactionPressure,
   type EpochRegionFactionPressureStatus,
@@ -266,8 +278,7 @@ import {
   type EpochRegionFrontlineStatus,
   type EpochRegionRaidHeat,
   type EpochRegionRaidHeatStatus,
-  type EpochRegionRaidTarget,
-  type EpochRegionRaidTargetRecommendationReason,
+  type EpochRegionEligibleRaidTarget,
 } from "./regionConflictReadModel.ts";
 import {
   locationMotifQuotasView,
@@ -387,9 +398,8 @@ import {
   runtimeSeasonTemplate,
 } from "./runtimeInputRules.ts";
 export {
-  EPOCH_ACTIVE_IDENTITY_RECOMMENDED_TOOLS,
   EPOCH_ACTIVE_IDENTITY_TOOL_NAMES,
-  EPOCH_ARCHIVED_IDENTITY_RECOMMENDED_TOOLS,
+  EPOCH_ARCHIVED_IDENTITY_LIFECYCLE_TOOL_NAMES,
 } from "./actionEligibilityReadModel.ts";
 export type { EpochActionEligibilityInfo, EpochActionEligibilityStatus } from "./actionEligibilityReadModel.ts";
 export type {
@@ -527,8 +537,7 @@ export type {
   EpochRegionFrontlineStatus,
   EpochRegionRaidHeat,
   EpochRegionRaidHeatStatus,
-  EpochRegionRaidTarget,
-  EpochRegionRaidTargetRecommendationReason,
+  EpochRegionEligibleRaidTarget,
 } from "./regionConflictReadModel.ts";
 export type {
   EpochLocationMotif,
@@ -555,7 +564,6 @@ export type {
   EpochSeasonContributionDailyTotal,
   EpochSeasonFactionStandingView,
 } from "./seasonRuntimeReadModel.ts";
-export type { EpochHostedSessionWatchAction } from "./hostedSessionReadModel.ts";
 export type { EpochIdentityArchiveInfo } from "./identityRuntimeReadModel.ts";
 export type { EpochWebBridgeActionOption, EpochWebBridgeTurn } from "./webBridgeReadModel.ts";
 
@@ -764,6 +772,176 @@ export interface EpochRegisterExplorerResult extends EpochRuntimeResult<EpochAge
   readonly recoveryCode: string;
 }
 
+export interface EpochCraftInventoryEvidence {
+  readonly recipes: readonly {
+    readonly recipeId: string;
+    readonly version: string;
+    readonly materials: readonly {
+      readonly asset: string;
+      readonly resourceId: EpochResourceId;
+      readonly quantity: number;
+    }[];
+    readonly outputs: readonly {
+      readonly asset: string;
+      readonly itemKey: string;
+      readonly quantity: number;
+      readonly rarity: string;
+    }[];
+  }[];
+  readonly crafts: readonly {
+    readonly operation: "craft";
+    readonly craftId: string;
+    readonly settlementId: string;
+    readonly recipeId: string;
+    readonly recipeVersion: string;
+    readonly idempotencyKey: string;
+    readonly success: true;
+    readonly materialsConsumed: readonly {
+      readonly asset: string;
+      readonly resourceId: EpochResourceId;
+      readonly quantity: number;
+      readonly sourceEventId?: string;
+      readonly spendEventId: string;
+    }[];
+    readonly outputs: readonly {
+      readonly asset: string;
+      readonly itemKey: string;
+      readonly inventoryItemId: string;
+      readonly quantity: number;
+      readonly rarity: string;
+      readonly sourceEventId: string;
+    }[];
+    readonly fees: readonly {
+      readonly asset: "coin";
+      readonly quantity: number;
+      readonly sourceEventId: string;
+    }[];
+  }[];
+}
+
+export interface EpochCraftInventoryResult extends EpochRuntimeResult<EpochInventoryItem> {
+  readonly crafting: EpochCraftInventoryEvidence;
+}
+
+export interface EpochShopPurchaseEvidence {
+  readonly purchases: readonly {
+    readonly operation: "purchase";
+    readonly offerId: string;
+    readonly offerVersion: string;
+    readonly itemKey: string;
+    readonly requestId: string;
+    readonly idempotencyKey: string;
+    readonly resourceSpends: readonly unknown[];
+    readonly createdItems: readonly unknown[];
+  }[];
+}
+
+export interface EpochShopPurchaseResult extends EpochRuntimeResult<EpochInventoryItem> {
+  readonly shop: EpochShopPurchaseEvidence;
+}
+
+function latestResourceGrantEventIds(
+  events: readonly EpochEvent[],
+  agentId: string,
+): ReadonlyMap<EpochResourceId, string> {
+  const sources = new Map<EpochResourceId, string>();
+  for (const event of events) {
+    if (event.eventType === "resource_granted" && event.agentId === agentId) {
+      sources.set(event.payload.resourceId, event.eventId);
+    }
+  }
+  return sources;
+}
+
+function craftingEvidenceResult(
+  result: EpochRuntimeResult<EpochInventoryItem>,
+  recipe: InventoryCraftRecipe,
+  idempotencyKey: string,
+  resourceGrantEventIds: ReadonlyMap<EpochResourceId, string>,
+): EpochCraftInventoryResult {
+  const resourceSpends = result.events.filter((event) => event.eventType === "resource_spent");
+  const created = result.events.find((event) => event.eventType === "item_created");
+  if (!created || created.eventType !== "item_created") {
+    throw new Error("craft_item_created_event_missing");
+  }
+  const coinFee = resourceSpends.find((event) => event.payload.resourceId === "coin");
+  return attachEpochEventsForPersistence({
+    ...result,
+    crafting: {
+      recipes: [{
+        recipeId: recipe.recipeId,
+        version: INVENTORY_CRAFT_RECIPE_CATALOG_VERSION,
+        materials: recipe.costs.map((cost) => ({
+          asset: cost.resourceId,
+          resourceId: cost.resourceId,
+          quantity: cost.amount,
+        })),
+        outputs: [{
+          asset: recipe.itemKey,
+          itemKey: recipe.itemKey,
+          quantity: 1,
+          rarity: recipe.rarity,
+        }],
+      }],
+      crafts: [{
+        operation: "craft",
+        craftId: result.value.itemId,
+        settlementId: created.eventId,
+        recipeId: recipe.recipeId,
+        recipeVersion: INVENTORY_CRAFT_RECIPE_CATALOG_VERSION,
+        idempotencyKey,
+        success: true,
+        materialsConsumed: resourceSpends.map((event) => ({
+          asset: event.payload.resourceId,
+          resourceId: event.payload.resourceId,
+          quantity: event.payload.amount,
+          sourceEventId: resourceGrantEventIds.get(event.payload.resourceId),
+          spendEventId: event.eventId,
+        })),
+        outputs: [{
+          asset: result.value.itemKey,
+          itemKey: result.value.itemKey,
+          inventoryItemId: result.value.itemId,
+          quantity: 1,
+          rarity: result.value.rarity,
+          sourceEventId: created.eventId,
+        }],
+        fees: coinFee ? [{
+          asset: "coin",
+          quantity: coinFee.payload.amount,
+          sourceEventId: coinFee.eventId,
+        }] : [],
+      }],
+    },
+  }, epochEventsForPersistence(result));
+}
+
+function shopPurchaseEvidenceResult(
+  result: EpochRuntimeResult<EpochInventoryItem>,
+  offer: EpochShopOffer,
+  idempotencyKey: string,
+): EpochShopPurchaseResult {
+  return attachEpochEventsForPersistence({
+    ...result,
+    shop: {
+      purchases: [{
+        operation: "purchase",
+        offerId: offer.offerId,
+        offerVersion: offer.offerVersion,
+        itemKey: offer.itemKey,
+        requestId: idempotencyKey,
+        idempotencyKey,
+        resourceSpends: result.events
+          .filter((event) => event.eventType === "resource_spent")
+          .map((event) => event.payload),
+        createdItems: result.events
+          .filter((event) => event.eventType === "item_created")
+          .map((event) => event.payload),
+      }],
+    },
+  }, epochEventsForPersistence(result));
+}
+
 export interface EpochExplorerAuthVerification {
   readonly explorerId: string;
   readonly verified: true;
@@ -814,22 +992,6 @@ export interface EpochWebBridgeActionResult {
   readonly channelClass: "browser_copy_paste";
   readonly deliveryTrust: "untrusted_client";
   readonly action: EpochHostedActionRecord;
-}
-
-export type EpochResultPageNextActionKind = "continue_turn" | "open_commission" | "resolve_retaliation" | "set_downtime" | "view_archive" | "reincarnate";
-export type EpochResultPageNextActionSourceType = EpochRegionCommissionSourceType | "retaliation";
-
-export interface EpochResultPageNextAction {
-  readonly actionId: string;
-  readonly kind: EpochResultPageNextActionKind;
-  readonly label: string;
-  readonly reason: string;
-  readonly toolName: string;
-  readonly regionId?: string;
-  readonly sourceType?: EpochResultPageNextActionSourceType;
-  readonly sourceId?: string;
-  readonly media?: EpochActivityMedia;
-  readonly requiresRecoveryCode?: boolean;
 }
 
 export type EpochResultPageReceiptFocusKind = "turn_card" | "hosted_session" | "agent_snapshot" | "explorer_snapshot";
@@ -896,7 +1058,6 @@ export interface EpochResultPagePayload {
     readonly agent?: string;
     readonly explorer?: string;
   };
-  readonly nextActions: readonly EpochResultPageNextAction[];
   readonly receipt: EpochResultPageReceipt;
   readonly regionalContext?: EpochResultPageRegionalContext;
   readonly focusTurnCard?: EpochTurnCard;
@@ -1055,6 +1216,33 @@ export interface EpochResultPageJourney {
     readonly sourceLedgerEntryId?: string;
     readonly observedAt: string;
   }[];
+  /** Canonical world-impact summary disclosed once the journey is settled. */
+  readonly worldImpact?: {
+    readonly objectChanges?: readonly {
+      readonly objectId: string;
+      readonly regionId: string;
+      readonly status: "intact" | "degraded" | "destroyed";
+      readonly degree: number;
+      readonly sourceActionEventId: string;
+      readonly observedAt: string;
+    }[];
+    readonly npcRelationships?: readonly {
+      readonly npcId: string;
+      readonly scoreDelta: number;
+      readonly scoreAfter: number;
+      readonly sourceEventIds: readonly string[];
+      readonly observedAt: string;
+    }[];
+    readonly hiddenPrerequisiteLinks?: readonly {
+      readonly objectiveId: string;
+      readonly prerequisiteObjectId: string;
+      readonly status: "intact" | "destroyed" | "degraded";
+      readonly destroyedAtActionEventId?: string;
+      readonly degradedAtActionEventId?: string;
+      readonly sourceLedgerEntryId?: string;
+      readonly observedAt: string;
+    }[];
+  };
 }
 
 export interface EpochResultPageDraft extends EpochResultPagePayload {
@@ -1660,6 +1848,24 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     return publicWorldReadModel.agentBriefing(input);
   }
 
+  /**
+   * Returns owner-authorized, server-derived options for spending the current
+   * balance. The returned MCP call is advisory only: mutation endpoints still
+   * verify ownership, price, funds, limits, and idempotency themselves.
+   */
+  function economyActions(input: AnyRecord = {}) {
+    const agentId = assertNonEmptyString(input.agentId, "agent_id");
+    const identity = requireRuntimeIdentity(agentId);
+    explorerAuthRuntime.assertExplorerAuth(input, identity.explorerId);
+    const regionId = canonicalRegionIdFromInput(input.regionId);
+    return epochEconomyActionOptions({
+      projection: core.project(),
+      agentId,
+      explorerId: identity.explorerId,
+      ...(regionId ? { regionId } : {}),
+    });
+  }
+
   function agentPublicIdentity(input: AnyRecord = {}) {
     return publicWorldReadModel.agentPublicIdentity(input);
   }
@@ -1694,6 +1900,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     worldOverview,
     loreContributions,
     loreTargets,
+    economyActions,
     audit: (input: AnyRecord = {}): EpochAuditInfo => auditInfoView(core.project(), input),
     recordRejectedCommand: (input: AnyRecord = {}): EpochRuntimeResult<EpochEvent> => {
       const sourceInput = recordValue(input.input);
@@ -1854,7 +2061,19 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
           readonly collateralScoreBps: number;
         };
       })(),
-    }, maintenanceContext(input, `journey_world_solidified:${String(input.journeyId || "").trim()}`))),
+      }, maintenanceContext(input, `journey_world_solidified:${String(input.journeyId || "").trim()}`))),
+    projectJourneySettlementViability: (input: AnyRecord = {}) => commandResult(core.projectJourneySettlementViability({
+      journeyId: assertNonEmptyString(input.journeyId, "journey_id"),
+      agentId: assertNonEmptyString(input.agentId, "agent_id"),
+      settlementId: assertNonEmptyString(input.settlementId, "journey_settlement_id"),
+      doubtEvents: Array.isArray(input.doubtEvents)
+        ? input.doubtEvents as readonly NpcDoubtEvent[]
+        : [],
+      projectedAt: assertNonEmptyString(input.projectedAt, "journey_viability_projected_at"),
+    }, maintenanceContext(
+      input,
+      `journey_viability_projected:${String(input.journeyId || "").trim()}:${String(input.settlementId || "").trim()}`,
+    ))),
     grantJourneyReward: (input: AnyRecord = {}) => {
       const journeyId = assertNonEmptyString(input.journeyId, "journey_id");
       const agentId = assertNonEmptyString(input.agentId, "agent_id");
@@ -1890,6 +2109,23 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
             amount: reward.amount,
             reason,
           }, maintenanceContext(input, reason)));
+      const materialReward = phase6JourneyMaterialRewardForTaskFamily(input.taskFamilyId);
+      const materialReason = materialReward
+        ? `journey_material:${journeyId}:${settlementId}:${materialReward.materialId}`
+        : undefined;
+      const existingMaterial = materialReason
+        ? core.project().events.find((event) => event.eventType === "resource_granted"
+          && event.agentId === agentId
+          && event.payload.reason === materialReason)
+        : undefined;
+      const materialGrant = materialReward && materialReason && !existingMaterial
+        ? commandResult(core.grantResource({
+            agentId,
+            resourceId: materialReward.resourceId,
+            amount: materialReward.amount,
+            reason: materialReason,
+          }, maintenanceContext(input, materialReason)))
+        : undefined;
       const sourceEventIds = Array.isArray(input.sourceEventIds)
         ? [...new Set(input.sourceEventIds.filter((value): value is string => typeof value === "string" && Boolean(value.trim())))]
         : [];
@@ -1905,19 +2141,24 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
       }, maintenanceContext(input, `${reason}:item:${item.itemKey}`))));
       const persistenceEvents = [
         ...epochEventsForPersistence(resourceGrant),
+        ...(materialGrant ? epochEventsForPersistence(materialGrant) : []),
         ...itemGrants.flatMap((grant) => epochEventsForPersistence(grant)),
       ];
-      const publicEvents = [resourceGrant, ...itemGrants].flatMap((grant) => grant.events);
-      const projection = itemGrants.at(-1)?.projection ?? resourceGrant.projection;
+      const publicEvents = [resourceGrant, ...(materialGrant ? [materialGrant] : []), ...itemGrants]
+        .flatMap((grant) => grant.events);
+      const projection = itemGrants.at(-1)?.projection ?? materialGrant?.projection ?? resourceGrant.projection;
       return attachEpochEventsForPersistence({
         ...resourceGrant,
         events: publicEvents,
         projection,
         reward,
         rewardBundle,
+        ...(materialReward ? { materialReward } : {}),
         grantedItems: itemGrants.map((grant) => grant.value),
         reason,
-        duplicate: Boolean(existing) && itemGrants.every((grant) => grant.events.length === 0),
+        duplicate: Boolean(existing)
+          && Boolean(!materialReward || existingMaterial)
+          && itemGrants.every((grant) => grant.events.length === 0),
       }, persistenceEvents);
     },
     agentBriefing,
@@ -2538,22 +2779,35 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         correlationId: typeof input.correlationId === "string" ? input.correlationId : undefined,
       })), { allowRestrictedScore: true });
     },
-    craftInventoryItem: (input: AnyRecord = {}): EpochRuntimeResult<EpochInventoryItem> => {
+    craftInventoryItem: (input: AnyRecord = {}): EpochCraftInventoryResult => {
       const agentId = assertNonEmptyString(input.agentId, "agent_id");
       const identity = requireRuntimeIdentity(agentId);
-      return idempotentlyAfterExplorerAuth("craft_item", input, identity.explorerId, () => commandResult(core.craftInventoryItem({
-        agentId,
-        recipeId: assertNonEmptyString(input.recipeId, "recipe_id"),
-      }, ownerVerifiedContextFromInput(input, identity.explorerId))));
+      const recipe = requireCraftRecipe(assertNonEmptyString(input.recipeId, "recipe_id"));
+      const idempotencyKey = assertNonEmptyString(input.idempotencyKey, "idempotency_key");
+      return idempotentlyAfterExplorerAuth("craft_item", input, identity.explorerId, () => {
+        const resourceGrantEventIds = latestResourceGrantEventIds(core.project().events, agentId);
+        const result = commandResult(core.craftInventoryItem({
+          agentId,
+          recipeId: recipe.recipeId,
+        }, ownerVerifiedContextFromInput(input, identity.explorerId)));
+        return craftingEvidenceResult(result, recipe, idempotencyKey, resourceGrantEventIds);
+      }) as EpochCraftInventoryResult;
     },
-    purchaseShopOffer: (input: AnyRecord = {}): EpochRuntimeResult<EpochInventoryItem> => {
+    purchaseShopOffer: (input: AnyRecord = {}): EpochShopPurchaseResult => {
       const agentId = assertNonEmptyString(input.agentId, "agent_id");
       const identity = requireRuntimeIdentity(agentId);
-      return idempotentlyAfterExplorerAuth("purchase_shop_offer", input, identity.explorerId, () => commandResult(core.purchaseShopOffer({
-        agentId,
-        offerId: assertNonEmptyString(input.offerId, "offer_id"),
-        regionId: canonicalRegionIdFromInput(input.regionId),
-      }, ownerVerifiedContextFromInput(input, identity.explorerId))));
+      const offerId = assertNonEmptyString(input.offerId, "offer_id");
+      const regionId = normalizeShopRegionId(input.regionId);
+      const offer = resolveEpochShopOfferForRegion(requireShopOffer(offerId), regionId);
+      const idempotencyKey = assertNonEmptyString(input.idempotencyKey, "idempotency_key");
+      return idempotentlyAfterExplorerAuth("purchase_shop_offer", input, identity.explorerId, () => {
+        const result = commandResult(core.purchaseShopOffer({
+          agentId,
+          offerId,
+          regionId,
+        }, ownerVerifiedContextFromInput(input, identity.explorerId)));
+        return shopPurchaseEvidenceResult(result, offer, idempotencyKey);
+      }) as EpochShopPurchaseResult;
     },
     bindInventoryItem: (input: AnyRecord = {}): EpochRuntimeResult<EpochInventoryItem> => {
       const itemId = assertNonEmptyString(input.itemId, "item_id");

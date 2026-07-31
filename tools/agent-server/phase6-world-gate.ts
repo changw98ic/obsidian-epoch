@@ -28,7 +28,7 @@ const repositoryRoot = path.resolve(scriptDirectory, "../..");
 
 function usage() {
   return [
-    "Usage: node tools/agent-server/phase6-world-gate.mjs --input <repo-relative-json-or-jsonl> [--input <path> ...]",
+    "Usage: node --import tsx ../agent-server/phase6-world-gate.ts --input <repo-relative-json-or-jsonl> [--input <path> ...]",
     "",
     "Reads RunReceipt/world replay JSON or JSONL from repository-relative files.",
     "Prints only counts, hashes, and stable error codes. Exits non-zero on gate failure.",
@@ -269,7 +269,7 @@ function timeValue(value) {
 
 function arrayOfText(value) {
   if (Array.isArray(value)) return value.map(textValue).filter(Boolean);
-  const single = textValue(value);
+  const single = typeof value === "string" || typeof value === "number" ? textValue(value) : undefined;
   return single ? [single] : [];
 }
 
@@ -356,6 +356,7 @@ function extractEventIds(record, receipt) {
 
 function extractWorldTime(record, receipt) {
   return firstValue(receipt || record, [
+    ["world", "worldTimeAfter"],
     ["world", "worldTime"],
     ["worldTime"],
     ["world_time"],
@@ -458,6 +459,7 @@ function extractDeterminismKey(record, receipt) {
     ["action_log"],
     ["input", "actions"],
     ["payload", "actions"],
+    ["outcome"],
   ]);
   if (!seed || !ruleset || !catalog || actions === undefined) return undefined;
   return canonicalHash({ seed, ruleset, catalog, actions });
@@ -548,12 +550,13 @@ function validateRecords(records, errors) {
         ["runId"],
         ["world", "worldId"],
         ["world", "regionId"],
-        ["world", "snapshotHash"],
         ["integrity", "bodyHash"],
       ];
       requiredFields.forEach((fieldPath) => {
         if (firstValue(receipt, [fieldPath]) === undefined) errors.add("ERR_RECEIPT_FIELD_MISSING", `${pathLabel}.${fieldPath.join(".")}`);
       });
+      const worldSnapshotHash = firstValue(receipt, [["world", "snapshotHash"], ["integrity", "worldHash"]]);
+      if (worldSnapshotHash === undefined) errors.add("ERR_RECEIPT_FIELD_MISSING", `${pathLabel}.world.snapshotHash`);
 
       const resultBody = extractResultBody(receipt);
       const resultHash = resultBody ? canonicalHash(resultBody) : undefined;

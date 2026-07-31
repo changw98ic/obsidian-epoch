@@ -10,6 +10,11 @@ import {
   type McpRequestAuthContext,
 } from "../mcpRequestAuthContext.ts";
 import type { PlayerMcpAccessTokenStore } from "../playerMcpAccessTokenStore.ts";
+import {
+  type PublicRegistrationProtectionConfig,
+  PERMISSIVE_PUBLIC_REGISTRATION_PROTECTION,
+  derivePublicRegistrationActor,
+} from "../publicRegistrationProtection.ts";
 import type { McpHttpSessionRegistry, McpHttpSessionRecord } from "../mcpHttpTransport.ts";
 import { MCP_SESSION_PROTOCOL_VERSION } from "../mcpSession.ts";
 import type { EpochMutationCoordinator } from "../epochPersistence.ts";
@@ -28,6 +33,8 @@ type McpRouteContext = EpochHttpRouteContext & {
   readonly mcpMutationCoordinator: EpochMutationCoordinator;
   readonly mcpBearerToken?: string;
   readonly playerMcpAccessTokens?: PlayerMcpAccessTokenStore;
+  readonly playerMcpTokenTtlMs: number;
+  readonly publicRegistrationProtection?: PublicRegistrationProtectionConfig;
   readonly publicServerBase: string;
   readonly persistMcpJsonRpcPayload: (requestBody: JsonRecord, jsonRpcResult: unknown) => Promise<unknown>;
   readonly persistMcpToolPayload: (
@@ -50,8 +57,13 @@ function isRecord(value: unknown): value is JsonRecord {
 function authBinding(auth: McpRequestAuthContext) {
   return auth.kind === "player"
     ? `player:${auth.explorerId}:${auth.tokenId}`
-    : "bootstrap";
+    : auth.kind;
 }
+
+const ANONYMOUS_MCP_TOOL_NAMES = new Set([
+  "obsidian_epoch.quickstart",
+  "obsidian_epoch.register_explorer",
+]);
 
 function singleHeader(value: string | string[] | undefined) {
   return Array.isArray(value) ? value[0] : value;
@@ -116,6 +128,98 @@ function recordValue(value: unknown): JsonRecord {
   return isRecord(value) ? value : {};
 }
 
+function textPayload(toolResult: unknown): JsonRecord {
+  const result = recordValue(toolResult);
+  const content = Array.isArray(result.content) ? result.content : [];
+  const first = recordValue(content[0]);
+  if (typeof first.text !== "string") throw new Error("mcp_bootstrap_registration_invalid");
+  try {
+    return recordValue(JSON.parse(first.text));
+  } catch {
+    throw new Error("mcp_bootstrap_registration_invalid");
+  }
+}
+
+function copyMcpPersistenceMetadata(source: unknown, target: JsonRecord) {
+  if (!source || typeof source !== "object") return;
+  for (const key of ["events", "journeyEvents", "phase6CommittedResults"] as const) {
+    const descriptor = Object.getOwnPropertyDescriptor(source, key);
+    if (descriptor) Object.defineProperty(target, key, descriptor);
+  }
+}
+
+function requirePlayerTokenStore(store: PlayerMcpAccessTokenStore | undefined) {
+  if (!store) throw new Error("player_mcp_access_tokens_unavailable");
+  return store;
+}
+
+async function admitAnonymousMcpRegistration(context: McpRouteContext) {
+  const config = context.publicRegistrationProtection || PERMISSIVE_PUBLIC_REGISTRATION_PROTECTION;
+  if (config.mode === "permissive") return;
+  const store = requirePlayerTokenStore(context.playerMcpAccessTokens);
+  if (!store.persistent) throw new Error("public_registration_protection_unavailable");
+  const actor = derivePublicRegistrationActor(context.request, config);
+  await store.consumePublicCredentialAction({
+    action: "pairing_registration",
+    actorHashes: actor.actorHashes,
+    windowMs: config.windowMs,
+    maxActions: config.maxActions,
+    cooldownMs: config.cooldownMs,
+  });
+}
+
+async function registerAnonymousMcpExplorer(context: McpRouteContext, args: JsonRecord) {
+  await admitAnonymousMcpRegistration(context);
+  const registeredToolResult = await context.mcpRuntime.callTool("obsidian_epoch.register_explorer", args);
+  const registration = textPayload(registeredToolResult);
+  const explorerId = typeof registration.explorerId === "string" ? registration.explorerId : "";
+  const recoveryCode = typeof registration.recoveryCode === "string" ? registration.recoveryCode : "";
+  const identity = recordValue(registration.value);
+  const agentId = typeof identity.agentId === "string" ? identity.agentId : "";
+  if (!explorerId || !agentId || !recoveryCode) throw new Error("mcp_bootstrap_registration_invalid");
+  const access = await requirePlayerTokenStore(context.playerMcpAccessTokens).issue({
+    explorerId,
+    ttlMs: context.playerMcpTokenTtlMs,
+  });
+  const result: JsonRecord = {
+    content: [{
+      type: "text",
+      text: JSON.stringify({
+        explorerId,
+        agentId,
+        identityName: typeof identity.identityName === "string" ? identity.identityName : undefined,
+        credentialStored: "proxy",
+        tokenExpiresAt: access.record.expiresAt,
+        proxyCredential: {
+          accessToken: access.bearerToken,
+          recoveryCode,
+        },
+      }, null, 2),
+    }],
+  };
+  copyMcpPersistenceMetadata(registeredToolResult, result);
+  return result;
+}
+
+function mcpRuntimeForRequest(
+  context: McpRouteContext,
+  requestAuth: McpRequestAuthContext,
+): McpJsonRpcRuntime {
+  if (requestAuth.kind !== "anonymous") return context.mcpRuntime;
+  return {
+    ...context.mcpRuntime,
+    listTools: () => context.mcpRuntime.listTools()
+      .filter((tool) => ANONYMOUS_MCP_TOOL_NAMES.has(String(tool.name))),
+    callTool: async (name, args = {}) => {
+      if (!ANONYMOUS_MCP_TOOL_NAMES.has(name)) throw new Error("mcp_bootstrap_tool_forbidden");
+      if (name === "obsidian_epoch.register_explorer") {
+        return registerAnonymousMcpExplorer(context, args);
+      }
+      return context.mcpRuntime.callTool(name, args);
+    },
+  };
+}
+
 function isRequestOriginAllowed(request: IncomingMessage, allowedOrigins: readonly string[]) {
   const origin = request.headers.origin;
   return !origin || allowedOrigins.includes(origin);
@@ -141,7 +245,7 @@ function authenticateMcpRequest(
 ): McpRequestAuthContext | undefined {
   if (!expectedToken && !playerTokens) return { kind: "bootstrap" };
   const providedToken = bearerTokenFromRequest(request);
-  if (!providedToken) return undefined;
+  if (!providedToken) return playerTokens ? { kind: "anonymous" } : undefined;
   if (expectedToken && bearerTokenMatches(providedToken, expectedToken)) return { kind: "bootstrap" };
   const playerToken = playerTokens?.authenticate(providedToken);
   return playerToken
@@ -217,6 +321,7 @@ export async function handleEpochMcpRoutes(context: McpRouteContext): Promise<bo
     if (method === "POST") {
       const body = await context.readJsonBody(request, maxBodyBytes);
       const mcpBody = mcpJsonRpcBodyForRequest(publicServerBase, body);
+      const requestRuntime = mcpRuntimeForRequest(context, requestAuth || { kind: "bootstrap" });
       if (mcpBody.method === "initialize") {
         const binding = authBinding(requestAuth || { kind: "bootstrap" });
         let record: McpHttpSessionRecord;
@@ -229,7 +334,7 @@ export async function handleEpochMcpRoutes(context: McpRouteContext): Promise<bo
         }
         const result = await runWithMcpRequestAuthContext(
           requestAuth || { kind: "bootstrap" },
-          () => handleMcpJsonRpcMessage(mcpRuntime, mcpBody, {
+          () => handleMcpJsonRpcMessage(requestRuntime, mcpBody, {
             session: record.session,
             sampling: record.sampling,
             notify: (notification) => mcpHttpSessions.notify(record, notification),
@@ -270,7 +375,7 @@ export async function handleEpochMcpRoutes(context: McpRouteContext): Promise<bo
         }
         const execute = () => runWithMcpRequestAuthContext(
           requestAuth || { kind: "bootstrap" },
-          () => handleMcpJsonRpcMessage(mcpRuntime, mcpBody, {
+          () => handleMcpJsonRpcMessage(requestRuntime, mcpBody, {
             session: resolved.record?.session,
             sampling: resolved.record?.sampling,
             notify: (notification) => mcpHttpSessions.notify(resolved.record as McpHttpSessionRecord, notification),
@@ -303,7 +408,7 @@ export async function handleEpochMcpRoutes(context: McpRouteContext): Promise<bo
       }
       const execute = () => runWithMcpRequestAuthContext(
         requestAuth || { kind: "bootstrap" },
-        () => handleMcpJsonRpcMessage(mcpRuntime, mcpBody, {
+        () => handleMcpJsonRpcMessage(requestRuntime, mcpBody, {
           session: resolved.record?.session,
           sampling: resolved.record?.sampling,
           notify: (notification) => mcpHttpSessions.notify(resolved.record as McpHttpSessionRecord, notification),
@@ -359,7 +464,8 @@ export async function handleEpochMcpRoutes(context: McpRouteContext): Promise<bo
   }
 
   if (method === "GET" && pathname === "/api/epoch/mcp/tools/list") {
-    context.sendJson(request, response, 200, { tools: mcpRuntime.listTools() }, allowedOrigins);
+    const requestRuntime = mcpRuntimeForRequest(context, requestAuth || { kind: "bootstrap" });
+    context.sendJson(request, response, 200, { tools: requestRuntime.listTools() }, allowedOrigins);
     return true;
   }
 
@@ -369,13 +475,14 @@ export async function handleEpochMcpRoutes(context: McpRouteContext): Promise<bo
     if (!toolName) throw new Error("mcp_tool_name_required");
     const toolArguments = recordValue(body.arguments);
     const partialPersistence = stagedPartialPersistence(context);
+    const requestRuntime = mcpRuntimeForRequest(context, requestAuth || { kind: "bootstrap" });
     const result = await runWithMcpRequestAuthContext(
       requestAuth || { kind: "bootstrap" },
       () => runWithMcpRequestContext({
         activeClientRequest: true,
         clientRequestId: toolArguments.idempotencyKey || `${toolName}:http`,
         persistPartial: partialPersistence,
-      }, () => mcpRuntime.callTool(toolName, toolArguments)),
+      }, () => requestRuntime.callTool(toolName, toolArguments)),
     );
     await context.persistMcpToolPayload(toolName, result);
     context.sendJson(request, response, 200, result, allowedOrigins);

@@ -244,10 +244,14 @@ test("inventory rules plan shop purchase event sequences", () => {
   const purchasedAt = "2026-07-07T05:20:00.000Z";
   const offer = {
     offerId: "ashen-oath-relic",
+    offerVersion: "inventory-shop.v2",
     itemKey: "shop:ashen-oath-relic",
     displayName: "灰誓遗物",
     rarity: "rare",
     bindOnAcquire: true,
+    stock: 1,
+    stockScope: "per_explorer" as const,
+    perExplorerLimit: 1,
     costs: [
       { resourceId: "coin" as const, amount: 8 },
       { resourceId: "legend" as const, amount: 1 },

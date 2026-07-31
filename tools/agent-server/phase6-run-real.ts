@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const MAX_STDERR_SUMMARY_BYTES = 8192;
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
-const SECRET_KEY = /(?:api[-_]?key|recovery[-_]?code|operator[-_]?key|secret|token|authorization|password|credential|private[-_]?key|access[-_]?key|refresh[-_]?token)/i;
+const SECRET_KEY = /(?:api[-_]?key|recovery[-_]?code|operator[-_]?key|secret|token|authorization|password|credential|private[-_]?key|access[-_]?key|refresh[-_]?token|session[-_]?key)/i;
 const SECRET_VALUE = /\b(?:sk-[A-Za-z0-9_-]{12,}|Bearer\s+[A-Za-z0-9._-]{12,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{16})\b/i;
 const SECRET_VALUE_GLOBAL = /\b(?:sk-[A-Za-z0-9_-]{12,}|Bearer\s+[A-Za-z0-9._-]{12,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{16})\b/gi;
 
@@ -48,10 +48,10 @@ interface AcceptanceResult {
 
 function usage(): string {
   return [
-    "Usage: node tools/agent-server/phase6-run-real.mjs --command-json '<argv-json>' --output <repo-jsonl-path> [--experiment-id <id>] [--timeout-ms <ms>]",
+    "Usage: node --import tsx ../agent-server/phase6-run-real.ts --command-json '<argv-json>' --output <repo-jsonl-path> [--experiment-id <id>] [--timeout-ms <ms>]",
     "",
     "Runs a real external host command without a shell, writes stdout to a repository JSONL evidence file,",
-    "summarizes stderr with redaction, then invokes phase6-ten-run.mjs against the evidence file.",
+    "summarizes stderr with redaction, then invokes phase6-ten-run.ts against the evidence file.",
   ].join("\n");
 }
 

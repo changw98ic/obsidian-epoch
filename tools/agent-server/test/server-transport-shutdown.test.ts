@@ -4,7 +4,7 @@ import { request, type IncomingMessage, type Server } from "node:http";
 import test from "node:test";
 
 import { createAgentHttpServer } from "../lib/httpServer.ts";
-import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 
 function listen(server: Server) {
   return new Promise<void>((resolve, reject) => {

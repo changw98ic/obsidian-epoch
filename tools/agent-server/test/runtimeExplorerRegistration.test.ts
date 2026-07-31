@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { encodeExplorerRecoveryCode } from "../lib/epoch/runtimeAuth.ts";
 import { epochEventsForPersistence } from "../lib/epoch/runtimePublicProjectionRules.ts";
-import { createAgentWorldMcpRuntime, createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldMcpRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 
 type RecoveryPayload = {
   readonly explorerId: string;
@@ -113,7 +114,7 @@ test("production registration secret makes pairing replay-safe across runtime re
   const restartedRuntime = createAgentWorldRuntime({
     epoch: {
       registrationSecret,
-      initialEvents: first.projection.events,
+      initialEvents: epochEventsForPersistence(first),
     },
   });
   const replay = restartedRuntime.epochRegisterExplorer(input);

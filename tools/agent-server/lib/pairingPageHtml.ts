@@ -1,16 +1,5 @@
 import { epochPageSceneMediaForKey } from "./pageSceneAssets.ts";
 
-export interface EpochPairingCredentialPageInfo {
-  readonly explorerId: string;
-  readonly agentId: string;
-  readonly recoveryCode: string;
-  readonly accessToken: string;
-  readonly expiresAt: string;
-  readonly serverBase: string;
-}
-
-const hostNames = ["Claude Code", "Codex", "Cursor", "Hermes", "OpenClaw"] as const;
-
 function escapeHtml(value: unknown) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -133,118 +122,26 @@ function pairingPageShell(title: string, summary: string, body: string) {
       color: var(--soft);
       line-height: 1.65;
     }
-    form {
-      display: grid;
-      gap: 12px;
-      max-width: 560px;
-    }
-    label {
-      display: grid;
-      gap: 8px;
-      color: var(--soft);
-      font-weight: 700;
-    }
-    input {
-      width: 100%;
-      min-height: 46px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      padding: 10px 12px;
-      color: var(--text);
-      background: var(--panel);
-      font: inherit;
-    }
-    button {
-      width: fit-content;
-      min-height: 44px;
-      border: 1px solid rgba(143, 216, 200, .56);
-      border-radius: 6px;
-      padding: 10px 16px;
-      color: #07110f;
-      background: var(--accent);
-      font: inherit;
-      font-weight: 800;
-      cursor: pointer;
-    }
-    .split {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
-    }
-    .field-list {
-      display: grid;
-      gap: 10px;
-      margin: 0;
-    }
-    .field {
-      min-width: 0;
-      display: grid;
-      gap: 5px;
-      padding: 12px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--panel-strong);
-    }
-    .field dt {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 800;
-      text-transform: uppercase;
-      letter-spacing: .06em;
-    }
-    .field dd {
-      margin: 0;
-      color: var(--text);
-      overflow-wrap: anywhere;
-      word-break: break-word;
-    }
-    .secret {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      font-size: 13px;
-      line-height: 1.55;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      word-break: break-word;
-    }
     .notice {
       color: var(--warn);
       font-weight: 800;
     }
-    .host-list {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 10px;
-      margin: 0;
-      padding: 0;
-      list-style: none;
-    }
-    .host-list li {
-      min-width: 0;
-      display: grid;
-      gap: 6px;
-      padding: 12px;
-      border: 1px solid var(--line);
+    .action-link {
+      display: inline-flex;
+      margin-top: 14px;
+      min-height: 44px;
+      align-items: center;
+      padding: 10px 16px;
+      border: 1px solid rgba(143, 216, 200, .56);
       border-radius: 6px;
-      background: var(--panel-strong);
-    }
-    .host-name {
-      color: var(--text);
+      color: #07110f;
+      background: var(--accent);
       font-weight: 800;
-    }
-    code {
-      color: var(--soft);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      font-size: 12px;
-      overflow-wrap: anywhere;
-      word-break: break-word;
+      text-decoration: none;
     }
     @media (max-width: 780px) {
       main { width: min(100vw - 20px, 1040px); }
-      .split,
-      .host-list {
-        grid-template-columns: 1fr;
-      }
-      button { width: 100%; }
+      .action-link { width: 100%; justify-content: center; }
     }
   </style>
 </head>
@@ -264,62 +161,15 @@ function pairingPageShell(title: string, summary: string, body: string) {
 </html>`;
 }
 
-function field(label: string, value: string, className = "") {
-  const valueClass = className ? ` class="${escapeHtml(className)}"` : "";
-  return `<div class="field"><dt>${escapeHtml(label)}</dt><dd${valueClass}>${escapeHtml(value)}</dd></div>`;
-}
-
 export function renderEpochPairingPageHtml() {
   return pairingPageShell(
-    "配对你的行动身份",
-    "由服务器分配首世身份、寿命与 Explorer 凭证，再复制到你使用的宿主环境变量中。",
-    `<section aria-labelledby="pairing-form-title">
-      <h2 id="pairing-form-title">注册身份</h2>
-      <form method="post" action="/epoch/pair/register" autocomplete="off">
-        <p class="notice">身份名称、初始寿命与第一世经历由服务器规则签发，客户端不能自定义。</p>
-        <button type="submit">由服务器签发身份</button>
-      </form>
-    </section>`,
-  );
-}
-
-export function renderEpochPairingCredentialPageHtml(info: EpochPairingCredentialPageInfo) {
-  const hostItems = hostNames.map((hostName) => `<li>
-    <span class="host-name">${escapeHtml(hostName)}</span>
-    <code>AGENT_WORLD_SERVER=${escapeHtml(info.serverBase)}</code>
-    <code>AGENT_WORLD_MCP_TOKEN=${escapeHtml(info.accessToken)}</code>
-  </li>`);
-
-  return pairingPageShell(
-    "配对凭证已签发",
-    "此页面只用于安装时复制凭证；不要把 token 或恢复码放进普通聊天、截图或公开工单。",
-    `<section aria-labelledby="identity-title">
-      <h2 id="identity-title">身份</h2>
-      <dl class="field-list split">
-        ${field("Explorer ID", info.explorerId)}
-        ${field("Agent ID", info.agentId)}
-      </dl>
-    </section>
-    <section aria-labelledby="token-title">
-      <h2 id="token-title">短期 MCP token</h2>
-      <dl class="field-list">
-        ${field("AGENT_WORLD_MCP_TOKEN", info.accessToken, "secret")}
-        ${field("有效期", info.expiresAt)}
-      </dl>
-    </section>
-    <section aria-labelledby="recovery-title">
-      <h2 id="recovery-title">恢复码</h2>
-      <p class="notice">恢复码仅显示一次。不要粘贴到普通聊天、公开频道、Issue、PR 或日志中。</p>
-      <dl class="field-list">
-        ${field("一次性恢复码", info.recoveryCode, "secret")}
-      </dl>
-    </section>
-    <section aria-labelledby="hosts-title">
-      <h2 id="hosts-title">五个宿主统一环境变量</h2>
-      <p>五个宿主使用同一组变量名：<code>AGENT_WORLD_SERVER</code> 和 <code>AGENT_WORLD_MCP_TOKEN</code>。</p>
-      <ul class="host-list">
-        ${hostItems.join("")}
-      </ul>
+    "由 Agent 创建首个身份",
+    "连接发布 MCP 代理后，Agent 会请求服务器签发首世身份并接管短期凭证。网页不创建身份，也不显示凭证。",
+    `<section aria-labelledby="pairing-agent-title">
+      <h2 id="pairing-agent-title">无需网页操作</h2>
+      <p>安装发布包后，让 Agent 调用 <code>obsidian_epoch.register_explorer</code>。服务器决定身份名称、寿命和首世资料；代理保管短期访问凭证，不把凭证或恢复码回显到对话。</p>
+      <p class="notice">不要在网页、普通聊天或截图中创建、复制或粘贴身份凭证。</p>
+      <a class="action-link" href="/epoch/install">查看 MCP 安装方式</a>
     </section>`,
   );
 }

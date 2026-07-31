@@ -88,6 +88,12 @@ test("public commits survive restart, finalize, and a second restart with readab
     assert.equal(firstReceipt.journeyId, journey.journeyId);
     assert.ok(String(firstReceipt.receiptId || "").length > 0);
     assert.ok(receiptEventIds(firstReceipt).length > 0);
+    assert.equal(record(firstReceipt.noChangeReasons).methods, "no_eligible_progression_change");
+    assert.equal(
+      Array.isArray(record(record(record(firstReceipt.snapshots).after).body).progression?.methods),
+      true,
+      "the persisted canonical snapshot must retain the methods domain",
+    );
 
     const sidecarRowsAfterFirstFinalize = runtime2.committedStore?.listByJourneyId(journey.journeyId).length;
     const secondStatus = await statusByJourneyId(runtime2, journey);
@@ -151,8 +157,13 @@ test("failed Phase 6 settlement keeps identity active until explicit archive, th
     const settlement = record(status.phase6Settlement);
     const receipt = record(settlement.receipt);
     assert.equal(settlement.ok, true, JSON.stringify(settlement));
+    assertReceiptEventsPersisted(runtime.database, receipt);
     assert.equal(record(status.taskAdjudication).mainCompleted, 0);
     assert.equal(record(record(status.journey).worldCommit).reason, "main_incomplete");
+    assert.equal(record(record(status.journey).worldCommit).status, "discarded");
+    const resultJourney = record(record(record(status.phase6Settlement).page).payload).journey;
+    assert.equal(record(resultJourney).worldImpact, undefined);
+    assert.equal(record(resultJourney).hiddenPrerequisites, undefined);
     const afterBody = record(record(record(receipt.snapshots).after).body);
     assert.equal(record(record(afterBody.identity).playerIdentity).status, "active");
     const archiveRow = runtime.database.prepare(`
@@ -185,7 +196,7 @@ test("failed Phase 6 settlement keeps identity active until explicit archive, th
     const experimentStatus = payload(await runtime.mcp.callTool("obsidian_epoch.phase6_experiment_status", {
       experimentId: journey.experimentId,
     }));
-    assert.equal(experimentStatus.identityId, journey.agentId);
+    assert.equal(record(experimentStatus.identity).identityId, journey.agentId);
     const nextArchive = payload(await runtime.mcp.callTool("obsidian_epoch.identity_archive", {
       agentId: nextAgentId,
     }));
@@ -210,6 +221,26 @@ test("failed Phase 6 settlement keeps identity active until explicit archive, th
     }));
     assert.equal(record(nextRun.identity).identityId, nextAgentId);
     assert.equal(record(nextRun.explorer).explorerId, journey.explorerId);
+    runtime.close();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("repeated Phase 6 starts omit signed action data from stored snapshots", async () => {
+  const root = mkdtempSync(join(tmpdir(), "phase6-snapshot-redaction-"));
+  const sqlitePath = join(root, "phase6.sqlite");
+  try {
+    const runtime = await openRuntime(sqlitePath, "snapshot-redaction", true);
+    for (let index = 1; index <= 3; index += 1) {
+      const completed = await startPhase6Journey(runtime, `snapshot-redaction-${index}`);
+      await settleJourney(runtime, completed, false);
+    }
+
+    const pending = await startPhase6Journey(runtime, "snapshot-redaction-4");
+    const context = runtime.mcp.runtime.epochLoadPhase6JourneyContext(pending.journeyId);
+    assert.ok(context);
+    assertNoPhase6SnapshotPrivateFields(context.beforeSnapshot);
     runtime.close();
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -856,6 +887,20 @@ function payload(result: { readonly content: readonly { readonly text: string }[
   return record(value);
 }
 
+function assertNoPhase6SnapshotPrivateFields(value: unknown, path = "$"): void {
+  const privateField = /(?:api[_-]?key|secret|token|password|credential|private[_-]?key|signature|recovery[_-]?code|authorization)/iu;
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => assertNoPhase6SnapshotPrivateFields(entry, `${path}[${index}]`));
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [key, entry] of Object.entries(value)) {
+    const fieldPath = `${path}.${key}`;
+    assert.equal(privateField.test(key), false, `private Phase 6 snapshot field: ${fieldPath}`);
+    assertNoPhase6SnapshotPrivateFields(entry, fieldPath);
+  }
+}
+
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as JsonRecord
@@ -866,6 +911,21 @@ function receiptEventIds(receipt: JsonRecord) {
   const groups = record(receipt.eventIds);
   return ["source", "settlement", "derived"].flatMap((key) =>
     Array.isArray(groups[key]) ? groups[key] as unknown[] : []);
+}
+
+function assertReceiptEventsPersisted(db: DatabaseSync, receipt: JsonRecord) {
+  for (const eventId of receiptEventIds(receipt)) {
+    assert.equal(typeof eventId, "string", "receipt event id must be a string");
+    const persisted = rowCount(db, `
+      SELECT COUNT(*) AS count
+      FROM (
+        SELECT event_id FROM epoch_events WHERE event_id = ?
+        UNION ALL
+        SELECT event_id FROM journey_events WHERE event_id = ?
+      )
+    `, eventId, eventId);
+    assert.equal(persisted, 1, `receipt event must exist in the canonical event authority: ${eventId}`);
+  }
 }
 
 function persistenceCounts(db: DatabaseSync) {

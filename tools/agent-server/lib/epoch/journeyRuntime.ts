@@ -24,6 +24,7 @@ import {
 import { revalidatePersistedJourneyNarrative } from "./journeyNarrativeRules.ts";
 import type { EpochEvent } from "./events.ts";
 import type { MirrorConsequenceLedgerEntry } from "./journeySettlementRules.ts";
+import { listMirrorConsequences } from "./journeyMirrorLedger.ts";
 import {
   generateJourneySceneEpisodes,
   generateTaskPlanJourneySceneEpisodes,
@@ -697,9 +698,21 @@ export class JourneyRuntime {
     const current = this.#record(input.journeyId).journey;
     if (current.version !== input.expectedVersion) throw new Error("journey_version_conflict");
     if (input.promotions.length === 0) return this.#record(input.journeyId);
+    const ledger = this.#projection.mirrorLedgers[input.journeyId];
+    const promotions = input.promotions.filter((promotion) => {
+      const existing = ledger?.promotedCanonicalEventIds[promotion.entryId];
+      if (existing === undefined) return true;
+      if (existing !== promotion.canonicalEventId) {
+        throw new Error("journey_mirror_ledger_entry_already_promoted");
+      }
+      return false;
+    });
+    // A retry after the canonical marker was committed must not create a new
+    // journey version when the ledger already records every promotion.
+    if (promotions.length === 0) return this.#record(input.journeyId);
     const journey: EpochJourney = { ...current, version: current.version + 1 };
     this.#append([
-      this.#snapshotEvent("journey_mirror_consequence_promoted", journey, undefined, undefined, undefined, undefined, undefined, input.promotions),
+      this.#snapshotEvent("journey_mirror_consequence_promoted", journey, undefined, undefined, undefined, undefined, undefined, promotions),
     ]);
     return this.#record(input.journeyId);
   }
@@ -715,6 +728,12 @@ export class JourneyRuntime {
   }): JourneyRuntimeRecord {
     const current = this.#record(input.journeyId).journey;
     if (current.version !== input.expectedVersion) throw new Error("journey_version_conflict");
+    const ledger = this.#projection.mirrorLedgers[input.journeyId];
+    if (!ledger || listMirrorConsequences(ledger).length === 0) {
+      // Discard is also a recovery boundary: if the first attempt already
+      // persisted the discard event, replaying the settlement is a no-op.
+      return this.#record(input.journeyId);
+    }
     const journey: EpochJourney = { ...current, version: current.version + 1 };
     this.#append([
       this.#snapshotEvent("journey_mirror_consequence_discarded", journey),

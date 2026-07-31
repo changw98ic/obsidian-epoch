@@ -42,6 +42,7 @@ import {
   type SelfLossContribution,
   type SettlementContext,
 } from "../lib/epoch/journeySettlementRules.ts";
+import type { RoleplayScore } from "../lib/epoch/journeyRoleplayRules.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -120,6 +121,24 @@ test("buildConsequenceScore: zero-affinity / zero-strategy invariant", () => {
   assert.equal(score.mainLineSucceeded, true);
   assert.equal(score.hiddenComplete, true);
   assert.equal(score.hiddenClamp.applied, false);
+});
+
+test("buildConsequenceScore: roleplay summary is projected without changing additive buckets", () => {
+  const roleplayScore: RoleplayScore = {
+    deviationBps: 4_000,
+    classification: "forbidden_action",
+    npcDoubtEvents: [],
+    exposed: true,
+    patternVersion: 1,
+    computedAt: "2026-07-15T12:00:00.000Z",
+  };
+  const score = buildConsequenceScore(makeCtx({ roleplayScore }));
+  assert.deepEqual(score.roleplaySummary, {
+    deviationBps: 4_000,
+    doubtEventCount: 0,
+    exposed: true,
+  });
+  assert.equal(score.breakdown.totalBps, 0);
 });
 
 test("buildConsequenceScore: main-line failure forces HiddenClamp to 未及格", () => {

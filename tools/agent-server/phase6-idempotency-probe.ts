@@ -19,7 +19,7 @@ const repositoryRoot = path.resolve(scriptDirectory, "../..");
 
 function usage() {
   return [
-    "Usage: node --import tsx tools/agent-server/phase6-idempotency-probe.mjs --output <repo-local-jsonl> [options]",
+    "Usage: node --import tsx ../agent-server/phase6-idempotency-probe.ts --output <repo-local-jsonl> [options]",
     "",
     "Options:",
     "  --output <path>         Repository-local JSONL output path. Refuses to overwrite non-empty files.",
@@ -28,7 +28,7 @@ function usage() {
     "  --experiment-id <value> Evidence experiment id. Default: phase6-idempotency-probe.",
     "  --keep-temp            Keep the temporary SQLite directory for inspection.",
     "",
-    "The output is suitable for phase6-idempotency-gate.mjs as command, settlement, and store audit input.",
+    "The output is suitable for phase6-idempotency-gate.ts as command, settlement, and store audit input.",
   ].join("\n");
 }
 
@@ -46,12 +46,14 @@ export async function runProbe(options) {
   try {
     const [
       { createAgentPersistenceFromEnv },
-      { createAgentWorldMcpRuntime, createAgentWorldRuntime },
+      { createAgentWorldMcpRuntime },
+      { createAgentWorldRuntime },
       { createSequentialEpochIdFactory },
       { readSqliteJsonlRecords },
     ] = await Promise.all([
       import("./lib/persistenceConfig.ts"),
       import("./lib/mcpTools.ts"),
+      import("./lib/mcpRuntimeCore.ts"),
       import("./lib/epoch/protocol.ts"),
       import("./lib/sqliteStore.ts"),
     ]);

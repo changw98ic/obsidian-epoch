@@ -186,7 +186,9 @@ test("HTTP MCP bounds concurrent SSE streams per session", () => {
 });
 
 test("HTTP MCP shares Sampling limits across sessions with the same auth binding", async () => {
-  const registry = createMcpHttpSessionRegistry();
+  const registry = createMcpHttpSessionRegistry(undefined, {
+    samplingLimiterOptions: { maxConcurrent: 2 },
+  });
   const first = registry.create("shared-owner");
   const second = registry.create("shared-owner");
   for (const record of [first, second]) {
@@ -211,6 +213,7 @@ test("HTTP MCP shares Sampling limits across sessions with the same auth binding
     source: "sampling_advice",
     trust: "untrusted_client",
     fallback: "rate_limited",
+    limitReason: "concurrency",
   });
   registry.close(first.session.sessionId, "shared-owner");
   registry.close(second.session.sessionId, "shared-owner");

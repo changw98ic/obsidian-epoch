@@ -146,6 +146,9 @@ export async function handleMcpJsonRpcMessage(
     if (messageText === "community_auth_player_required") {
       return mcpJsonRpcErrorResponse(id, -32001, messageText);
     }
+    if (messageText === "mcp_bootstrap_tool_forbidden") {
+      return mcpJsonRpcErrorResponse(id, -32001, messageText);
+    }
     if (messageText === "community_rate_limited") {
       const retryAfterMs = isRecord(error) && Number.isSafeInteger(error.retryAfterMs)
         ? Number(error.retryAfterMs)

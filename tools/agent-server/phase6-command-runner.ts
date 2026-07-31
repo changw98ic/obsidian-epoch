@@ -29,7 +29,7 @@ interface CommandRunnerOptions {
 
 function usage(): string {
   return [
-    "Usage: node tools/agent-server/phase6-command-runner.mjs --program <program> [--arg <arg> ...] --claim-output <repo-path> --receipt <repo-path> [--cwd <repo-path>]",
+    "Usage: node --import tsx ../agent-server/phase6-command-runner.ts --program <program> [--arg <arg> ...] --claim-output <repo-path> --receipt <repo-path> [--cwd <repo-path>]",
     "",
     `Requires ${ATTESTATION_KEY_ENV} to name an absolute, repository-external 0600 file containing at least 32 bytes.`,
     "Every claimed output must be absent before execution and newly created by the shell:false command.",

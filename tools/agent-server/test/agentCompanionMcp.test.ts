@@ -4,7 +4,9 @@ import { handleMcpJsonRpcMessage } from "../lib/mcpJsonRpc.ts";
 import { createMcpSamplingClient } from "../lib/mcpSampling.ts";
 import { createMcpServerRequestManager } from "../lib/mcpServerRequestManager.ts";
 import { createMcpSession } from "../lib/mcpSession.ts";
-import { createAgentWorldMcpRuntime, createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { runWithMcpRequestContext } from "../lib/mcpRequestContext.ts";
+import { createAgentWorldMcpRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 import { createSequentialEpochIdFactory } from "../lib/epoch/protocol.ts";
 import { epochEventsForPersistence } from "../lib/epoch/runtimePublicProjectionRules.ts";
 import { journeyEventsForPersistence } from "../lib/epoch/journeyPersistence.ts";
@@ -96,6 +98,100 @@ async function preparedAgentNativeJourney(
   return { ...context, prepared, started, proposed };
 }
 
+test("agent briefing exposes current economy facts without deciding for the Agent", async () => {
+  const { mcp, agentId, ownerRecovery, advanceEpoch } = await fixture();
+  const focusShort = payload(await mcp.callTool("obsidian_epoch.agent_briefing", {
+    agentId,
+    regionId: "region_gray_harbor",
+    recoveryCode: ownerRecovery,
+  }));
+  const focusShortEconomy = focusShort.economyActions as {
+    authority: string;
+    ownerAccess: { status: string; canExecute: boolean };
+    actions: Array<{
+      actionId: string;
+      availability: { status: string; missingResources: Array<{ resourceId: string; amount: number }> };
+    }>;
+  };
+  assert.equal(focusShortEconomy.authority, "server_economy_action_facts");
+  assert.equal(Object.hasOwn(focusShortEconomy, "recommended"), false);
+  assert.deepEqual(focusShortEconomy.ownerAccess, {
+    status: "owner_authorized",
+    canExecute: true,
+  });
+  const focusCharm = focusShortEconomy.actions.find((action) => action.actionId === "craft:focus-charm");
+  assert.ok(focusCharm);
+  assert.equal(focusCharm.availability.status, "insufficient_resources");
+  assert.ok(focusCharm.availability.missingResources.some((resource) => resource.resourceId === "focus"));
+  assert.equal(Object.hasOwn(focusCharm, "recommendation"), false);
+
+  await mcp.callTool("obsidian_epoch.set_downtime", {
+    agentId,
+    mode: "slacking",
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "economy-advice-slacking",
+  });
+  advanceEpoch("2026-07-12T00:45:01.000Z");
+  const claimed = payload(await mcp.callTool("obsidian_epoch.claim_downtime", {
+    agentId,
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "economy-advice-claim",
+  }));
+  assert.deepEqual(claimed.value.lastRewards, [{
+    resourceId: "coin",
+    amount: 3,
+    reason: "downtime_slacking",
+  }]);
+
+  const affordable = payload(await mcp.callTool("obsidian_epoch.agent_briefing", {
+    agentId,
+    regionId: "region_gray_harbor",
+    recoveryCode: ownerRecovery,
+  }));
+  const ration = (affordable.economyActions.actions as Array<{
+    actionId: string;
+    availability: { status: string; balancesAfter: Record<string, number> };
+    execution: { tool: string; arguments: Record<string, unknown>; idempotencyKeyRequired: boolean };
+    nextJourneyImpact: { equipmentFactor: { before: number; after: number; delta: number } };
+  }>).find((action) => action.actionId === "shop:gray-ration-pack");
+  assert.ok(ration);
+  assert.equal(ration.availability.status, "available");
+  assert.equal(ration.availability.balancesAfter.coin, 0);
+  assert.equal(ration.execution.tool, "obsidian_epoch.purchase_shop_offer");
+  assert.deepEqual(ration.execution.arguments, {
+    agentId,
+    offerId: "gray-ration-pack",
+    regionId: "region_gray_harbor",
+  });
+  assert.equal(ration.execution.idempotencyKeyRequired, true);
+  assert.deepEqual(ration.nextJourneyImpact.equipmentFactor, {
+    before: 0,
+    after: 1,
+    delta: 1,
+  });
+  assert.equal(Object.hasOwn(ration, "recommendation"), false);
+
+  const purchased = payload(await mcp.callTool("obsidian_epoch.purchase_shop_offer", {
+    ...ration.execution.arguments,
+    recoveryCode: ownerRecovery,
+    idempotencyKey: "economy-advice-purchase-ration",
+  }));
+  assert.equal(purchased.value.itemKey, "shop:gray-ration-pack");
+
+  const afterPurchase = payload(await mcp.callTool("obsidian_epoch.agent_briefing", {
+    agentId,
+    regionId: "region_gray_harbor",
+    recoveryCode: ownerRecovery,
+  }));
+  const limitedRation = (afterPurchase.economyActions.actions as Array<{
+    actionId: string;
+    availability: { status: string };
+  }>).find((action) => action.actionId === "shop:gray-ration-pack");
+  assert.ok(limitedRation);
+  assert.equal(limitedRation.availability.status, "purchase_limit_reached");
+  assert.equal(Object.hasOwn(limitedRation, "recommendation"), false);
+});
+
 test("public journey proposal stays compact and remains directly committable", async () => {
   const context = await preparedAgentNativeJourney(
     "compact-public-proposal",
@@ -113,6 +209,17 @@ test("public journey proposal stays compact and remains directly committable", a
   }));
   assert.ok(Buffer.byteLength(JSON.stringify(compactStatus), "utf8") < 24_000);
   assert.equal(compactStatus.transportVersion, "journey_status.compact.v1");
+  assert.equal(compactStatus.economyActions.authority, "server_economy_action_facts");
+  assert.equal(Object.hasOwn(compactStatus.economyActions, "recommended"), false);
+  assert.deepEqual(compactStatus.economyActions.ownerAccess, {
+    status: "owner_authorized",
+    canExecute: true,
+  });
+  assert.ok(compactStatus.economyActions.actions.every((action: {
+    execution: { tool: string; idempotencyKeyRequired: boolean };
+  }) => action.execution.tool.startsWith("obsidian_epoch.")
+    && action.execution.idempotencyKeyRequired
+    && !Object.hasOwn(action, "recommendation")));
   const selected = context.proposed.proposal.sceneContract.actionOptions[0];
   assert.ok(selected?.signed?.signature, "compact action must carry signed envelope with signature");
   const committed = payload(await context.mcp.callTool("obsidian_epoch.commit_journey_action_compact", {
@@ -128,6 +235,67 @@ test("public journey proposal stays compact and remains directly committable", a
   assert.ok(Buffer.byteLength(JSON.stringify(committed), "utf8") < 24_000);
   assert.equal(committed.transportVersion, "journey_commit.compact.v1");
   assert.equal(committed.settledAction.actionOptionId, selected.actionOptionId);
+});
+
+test("compact settled journey status sends its complete verification page to persistence", async () => {
+  const context = await preparedAgentNativeJourney(
+    "compact-final-verification-persistence",
+    undefined,
+    "obsidian_epoch.propose_journey_step_compact",
+  );
+  let current = context.started;
+  let proposed = context.proposed;
+  for (let index = 0; current.journey.status !== "settled" && index < 12; index += 1) {
+    const selected = proposed.proposal.sceneContract.actionOptions.find(
+      (option: { readonly risk: string }) => option.risk === "low",
+    ) ?? proposed.proposal.sceneContract.actionOptions[0];
+    assert.ok(selected);
+    current = payload(await context.mcp.callTool("obsidian_epoch.commit_journey_action_compact", {
+      journeyId: current.journey.journeyId,
+      sceneId: proposed.proposal.sceneContract.sceneId,
+      episodeId: proposed.proposal.episode.episodeId,
+      expectedVersion: proposed.proposal.expectedVersion,
+      actionOptionId: selected.actionOptionId,
+      signature: selected.signed.signature,
+      recoveryCode: context.ownerRecovery,
+      idempotencyKey: `commit-compact-final-verification-${index}`,
+    }));
+    if (current.journey.status === "settled") break;
+    proposed = payload(await context.mcp.callTool("obsidian_epoch.propose_journey_step_compact", {
+      journeyId: current.journey.journeyId,
+      expectedVersion: current.journey.version,
+      recoveryCode: context.ownerRecovery,
+      idempotencyKey: `propose-compact-final-verification-${index + 1}`,
+    }));
+  }
+  assert.equal(current.journey.status, "settled");
+
+  const persisted: Array<{ readonly toolName: string; readonly result: unknown }> = [];
+  const compactStatus = payload(await runWithMcpRequestContext({
+    activeClientRequest: true,
+    clientRequestId: "compact-final-verification-persistence",
+    persistPartial: async (toolName, result) => {
+      persisted.push({ toolName, result });
+    },
+  }, () => context.mcp.callTool("obsidian_epoch.journey_status_compact", {
+    journeyId: current.journey.journeyId,
+    recoveryCode: context.ownerRecovery,
+  })));
+
+  assert.equal(compactStatus.journey.status, "settled");
+  assert.equal(persisted.length, 1);
+  assert.equal(persisted[0]?.toolName, "obsidian_epoch.journey_final_verification");
+  const persistedPage = persisted[0]?.result as { readonly page?: {
+    readonly pageId?: string;
+    readonly createdBy?: string;
+    readonly idempotencyKey?: string;
+    readonly payload?: { readonly journey?: { readonly status?: string; readonly worldCommit?: { readonly status?: string } } };
+  } } | undefined;
+  assert.equal(persistedPage?.page?.pageId, compactStatus.finalVerification.pageId);
+  assert.equal(persistedPage?.page?.createdBy, context.explorerId);
+  assert.ok(persistedPage?.page?.idempotencyKey);
+  assert.equal(persistedPage?.page?.payload?.journey?.status, "settled");
+  assert.equal(persistedPage?.page?.payload?.journey?.worldCommit?.status, "solidified");
 });
 
 test("MCP exposes an Agent-native start, propose, and commit journey flow", async () => {
@@ -184,7 +352,7 @@ test("MCP exposes an Agent-native start, propose, and commit journey flow", asyn
   assert.equal(started.episodes[0].serverFacts.journeyId, started.journey.journeyId);
   assert.equal(started.episodes[0].narrative.kind, "grounded_narrative");
   assert.deepEqual(started.episodes[0].narrative.sourceEventIds, started.episodes[0].serverFacts.sourceEventIds);
-  assert.equal(started.nextAction, "obsidian_epoch.propose_journey_step");
+  assert.equal(Object.hasOwn(started, "nextAction"), false);
 
   const proposed = payload(await mcp.callTool("obsidian_epoch.propose_journey_step", {
     journeyId: started.journey.journeyId,
@@ -608,6 +776,17 @@ test("a safe full clear uses the canonical settlement tier and reward contract",
     recoveryCode: ownerRecovery,
   }));
   assert.equal(finalized.storyReport.mission.status, "completed");
+  assert.equal(finalized.economyActions.authority, "server_economy_action_facts");
+  assert.equal(Object.hasOwn(finalized.economyActions, "recommended"), false);
+  assert.equal(finalized.economyActions.ownerAccess.status, "owner_authorized");
+  assert.equal(finalized.economyActions.balances[resourceId], balance);
+  assert.ok(finalized.economyActions.actions.every((action: {
+    execution: { tool: string; idempotencyKeyRequired: boolean };
+    nextJourneyImpact: { equipmentFactor: { delta: number } };
+  }) => action.execution.tool.startsWith("obsidian_epoch.")
+    && action.execution.idempotencyKeyRequired
+    && Number.isInteger(action.nextJourneyImpact.equipmentFactor.delta)
+    && !Object.hasOwn(action, "recommendation")));
   assert.equal(finalized.storyReport.resolution.missionStatus, "completed");
   assert.equal(finalized.finalVerification.page.payload.journey.episodes[0].phase, "arrival");
   assert.equal(finalized.finalVerification.page.payload.journey.episodes.at(-1).phase, "return");
@@ -744,11 +923,71 @@ test("Host Sampling partial persistence retains every generated objective action
   session.acceptInitializedNotification();
   const sent: Record<string, unknown>[] = [];
   let requestSequence = 0;
-  const manager = createMcpServerRequestManager({
-    send: (message) => { sent.push(message); },
+  const partials: { readonly toolName: string; readonly result: unknown }[] = [];
+  let samplingRequestCount = 0;
+  let manager: ReturnType<typeof createMcpServerRequestManager>;
+  manager = createMcpServerRequestManager({
+    send: (message) => {
+      sent.push(message);
+      assert.equal(message.method, "sampling/createMessage");
+      const requestBound = JOURNEY_TASK_OBJECTIVE_LIMITS.mainMax
+        + JOURNEY_TASK_OBJECTIVE_LIMITS.sideMax
+        + JOURNEY_TASK_OBJECTIVE_LIMITS.choiceMax;
+      if (samplingRequestCount >= requestBound) {
+        throw new Error(`generated_staged_sampling_request_bound_exceeded:${samplingRequestCount}`);
+      }
+      const request = message as {
+        readonly id: string;
+        readonly params: {
+          readonly systemPrompt?: string;
+          readonly messages: readonly { readonly content: { readonly text: string } }[];
+        };
+      };
+      const prompt = JSON.parse(request.params.messages[0]!.content.text);
+      if (samplingRequestCount === 0 && prompt.decisionContext) {
+        // Action-choice request: verify identity context is present.
+        assert.equal(typeof prompt.decisionContext.identity.identityName, "string");
+        assert.ok(Array.isArray(prompt.decisionContext.identity.traits), JSON.stringify(Object.keys(prompt.decisionContext ?? {})));
+        assert.ok(
+          Array.isArray(prompt.decisionContext.identity.strongestNeeds),
+          JSON.stringify(prompt.decisionContext.identity),
+        );
+        assert.equal(typeof prompt.decisionContext.resources, "object");
+        assert.match(prompt.decisionContext.worldSlice.sliceHash, /^sha256:/u);
+        assert.equal(typeof prompt.decisionContext.worldSlice.direction, "object");
+        assert.ok(JSON.stringify(prompt.decisionContext.worldSlice).length < 2_000);
+        assert.ok(prompt.actionOptions.every((option: {
+          intent?: string;
+          decisionEffect?: string;
+        }) => typeof option.intent === "string" && typeof option.decisionEffect === "string"));
+      }
+      const selectedAction = prompt.actionOptions.find((option: {
+        risk: string;
+        decisionEffect: string;
+      }) => option.risk === "low" && option.decisionEffect === "attempt_objective")
+        ?? prompt.actionOptions.find((option: { decisionEffect: string }) =>
+          option.decisionEffect === "attempt_objective")
+        ?? prompt.actionOptions[0];
+      samplingRequestCount += 1;
+      queueMicrotask(() => {
+        manager.handleResponse({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: {
+            role: "assistant",
+            content: { type: "text", text: JSON.stringify({
+              actionOptionId: selectedAction.actionOptionId,
+              rationale: "选择服务器签发的完成行动",
+              confidence: 0.95,
+            }) },
+            model: "staged-persistence-host",
+            stopReason: "endTurn",
+          },
+        });
+      });
+    },
     requestIdFactory: () => `generated-staged-${++requestSequence}`,
   });
-  const partials: { readonly toolName: string; readonly result: unknown }[] = [];
   const responsePromise = handleMcpJsonRpcMessage(mcp, {
     jsonrpc: "2.0",
     id: 601,
@@ -769,77 +1008,17 @@ test("Host Sampling partial persistence retains every generated objective action
     sampling: createMcpSamplingClient({ session, requestManager: manager }),
     persistPartial: async (toolName, result) => { partials.push({ toolName, result }); },
   });
-
-  let responseSettled = false;
-  let finalResponse: Record<string, unknown> | undefined;
-  let responseError: unknown;
-  void responsePromise.then(
-    (response) => {
-      finalResponse = response && typeof response === "object" && !Array.isArray(response)
-        ? response as Record<string, unknown>
-        : undefined;
-      responseSettled = true;
-    },
-    (error) => { responseError = error; responseSettled = true; },
-  );
-  let index = 0;
-  while (!responseSettled) {
-    while (sent.length <= index && !responseSettled) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-    if (responseSettled) break;
-    const requestBound = JOURNEY_TASK_OBJECTIVE_LIMITS.mainMax
-      + JOURNEY_TASK_OBJECTIVE_LIMITS.sideMax
-      + JOURNEY_TASK_OBJECTIVE_LIMITS.choiceMax;
-    if (index >= requestBound) throw new Error("generated_staged_sampling_request_bound_exceeded");
-    const request = sent[index] as {
-      readonly id: string;
-      readonly params: {
-        readonly systemPrompt?: string;
-        readonly messages: readonly { readonly content: { readonly text: string } }[];
-      };
-    };
-    const prompt = JSON.parse(request.params.messages[0]!.content.text);
-    if (index === 0) {
-      assert.match(request.params.systemPrompt || "", /not as a quest-grade optimizer/u);
-      assert.equal(typeof prompt.decisionContext.identity.identityName, "string");
-      assert.ok(Array.isArray(prompt.decisionContext.identity.traits), JSON.stringify(Object.keys(prompt.decisionContext ?? {})));
-      assert.ok(Array.isArray(prompt.decisionContext.identity.strongestNeeds));
-      assert.equal(typeof prompt.decisionContext.resources, "object");
-      assert.match(prompt.decisionContext.worldSlice.sliceHash, /^sha256:/u);
-      assert.equal(typeof prompt.decisionContext.worldSlice.direction, "object");
-      assert.ok(JSON.stringify(prompt.decisionContext.worldSlice).length < 2_000);
-      assert.ok(prompt.actionOptions.every((option: {
-        intent?: string;
-        decisionEffect?: string;
-      }) => typeof option.intent === "string" && typeof option.decisionEffect === "string"));
-    }
-    manager.handleResponse({
-      jsonrpc: "2.0",
-      id: request.id,
-      result: {
-        role: "assistant",
-        content: { type: "text", text: JSON.stringify({
-          actionOptionId: (prompt.actionOptions.find((option: {
-            risk: string;
-            decisionEffect: string;
-          }) => option.risk === "low" && option.decisionEffect === "attempt_objective")
-            ?? prompt.actionOptions.find((option: { decisionEffect: string }) =>
-              option.decisionEffect === "attempt_objective")
-            ?? prompt.actionOptions[0]).actionOptionId,
-          rationale: "选择服务器签发的完成行动",
-          confidence: 0.95,
-        }) },
-        model: "staged-persistence-host",
-        stopReason: "endTurn",
-      },
-    });
-    index += 1;
-  }
-
-  if (responseError) throw responseError;
+  const finalResponse = await new Promise<Awaited<typeof responsePromise>>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`generated_staged_sampling_response_timeout:sent=${sent.length},pending=${manager.pendingRequestCount}`));
+    }, 10_000);
+    void responsePromise.then(
+      (response) => { clearTimeout(timeout); resolve(response); },
+      (error) => { clearTimeout(timeout); reject(error); },
+    );
+  });
   assert.ok(finalResponse && "result" in finalResponse);
-  const result = payload(finalResponse!.result as { readonly content: readonly { readonly text: string }[] });
+  const result = payload(finalResponse.result as { readonly content: readonly { readonly text: string }[] });
   assert.equal(result.journey.status, "settled");
   const stepPartials = partials.filter((partial) =>
     partial.toolName === "obsidian_epoch.propose_journey_step");
@@ -1015,6 +1194,8 @@ test("one Journey is a complete mission with explicit tasks, stakes, criteria, a
   assert.deepEqual(status.finalVerification.page.payload.journey.mission, status.mission);
   assert.equal(status.finalVerification.page.payload.runSummary.runKind, "one_shot_journey");
   assert.equal(status.finalVerification.page.payload.runSummary.endingReason, "completed");
+  assert.ok(status.finalVerification.page.payload.journey.viability);
+  assert.ok(status.finalVerification.page.payload.journey.settlement.score.viabilitySummary);
 });
 
 test("a real non-Gray-Harbor journey runs the quantum experiment route end to end", async () => {
@@ -1152,6 +1333,13 @@ test("a settled Journey that misses the core task is reported as a failed run", 
   assert.doesNotMatch(status.storyReport.storyContent, /\b(?:epoch|region|journey|episode)_[a-z0-9_]+\b/u);
   assert.equal(status.finalVerification.page.payload.runSummary.runKind, "one_shot_journey");
   assert.equal(status.finalVerification.page.payload.runSummary.endingReason, "early_exit");
+  assert.ok(status.finalVerification.page.payload.journey.viability);
+  assert.ok(status.finalVerification.page.payload.journey.settlement.score.viabilitySummary);
+  assert.equal(
+    status.finalVerification.page.payload.journey.viability.deltaBps,
+    status.finalVerification.page.payload.journey.settlement.score.viabilitySummary.viabilityScoreBpsAfter
+      - status.finalVerification.page.payload.journey.settlement.score.viabilitySummary.viabilityScoreBpsBefore,
+  );
   const failedProgress = payload(await mcp.callTool("obsidian_epoch.progress", { agentId }));
   assert.equal(failedProgress.identity.status, "active");
 });
@@ -1444,8 +1632,14 @@ test("start_journey performs nested Sampling and settles only a server-issued op
     () => { responseSettled = true; },
   );
   let requestIndex = 0;
+  const journeySamplingDeadline = Date.now() + 10_000;
   while (!responseSettled) {
     while (sent.length <= requestIndex && !responseSettled) {
+      if (Date.now() >= journeySamplingDeadline) {
+        throw new Error(
+          `journey_sampling_response_timeout:index=${requestIndex},sent=${sent.length},pending=${manager.pendingRequestCount}`,
+        );
+      }
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
     if (responseSettled) break;
@@ -1565,7 +1759,7 @@ test("invalid Sampling advice leaves the signed proposal open for Agent-native c
   assert.ok(response && "result" in response);
   const result = payload(response.result as { readonly content: readonly { readonly text: string }[] });
   assert.equal(result.sampling.fallback, "invalid_action_option");
-  assert.equal(result.nextAction, "obsidian_epoch.commit_journey_action");
+  assert.equal(Object.hasOwn(result, "nextAction"), false);
   assert.equal(result.proposal.episode.phase, "main");
   const status = payload(await mcp.callTool("obsidian_epoch.journey_status", {
     journeyId: prepared.journey.journeyId,
@@ -1699,12 +1893,18 @@ test("recall records a safe grounded main decision and settles the failed Journe
     recoveryCode: ownerRecovery,
     idempotencyKey: "start-recall-grounded",
   }));
-  const recalled = payload(await mcp.callTool("obsidian_epoch.recall_journey", {
+  const recalledToolResult = await mcp.callTool("obsidian_epoch.recall_journey", {
     journeyId: started.journey.journeyId,
     expectedVersion: started.journey.version,
     recoveryCode: ownerRecovery,
     idempotencyKey: "recall-grounded",
-  }));
+  });
+  const recallEvents = epochEventsForPersistence(recalledToolResult);
+  assert.ok(recallEvents.some((event) => event.eventType === "hosted_session_started"),
+    "the server-created recall scene must be persisted with its signed withdrawal");
+  assert.ok(recallEvents.some((event) => event.eventType === "hosted_action_recorded"),
+    "the server-created recall action must be persisted");
+  const recalled = payload(recalledToolResult);
   assert.equal(recalled.episodes[0].phase, "arrival");
   assert.equal(recalled.episodes.at(-1).phase, "return");
   assert.ok(recalled.episodes.length >= 3);
@@ -1823,8 +2023,14 @@ test("Agent A journey encounter appears in Agent B briefing without direct model
     () => { responseSettled = true; },
   );
   let requestIndex = 0;
+  const twoAgentSamplingDeadline = Date.now() + 10_000;
   while (!responseSettled) {
     while (sent.length <= requestIndex && !responseSettled) {
+      if (Date.now() >= twoAgentSamplingDeadline) {
+        throw new Error(
+          `two_agent_sampling_response_timeout:index=${requestIndex},sent=${sent.length},pending=${manager.pendingRequestCount}`,
+        );
+      }
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
     if (responseSettled) break;

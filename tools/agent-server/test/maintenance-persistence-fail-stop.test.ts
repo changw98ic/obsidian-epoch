@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createEpochPersistenceGuard } from "../lib/epochPersistence.ts";
 import { startEpochMaintenanceScheduler } from "../lib/maintenance.ts";
-import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 
 test("run-on-start maintenance trips once, stops scheduling, and does not run the next command", async () => {
   const baseRuntime = createAgentWorldRuntime();

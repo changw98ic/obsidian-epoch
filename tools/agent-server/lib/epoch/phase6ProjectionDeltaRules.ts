@@ -24,6 +24,13 @@ export type Phase6NoChangeReason =
   | "no_supported_projection_fields"
   | "only_untracked_fields_changed";
 
+export const PHASE6_RAG_NO_CHANGE_REASONS: ReadonlySet<Phase6NoChangeReason> = new Set([
+  "no_canonical_events",
+  "projection_equal",
+  "no_supported_projection_fields",
+  "only_untracked_fields_changed",
+]);
+
 export type Phase6NoWorldChangeReason =
   | "no_canonical_events"
   | "world_projection_equal"

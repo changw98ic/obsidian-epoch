@@ -1,7 +1,11 @@
-export const MCP_SESSION_PROTOCOL_VERSION = "2025-06-18" as const;
-export const MCP_SUPPORTED_PROTOCOL_VERSIONS = [MCP_SESSION_PROTOCOL_VERSION] as const;
+import {
+  MCP_PROTOCOL_VERSION,
+  MCP_SUPPORTED_PROTOCOL_VERSIONS,
+  type McpSupportedProtocolVersion,
+} from "./mcpConstants.ts";
 
-export type McpSupportedProtocolVersion = typeof MCP_SUPPORTED_PROTOCOL_VERSIONS[number];
+export const MCP_SESSION_PROTOCOL_VERSION = MCP_PROTOCOL_VERSION;
+export { MCP_SUPPORTED_PROTOCOL_VERSIONS, type McpSupportedProtocolVersion };
 export type McpSessionState = "new" | "initializing" | "initialized" | "closed";
 export type McpSessionTransport = "stdio" | "streamable-http";
 export type McpJsonValue = null | boolean | number | string | readonly McpJsonValue[] | McpJsonObject;

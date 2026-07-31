@@ -1,5 +1,5 @@
 import { type IncomingMessage, type ServerResponse } from "node:http";
-import { type createAgentWorldRuntime } from "../mcpTools.ts";
+import { type createAgentWorldRuntime } from "../mcpRuntimeCore.ts";
 
 type AgentWorldRuntime = ReturnType<typeof createAgentWorldRuntime>;
 

@@ -1,6 +1,6 @@
 import { createAgentHttpServer, disposeAgentHttpServerTransport } from "./lib/httpServer.ts";
 import { epochMaintenanceConfigFromEnv, startEpochMaintenanceScheduler } from "./lib/maintenance.ts";
-import { createAgentWorldRuntime } from "./lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "./lib/mcpRuntimeCore.ts";
 import { ServerQuestAi, buildProviderChain, buildAiReplenishStrategy } from "./lib/epoch/serverQuestAi.ts";
 import { createAgentPersistenceFromEnv } from "./lib/persistenceConfig.ts";
 import { productionAgentServerConfigFromEnv } from "./lib/productionConfig.ts";
@@ -203,6 +203,7 @@ async function main() {
     playerMcpAccessTokens,
     playerMcpTokenTtlMs: startupConfig.mcpPlayerTokenTtlMs,
     publicRegistrationProtection: startupConfig.publicRegistrationProtection,
+    publicReleaseEvidenceStore: persistence.publicReleaseEvidenceStore,
     maxBodyBytes,
     persistJsonl: persistence.persistJsonl,
     persistEpochEventBatch: persistence.persistEpochEventBatch,

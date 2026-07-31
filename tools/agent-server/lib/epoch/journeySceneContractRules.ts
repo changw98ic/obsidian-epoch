@@ -23,6 +23,10 @@ import {
   type JourneyActionRiskTerms,
 } from "./journeyActionResolutionRules.ts";
 import type { JourneyActionObjectImpact } from "./journeyWorldImpactRules.ts";
+import {
+  phase6ScenarioReadinessForRun,
+  type Phase6ScenarioReadiness,
+} from "./phase6ScenarioMatrixRules.ts";
 
 export const JOURNEY_SCENE_CONTRACT_RULE_VERSION = "journey-scene-contract.v2";
 export const JOURNEY_SCENE_ACTION_SIGNING_PURPOSE = "journey_scene_action";
@@ -116,6 +120,12 @@ export interface JourneySceneContract {
   readonly expectedVersion: number;
   readonly expiresAt: string;
   readonly ruleVersion: typeof JOURNEY_SCENE_CONTRACT_RULE_VERSION;
+  /**
+   * Present only for a server-bound Phase 6 run. The numeric preparation
+   * value is derived from the authoritative matrix rather than accepted from
+   * the request that starts the journey.
+   */
+  readonly phase6Readiness?: Phase6ScenarioReadiness;
   readonly taskObjective?: {
     readonly objectiveId: string;
     readonly kind: "main" | "side" | "choice";
@@ -125,6 +135,11 @@ export interface JourneySceneContract {
     /** PR5c additive. Hidden prerequisite object ids for this objective. INTERNAL-only. */
     readonly hiddenPrerequisiteObjectIds?: readonly string[];
   };
+}
+
+export interface JourneyScenePhase6ReadinessBinding {
+  readonly runIndex: number;
+  readonly scenarioTag: string;
 }
 
 export interface JourneySceneContractSeed {
@@ -141,6 +156,7 @@ export interface JourneySceneContractSeed {
   readonly expectedVersion: number;
   readonly generatedTaskObjective?: JourneyGeneratedTaskObjective;
   readonly taskRoutes?: readonly JourneyTaskGraphRoute[];
+  readonly phase6Readiness?: JourneyScenePhase6ReadinessBinding;
   /** Internal journey-level recall scene; it must never bind to a task objective. */
   readonly recallOnly?: boolean;
 }
@@ -162,6 +178,7 @@ export interface JourneySceneContractBuildInput {
   readonly ruleVersion?: typeof JOURNEY_SCENE_CONTRACT_RULE_VERSION;
   readonly generatedTaskObjective?: JourneyGeneratedTaskObjective;
   readonly taskRoutes?: readonly JourneyTaskGraphRoute[];
+  readonly phase6Readiness?: JourneyScenePhase6ReadinessBinding;
   /** Internal journey-level recall scene; it must never bind to a task objective. */
   readonly recallOnly?: boolean;
 }
@@ -353,6 +370,20 @@ function normalizedMandate(mandate: JourneyMandate): JourneyMandate {
   };
 }
 
+function normalizedPhase6Readiness(
+  binding: JourneyScenePhase6ReadinessBinding | undefined,
+): Phase6ScenarioReadiness | undefined {
+  if (!binding) return undefined;
+  if (!Number.isInteger(binding.runIndex) || binding.runIndex < 1 || binding.runIndex > 10) {
+    throw new Error("journey_scene_phase6_readiness_run_index_invalid");
+  }
+  const scenarioTag = requiredText(
+    binding.scenarioTag,
+    "journey_scene_phase6_readiness_tag_required",
+  );
+  return phase6ScenarioReadinessForRun(binding.runIndex, scenarioTag);
+}
+
 function compactHash(value: unknown): string {
   return signedEnvelopeContentHash(value).slice("sha256:".length, "sha256:".length + 24);
 }
@@ -364,6 +395,7 @@ interface JourneySceneActionSignedContentInput {
   readonly expiresAt: string;
   readonly ruleVersion: string;
   readonly worldMode?: "mirror";
+  readonly phase6Readiness?: Phase6ScenarioReadiness;
   readonly signatureVersion: 1;
   readonly signingPurpose: typeof JOURNEY_SCENE_ACTION_SIGNING_PURPOSE;
   readonly signingKeyId: string;
@@ -386,6 +418,7 @@ export function journeySceneActionSignedContent(input: JourneySceneActionSignedC
     risk: input.action.risk,
     ruleVersion: input.ruleVersion,
     ...(input.worldMode ? { worldMode: input.worldMode } : {}),
+    ...(input.phase6Readiness ? { phase6Readiness: input.phase6Readiness } : {}),
     sceneId: input.sceneId,
     signatureVersion: input.signatureVersion,
     signingKeyId: input.signingKeyId,
@@ -429,6 +462,7 @@ export function verifyJourneySceneActionSignature(input: {
       expiresAt: input.contract.expiresAt,
       ruleVersion: input.contract.ruleVersion,
       worldMode: input.contract.worldMode,
+      phase6Readiness: input.contract.phase6Readiness,
       signatureVersion: input.action.signatureVersion,
       signingPurpose: input.action.signingPurpose,
       signingKeyId: input.action.signingKeyId,
@@ -469,6 +503,7 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
   if (!Number.isFinite(expiresAtMs)) throw new Error("journey_scene_expiry_invalid");
   const expiresAt = new Date(expiresAtMs).toISOString();
   const mandate = normalizedMandate(input.mandate);
+  const phase6Readiness = normalizedPhase6Readiness(input.phase6Readiness);
   const worldObjects = normalizedWorldObjects(input.worldObjects);
   const groundedFacts = new Set(worldObjects.flatMap((object) => object.sourceFactIds));
   const confirmedFactIds = uniqueSorted(input.sourceFactIds);
@@ -520,6 +555,7 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
     expectedVersion: input.expectedVersion,
     expiresAt,
     ruleVersion,
+    ...(phase6Readiness ? { phase6Readiness } : {}),
     ...(recallOnly ? { recallOnly: true } : {}),
     generatedTaskObjective,
     taskRoutes,
@@ -579,6 +615,7 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
       expiresAt,
       ruleVersion,
       worldMode: input.worldMode,
+      phase6Readiness,
       signatureVersion: 1,
       signingPurpose: JOURNEY_SCENE_ACTION_SIGNING_PURPOSE,
       signingKeyId: runtimeActionKeyId(),
@@ -697,6 +734,7 @@ export function buildJourneySceneContract(input: JourneySceneContractBuildInput)
     expectedVersion: input.expectedVersion,
     expiresAt,
     ruleVersion,
+    ...(phase6Readiness ? { phase6Readiness } : {}),
     ...(generatedTaskObjective ? { taskObjective: {
       objectiveId: generatedTaskObjective.objectiveId,
       kind: generatedTaskObjective.kind,

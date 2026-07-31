@@ -48,12 +48,10 @@ function gateReport(inputPath: string) {
 
 function balancedGateSamples(seed = "balanced-gate-positive") {
   return generatePhase6BalanceSamples({ runs: 10_000, seed }).map((sample, index) => {
-    const combat = sample.audit.production.combatSuitability;
-    const success = sample.success ? 1 : 0;
     const wave = Math.sin((index + 1) * 12.9898) * 9 + Math.cos((index + 1) * 78.233) * 5;
     return {
       ...sample,
-      score: Math.round((52 + combat * 0.22 + success * 7 - sample.injury * 0.14 - sample.intensity * 0.045 + wave) * 10_000) / 10_000,
+      score: Math.round((52 + wave) * 10_000) / 10_000,
     };
   });
 }
@@ -67,6 +65,13 @@ test("same seed generates identical sample hash and different seeds vary", () =>
   assert.notEqual(hashSamples(left), hashSamples(changed));
 });
 
+test("explicit experiment id binds every generated balance sample", () => {
+  const experimentId = "phase6_exp_balance_binding";
+  const samples = generatePhase6BalanceSamples({ runs: 128, seed: "experiment-binding", experimentId });
+
+  assert.equal(samples.every((sample) => sample.experimentId === experimentId), true);
+});
+
 test("balance gate accepts audited balanced 10k stratified workload", () => {
   const root = mkdtempSync(join(repoRoot, ".omx", "tmp-phase6-balance-gate-pass-"));
   try {
@@ -77,6 +82,7 @@ test("balance gate accepts audited balanced 10k stratified workload", () => {
     assert.equal(report.passed, true);
     assert.equal(report.gates.observedDesignPriors.passed, true);
     assert.equal(report.gates.pearsonFisherCi.passed, true);
+    assert.equal(report.gates.suitabilityOutcome.passed, true);
     assert.equal(report.gates.scoreHistogramEntropy.passed, true);
     assert.equal(report.gates.stratifiedSpread.passed, true);
   } finally {
@@ -143,19 +149,40 @@ test("balance gate rejects tail explosions in cost and injury", () => {
   }
 });
 
+test("balance gate rejects suitability with no controlled outcome or cost effect", () => {
+  const root = mkdtempSync(join(repoRoot, ".omx", "tmp-phase6-balance-gate-suitability-"));
+  try {
+    const samples = balancedGateSamples("no-suitability-effect").map((sample) => ({
+      ...sample,
+      success: false,
+      cost: 0.15,
+      injury: 30,
+    }));
+    const output = writeSamplesFile(root, "no-suitability-effect.jsonl", samples);
+    const { result, report } = gateReport(output);
+
+    assert.equal(result.status, 1, result.stdout);
+    assert.equal(report.passed, false);
+    assert.equal(report.gates.suitabilityOutcome.passed, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("samples recompute through production rules", () => {
   const samples = generatePhase6BalanceSamples({ runs: 36, seed: "production-recompute" });
 
   for (const sample of samples) {
     const recomputed = recomputeSample(sample);
-    const serverScoreMean = Object.values(recomputed.scoring.score).reduce((sum, metric) => sum + metric.value, 0) / Object.values(recomputed.scoring.score).length;
-    const expectedScore = Math.round((serverScoreMean * 0.4 + recomputed.suitability.suitability * 1.1 + recomputed.missionScore.finalScore * 0.05) * 10_000) / 10_000;
+    const serverScoreTotal = recomputed.scoring.score.total;
 
     assert.equal(sample.intensity, recomputed.missionIntensity.encounterIntensity);
     assert.equal(sample.audit.production.missionFinalScore, recomputed.missionScore.finalScore);
-    assert.equal(sample.audit.production.serverScoreMean, serverScoreMean);
+    assert.equal(sample.audit.production.serverScoreTotal, serverScoreTotal);
     assert.equal(sample.audit.production.combatSuitability, recomputed.suitability.suitability);
-    assert.equal(sample.score, expectedScore);
+    assert.equal(Number.isFinite(sample.audit.production.decisionQuality), true);
+    assert.equal(sample.score, serverScoreTotal);
+    assert.equal(Number.isFinite(sample.score), true);
     assert.equal(recomputed.economy.ok, true);
   }
 });

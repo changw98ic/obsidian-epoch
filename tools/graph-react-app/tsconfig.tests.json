@@ -21,7 +21,8 @@
     "scripts/check-repository-import.test.ts",
     "scripts/check-strict-serial-validation.test.ts",
     "scripts/object-storage-manifest.test.ts",
-    "scripts/typecheck-config.test.ts"
+    "scripts/typecheck-config.test.ts",
+    "scripts/eventRegistryCI.test.ts"
   ],
   "exclude": ["dist", "node_modules"]
 }

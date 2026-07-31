@@ -66,8 +66,7 @@ function payload(overrides: Partial<EpochResultPagePayload> = {}): EpochResultPa
         summary: "调查员完成了灰港探索。",
       },
     },
-    publicPages: { world: "/epoch/world", console: "/epoch/console" },
-    nextActions: [],
+    publicPages: { world: "/epoch/world", console: "/epoch/web-play" },
     ...bodyOverrides,
   } as Omit<EpochResultPagePayload, "receipt">;
   const generatedReceipt = resultPageReceipt(projectEpochEvents([]), body);

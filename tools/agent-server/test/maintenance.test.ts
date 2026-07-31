@@ -12,7 +12,7 @@ import {
   runEpochMaintenanceTick,
   startEpochMaintenanceScheduler,
 } from "../lib/maintenance.ts";
-import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 
 function mutableClock(initialIso: string) {
   let current = new Date(initialIso);

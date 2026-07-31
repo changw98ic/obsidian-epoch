@@ -41,6 +41,30 @@ identical query vectors are reused from a bounded in-memory cache controlled by
 `AGENT_SERVER_EMBEDDING_QUERY_CACHE_TTL_MS` and
 `AGENT_SERVER_EMBEDDING_QUERY_CACHE_MAX_ENTRIES`. A corpus with no ready vectors
 uses lexical retrieval without contacting the embedding endpoint.
+
+Before treating the projection as semantic retrieval, run a probe in the same
+container environment as the server. It reads no player stories and writes no
+SQLite rows; it checks the endpoint, configured model and 4096-value response
+contract without printing the endpoint or credential:
+
+```bash
+cd tools/agent-server/deploy
+docker compose run --rm --no-deps obsidian-epoch-agent-server \
+  tools/agent-server/world-memory-semantic-preflight.ts --json
+```
+
+The command must return `ok: true` before the server can build vectors. Stable
+failure codes distinguish a missing endpoint (`semantic_embedding_base_url_missing`),
+an unreadable secret (`world_memory_embedding_api_key_file_invalid`) and a
+provider/network failure (for example `qwen_embedding_transport_error`). Once
+the server is running, `/api/health` exposes the same truth under
+`checks.worldMemory`: `lexical_only` has no embedding client, `initializing` or
+`indexing` means vectors are not usable yet, `degraded` means an embedding or
+queue error remains, and `ok` means the identity probe passed and no vector work
+is outstanding. MCP `world_knowledge` and `world_memory` calls mark a fallback
+with `semanticUnavailable: true` and `semanticErrorCode`; only
+`retrievalMode: "hybrid"` proves that vector retrieval ran.
+
 For an authenticated LAN endpoint, set `AGENT_SERVER_EMBEDDING_API_KEY_FILE` to
 a regular, non-symlink bearer-token file with mode 0600 or stricter. Compose mounts it through
 `/run/secrets/obsidian_epoch_embedding_api_key`; it is never copied into the
@@ -166,6 +190,8 @@ npm run agent:release-rehearsal -- --server https://your-domain.example --operat
 
 The production rehearsal fails if the immutable image digest is missing or malformed, or if install smoke cannot verify operator signing, the expected release key id, external console media, package integrity, public proof pages or persistent-store recovery health. Its JSON `artifacts` block records the operator-supplied registry image digest and the sha256 calculated from the live downloaded package. Treat a passing rehearsal as the final deploy gate before publishing the install URL to players.
 
+On a passing production rehearsal, the command records a compact proof at `POST /api/epoch/operator/public-release-evidence` through the operator key. `GET /api/epoch/install-status` exposes the resulting `publicRelease` gate. It stays `blocked` unless the proof matches the live package digest and release key, and the running server also has protected persistent registration, maintenance, semantic world memory, live MCP success metrics, recovery health and ready server AI. Do not call the proof endpoint by hand; rerun the production rehearsal after a package, key, image or recovery change.
+
 ## Implementation Boundary
 
 Repository code implements the deterministic package archive, package integrity manifest, release signing metadata, production smoke gates, backup, restore, recovery drill and release rehearsal commands. It does not by itself complete public DNS, real HTTPS reachability, registry publication, production secret storage or a successful off-host restore on a separate machine.
@@ -261,7 +287,7 @@ The production Docker image keeps the console HTML, generated `index-*.css` bund
 AGENT_EPOCH_CONSOLE_MEDIA_BASE_URL=https://cdn.your-domain.example/obsidian-epoch/assets/media
 ```
 
-At runtime `/epoch/console` rewrites `assets/media/...` references to this external media base. Keep the media origin cacheable and public; do not put secrets or per-user tokens in the URL.
+At runtime `/epoch/web-play` rewrites `assets/media/...` references to this external media base. Keep the media origin cacheable and public; do not put secrets or per-user tokens in the URL.
 
 Release smoke should verify the same external media base, not the image-local
 media path. Pass it explicitly or set `AGENT_INSTALL_SMOKE_CONSOLE_MEDIA_BASE_URL`

@@ -150,7 +150,12 @@ function releaseConfig({ manifestPath, inputPath, artifacts, experimentId }) {
     freshnessPolicy: { verifiedMaxAgeMinutes: 60 },
     evidenceManifest: { path: manifestPath },
     gates: {
-      tenRun: { input: inputPath, experimentId },
+      tenRun: {
+        input: inputPath,
+        experimentId,
+        requireMcpHttpTransport: true,
+        expectedMcpHttpOrigin: "http://127.0.0.1:19002",
+      },
       playerPanel: {
         before: artifacts["panel-before"],
         after: artifacts["panel-after"],
@@ -161,8 +166,8 @@ function releaseConfig({ manifestPath, inputPath, artifacts, experimentId }) {
         commandAudit: artifacts["command-audit"],
         settlementAudit: artifacts["settlement-audit"],
         storeAudit: artifacts["store-audit"],
-        journey: artifacts.journey,
-        result: artifacts.result,
+        journeyEvents: artifacts.journey,
+        resultPages: artifacts.result,
         epochEvents: artifacts["epoch-events"],
       },
       economy: { input: artifacts.economy, expectedRuns: 10 },
@@ -425,6 +430,18 @@ test("release gate rejects a manifest that omits one configured gate input", asy
   assert.equal(report.ok, false);
   assert.ok(report.reason.includes("E_EVIDENCE_GATE_INPUT_MISSING"));
   assert.equal(report.reason.includes("E_EVIDENCE_MANIFEST_HASH_MISMATCH"), false);
+});
+
+test("release gate binds idempotency result-page evidence with the gate's canonical option", async (t) => {
+  const evidence = await makeGoldenEvidence(t);
+  const omittedPath = evidence.artifacts.result;
+  const variant = await writeManifestVariant(evidence, "manifest-omits-idempotency-result-pages", async (manifest) => {
+    manifest.artifacts = manifest.artifacts.filter((entry) => entry.path !== omittedPath);
+  });
+
+  const report = reportFor(evidence, { manifestPath: variant.manifestPath });
+  assert.equal(report.ok, false);
+  assert.ok(report.reason.includes("E_EVIDENCE_GATE_INPUT_MISSING"));
 });
 
 test("release gate rejects an old independently passing artifact from another experiment", async (t) => {

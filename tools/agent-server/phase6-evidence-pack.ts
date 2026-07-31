@@ -3,6 +3,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import {
   ATTESTATION_KEY_ENV,
@@ -15,6 +16,8 @@ export const SCHEMA_VERSION = "obsidian-epoch.phase6-evidence-pack.v2";
 const HASH_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SECRET_KEY = /(?:secret|token|api[-_]?key|authorization|password|credential|private[-_]?key|access[-_]?key|refresh[-_]?token|session[-_]?key|client[-_]?secret|recovery[-_]?code|operator[-_]?key)/i;
 const SECRET_VALUE = /(?:\b(?:sk-[A-Za-z0-9_-]{12,}|Bearer\s+[A-Za-z0-9._~+/=-]{12,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{16})\b|-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----)/i;
+const SENSITIVE_URL_VALUE = /(?:[?&](?:share[-_]?token|publish[-_]?token|token|authorization|access[-_]?token|refresh[-_]?token|signature|recovery[-_]?code)(?:=|%3d)|\/(?:share[-_]?token|publish[-_]?token)(?:\/|$))/i;
+const SENSITIVE_ASSIGNMENT = /(?:^|[\s,{])(?:"|')?(?:secret|token|api[-_]?key|authorization|password|credential|private[-_]?key|access[-_]?key|refresh[-_]?token|session[-_]?key|client[-_]?secret|recovery[-_]?code|operator[-_]?key)(?:"|')?\s*[:=]/i;
 
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(scriptDirectory, "../..");
@@ -49,7 +52,7 @@ interface OutputTarget {
 
 function usage(): string {
   return [
-    "Usage: node tools/agent-server/phase6-evidence-pack.mjs --experiment-id <id> --input-candidate <path> --output-artifact <path> --output <manifest-path> [options]",
+    "Usage: node --import tsx ../agent-server/phase6-evidence-pack.ts --experiment-id <id> --input-candidate <path> --output-artifact <path> --output <manifest-path> [options]",
     "",
     "Options:",
     "  --input-candidate <path>  Candidate input file to bind into the manifest; repeatable",
@@ -129,7 +132,7 @@ function parseArguments(argv: string[]): EvidencePackOptions {
     }
     if (argument === "--argv-file" || argument === "--argv-hash" || argument === "--command-exit-code") {
       readValue(argv, ++index, argument);
-      throw new Error(`${argument} is no longer accepted; use --execution-receipt from phase6-command-runner.mjs`);
+      throw new Error(`${argument} is no longer accepted; use --execution-receipt from phase6-command-runner.ts`);
     }
     throw new Error(`Unknown argument: ${argument}`);
   }
@@ -164,10 +167,74 @@ function secretFindingsForText(text: string): { code: string; line: number }[] {
   const findings: { code: string; line: number }[] = [];
   const lines = text.split(/\r?\n/);
   lines.forEach((line, index) => {
-    if (SECRET_KEY.test(line)) findings.push({ code: "secret_key", line: index + 1 });
-    if (SECRET_VALUE.test(line)) findings.push({ code: "secret_value", line: index + 1 });
+    findings.push(...secretFindingsForLine(line, index + 1));
   });
   return findings;
+}
+
+function secretFindingsForLine(line: string, lineNumber: number): { code: string; line: number }[] {
+  const codes = new Set<string>();
+  try {
+    collectJsonSecretFindings(JSON.parse(line), codes);
+  } catch {
+    if (SENSITIVE_ASSIGNMENT.test(line)) codes.add("secret_key");
+    if (SECRET_VALUE.test(line) || SENSITIVE_URL_VALUE.test(line)) codes.add("secret_value");
+  }
+  return [...codes].sort().map((code) => ({ code, line: lineNumber }));
+}
+
+function collectJsonSecretFindings(value: unknown, codes: Set<string>): void {
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectJsonSecretFindings(entry, codes));
+    return;
+  }
+  if (value && typeof value === "object") {
+    for (const [key, entry] of Object.entries(value)) {
+      if (SECRET_KEY.test(key)) codes.add("secret_key");
+      collectJsonSecretFindings(entry, codes);
+    }
+    return;
+  }
+  if (typeof value === "string" && (SECRET_VALUE.test(value) || SENSITIVE_URL_VALUE.test(value))) {
+    codes.add("secret_value");
+  }
+}
+
+function inspectFileContent(filePath: string): { sha256: string; secretFindings: { code: string; line: number }[] } {
+  const hash = crypto.createHash("sha256");
+  const descriptor = fs.openSync(filePath, "r");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  const decoder = new StringDecoder("utf8");
+  const findings: { code: string; line: number }[] = [];
+  let carry = "";
+  let lineNumber = 1;
+
+  const inspectLine = (rawLine: string) => {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    findings.push(...secretFindingsForLine(line, lineNumber));
+    lineNumber += 1;
+  };
+
+  try {
+    for (;;) {
+      const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      const chunk = buffer.subarray(0, bytesRead);
+      hash.update(chunk);
+      const lines = `${carry}${decoder.write(chunk)}`.split("\n");
+      carry = lines.pop() ?? "";
+      for (const line of lines) inspectLine(line);
+    }
+    const finalLine = `${carry}${decoder.end()}`;
+    if (finalLine.length > 0) inspectLine(finalLine);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+
+  return {
+    sha256: `sha256:${hash.digest("hex")}`,
+    secretFindings: findings,
+  };
 }
 
 function rejectSecretText(text: unknown, label: string): void {
@@ -214,9 +281,8 @@ function validateHashedFile(inputPath: string, repositoryRealPath: string, error
     return undefined;
   }
 
-  const buffer = fs.readFileSync(realPath);
-  const text = buffer.toString("utf8");
-  const secretFindings = secretFindingsForText(text);
+  const content = inspectFileContent(realPath);
+  const secretFindings = content.secretFindings;
   if (secretFindings.length > 0) {
     for (const finding of secretFindings) {
       errors.push({
@@ -231,7 +297,7 @@ function validateHashedFile(inputPath: string, repositoryRealPath: string, error
   return {
     path: relativeSlash(realPath),
     bytes: stat.size,
-    sha256: sha256(buffer),
+    sha256: content.sha256,
   };
 }
 

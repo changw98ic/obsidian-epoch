@@ -42,6 +42,8 @@ export interface AgentCompanionEpochSurface {
   readonly verifyExplorerAuth: (input?: UnknownRecord) => unknown;
   readonly regionInfo: (input?: UnknownRecord) => unknown;
   readonly agentBriefing: (input?: UnknownRecord) => unknown;
+  /** Owner-authorized server advice for safe, executable economy actions. */
+  readonly economyActions?: (input?: UnknownRecord) => unknown;
   readonly publicIdentity?: (input?: UnknownRecord) => unknown;
   readonly events: (input?: UnknownRecord) => unknown;
   /** Returns the immutable result-page revision linked to a settled journey. */
@@ -688,6 +690,12 @@ export class AgentCompanionRuntime {
       this.#journey.catchUp();
       const record = this.#journey.status(requiredString(input.journeyId, "id"));
       this.#authorizeExplorer(input, record.journey.explorerId);
+      const economyActions = this.#epoch.economyActions?.({
+        ...input,
+        agentId: record.journey.agentId,
+        explorerId: record.journey.explorerId,
+        regionId: record.journey.destinationRegionId,
+      });
       const projection = this.#journey.projection();
       const episodes = record.journey.episodeIds.map((episodeId) => projection.episodes[episodeId]).filter(Boolean);
       const identity = this.#identityForJourney(record.journey);
@@ -748,6 +756,7 @@ export class AgentCompanionRuntime {
         } : {}),
         interactionLog,
         ...(storyReport ? { storyReport } : {}),
+        ...(economyActions ? { economyActions } : {}),
         nextPollAt: record.journey.nextPollAt,
       };
     });
@@ -921,6 +930,15 @@ export class AgentCompanionRuntime {
         ? this.#journey.pendingReturnedJourneys(explorerId)
         : this.#journey.claimReturnedJourneys(explorerId);
       const current = this.#journey.activeForAgent(agentId);
+      const requestedRegionId = typeof input.regionId === "string" && input.regionId.trim()
+        ? input.regionId.trim()
+        : current?.journey.destinationRegionId;
+      const economyActions = this.#epoch.economyActions?.({
+        ...input,
+        agentId,
+        explorerId,
+        ...(requestedRegionId ? { regionId: requestedRegionId } : {}),
+      });
       const ownerForAgent = (targetAgentId: string) => {
         const value = this.#epoch.progress({ agentId: targetAgentId });
         const targetProgress = isRecord(value) ? value : {};
@@ -985,6 +1003,7 @@ export class AgentCompanionRuntime {
         interactionInboxSummaries: inbox.summaries,
         interactionInboxTotal: inbox.total,
         agentWishes: [],
+        ...(economyActions ? { economyActions } : {}),
         nextPollAt: current?.journey.nextPollAt,
       };
     });

@@ -46,6 +46,7 @@ test("compact Phase 6 transport projections are not persisted as result pages", 
   assert.deepEqual(embeddedResultPagesForPersistence(compactProjection), []);
   assert.deepEqual(embeddedResultPagesForPersistence(journeyStatusPageReference), []);
   assert.deepEqual(embeddedResultPagesForPersistence(fullPage), [fullPage]);
+  assert.deepEqual(embeddedResultPagesForPersistence({ page: fullPage }), [fullPage]);
   assert.deepEqual(
     embeddedResultPagesForPersistence({ finalVerification: fullPage }),
     [fullPage],

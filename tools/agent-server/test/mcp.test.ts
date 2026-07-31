@@ -248,20 +248,30 @@ function explorerSecretHash(explorerId: string, localSecret: string) {
 }
 
 function coreActiveIdentityMethodNames() {
-  const source = readFileSync(new URL("../lib/epoch/gameCore.ts", import.meta.url), "utf8");
-  const returnStart = source.lastIndexOf("  return {");
-  const returnEnd = source.indexOf("\n  };\n}", returnStart);
-  assert.ok(returnStart > 0 && returnEnd > returnStart, "gameCore return object should be parseable");
-  const returnBlock = source.slice(returnStart, returnEnd);
-  const returnedMethods = [...returnBlock.matchAll(/^    ([A-Za-z0-9_]+),$/gm)].map((match) => match[1]);
+  const sources = [
+    readFileSync(new URL("../lib/epoch/gameCoreComposition.ts", import.meta.url), "utf8"),
+    readFileSync(new URL("../lib/epoch/gameCoreCombat.ts", import.meta.url), "utf8"),
+    readFileSync(new URL("../lib/epoch/gameCoreJourney.ts", import.meta.url), "utf8"),
+    readFileSync(new URL("../lib/epoch/gameCoreTrade.ts", import.meta.url), "utf8"),
+  ];
+  const returnedMethods = [...new Set(sources.flatMap((source) => {
+    const returnStart = source.lastIndexOf("  return {");
+    const returnEnd = source.indexOf("\n  };\n}", returnStart);
+    assert.ok(returnStart > 0 && returnEnd > returnStart, "gameCore command return object should be parseable");
+    return [...source.slice(returnStart, returnEnd).matchAll(/^    (?:\.\.\.)?([A-Za-z0-9_]+),$/gm)]
+      .map((match) => match[1]);
+  }))];
 
   const methodBody = (name: string) => {
-    const start = source.indexOf(`function ${name}`);
-    if (start < 0) return "";
-    const nextFunction = source.indexOf("\n  function ", start + 1);
-    const nextReturn = source.indexOf("\n  return {", start + 1);
-    const end = [nextFunction, nextReturn].filter((index) => index > start).sort((left, right) => left - right)[0] ?? source.length;
-    return source.slice(start, end);
+    for (const source of sources) {
+      const start = source.indexOf(`function ${name}`);
+      if (start < 0) continue;
+      const nextFunction = source.indexOf("\n  function ", start + 1);
+      const nextReturn = source.indexOf("\n  return {", start + 1);
+      const end = [nextFunction, nextReturn].filter((index) => index > start).sort((left, right) => left - right)[0] ?? source.length;
+      return source.slice(start, end);
+    }
+    return "";
   };
 
   return returnedMethods
@@ -644,7 +654,7 @@ test("MCP tool registry exposes agent world tools without model credential field
   assert.match(JSON.stringify(quickstart), /smoke-playbook\.md/);
   assert.match(JSON.stringify(quickstart), /turn_card[\s\S]*resolve_turn[\s\S]*create_result_page/);
   const quickstartPayload = textPayload(quickstart);
-  assert.equal(quickstartPayload.webConsole, "http://127.0.0.1:8787/epoch/console");
+  assert.equal(quickstartPayload.webConsole, "http://127.0.0.1:8787/epoch/web-play");
   assert.equal(quickstartPayload.contentPolicy.regionCode, "strict_region");
   assert.equal(quickstartPayload.contentPolicy.source, "configured_region");
   assert.equal(quickstartPayload.contentPolicy.configurationSource, "AGENT_WORLD_CONTENT_POLICY_JSON");
@@ -710,7 +720,8 @@ test("MCP tool registry exposes agent world tools without model credential field
   ]) {
     assert.ok(quickstartPayload.identityLifecycle.activeOnlyTools.includes(tool), `${tool} should be listed as active-identity-only`);
   }
-  assert.ok(quickstartPayload.identityLifecycle.archivedFlow.some((step: { tool: string }) =>
+  assert.equal(Object.hasOwn(quickstartPayload.identityLifecycle, "archivedFlow"), false);
+  assert.ok(quickstartPayload.identityLifecycle.archivedLifecycleTools.some((step: { tool: string }) =>
     step.tool === "obsidian_epoch.reincarnate"));
   const createTurnStep = quickstartPayload.oneTurnFlow.find((step: { step: string }) => step.step === "create_turn_card");
   assert.equal(createTurnStep.requiresActiveIdentity, true);
@@ -3664,7 +3675,7 @@ test("MCP routes low-authority lore adjudication to review instead of direct ref
   assert.equal(reviewed.value.authorityReview.evidenceQuality, "weak");
   assert.deepEqual(reviewed.value.authorityReview.sourceAuthorities, ["derived"]);
   assert.deepEqual(reviewed.value.authorityReview.lowAuthoritySourceEventIds, [derivedEventId]);
-  assert.equal(reviewed.value.authorityReview.recommendedStatus, "review_required");
+  assert.equal(reviewed.value.authorityReview.refutationStatus, "review_required");
   assert.match(reviewed.value.authorityReview.latestSourceRecordedAt, /^2026-06-25T/);
 
   const targets = textPayload(await mcp.callTool("obsidian_epoch.lore_targets", {
@@ -6969,7 +6980,7 @@ test("MCP archives an identity, ignores forged final titles, and returns reincar
   assert.equal(activeProgress.actionEligibility.status, "active");
   assert.equal(activeProgress.actionEligibility.canUseActiveTools, true);
   assert.ok(activeProgress.actionEligibility.activeOnlyTools.includes("obsidian_epoch.turn_card"));
-  assert.deepEqual(activeProgress.actionEligibility.recommendedTools, ["obsidian_epoch.turn_card", "obsidian_epoch.start_hosted_session", "obsidian_epoch.web_bridge_turn"]);
+  assert.equal(Object.hasOwn(activeProgress.actionEligibility, "recommendedTools"), false);
 
   await assert.rejects(
     () => mcp.callTool("obsidian_epoch.archive_identity", {
@@ -7007,7 +7018,7 @@ test("MCP archives an identity, ignores forged final titles, and returns reincar
   assert.equal(archivedProgress.actionEligibility.status, "archived");
   assert.equal(archivedProgress.actionEligibility.canUseActiveTools, false);
   assert.match(archivedProgress.actionEligibility.reason, /archived/);
-  assert.deepEqual(archivedProgress.actionEligibility.recommendedTools, ["obsidian_epoch.identity_archive", "obsidian_epoch.result_page", "obsidian_epoch.reincarnate"]);
+  assert.equal(Object.hasOwn(archivedProgress.actionEligibility, "recommendedTools"), false);
   assert.ok(archivedProgress.actionEligibility.blockedTools.includes("obsidian_epoch.turn_card"));
   for (const tool of [
     "obsidian_epoch.confirm_personality_drift",
@@ -7940,9 +7951,9 @@ test("MCP Epoch tools expose server-issued identity, downtime, NPC and event pro
   assert.doesNotMatch(briefing.agentSelfStatement, /prompt|system|系统|规则|模型|提示/i);
   assert.equal(briefing.regionalContext.messages[0].body, "盐门边缘出现新的巡查留言。");
   assert.equal(briefing.regionalContext.news[0].newsId, generatedNews.value.newsId);
-  assert.ok(briefing.pendingActions.some((action: { toolName: string }) => action.toolName === "obsidian_epoch.turn_card"));
+  assert.equal(Object.hasOwn(briefing, "pendingActions"), false);
   assert.equal(briefing.publicPages.agent, `/epoch/agent/${encodeURIComponent(identity.value.agentId)}`);
-  assert.equal(briefing.world.publicPages.console, "/epoch/console");
+  assert.equal(briefing.world.publicPages.console, "/epoch/web-play");
   const newsProgress = textPayload(await mcp.callTool("obsidian_epoch.progress", {
     agentId: identity.value.agentId,
   }));
@@ -10423,6 +10434,17 @@ test("MCP crafts inventory items from server-ledger resources", async () => {
     causationId: "mcp_craft_seed_aether",
     correlationId: "mcp_craft",
   });
+  seedCore.grantResource({
+    agentId: identity.value.agentId,
+    resourceId: "material_forging_alloy",
+    amount: 1,
+    reason: "mcp_craft_seed",
+  }, {
+    actorExplorerId: "system",
+    trustClass: "system_worker" as const,
+    causationId: "mcp_craft_seed_forging_alloy",
+    correlationId: "mcp_craft",
+  });
   const mcp = createAgentWorldMcpRuntime({
     epochEvents: [...seedCore.project().events],
   });
@@ -10459,6 +10481,14 @@ test("MCP crafts inventory items from server-ledger resources", async () => {
     "resource_spent",
     "item_created",
   ]);
+  assert.equal(crafted.crafting.recipes[0].recipeId, "field-kit");
+  assert.equal(crafted.crafting.recipes[0].version, "inventory-craft-recipes.v2");
+  assert.equal(crafted.crafting.crafts[0].materialsConsumed[0].sourceEventId.length > 0, true);
+  assert.deepEqual(crafted.crafting.crafts[0].fees, [{
+    asset: "coin",
+    quantity: 5,
+    sourceEventId: crafted.events[0].eventId,
+  }]);
 
   const progress = textPayload(await mcp.callTool("obsidian_epoch.progress", {
     agentId: identity.value.agentId,
@@ -10486,6 +10516,18 @@ test("MCP crafts inventory items from server-ledger resources", async () => {
       label: "资源点争夺分 +1",
       resourceNodeScoreBonus: 1,
     },
+  ]);
+
+  const phase6Blade = textPayload(await mcp.callTool("obsidian_epoch.craft_item", {
+    agentId: identity.value.agentId,
+    recipeId: "phase6-field-blade",
+    recoveryCode: recoveryCode(explorerId, localSecret),
+    idempotencyKey: "craft-mcp-phase6-blade-1",
+  }));
+  assert.equal(phase6Blade.value.itemKey, "crafted:phase6-field-blade");
+  assert.deepEqual(phase6Blade.crafting.crafts[0].materialsConsumed.map((entry: { asset: string }) => entry.asset), [
+    "material_forging_alloy",
+    "coin",
   ]);
 });
 
@@ -10535,6 +10577,10 @@ test("MCP shop purchases use server catalog prices and canonical items", async (
 
   const shop = textPayload(await mcp.callTool("obsidian_epoch.shop", {}));
   assert.ok(shop.offers.some((offer: { offerId: string }) => offer.offerId === "gray-ration-pack"));
+  const rationOffer = shop.offers.find((offer: { offerId: string }) => offer.offerId === "gray-ration-pack");
+  assert.equal(rationOffer?.offerVersion, "inventory-shop.v2");
+  assert.equal(rationOffer?.stockScope, "per_explorer");
+  assert.equal(rationOffer?.perExplorerLimit, 1);
   assert.equal(
     shop.offers.find((offer: { offerId: string }) => offer.offerId === "ashen-oath-relic")?.bindOnAcquire,
     true,
@@ -10602,6 +10648,19 @@ test("MCP shop purchases use server catalog prices and canonical items", async (
   assert.equal(purchased.value.displayName, "灰市补给包");
   assert.equal(purchased.events[0].payload.amount, 4);
   assert.equal(purchased.projection.resourceBalances[identity.value.agentId].coin, 13);
+  assert.equal(purchased.shop.purchases[0].offerId, "gray-ration-pack");
+  assert.equal(purchased.shop.purchases[0].resourceSpends[0].amount, 4);
+
+  await assert.rejects(
+    () => mcp.callTool("obsidian_epoch.purchase_shop_offer", {
+      agentId: identity.value.agentId,
+      offerId: "gray-ration-pack",
+      regionId: "region_ash_outpost",
+      recoveryCode: recoveryCode(explorerId, localSecret),
+      idempotencyKey: "purchase-mcp-shop-limit-1",
+    }),
+    /shop_offer_purchase_limit_reached/,
+  );
 
   const relic = textPayload(await mcp.callTool("obsidian_epoch.purchase_shop_offer", {
     agentId: identity.value.agentId,
@@ -10959,7 +11018,7 @@ test("MCP region info exposes server-derived frontlines", async () => {
   assert.equal(region.frontlines[0].openRetaliationIds.length, 1);
 });
 
-test("MCP region info exposes server-derived raid target recommendations", async () => {
+test("MCP region info exposes server-derived eligible raid candidates without ranking them", async () => {
   const time = mutableClock("2026-06-25T00:00:00.000Z");
   const seedCore = createEpochGameCore({
     clock: time.clock,
@@ -10980,7 +11039,7 @@ test("MCP region info exposes server-derived raid target recommendations", async
     causationId: `${explorerId}_issue`,
     correlationId: "mcp_region_raid_targets",
   });
-  const attacker = issue("explorer_mcp_targets_attacker", "MCP 目标推荐进攻者");
+  const attacker = issue("explorer_mcp_targets_attacker", "MCP 目标对抗进攻者");
   seedCore.grantResource({
     agentId: attacker.value.agentId,
     resourceId: "legend",
@@ -11013,7 +11072,7 @@ test("MCP region info exposes server-derived raid target recommendations", async
   }, systemContext);
   const season = (seedCore as any).createSeasonCampaign({
     seasonKey: "mcp_region_raid_targets_season",
-    title: "MCP raid 目标推荐季",
+    title: "MCP raid 目标对抗季",
     regionIds: ["region_gray_harbor"],
     factionIds: ["gray_watch", "cinder_archive"],
     resourceId: "coin",
@@ -11060,18 +11119,19 @@ test("MCP region info exposes server-derived raid target recommendations", async
     raidTargetAttackerAgentId: attacker.value.agentId,
     raidTargetLimit: 10,
   }));
-  assert.ok(Array.isArray(region.raidTargets));
-  assert.deepEqual(region.raidTargets.map((target: { targetAgentId: string }) => target.targetAgentId), [
+  assert.ok(Array.isArray(region.eligibleRaidTargets));
+  assert.deepEqual(region.eligibleRaidTargets.map((target: { targetAgentId: string }) => target.targetAgentId), [
     legalTarget.value.agentId,
   ]);
-  assert.equal(region.raidTargets[0].attackerAgentId, attacker.value.agentId);
-  assert.equal(region.raidTargets[0].attackerFactionId, "gray_watch");
-  assert.equal(region.raidTargets[0].targetFactionId, "cinder_archive");
-  assert.equal(region.raidTargets[0].recommendationReason, "cross_faction_pressure");
-  assert.equal(region.raidTargets[0].latestPairRaidId, undefined);
-  assert.ok(!region.raidTargets.some((target: { targetAgentId: string }) => target.targetAgentId === sameFactionTarget.value.agentId));
-  assert.ok(!region.raidTargets.some((target: { targetAgentId: string }) => target.targetAgentId === sameExplorerTarget.value.agentId));
-  assert.ok(!region.raidTargets.some((target: { targetAgentId: string }) => target.targetAgentId === cooldownTarget.value.agentId));
+  assert.equal(region.eligibleRaidTargets[0].attackerAgentId, attacker.value.agentId);
+  assert.equal(region.eligibleRaidTargets[0].attackerFactionId, "gray_watch");
+  assert.equal(region.eligibleRaidTargets[0].targetFactionId, "cinder_archive");
+  assert.equal(Object.hasOwn(region.eligibleRaidTargets[0], "recommendationScore"), false);
+  assert.equal(Object.hasOwn(region.eligibleRaidTargets[0], "recommendationReason"), false);
+  assert.equal(region.eligibleRaidTargets[0].latestPairRaidId, undefined);
+  assert.ok(!region.eligibleRaidTargets.some((target: { targetAgentId: string }) => target.targetAgentId === sameFactionTarget.value.agentId));
+  assert.ok(!region.eligibleRaidTargets.some((target: { targetAgentId: string }) => target.targetAgentId === sameExplorerTarget.value.agentId));
+  assert.ok(!region.eligibleRaidTargets.some((target: { targetAgentId: string }) => target.targetAgentId === cooldownTarget.value.agentId));
   assert.equal(cooldownRaid.value.defenderAgentId, cooldownTarget.value.agentId);
 });
 

@@ -209,7 +209,27 @@ export function createJsonlCausalIdempotencyManifestStore(
       return withJsonlLock(targetDataDir, async () => {
         const existing = await recoverLatestManifest(targetDataDir, reservation.manifest.scope);
         const finalized = assertCausalReservationFinalization(reservation, existing, manifest);
-        await commit({});
+        // Collect records from commit callback, then write events + manifest atomically
+        const capturedRecords: Array<{ fileName: string; record: unknown }> = [];
+        const captureContext = {
+          appendJsonl(fileName: string, record: unknown) {
+            capturedRecords.push({ fileName, record });
+          },
+        };
+        const result = commit(captureContext);
+        if (result && typeof result === "object" && "then" in result) {
+          throw new Error("causal_idempotency_jsonl_atomic_commit_must_be_sync");
+        }
+        // Write captured event records first
+        for (const { fileName, record } of capturedRecords) {
+          await appendFile(
+            join(targetDataDir, fileName),
+            `${JSON.stringify(record)}\n`,
+            "utf8",
+          );
+        }
+        // Write manifest last — if crash occurs between events and manifest,
+        // startup reconciliation will detect orphaned events
         await appendManifest(targetDataDir, finalized);
         return finalized;
       });

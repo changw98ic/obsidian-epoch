@@ -1,4 +1,5 @@
 import { PHASE6_MATRIX_VERSION } from "./phase6ScenarioMatrixRules.ts";
+import { JOURNEY_RUN_RECEIPT_VERSION } from "./journeyRunReceiptRules.ts";
 import {
   PHASE6_RUN_INDEXES,
   complete,
@@ -21,8 +22,6 @@ import {
   type Phase6SeedBinding,
   type Phase6VersionBinding,
 } from "./phase6ExperimentRules";
-
-export const PHASE6_EXPERIMENT_RECEIPT_VERSION = "phase6-experiment-receipt.v3" as const;
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -78,8 +77,8 @@ export interface Phase6StartRunRuntimeInput
   readonly run: Phase6RegisterRunInput;
 }
 
-export interface Phase6ResultReceiptV3 extends Phase6RunResultReceiptRef {
-  readonly receiptVersion: "v3";
+export interface Phase6ResultReceipt extends Phase6RunResultReceiptRef {
+  readonly receiptVersion: typeof JOURNEY_RUN_RECEIPT_VERSION;
   readonly experimentId: string;
   readonly runIndex: Phase6RunIndex;
   readonly identity: Phase6IdentityBinding;
@@ -90,8 +89,6 @@ export interface Phase6ResultReceiptV3 extends Phase6RunResultReceiptRef {
   readonly matrixSnapshot: Phase6ScenarioMatrixVersion;
   readonly matrixVersion: typeof PHASE6_MATRIX_VERSION;
 }
-
-export type Phase6ResultReceipt = Phase6ResultReceiptV3;
 
 export interface Phase6CompleteRunWithReceiptRuntimeInput
   extends Phase6RuntimeCommandInput {
@@ -342,7 +339,9 @@ function assertReceiptMatchesRun(
   run: Phase6Run,
 ): void {
   assertNonEmpty(receipt.receiptId, "receipt.receiptId");
-  if (receipt.receiptVersion !== "v3") throw new Error("Phase 6 result receipt must be v3");
+  if (receipt.receiptVersion !== JOURNEY_RUN_RECEIPT_VERSION) {
+    throw new Error(`Phase 6 result receipt must be ${JOURNEY_RUN_RECEIPT_VERSION}`);
+  }
   if (receipt.experimentId !== experiment.experimentId) {
     throw new Error("Phase 6 receipt experimentId does not match registration");
   }

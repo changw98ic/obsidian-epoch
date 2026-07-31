@@ -21,10 +21,11 @@ import {
   type Phase6ServerScoringResult,
   type Phase6ServerScoringWorldCursor,
 } from "./phase6ServerScoringRules.ts";
+import { buildPhase6RagDelta } from "./phase6ProjectionDeltaRules.ts";
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
 
-export const PHASE6_SERVER_PRE_SETTLEMENT_RULESET_VERSION = "obsidian-epoch-phase6-server-pre-settlement-v0.1.1" as const;
+export const PHASE6_SERVER_PRE_SETTLEMENT_RULESET_VERSION = "obsidian-epoch-phase6-server-pre-settlement-v0.1.2" as const;
 
 export type Phase6ServerPreSettlementFindingSeverity = "error" | "info";
 
@@ -63,11 +64,11 @@ export interface Phase6ServerPreSettlementRuntimeInput {
   readonly afterPanel: Phase6McpJourneyCompletionContextInput["afterPanel"];
   readonly afterProjection: Phase6McpJourneyCompletionContextInput["afterProjection"];
   readonly canonicalEvents: readonly EpochEvent[];
-  // RAG retrieval legally happens before the run's first canonical event
-  // (cursor rules allow retrievalCursor <= beforeCursor). These are event ids
-  // the persisted RAG trace cites that exist in the global event stream at
-  // run-start; they extend the binding id set without polluting canonicalEvents
-  // (which scoring/cursor-chain consume).
+  // A retrieval before the run's first canonical event may cite a persisted
+  // run-start anchor. Retrieval after start must instead cite this run's
+  // canonical events and remain inside the run's cursor interval. These prior
+  // anchors extend the binding id set without polluting canonicalEvents (which
+  // scoring and cursor-chain checks consume).
   readonly bindingAnchorEventIds?: readonly string[];
   readonly economy: Phase6McpJourneyCompletionContextInput["economy"];
   readonly worldCursor: Phase6ServerScoringWorldCursor;
@@ -289,6 +290,40 @@ function cursorAtOrBefore(
   ));
 }
 
+function cursorWithinRun(
+  findings: Phase6ServerPreSettlementFinding[],
+  path: string,
+  retrievalCursor: Phase6ServerPreSettlementCursorEvidence,
+  beforeCursor: Phase6ServerPreSettlementCursorEvidence,
+  afterCursor: Phase6ServerPreSettlementCursorEvidence,
+): void {
+  const afterStart = compareCursorTime(beforeCursor.worldTime, retrievalCursor.worldTime);
+  const beforeSettlement = compareCursorTime(retrievalCursor.worldTime, afterCursor.worldTime);
+  if (afterStart !== undefined && afterStart <= 0 && beforeSettlement !== undefined && beforeSettlement <= 0) {
+    return;
+  }
+  findings.push(finding(
+    "PHASE6_SERVER_PRE_SETTLEMENT_BINDING_MISMATCH",
+    "error",
+    "RAG retrieval with a run-scoped event anchor must occur within the canonical run cursor interval",
+    path,
+    { beforeCursor, retrievalCursor, settlementCursor: afterCursor },
+  ));
+}
+
+function hasRunScopedRagEvidence(input: Phase6ServerPreSettlementInput): boolean {
+  const canonicalEventIds = new Set(
+    input.runtime.canonicalEvents
+      .map((event) => eventId(event))
+      .filter((id): id is string => Boolean(id)),
+  );
+  const traceEventIds = [
+    ...input.persistedRagTrace.sourceEventIds,
+    ...input.persistedRagTrace.groundingHits.flatMap((hit) => hit.eventIds),
+  ];
+  return traceEventIds.some((id) => canonicalEventIds.has(id.trim()));
+}
+
 function requireSameCursorScope(
   findings: Phase6ServerPreSettlementFinding[],
   path: string,
@@ -392,7 +427,17 @@ function validateWorldCursorBindings(input: Phase6ServerPreSettlementInput): rea
   const retrievalCursor = cursorFromRecord(input.persistedRagTrace?.binding?.world);
 
   requireSameCursorScope(findings, "persistedRagTrace.binding.world", beforeCursor, retrievalCursor, "RAG retrieval");
-  cursorAtOrBefore(findings, "persistedRagTrace.binding.world.worldTime", retrievalCursor, beforeCursor, "RAG retrieval");
+  if (hasRunScopedRagEvidence(input)) {
+    cursorWithinRun(
+      findings,
+      "persistedRagTrace.binding.world.worldTime",
+      retrievalCursor,
+      beforeCursor,
+      afterCursor,
+    );
+  } else {
+    cursorAtOrBefore(findings, "persistedRagTrace.binding.world.worldTime", retrievalCursor, beforeCursor, "RAG retrieval");
+  }
   requireSameCursorScope(findings, "runtime.worldCursor", beforeCursor, afterCursor, "settlement");
   const settlementComparison = compareCursorTime(beforeCursor.worldTime, afterCursor.worldTime);
   if (settlementComparison === undefined || settlementComparison > 0) {
@@ -713,12 +758,46 @@ export function buildPhase6ServerPreSettlement(
     };
   }
 
+  const projectionRagDelta = buildPhase6RagDelta(
+    input.stores.beforeProjection as Parameters<typeof buildPhase6RagDelta>[0],
+    input.runtime.afterProjection as Parameters<typeof buildPhase6RagDelta>[1],
+    input.runtime.canonicalEvents as unknown as Parameters<typeof buildPhase6RagDelta>[2],
+  );
+  const routeDedupCount = projectionRagDelta.memories.filter((memory) =>
+    memory.kind === "changed" && memory.key.startsWith("memory:phase6-memory:route:")).length;
+  const grounding = {
+    queryHash: ragEvidence.grounding.queryHash,
+    corpusHash: ragEvidence.grounding.corpusHash,
+    claims: ragEvidence.grounding.claims,
+    importantMemoryCount: projectionRagDelta.memories.length,
+    ordinaryNodePersistenceExpansion: 0,
+    delta: {
+      entries: projectionRagDelta.memories.map((memory) => ({
+        type: "persistent_memory" as const,
+        memoryId: memory.key.replace(/^memory:/, ""),
+        importance: "high" as const,
+        sourceEventIds: memory.sourceEvents.map((event) => event.eventId),
+      })),
+    },
+    ...(projectionRagDelta.noChangeReason !== undefined
+      ? { noChangeReason: projectionRagDelta.noChangeReason }
+      : {}),
+    ...(routeDedupCount > 0 ? {
+      dedupedRoutes: routeDedupCount,
+      duplicateRoutes: routeDedupCount,
+    } : {}),
+  };
+  const enrichedRagEvidence = {
+    ...ragEvidence,
+    grounding,
+  };
+
   const metadata = buildMetadata(input);
   const receipt = {
     deltas: input.receiptBasis.deltas,
     score: scoringEvidence.score,
     suitability: scoringEvidence.suitability,
-    rag: ragEvidence.grounding,
+    rag: grounding,
     eventIds: input.receiptBasis.eventIds,
     snapshots: input.receiptBasis.snapshots,
     outcome: input.receiptBasis.outcome,
@@ -753,7 +832,7 @@ export function buildPhase6ServerPreSettlement(
     value: {
       authoritativeInput,
       scoringEvidence,
-      ragEvidence,
+      ragEvidence: enrichedRagEvidence,
       finalizeContract: {
         strictV2ReceiptMustBeFinalizedByAssembly: true,
         resultPageMustBeBuiltFromFinalizedReceipt: true,

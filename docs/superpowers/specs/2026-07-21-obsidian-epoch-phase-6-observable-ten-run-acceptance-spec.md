@@ -343,13 +343,17 @@ RAG 回执必须包含：
 不得在 README、聊天消息或其他文档中维护独立百分比。需要当前进度时必须运行：
 
 ```bash
-node tools/agent-server/phase6-progress.mjs --markdown
+cd tools/graph-react-app
+PHASE6_ATTESTATION_KEY_FILE=/absolute/path/outside-the-repository/phase6-attestation.key \
+  npm run agent:phase6-progress -- --markdown
 ```
 
 机器消费使用：
 
 ```bash
-node tools/agent-server/phase6-progress.mjs --json
+cd tools/graph-react-app
+PHASE6_ATTESTATION_KEY_FILE=/absolute/path/outside-the-repository/phase6-attestation.key \
+  npm run agent:phase6-progress -- --json
 ```
 
 ### 10.2 工作项状态

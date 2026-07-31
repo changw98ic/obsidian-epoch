@@ -5,7 +5,8 @@ import path from "node:path";
 import test from "node:test";
 
 import { createAgentHttpServer } from "../lib/httpServer.ts";
-import { createAgentWorldMcpRuntime, createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldMcpRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 import { createAgentPersistenceFromEnv } from "../lib/persistenceConfig.ts";
 import { epochEventsForPersistence } from "../lib/epoch/runtimePublicProjectionRules.ts";
 import { readSqliteJsonlRecords } from "../lib/sqliteStore.ts";
@@ -60,7 +61,13 @@ test("persistence config injects JSONL causal idempotency store and epoch batch 
     const runtime = runtimeWithPersistence({
       infiniteWorld: {
         idempotencyStore: createJsonlCausalIdempotencyManifestStore(tempDir),
-        atomicCommit: ({ epochEvents }) => appendBatch(epochEvents),
+        atomicCommit: ({ atomic, epochEvents }) => {
+          if (!atomic?.appendJsonl) throw new Error("causal_atomic_append_required");
+          atomic.appendJsonl("epoch-events.jsonl", {
+            type: "epoch_event_batch",
+            events: epochEvents,
+          });
+        },
       },
     });
 

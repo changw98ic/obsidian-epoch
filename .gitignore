@@ -58,3 +58,4 @@ __pycache__/
 
 # Accidental empty shell artifact
 /=
+tools/agent-server/node_modules

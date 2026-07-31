@@ -609,6 +609,13 @@ export function buildReceiptRagEvidence(trace: Phase6ServerRagTrace): Phase6Rece
         })),
       }),
       claims,
+      // Retrieval evidence has no authority to add a persistent memory on its
+      // own. Pre-settlement replaces this safe zero-delta projection with the
+      // canonical-event-derived result for the completed run.
+      importantMemoryCount: 0,
+      ordinaryNodePersistenceExpansion: 0,
+      delta: { entries: [] },
+      noChangeReason: "no_supported_projection_fields",
     },
     trace: normalized,
     validation,

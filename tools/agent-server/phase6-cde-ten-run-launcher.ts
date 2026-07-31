@@ -42,7 +42,7 @@ const SECRET_VALUE_GLOBAL = /\b(?:sk-[A-Za-z0-9_-]{8,}|Bearer\s+[A-Za-z0-9._-]{8
 
 function usage() {
   return [
-    "Usage: node tools/agent-server/phase6-cde-ten-run-launcher.mjs --prompt <path> --server-base <url> --raw-output <absolute-jsonl> --state-output <absolute-json> [--start-at <iso-or-ms>] --claude-bin <absolute-path> --mcp-adapter-bin <absolute-js-module-path>",
+    "Usage: node --import tsx ../agent-server/phase6-cde-ten-run-launcher.ts --prompt <path> --server-base <url> --raw-output <absolute-jsonl> --state-output <absolute-json> [--start-at <iso-or-ms>] --claude-bin <absolute-path> --mcp-adapter-bin <absolute-js-module-path>",
     "",
     "Launches Claude Code without a shell in a non-Git temporary directory, records stream-json raw output privately, and writes a redacted launcher state file.",
   ].join("\n");

@@ -1,5 +1,10 @@
 import { type IncomingHttpHeaders } from "node:http";
 import { type EpochHttpRouteContext } from "./httpRouteTypes.ts";
+import { type PublicReleaseEvidenceStore } from "../publicReleaseReadiness.ts";
+
+type OperatorRouteContext = EpochHttpRouteContext & {
+  readonly publicReleaseEvidenceStore?: PublicReleaseEvidenceStore;
+};
 
 function firstHeaderValue(value: IncomingHttpHeaders[string]) {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -10,7 +15,7 @@ function operatorKeyFromHeaders(headers: IncomingHttpHeaders) {
   return firstHeaderValue(headers["x-epoch-operator-key"]);
 }
 
-export async function handleEpochOperatorRoutes(context: EpochHttpRouteContext): Promise<boolean> {
+export async function handleEpochOperatorRoutes(context: OperatorRouteContext): Promise<boolean> {
   const { allowedOrigins, method, pathname, request, response, runtime } = context;
 
   if (method === "GET" && pathname === "/api/epoch/moderation") {
@@ -62,6 +67,25 @@ export async function handleEpochOperatorRoutes(context: EpochHttpRouteContext):
       operatorKey: operatorKeyFromHeaders(request.headers),
       limit: params.get("limit") ? Number(params.get("limit")) : undefined,
     }), allowedOrigins);
+    return true;
+  }
+
+  if (method === "POST" && pathname === "/api/epoch/operator/public-release-evidence") {
+    runtime.epochOperatorOverview({
+      operatorKey: operatorKeyFromHeaders(request.headers),
+      limit: 1,
+    });
+    const store = context.publicReleaseEvidenceStore;
+    if (!store) throw new Error("public_release_evidence_store_unavailable");
+    const evidence = store.record(await context.readJsonBody(request, context.maxBodyBytes));
+    context.sendJson(request, response, 200, {
+      ok: true,
+      evidence: {
+        recordedAt: evidence.recordedAt,
+        package: evidence.package,
+        image: evidence.image,
+      },
+    }, allowedOrigins);
     return true;
   }
 

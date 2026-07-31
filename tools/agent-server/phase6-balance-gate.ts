@@ -2,8 +2,9 @@
 // @ts-nocheck
 
 import fs from "node:fs";
+import { createInterface } from "node:readline";
 
-const SCHEMA_VERSION = "obsidian-epoch.phase6-balance-gate.v1";
+const SCHEMA_VERSION = "obsidian-epoch.phase6-balance-gate.v3";
 const ALLOWED_EXPECTED_RUNS = new Set([10000, 100000]);
 const MAX_PARSE_ERRORS = 20;
 const MAX_SCHEMA_ERRORS = 50;
@@ -21,22 +22,21 @@ const SPREAD_MAX_COST_P99 = 95;
 const SPREAD_MAX_INJURY_P99 = 95;
 const SPREAD_MAX_CV = 2.75;
 const RESOURCE_TOLERANCE = 1e-9;
+const DECISION_QUALITY_BUCKET_COUNT = 5;
+const MAX_CONTROLLED_QUALITY_MEAN_GAP = 2.5;
+const WHOLE_DOCUMENT_MAX_BYTES = 32 * 1024 * 1024;
 const CORRELATION_GATES = {
-  // Final score may respond to mission intensity, but the upper 95% CI must stay well below single-axis control.
-  intensity: { label: "score-intensity", minAbsCiUpperInclusive: 0, maxAbsCiUpperInclusive: 0.65 },
-  // Combat suitability is intentionally relevant to scoring, while still bounded away from dominance.
-  combatSuitability: { label: "score-combatSuitability", minAbsCiUpperInclusive: 0.12, maxAbsCiUpperInclusive: 0.82 },
-  // Success is a strong outcome signal, but score must still preserve cost, injury, difficulty, and quality effects.
-  success: { label: "score-success", minAbsCiUpperInclusive: 0.1, maxAbsCiUpperInclusive: 0.86 },
-  // Injury should be visible in score without becoming the only balance axis.
-  injury: { label: "score-injury", minAbsCiUpperInclusive: 0.05, maxAbsCiUpperInclusive: 0.8 },
+  // Phase 6 requires score and mission intensity to remain statistically decoupled.
+  intensity: { label: "score-intensity", minAbsCiUpperInclusive: 0, maxAbsCiUpperInclusive: 0.15 },
+  // Suitability may have an indirect relationship through outcomes, but it cannot dominate score.
+  combatSuitability: { label: "score-combatSuitability", minAbsCiUpperInclusive: 0, maxAbsCiUpperInclusive: 0.35 },
 };
 const SECRET_KEY = /(?:secret|token|api[-_]?key|authorization|password|credential|private[-_]?key|access[-_]?key|refresh[-_]?token|session[-_]?key|recovery[-_]?code|operator[-_]?key)/i;
 const SECRET_VALUE = /\b(?:sk-[A-Za-z0-9_-]{12,}|Bearer\s+[A-Za-z0-9._-]{12,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{16})\b/i;
 
 function usage() {
   return [
-    "Usage: node tools/agent-server/phase6-balance-gate.mjs --expected-runs <10000|100000> [--input <path>]",
+    "Usage: node --import tsx ../agent-server/phase6-balance-gate.ts --expected-runs <10000|100000> [--input <path>]",
     "",
     "Reads machine JSON or JSONL samples from --input or stdin and prints a pure JSON balance-gate summary.",
     "Exits non-zero when any Phase 6 numerical balance gate fails.",
@@ -80,10 +80,7 @@ function parseArguments(argv) {
   return options;
 }
 
-function readInput(inputPath) {
-  if (inputPath) {
-    return fs.readFileSync(inputPath, "utf8");
-  }
+function readInput() {
   return fs.readFileSync(0, "utf8");
 }
 
@@ -149,7 +146,7 @@ function flattenRecords(value, records = []) {
   return records;
 }
 
-function parseRecords(input) {
+function parseTextRecords(input) {
   const wholeDocument = tryParseJson(input.trim());
   if (wholeDocument !== undefined) {
     return { records: flattenRecords(wholeDocument), parseErrors: [] };
@@ -170,6 +167,37 @@ function parseRecords(input) {
   });
 
   return { records, parseErrors };
+}
+
+async function analyzeInput(inputPath) {
+  if (!inputPath) {
+    return analyzeParsedRecords(parseTextRecords(readInput()));
+  }
+  const size = fs.statSync(inputPath).size;
+  if (size <= WHOLE_DOCUMENT_MAX_BYTES) {
+    return analyzeParsedRecords(parseTextRecords(fs.readFileSync(inputPath, "utf8")));
+  }
+  return analyzeJsonlFile(inputPath);
+}
+
+async function analyzeJsonlFile(inputPath) {
+  const analysis = createAnalysis();
+  const stream = fs.createReadStream(inputPath, { encoding: "utf8" });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  let lineNumber = 0;
+  for await (const line of lines) {
+    lineNumber += 1;
+    if (!line.trim()) continue;
+    const parsed = extractJsonCandidate(line);
+    if (parsed === undefined) {
+      addParseError(analysis, { line: lineNumber, reason: "not_json" });
+      continue;
+    }
+    for (const record of flattenRecords(parsed)) {
+      ingestRecord(analysis, record);
+    }
+  }
+  return analysis;
 }
 
 function scanForSecrets(value, path, state) {
@@ -354,6 +382,12 @@ function extractSample(record) {
     ["metrics", "combatSuitability"],
     ["payload", "combatSuitability"],
   ]));
+  const decisionQuality = finiteNumber(firstValue(record, [
+    ["audit", "production", "decisionQuality"],
+    ["decisionQuality"],
+    ["metrics", "decisionQuality"],
+    ["payload", "decisionQuality"],
+  ]));
   const sampling = getPath(record, ["metadata", "sampling"]);
   const priorVersion = stringValue(firstValue(record, [
     ["metadata", "sampling", "priorVersion"],
@@ -400,6 +434,7 @@ function extractSample(record) {
     cost,
     injury,
     combatSuitability,
+    decisionQuality,
     priorVersion,
     priors,
     seed,
@@ -783,7 +818,7 @@ function correlationGate(samples, key, config) {
   const ciUpper = result.absCi95 ? result.absCi95[1] : null;
   return {
     label: config.label,
-    rationale: "Fisher-z 95% CI on Pearson r; bounds keep combat-relevant variables visible without allowing one axis to dominate final score.",
+    rationale: "Fisher-z 95% CI on Pearson r; score must stay decoupled from mission intensity and suitability cannot dominate it through an untracked direct bonus.",
     variable: key,
     minAbsCiUpperInclusive: config.minAbsCiUpperInclusive,
     maxAbsCiUpperInclusive: config.maxAbsCiUpperInclusive,
@@ -792,6 +827,73 @@ function correlationGate(samples, key, config) {
       ciUpper !== null &&
       ciUpper >= config.minAbsCiUpperInclusive &&
       ciUpper <= config.maxAbsCiUpperInclusive,
+  };
+}
+
+function suitabilityOutcomeGate(samples) {
+  const usable = samples
+    .filter((sample) => sample.combatSuitability !== undefined && sample.decisionQuality !== undefined && sample.success !== undefined && sample.cost !== undefined && sample.injury !== undefined);
+  if (usable.length < DECISION_QUALITY_BUCKET_COUNT * 8) {
+    return {
+      passed: false,
+      reason: "insufficient_suitability_samples",
+      usableRuns: usable.length,
+    };
+  }
+  const summarize = (slice) => ({
+    runs: slice.length,
+    meanSuitability: slice.reduce((sum, sample) => sum + sample.combatSuitability, 0) / slice.length,
+    successRate: slice.filter((sample) => sample.success === true).length / slice.length,
+    meanCost: slice.reduce((sum, sample) => sum + sample.cost, 0) / slice.length,
+    meanInjury: slice.reduce((sum, sample) => sum + sample.injury, 0) / slice.length,
+  });
+  const buckets = Array.from({ length: DECISION_QUALITY_BUCKET_COUNT }, () => []);
+  for (const sample of usable) {
+    const bucketIndex = Math.min(
+      DECISION_QUALITY_BUCKET_COUNT - 1,
+      Math.max(0, Math.floor(sample.decisionQuality / (100 / DECISION_QUALITY_BUCKET_COUNT))),
+    );
+    buckets[bucketIndex].push(sample);
+  }
+  const controls = buckets.map((bucket, bucketIndex) => {
+    const ordered = [...bucket].sort((left, right) => left.combatSuitability - right.combatSuitability);
+    const sliceSize = Math.floor(ordered.length / 4);
+    if (sliceSize === 0) {
+      return { bucketIndex, passed: false, reason: "insufficient_bucket_samples", runs: ordered.length };
+    }
+    const lowerQuartile = summarize(ordered.slice(0, sliceSize));
+    const upperQuartile = summarize(ordered.slice(ordered.length - sliceSize));
+    const lowerDecisionQuality = ordered.slice(0, sliceSize).reduce((sum, sample) => sum + sample.decisionQuality, 0) / sliceSize;
+    const upperDecisionQuality = ordered.slice(ordered.length - sliceSize).reduce((sum, sample) => sum + sample.decisionQuality, 0) / sliceSize;
+    const successRateDelta = upperQuartile.successRate - lowerQuartile.successRate;
+    const costDelta = upperQuartile.meanCost - lowerQuartile.meanCost;
+    const injuryDelta = upperQuartile.meanInjury - lowerQuartile.meanInjury;
+    const decisionQualityMeanGap = upperDecisionQuality - lowerDecisionQuality;
+    return {
+      bucketIndex,
+      decisionQualityRange: [bucketIndex * (100 / DECISION_QUALITY_BUCKET_COUNT), (bucketIndex + 1) * (100 / DECISION_QUALITY_BUCKET_COUNT)],
+      runs: ordered.length,
+      sliceSize,
+      lowerQuartile,
+      upperQuartile,
+      lowerDecisionQuality,
+      upperDecisionQuality,
+      decisionQualityMeanGap,
+      successRateDelta,
+      costDelta,
+      injuryDelta,
+      passed:
+        Math.abs(decisionQualityMeanGap) <= MAX_CONTROLLED_QUALITY_MEAN_GAP
+        && (successRateDelta >= 0.03 || costDelta < 0 || injuryDelta < 0),
+    };
+  });
+  return {
+    usableRuns: usable.length,
+    decisionQualityBucketCount: DECISION_QUALITY_BUCKET_COUNT,
+    maxControlledQualityMeanGap: MAX_CONTROLLED_QUALITY_MEAN_GAP,
+    controls,
+    minSuccessRateDelta: 0.03,
+    passed: controls.length === DECISION_QUALITY_BUCKET_COUNT && controls.every((control) => control.passed),
   };
 }
 
@@ -846,83 +948,114 @@ function checkSpread(label, stats, failures) {
   }
 }
 
-function validateSamples(records) {
-  const samples = [];
-  const schemaErrors = [];
-  const resource = { evaluatedRuns: 0, anomalousRuns: 0, unevaluableRuns: 0 };
+function createAnalysis() {
+  return {
+    samples: [],
+    schemaErrors: [],
+    schemaErrorCount: 0,
+    parseErrors: [],
+    parseErrorCount: 0,
+    resource: { evaluatedRuns: 0, anomalousRuns: 0, unevaluableRuns: 0 },
+    secretState: { secretPaths: new Set() },
+    recordCount: 0,
+    capturedPriors: false,
+  };
+}
 
-  records.forEach((record, index) => {
+function addSchemaError(analysis, message) {
+  analysis.schemaErrorCount += 1;
+  if (analysis.schemaErrors.length < MAX_SCHEMA_ERRORS) analysis.schemaErrors.push(message);
+}
+
+function addParseError(analysis, entry) {
+  analysis.parseErrorCount += 1;
+  if (analysis.parseErrors.length < MAX_PARSE_ERRORS) analysis.parseErrors.push(entry);
+}
+
+function ingestRecord(analysis, record) {
+    const index = analysis.recordCount;
+    scanForSecrets(record, `records[${index}]`, analysis.secretState);
     const sample = extractSample(record);
     const label = `records[${index}]`;
     if (sample.score === undefined) {
-      schemaErrors.push(`${label}.score is required and must be numeric`);
+      addSchemaError(analysis, `${label}.score is required and must be numeric`);
     }
     if (sample.intensity === undefined) {
-      schemaErrors.push(`${label}.intensity is required and must be numeric`);
+      addSchemaError(analysis, `${label}.intensity is required and must be numeric`);
     }
     if (!sample.suitabilityBand) {
-      schemaErrors.push(`${label}.suitabilityBand is required`);
+      addSchemaError(analysis, `${label}.suitabilityBand is required`);
     }
     if (!sample.build) {
-      schemaErrors.push(`${label}.build is required`);
+      addSchemaError(analysis, `${label}.build is required`);
     }
     if (!sample.scenario) {
-      schemaErrors.push(`${label}.scenario is required`);
+      addSchemaError(analysis, `${label}.scenario is required`);
     }
     if (sample.success === undefined) {
-      schemaErrors.push(`${label}.success is required and must be boolean-like`);
+      addSchemaError(analysis, `${label}.success is required and must be boolean-like`);
     }
     if (sample.cost === undefined) {
-      schemaErrors.push(`${label}.cost is required and must be numeric`);
+      addSchemaError(analysis, `${label}.cost is required and must be numeric`);
     }
     if (sample.injury === undefined) {
-      schemaErrors.push(`${label}.injury is required and must be numeric`);
+      addSchemaError(analysis, `${label}.injury is required and must be numeric`);
     }
     if (sample.combatSuitability === undefined) {
-      schemaErrors.push(`${label}.audit.production.combatSuitability is required and must be numeric`);
+      addSchemaError(analysis, `${label}.audit.production.combatSuitability is required and must be numeric`);
+    }
+    if (sample.decisionQuality === undefined) {
+      addSchemaError(analysis, `${label}.audit.production.decisionQuality is required and must be numeric`);
     }
     if (!sample.outcome) {
-      schemaErrors.push(`${label}.outcome is required`);
+      addSchemaError(analysis, `${label}.outcome is required`);
     }
     if (sample.priorVersion !== DESIGN_PRIOR_VERSION) {
-      schemaErrors.push(`${label}.metadata.sampling.priorVersion must be ${DESIGN_PRIOR_VERSION}`);
+      addSchemaError(analysis, `${label}.metadata.sampling.priorVersion must be ${DESIGN_PRIOR_VERSION}`);
     }
     if (!sample.seed || !sample.seedHash) {
-      schemaErrors.push(`${label}.metadata.seed and metadata.seedHash are required`);
+      addSchemaError(analysis, `${label}.metadata.seed and metadata.seedHash are required`);
     }
     if (!sample.stratumBuild || !sample.stratumScenario || !sample.stratumGrowthChoice || !sample.stratumOutcome || !sample.stratumIntensityTier) {
-      schemaErrors.push(`${label}.metadata.sampling.strata must include build, scenario, growthChoice, outcome, intensityTier`);
+      addSchemaError(analysis, `${label}.metadata.sampling.strata must include build, scenario, growthChoice, outcome, intensityTier`);
     }
     if (!sample.priors || typeof sample.priors !== "object") {
-      schemaErrors.push(`${label}.metadata.sampling.priors is required`);
+      addSchemaError(analysis, `${label}.metadata.sampling.priors is required`);
     }
 
     const resourceCheck = resourceAnomaly(record);
     if (resourceCheck.evaluated) {
-      resource.evaluatedRuns += 1;
+      analysis.resource.evaluatedRuns += 1;
     } else {
-      resource.unevaluableRuns += 1;
+      analysis.resource.unevaluableRuns += 1;
     }
     if (resourceCheck.anomalous) {
-      resource.anomalousRuns += 1;
+      analysis.resource.anomalousRuns += 1;
     }
 
-    samples.push(sample);
-  });
+    if (analysis.capturedPriors) {
+      sample.priors = undefined;
+    } else if (sample.priors && typeof sample.priors === "object") {
+      analysis.capturedPriors = true;
+    }
+    analysis.samples.push(sample);
+    analysis.recordCount += 1;
+}
 
-  return { samples, schemaErrors, resource };
+function analyzeParsedRecords(parsed) {
+  const analysis = createAnalysis();
+  for (const parseError of parsed.parseErrors) addParseError(analysis, parseError);
+  for (const record of parsed.records) ingestRecord(analysis, record);
+  return analysis;
 }
 
 function buildReport(options, parsed) {
-  const secretState = { secretPaths: new Set() };
-  parsed.records.forEach((record, index) => scanForSecrets(record, `records[${index}]`, secretState));
-  const { samples, schemaErrors, resource } = validateSamples(parsed.records);
+  const { samples, schemaErrors, schemaErrorCount, resource, secretState, recordCount, parseErrors, parseErrorCount } = parsed;
   const correlations = {
     scoreIntensity: correlationGate(samples, "intensity", CORRELATION_GATES.intensity),
     scoreCombatSuitability: correlationGate(samples, "combatSuitability", CORRELATION_GATES.combatSuitability),
-    scoreSuccess: correlationGate(samples, "success", CORRELATION_GATES.success),
-    scoreInjury: correlationGate(samples, "injury", CORRELATION_GATES.injury),
   };
+  const suitabilityOutcome = suitabilityOutcomeGate(samples);
   const scoreHistogram = histogramConcentration(samples);
   const dominance = buildDominance(samples);
   const priors = priorAudit(samples, options.expectedRuns);
@@ -930,14 +1063,14 @@ function buildReport(options, parsed) {
 
   const gates = {
     expectedRuns: {
-      passed: parsed.records.length === options.expectedRuns,
+      passed: recordCount === options.expectedRuns,
       expected: options.expectedRuns,
-      actual: parsed.records.length,
+      actual: recordCount,
     },
     parseableInput: {
-      passed: parsed.parseErrors.length === 0,
-      parseErrors: parsed.parseErrors.slice(0, MAX_PARSE_ERRORS),
-      parseErrorCount: parsed.parseErrors.length,
+      passed: parseErrorCount === 0,
+      parseErrors,
+      parseErrorCount,
     },
     noSecretMaterial: {
       passed: secretState.secretPaths.size === 0,
@@ -945,15 +1078,16 @@ function buildReport(options, parsed) {
       secretPaths: [...secretState.secretPaths].slice(0, MAX_SECRET_PATHS),
     },
     schema: {
-      passed: schemaErrors.length === 0,
-      errorCount: schemaErrors.length,
-      errors: schemaErrors.slice(0, MAX_SCHEMA_ERRORS),
+      passed: schemaErrorCount === 0,
+      errorCount: schemaErrorCount,
+      errors: schemaErrors,
     },
     observedDesignPriors: priors,
     pearsonFisherCi: {
       passed: Object.values(correlations).every((entry) => entry.passed),
       correlations,
     },
+    suitabilityOutcome,
     scoreHistogramEntropy: scoreHistogram,
     singleBuildDominance: dominance,
     stratifiedSpread: spread,
@@ -971,7 +1105,7 @@ function buildReport(options, parsed) {
     input: {
       source: options.inputPath ? "file" : "stdin",
       expectedRuns: options.expectedRuns,
-      observedRuns: parsed.records.length,
+      observedRuns: recordCount,
     },
     gates,
     metrics: {
@@ -981,6 +1115,7 @@ function buildReport(options, parsed) {
       byScenario: groupedStats(samples, "scenario"),
       priors,
       correlations,
+      suitabilityOutcome,
       scoreHistogram,
     },
   };
@@ -990,7 +1125,7 @@ function printJson(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-function main() {
+async function main() {
   try {
     const options = parseArguments(process.argv.slice(2));
     if (options.help) {
@@ -998,8 +1133,7 @@ function main() {
       return;
     }
 
-    const input = readInput(options.inputPath);
-    const parsed = parseRecords(input);
+    const parsed = await analyzeInput(options.inputPath);
     const report = buildReport(options, parsed);
     printJson(report);
     if (!report.passed) {
@@ -1015,4 +1149,4 @@ function main() {
   }
 }
 
-main();
+void main();

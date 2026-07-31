@@ -171,6 +171,8 @@ export interface WorldSimulationContentMigratedPayload {
 }
 
 export interface IdentityIssuedPayload {
+  /** Current persisted identity-issued payload format. */
+  readonly schemaVersion: 2;
   readonly agentId: string;
   readonly explorerId: string;
   readonly explorerSecretHash?: string;
@@ -246,6 +248,8 @@ export interface LifetimeAdjustedPayload {
   readonly reason: string;
   readonly previousRemaining: number;
   readonly remaining: number;
+  /** Canonical action event that caused this adjustment, when action-scoped. */
+  readonly sourceEventId?: string;
   /**
    * PR5a additive. Server-attested reference to the viability projection
    * that triggered this adjustment. Required when `reason` is
@@ -326,6 +330,8 @@ export interface ResourceSpentPayload {
   readonly amount: number;
   readonly reason: string;
   readonly balanceAfter: number;
+  /** Canonical action event that caused this spend, when action-scoped. */
+  readonly sourceEventId?: string;
   readonly accountRef: string;
   readonly assetKey: `resource:${EpochResourceId}`;
   readonly unit: "unit";
@@ -1208,6 +1214,8 @@ export interface AgentFactionStandingChangedPayload {
 }
 
 export interface JourneyWorldSolidifiedPayload {
+  /** Current persisted journey-world-solidification payload format. */
+  readonly schemaVersion: 2;
   readonly journeyId: string;
   readonly agentId: string;
   readonly explorerId: string;
@@ -1222,6 +1230,11 @@ export interface JourneyWorldSolidifiedPayload {
   readonly completionScoreBps: number;
   readonly worldSliceHash?: `sha256:${string}`;
   readonly influenceDelta: number;
+  /**
+   * Signed route choices that contributed to this solidification. Additive so
+   * historical markers without a route remain replayable via factionStandings.
+   */
+  readonly routeIds?: readonly string[];
   readonly factionStandings: readonly {
     readonly factionId: string;
     readonly routeId: string;
@@ -1255,12 +1268,14 @@ export interface JourneyWorldSolidifiedPayload {
   /** PR1 additive. sha256 of the offer bound to this solidify, for replay. */
   readonly offerHash?: `sha256:${string}`;
   /**
-   * PR2 additive. Mirror-ledger entry ids promoted into the canonical effect
-   * events listed in {@link effectEventIds}. An empty array means this
-   * journey produced no promotable mirror collateral. Carried for replay
-   * audit so a restart-duplicate solidify can detect double-promotion.
+   * PR2 additive. Explicit mirror-ledger promotion mapping. A ledger entry may
+   * produce a canonical event with a different position, so replay must use
+   * this mapping rather than reconstructing parallel arrays positionally.
    */
-  readonly mirrorLedgerPromotedEntryIds: readonly string[];
+  readonly mirrorLedgerPromotions: readonly {
+    readonly entryId: string;
+    readonly canonicalEventId: string;
+  }[];
   /** Settlement id linking this solidify to its SettlementDecision. */
   readonly settlementId: string;
   /** Per-bucket breakdown of the completion score, for receipt audit. */

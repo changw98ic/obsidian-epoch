@@ -423,7 +423,7 @@ test("changes only player combat power to reduce encounter intensity without cha
   const prepared = calculateMissionIntensity(baseIntensity({ playerCombatPower: 200 }));
 
   assert.equal(underpowered.worldIntensity, prepared.worldIntensity);
-  assert.equal(underpowered.recommendedBand, prepared.recommendedBand);
+  assert.equal(underpowered.worldPressureBand, prepared.worldPressureBand);
   assert.equal(underpowered.playerCombatRatio < prepared.playerCombatRatio, true);
   assert.equal(underpowered.readinessGap > prepared.readinessGap, true);
   assert.equal(underpowered.encounterIntensity > prepared.encounterIntensity, true);
@@ -480,23 +480,22 @@ test("scores objective, causal, execution, risk, efficiency, survival, and integ
     resourceEfficiencyBps: 4_000,
     survivalBps: 10_000,
     integrityBps: 3_000,
-    combatPowerFitBps: 2_000,
   });
 
   assert.equal(score.objective, 80);
   assert.equal(score.causalImpact, 76);
-  assert.equal(score.execution, 66);
+  assert.equal(score.execution, 60);
   assert.equal(score.risk, 56);
   assert.equal(score.efficiency, 40);
   assert.equal(score.survival, 100);
   assert.equal(score.integrity, 30);
   assert.equal(score.antiFarmDecay, 0);
-  assert.equal(score.rawScore, 67);
-  assert.equal(score.finalScore, 67);
+  assert.equal(score.rawScore, 66);
+  assert.equal(score.finalScore, 66);
   assert.equal(score.grade, "B");
 });
 
-test("applies anti-farm decay and overwhelming-force penalty to mission scores", () => {
+test("applies anti-farm decay to mission scores", () => {
   const normal = scoreMission({
     objectiveCompletionBps: 10_000,
     pressureReliefBps: 10_000,
@@ -518,7 +517,6 @@ test("applies anti-farm decay and overwhelming-force penalty to mission scores",
     resourceEfficiencyBps: 10_000,
     survivalBps: 10_000,
     integrityBps: 10_000,
-    overwhelmingForceBps: 10_000,
     recentSimilarCompletionCount: 4,
     repeatedResolutionFamilyCount: 3,
   });
@@ -526,17 +524,17 @@ test("applies anti-farm decay and overwhelming-force penalty to mission scores",
   assert.equal(normal.rawScore, 100);
   assert.equal(normal.finalScore, 100);
   assert.equal(farmed.antiFarmDecay, 43);
-  assert.equal(farmed.rawScore, 92);
-  assert.equal(farmed.finalScore, 60);
+  assert.equal(farmed.rawScore, 100);
+  assert.equal(farmed.finalScore, 65);
   assert.equal(farmed.finalScore < normal.finalScore, true);
   assert.equal(Math.round(farmed.dimensions.reduce((sum, dimension) => sum + dimension.contribution, 0)), farmed.finalScore);
   assert.equal(
     farmed.dimensions.find((dimension) => dimension.dimensionId === "antiFarmDecay")?.reasonCode,
-    "mission_score_anti_farm_and_overwhelming_force_decay",
+    "mission_score_anti_farm_decay",
   );
 });
 
-test("lets combat power affect scoring through execution without deciding the score alone", () => {
+test("does not directly use combat power or suitability in task scoring", () => {
   const weakCombat = scoreMission({
     objectiveCompletionBps: 8_000,
     pressureReliefBps: 8_000,
@@ -547,7 +545,6 @@ test("lets combat power affect scoring through execution without deciding the sc
     resourceEfficiencyBps: 7_000,
     survivalBps: 9_000,
     integrityBps: 9_000,
-    combatPowerFitBps: 0,
   });
   const strongCombat = scoreMission({
     objectiveCompletionBps: 8_000,
@@ -559,9 +556,8 @@ test("lets combat power affect scoring through execution without deciding the sc
     resourceEfficiencyBps: 7_000,
     survivalBps: 9_000,
     integrityBps: 9_000,
-    combatPowerFitBps: 10_000,
   });
-  const poorMissionWithStrongCombat = scoreMission({
+  const poorMission = scoreMission({
     objectiveCompletionBps: 0,
     pressureReliefBps: 0,
     sideEffectControlBps: 0,
@@ -571,12 +567,11 @@ test("lets combat power affect scoring through execution without deciding the sc
     resourceEfficiencyBps: 0,
     survivalBps: 0,
     integrityBps: 0,
-    combatPowerFitBps: 10_000,
   });
 
-  assert.equal(strongCombat.execution > weakCombat.execution, true);
-  assert.equal(strongCombat.finalScore > weakCombat.finalScore, true);
-  assert.equal(poorMissionWithStrongCombat.finalScore < weakCombat.finalScore, true);
+  assert.equal(strongCombat.execution, weakCombat.execution);
+  assert.equal(strongCombat.finalScore, weakCombat.finalScore);
+  assert.equal(poorMission.finalScore < weakCombat.finalScore, true);
 });
 
 test("clamps score inputs and never lets invalid numeric extremes escape", () => {
@@ -590,8 +585,6 @@ test("clamps score inputs and never lets invalid numeric extremes escape", () =>
     resourceEfficiencyBps: 100_000,
     survivalBps: -1,
     integrityBps: 100_000,
-    combatPowerFitBps: Number.NaN,
-    overwhelmingForceBps: 100_000,
     recentSimilarCompletionCount: 100,
     repeatedResolutionFamilyCount: 100,
   });
@@ -604,7 +597,7 @@ test("clamps score inputs and never lets invalid numeric extremes escape", () =>
   assert.equal(score.survival, 0);
   assert.equal(score.integrity, 100);
   assert.equal(score.antiFarmDecay, 100);
-  assert.equal(score.rawScore, 24);
-  assert.equal(score.finalScore, 16);
+  assert.equal(score.rawScore, 32);
+  assert.equal(score.finalScore, 21);
   assert.equal(Math.round(score.dimensions.reduce((sum, dimension) => sum + dimension.contribution, 0)), score.finalScore);
 });

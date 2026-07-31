@@ -193,11 +193,26 @@ export interface BuildGroundedJourneyStoryReportInput {
    */
   readonly strategyConsistencySnapshot?: StrategyConsistencyScore;
   /**
+   * Result-page projection of the audit-only strategy score. This keeps the
+   * story builder independent from the result-page wire shape while retaining
+   * the exact server-derived values.
+   */
+  readonly strategyConsistencySummary?: {
+    readonly matchBps: number;
+    readonly classification: PrimaryViolationClassification["kind"];
+  };
+  /**
    * PR8 additive. Roleplay score projection from SettlementContext.
    * Read by report builder for evaluation display; never consumed
    * by identityFidelityPercent or reward pipeline.
    */
   readonly roleplayScore?: import("./journeyRoleplayRules.ts").RoleplayScore;
+  /** Result-page projection of the roleplay score. */
+  readonly roleplaySummary?: {
+    readonly deviationBps: number;
+    readonly doubtEventCount: number;
+    readonly exposed: boolean;
+  };
   /**
    * PR8 additive. Viability projection from SettlementContext.
    * Read by report builder for evaluation display; never consumed
@@ -625,7 +640,7 @@ function identityFidelityEvaluation(input: {
   let warning: string | undefined;
   if (identityEnded) warning = "该身份已经终结，无法继续保留。";
   else if (hasLifetime && lifetimeRemaining <= 0) warning = "该身份寿命已耗尽，无法继续保留。";
-  else if (remainingRatio !== undefined && remainingRatio <= 0.15) warning = "该身份寿命濒危，建议尽快转生。";
+  else if (remainingRatio !== undefined && remainingRatio <= 0.15) warning = "该身份寿命濒危，剩余寿命不高于上限的 15%。";
 
   return {
     identityFidelityPercent: percent,
@@ -914,18 +929,19 @@ function buildGeneratedJourneyStoryReport(
     playerImpact: playerImpactEvaluation(input.episodes, protagonist?.entityId || "", input.worldCommit),
     ...worldCommitEvaluation(input.worldCommit),
     // PR6: strategy consistency audit — independent from identityFidelity.
-    ...(input.strategyConsistencySnapshot ? {
+    ...((input.strategyConsistencySnapshot || input.strategyConsistencySummary) ? {
       strategyConsistencyAudit: {
-        matchBps: input.strategyConsistencySnapshot.matchBps,
-        classification: input.strategyConsistencySnapshot.classification.kind,
+        matchBps: input.strategyConsistencySnapshot?.matchBps ?? input.strategyConsistencySummary!.matchBps,
+        classification: input.strategyConsistencySnapshot?.classification.kind
+          ?? input.strategyConsistencySummary!.classification,
       },
     } : {}),
     // PR8: roleplay summary — independent from identityFidelity.
-    ...(input.roleplayScore ? {
+    ...((input.roleplayScore || input.roleplaySummary) ? {
       roleplaySummary: {
-        deviationBps: input.roleplayScore.deviationBps,
-        doubtEventCount: input.roleplayScore.npcDoubtEvents.length,
-        exposed: input.roleplayScore.exposed,
+        deviationBps: input.roleplayScore?.deviationBps ?? input.roleplaySummary!.deviationBps,
+        doubtEventCount: input.roleplayScore?.npcDoubtEvents.length ?? input.roleplaySummary!.doubtEventCount,
+        exposed: input.roleplayScore?.exposed ?? input.roleplaySummary!.exposed,
       },
     } : {}),
     // PR8: viability summary — independent from identityFidelity.

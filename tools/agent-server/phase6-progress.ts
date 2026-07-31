@@ -32,7 +32,7 @@ const repositoryRoot = path.resolve(scriptDirectory, "../..");
 
 function usage() {
   return [
-    "Usage: node tools/agent-server/phase6-progress.mjs [options]",
+    "Usage: node --import tsx ../agent-server/phase6-progress.ts [options]",
     "",
     "Options:",
     "  --markdown       Print a human-readable report (default)",

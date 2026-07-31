@@ -172,7 +172,7 @@ function run(argv) {
 
 function usage() {
   return [
-    "Usage: node tools/agent-server/phase6-shop-gate.mjs [--min-sink-source-bps N] --input <repo-jsonl> [--input <repo-jsonl>...]",
+    "Usage: node --import tsx ../agent-server/phase6-shop-gate.ts [--min-sink-source-bps N] --input <repo-jsonl> [--input <repo-jsonl>...]",
     "",
     "Reads repo-local shop offer, purchase, sale, and economy-audit JSON/JSONL records.",
     "Prints a redacted JSON summary and exits non-zero on gate failures.",

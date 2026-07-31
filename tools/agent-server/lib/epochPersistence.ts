@@ -1,4 +1,5 @@
 import { assertEpochEvent, type EpochEvent } from "./epoch/events.ts";
+import { upcastEvent } from "./epoch/eventUpcasters.ts";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -116,11 +117,11 @@ export function serializeEpochEventBatch(events: readonly EpochEvent[]) {
 }
 
 export function epochEventsFromPersistenceRecord(record: unknown): readonly EpochEvent[] {
-  if (!isRecord(record)) return [assertEpochEvent(record)];
+  if (!isRecord(record)) return [upcastEvent(assertEpochEvent(record))];
   if (record.type === "epoch_event_batch") {
     if (!Array.isArray(record.events)) throw new Error("epoch_event_batch_events_required");
-    return record.events.map((event) => assertEpochEvent(event));
+    return record.events.map((event) => upcastEvent(assertEpochEvent(event)));
   }
-  if (record.type === "epoch_event") return [assertEpochEvent(record.event)];
-  return [assertEpochEvent(record)];
+  if (record.type === "epoch_event") return [upcastEvent(assertEpochEvent(record.event))];
+  return [upcastEvent(assertEpochEvent(record))];
 }

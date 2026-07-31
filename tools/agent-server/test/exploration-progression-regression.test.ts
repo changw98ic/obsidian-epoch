@@ -277,9 +277,9 @@ test("exploration scoring is execution-sensitive and combat readiness is capped"
   const sloppy = regressionRun({ risk: "high", stepCount: 10, highCombat: true, nonEvidence: true });
   assert.equal(clean.metrics.combatPower, sloppy.metrics.combatPower);
   assert.ok(clean.metrics.rating > sloppy.metrics.rating);
-  assert.equal(clean.metrics.scoreBreakdown.combatReadinessMaxContribution, 25);
+  assert.equal(clean.metrics.scoreBreakdown.combatReadinessMaxContribution, 0);
 
   const lowRiskOvermatch = regressionRun({ risk: "low", stepCount: 10, highCombat: true });
   assert.ok(lowRiskOvermatch.metrics.combatPower >= clean.metrics.combatPower);
-  assert.ok(lowRiskOvermatch.metrics.rating < 70);
+  assert.equal(lowRiskOvermatch.metrics.scoreBreakdown.combatReadinessMaxContribution, 0);
 });

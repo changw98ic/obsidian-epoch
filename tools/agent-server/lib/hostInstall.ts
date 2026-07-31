@@ -76,7 +76,7 @@ function codexMcpServerSettings(mcp: EpochMcpInstallConfig) {
 }
 
 const webBridgePublicPages = {
-  console: "/epoch/console",
+  console: "/epoch/web-play",
   play: "/epoch/web-play",
   install: "/epoch/install",
   world: "/epoch/world",

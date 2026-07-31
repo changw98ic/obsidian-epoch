@@ -14,7 +14,8 @@ import { resolveEpochFrontstageStatus } from "../frontstageStatus.ts";
 import { epochHostConfigFiles, epochHostConfigManifestEntries, epochHostInstallEntries } from "../hostInstall.ts";
 import { epochItemAssetManifestEntries } from "../itemAssets.ts";
 import { epochLocationAssetManifestEntries } from "../locationAssets.ts";
-import { AGENT_WORLD_TOOLS, MCP_PROTOCOL_VERSION } from "../mcpTools.ts";
+import { MCP_PROTOCOL_VERSION } from "../mcpConstants.ts";
+import { AGENT_WORLD_TOOLS } from "../mcpTools.ts";
 import { epochNpcAssetManifestEntries } from "../npcAssets.ts";
 import {
   OBSIDIAN_EPOCH_PACKAGE_FILE,
@@ -30,6 +31,8 @@ import {
 } from "../packageArchive.ts";
 import { epochPageSceneAssetManifestEntries } from "../pageSceneAssets.ts";
 import { renderEpochInstallPublicPageHtml } from "../publicWorldPageHtml.ts";
+import { type PublicReleaseReadiness } from "../publicReleaseReadiness.ts";
+import { obsidianEpochPublicSurface } from "../publicSurfaceContract.ts";
 import { epochRelationshipAssetManifestEntries } from "../relationshipAssets.ts";
 import {
   epochDowntimeAssetManifestEntries,
@@ -46,6 +49,11 @@ const OBSIDIAN_EPOCH_INSTALL_VERSION = "0.1.0-alpha";
 type InstallRouteContext = EpochHttpRouteContext & {
   readonly publicServerBase: string;
   readonly sendBinary: SendBinary;
+  readonly publicReleaseReadiness: (packageInfo: {
+    readonly sha256: string;
+    readonly releaseKeyId: string;
+    readonly signingTrust: string;
+  }) => Promise<PublicReleaseReadiness>;
 };
 
 type Runtime = EpochHttpRouteContext["runtime"];
@@ -192,7 +200,11 @@ function epochInstallVerification() {
   };
 }
 
-function epochInstallStatus(packageInfo: EpochInstallPackageInfo, serverBase = "http://127.0.0.1:8787") {
+function epochInstallStatus(
+  packageInfo: EpochInstallPackageInfo,
+  publicRelease: PublicReleaseReadiness,
+  serverBase = "http://127.0.0.1:8787",
+) {
   const verification = epochInstallVerification();
   const packageUrl = `${serverBase}/api/epoch/package/${OBSIDIAN_EPOCH_PACKAGE_FILE}`;
   const hostInstall = epochHostInstallEntries(serverBase);
@@ -205,6 +217,8 @@ function epochInstallStatus(packageInfo: EpochInstallPackageInfo, serverBase = "
     serverBase,
     truthLevel: "live_lightweight",
     frontstageStatus: resolveEpochFrontstageStatus(),
+    publicRelease,
+    publicSurface: obsidianEpochPublicSurface(),
     manifest: {
       endpoint: "/api/epoch/install-manifest",
       name: OBSIDIAN_EPOCH_INSTALL_NAME,
@@ -375,9 +389,15 @@ export async function handleEpochInstallRoutes(context: InstallRouteContext): Pr
 
   if (method === "GET" && pathname === "/epoch/install") {
     const { packageInfo } = await epochInstallPackageArchive(publicServerBase);
+    const verification = epochInstallVerification();
     context.sendHtml(request, response, 200, renderEpochInstallPublicPageHtml({
       ...(await epochInstallManifest(packageInfo, publicServerBase)),
       ...epochInstallFeed(runtime),
+      publicRelease: await context.publicReleaseReadiness({
+        sha256: packageInfo.sha256,
+        releaseKeyId: verification.packageReleaseKeyId,
+        signingTrust: verification.packageSigningTrust,
+      }),
     }), allowedOrigins);
     return true;
   }
@@ -390,7 +410,16 @@ export async function handleEpochInstallRoutes(context: InstallRouteContext): Pr
 
   if (method === "GET" && pathname === "/api/epoch/install-status") {
     const { packageInfo } = await epochInstallPackageArchive(publicServerBase);
-    context.sendJson(request, response, 200, epochInstallStatus(packageInfo, publicServerBase), allowedOrigins);
+    const verification = epochInstallVerification();
+    context.sendJson(request, response, 200, epochInstallStatus(
+      packageInfo,
+      await context.publicReleaseReadiness({
+        sha256: packageInfo.sha256,
+        releaseKeyId: verification.packageReleaseKeyId,
+        signingTrust: verification.packageSigningTrust,
+      }),
+      publicServerBase,
+    ), allowedOrigins);
     return true;
   }
 

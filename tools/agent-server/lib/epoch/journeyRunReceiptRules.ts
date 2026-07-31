@@ -3,9 +3,20 @@ import {
   causalCanonicalJsonHash,
   type CausalCanonicalJsonValue,
 } from "./causalCanonicalJson.ts";
+import {
+  phase6PlayerPanelNoChangeReasons,
+  type Phase6PlayerPanelNoChangeReasons,
+} from "./phase6PlayerSnapshotRules.ts";
+import {
+  PHASE6_RAG_NO_CHANGE_REASONS,
+  type Phase6NoChangeReason,
+} from "./phase6ProjectionDeltaRules.ts";
+import { SETTLEMENT_POLICY_VERSION } from "./journeySettlementRules.ts";
 
 export const JOURNEY_RUN_RECEIPT_VERSION = "journey_run_receipt.v2" as const;
 export const JOURNEY_RUN_RECEIPT_AUTHORITY = "server_settled" as const;
+export const JOURNEY_RUN_SETTLEMENT_POLICY_VERSION =
+  `phase6-settlement-policy-v${SETTLEMENT_POLICY_VERSION}` as const;
 export const JOURNEY_RUN_SCORE_CONTRACT_VERSION = "phase6_score.v2" as const;
 export const JOURNEY_RUN_SCORE_AUTHORITY = "server_authoritative" as const;
 export const JOURNEY_RUN_SCORE_FORMULA =
@@ -112,10 +123,27 @@ export interface JourneyRunRagClaim {
   readonly relevance: number;
 }
 
+export interface JourneyRunPersistentMemoryDelta {
+  readonly type: "persistent_memory";
+  readonly memoryId: string;
+  readonly importance: "high";
+  readonly sourceEventIds: readonly string[];
+}
+
 export interface JourneyRunRagGrounding {
   readonly queryHash: JourneyRunReceiptHash;
   readonly corpusHash: JourneyRunReceiptHash;
   readonly claims: readonly JourneyRunRagClaim[];
+  /** Projection-only audit data derived from canonical events; it never writes world state. */
+  readonly importantMemoryCount: number;
+  readonly dedupedRoutes?: number;
+  readonly duplicateRoutes?: number;
+  readonly ordinaryNodePersistenceExpansion: number;
+  readonly delta: {
+    readonly entries: readonly JourneyRunPersistentMemoryDelta[];
+  };
+  /** Required exactly when this run creates no persistent RAG-memory projection. */
+  readonly noChangeReason?: Phase6NoChangeReason;
 }
 
 export interface JourneyRunWorldReceipt {
@@ -172,6 +200,7 @@ export interface JourneyRunReceipt {
   readonly catalogVersion: string;
   readonly codeVersion: string;
   readonly scenarioMatrixVersion: string;
+  readonly settlementPolicyVersion: typeof JOURNEY_RUN_SETTLEMENT_POLICY_VERSION;
   readonly matrixVersion?: string;
   readonly generatedAt: string;
   readonly startedAt: string;
@@ -179,6 +208,7 @@ export interface JourneyRunReceipt {
   readonly world: JourneyRunWorldReceipt;
   readonly snapshots: JourneyRunReceiptSnapshots;
   readonly deltas: readonly JourneyRunStructuredDelta[];
+  readonly noChangeReasons?: Phase6PlayerPanelNoChangeReasons;
   readonly score: JourneyRunScore;
   readonly suitability: JourneyRunSuitability;
   readonly rag: JourneyRunRagGrounding;
@@ -429,6 +459,7 @@ function receiptBody(receipt: Omit<JourneyRunReceipt, "integrity">) {
     catalogVersion: receipt.catalogVersion,
     codeVersion: receipt.codeVersion,
     scenarioMatrixVersion: receipt.scenarioMatrixVersion,
+    settlementPolicyVersion: receipt.settlementPolicyVersion,
     ...(receipt.matrixVersion !== undefined ? { matrixVersion: receipt.matrixVersion } : {}),
     generatedAt: receipt.generatedAt,
     startedAt: receipt.startedAt,
@@ -436,6 +467,7 @@ function receiptBody(receipt: Omit<JourneyRunReceipt, "integrity">) {
     world: receipt.world,
     snapshots: receipt.snapshots,
     deltas: receipt.deltas,
+    ...(receipt.noChangeReasons !== undefined ? { noChangeReasons: receipt.noChangeReasons } : {}),
     score: receipt.score,
     suitability: receipt.suitability,
     rag: receipt.rag,
@@ -479,6 +511,10 @@ export function buildJourneyRunReceipt(input: BuildJourneyRunReceiptInput): Jour
     const first = scoreValidation.issues[0];
     throw new TypeError(`${first?.code ?? "journey_run_receipt_score_invalid"}:${first?.path ?? "$"}`);
   }
+  const noChangeReasons = phase6PlayerPanelNoChangeReasons(
+    input.snapshots.before.body,
+    input.snapshots.after.body,
+  );
   const body = receiptBody({
     receiptType: "journey_run_receipt",
     version: JOURNEY_RUN_RECEIPT_VERSION,
@@ -495,6 +531,7 @@ export function buildJourneyRunReceipt(input: BuildJourneyRunReceiptInput): Jour
     catalogVersion: input.catalogVersion.trim(),
     codeVersion: input.codeVersion.trim(),
     scenarioMatrixVersion: input.scenarioMatrixVersion.trim(),
+    settlementPolicyVersion: JOURNEY_RUN_SETTLEMENT_POLICY_VERSION,
     ...(input.matrixVersion !== undefined ? { matrixVersion: input.matrixVersion } : {}),
     generatedAt: input.generatedAt,
     startedAt: input.startedAt,
@@ -508,6 +545,7 @@ export function buildJourneyRunReceipt(input: BuildJourneyRunReceiptInput): Jour
     },
     snapshots: input.snapshots,
     deltas: input.deltas,
+    ...(noChangeReasons !== undefined ? { noChangeReasons } : {}),
     score: input.score,
     suitability: input.suitability,
     rag: input.rag,
@@ -533,6 +571,77 @@ export function extractJourneyRunReceiptEventIds(receipt: JourneyRunReceipt): re
   ]).filter(nonEmpty);
 }
 
+function assertJourneyRunRag(
+  value: unknown,
+  path: string,
+  issues: JourneyRunReceiptValidationIssue[],
+): void {
+  if (!isRecord(value) || !isSha256(value.queryHash) || !isSha256(value.corpusHash) || !Array.isArray(value.claims)) {
+    issues.push(issue("journey_run_receipt_rag_invalid", path));
+    return;
+  }
+  value.claims.forEach((claim, index) => {
+    if (!isRecord(claim) || !nonEmpty(claim.claimId) || !nonEmpty(claim.sourceId) || !isSha256(claim.sourceHash)) {
+      issues.push(issue("journey_run_receipt_rag_claim_invalid", `${path}.claims[${index}]`));
+    }
+    if (!isRecord(claim) || typeof claim.relevance !== "number" || !Number.isFinite(claim.relevance) || claim.relevance < 0 || claim.relevance > 1) {
+      issues.push(issue("journey_run_receipt_rag_relevance_invalid", `${path}.claims[${index}].relevance`));
+    }
+  });
+
+  const importantMemoryCount = value.importantMemoryCount;
+  const hasValidImportantMemoryCount = typeof importantMemoryCount === "number"
+    && Number.isInteger(importantMemoryCount)
+    && importantMemoryCount >= 0
+    && importantMemoryCount <= 3;
+  if (!hasValidImportantMemoryCount) {
+    issues.push(issue("journey_run_receipt_rag_important_memory_count_invalid", `${path}.importantMemoryCount`));
+  }
+  const ordinaryExpansion = value.ordinaryNodePersistenceExpansion;
+  const hasValidOrdinaryExpansion = typeof ordinaryExpansion === "number"
+    && Number.isInteger(ordinaryExpansion)
+    && ordinaryExpansion >= 0;
+  if (!hasValidOrdinaryExpansion) {
+    issues.push(issue("journey_run_receipt_rag_ordinary_expansion_invalid", `${path}.ordinaryNodePersistenceExpansion`));
+  }
+
+  const delta = value.delta;
+  if (!isRecord(delta) || !Array.isArray(delta.entries)) {
+    issues.push(issue("journey_run_receipt_rag_delta_required", `${path}.delta.entries`));
+    return;
+  }
+  if (hasValidImportantMemoryCount && importantMemoryCount !== delta.entries.length) {
+    issues.push(issue("journey_run_receipt_rag_count_delta_mismatch", `${path}.importantMemoryCount`));
+  }
+  const memoryIds = new Set<string>();
+  delta.entries.forEach((entry, index) => {
+    if (!isRecord(entry)
+      || entry.type !== "persistent_memory"
+      || !nonEmpty(entry.memoryId)
+      || entry.importance !== "high"
+      || !Array.isArray(entry.sourceEventIds)
+      || entry.sourceEventIds.length === 0
+      || entry.sourceEventIds.some((eventId) => !nonEmpty(eventId))) {
+      issues.push(issue("journey_run_receipt_rag_delta_entry_invalid", `${path}.delta.entries[${index}]`));
+      return;
+    }
+    if (memoryIds.has(entry.memoryId)) {
+      issues.push(issue("journey_run_receipt_rag_delta_memory_duplicate", `${path}.delta.entries[${index}].memoryId`));
+      return;
+    }
+    memoryIds.add(entry.memoryId);
+  });
+
+  const noChangeReason = value.noChangeReason;
+  if (delta.entries.length === 0) {
+    if (!nonEmpty(noChangeReason) || !PHASE6_RAG_NO_CHANGE_REASONS.has(noChangeReason as Phase6NoChangeReason)) {
+      issues.push(issue("journey_run_receipt_rag_no_change_reason_required", `${path}.noChangeReason`));
+    }
+  } else if (noChangeReason !== undefined) {
+    issues.push(issue("journey_run_receipt_rag_no_change_reason_unexpected", `${path}.noChangeReason`));
+  }
+}
+
 export function validateJourneyRunReceipt(receipt: unknown): JourneyRunReceiptValidationResult {
   const issues: JourneyRunReceiptValidationIssue[] = [];
   if (!isRecord(receipt)) return { ok: false, issues: [issue("journey_run_receipt_invalid", "$")] };
@@ -540,6 +649,9 @@ export function validateJourneyRunReceipt(receipt: unknown): JourneyRunReceiptVa
   if (candidate.receiptType !== "journey_run_receipt") issues.push(issue("journey_run_receipt_type_invalid", "$.receiptType"));
   if (candidate.version !== JOURNEY_RUN_RECEIPT_VERSION) issues.push(issue("journey_run_receipt_version_invalid", "$.version"));
   if (candidate.authority !== JOURNEY_RUN_RECEIPT_AUTHORITY) issues.push(issue("journey_run_receipt_authority_invalid", "$.authority"));
+  if (candidate.settlementPolicyVersion !== JOURNEY_RUN_SETTLEMENT_POLICY_VERSION) {
+    issues.push(issue("journey_run_receipt_settlement_policy_version_invalid", "$.settlementPolicyVersion"));
+  }
   for (const field of [
     "receiptId",
     "runId",
@@ -590,6 +702,24 @@ export function validateJourneyRunReceipt(receipt: unknown): JourneyRunReceiptVa
       }
     }
   }
+  const expectedNoChangeReasons = isRecord(candidate.snapshots)
+    ? phase6PlayerPanelNoChangeReasons(candidate.snapshots.before?.body, candidate.snapshots.after?.body)
+    : undefined;
+  if (expectedNoChangeReasons !== undefined) {
+    if (!isRecord(candidate.noChangeReasons)) {
+      issues.push(issue("journey_run_receipt_no_change_reasons_required", "$.noChangeReasons"));
+    } else {
+      const actualReasons = candidate.noChangeReasons as Readonly<Record<string, unknown>>;
+      if (Object.values(actualReasons).some((reason) => !nonEmpty(reason))) {
+        issues.push(issue("journey_run_receipt_no_change_reasons_invalid", "$.noChangeReasons"));
+      } else if (
+        causalCanonicalJson(actualReasons as unknown as CausalCanonicalJsonValue)
+        !== causalCanonicalJson(expectedNoChangeReasons as unknown as CausalCanonicalJsonValue)
+      ) {
+        issues.push(issue("journey_run_receipt_no_change_reasons_mismatch", "$.noChangeReasons"));
+      }
+    }
+  }
   if (!Array.isArray(candidate.deltas)) {
     issues.push(issue("journey_run_receipt_deltas_invalid", "$.deltas"));
   } else {
@@ -608,18 +738,7 @@ export function validateJourneyRunReceipt(receipt: unknown): JourneyRunReceiptVa
   }
   assertJourneyRunScore(candidate.score, "$.score", issues);
   assertMetricMap(candidate.suitability, JOURNEY_RUN_SUITABILITY_DIMENSIONS, "$.suitability", issues);
-  if (!isRecord(candidate.rag) || !isSha256(candidate.rag.queryHash) || !isSha256(candidate.rag.corpusHash) || !Array.isArray(candidate.rag.claims)) {
-    issues.push(issue("journey_run_receipt_rag_invalid", "$.rag"));
-  } else {
-    candidate.rag.claims.forEach((claim, index) => {
-      if (!nonEmpty(claim.claimId) || !nonEmpty(claim.sourceId) || !isSha256(claim.sourceHash)) {
-        issues.push(issue("journey_run_receipt_rag_claim_invalid", `$.rag.claims[${index}]`));
-      }
-      if (typeof claim.relevance !== "number" || !Number.isFinite(claim.relevance) || claim.relevance < 0 || claim.relevance > 1) {
-        issues.push(issue("journey_run_receipt_rag_relevance_invalid", `$.rag.claims[${index}].relevance`));
-      }
-    });
-  }
+  assertJourneyRunRag(candidate.rag, "$.rag", issues);
   if (!isRecord(candidate.eventIds)
     || !Array.isArray(candidate.eventIds.source)
     || !Array.isArray(candidate.eventIds.settlement)

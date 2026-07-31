@@ -14,19 +14,22 @@ const SECRET_KEY = /(?:secret|token|api[-_]?key|authorization|password|credentia
 const SECRET_VALUE = /(?:\b(?:sk-[A-Za-z0-9_-]{12,}|Bearer\s+[A-Za-z0-9._~+/=-]{12,}|xox[baprs]-[A-Za-z0-9-]{12,}|AKIA[0-9A-Z]{16})\b|-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----)/i;
 const BAD_FALLBACK = /(?:internal_error|default[_ -]?fallback|\bfallback_default\b)/i;
 const EMPTY_REASON = /^(?:unknown|none|null|n\/a|default|internal_error|fallback|default[_ -]?fallback)$/i;
+const JOURNEY_IDENTITY_PATHS = [
+  ["journeyId"],
+  ["journey_id"],
+  ["meta", "journeyId"],
+  ["payload", "journeyId"],
+  ["runReceipt", "journeyId"],
+  ["receipt", "journeyId"],
+];
+
 const RUN_IDENTITY_PATHS = [
   ["runId"],
   ["run_id"],
-  ["journeyId"],
-  ["journey_id"],
   ["meta", "runId"],
-  ["meta", "journeyId"],
   ["payload", "runId"],
-  ["payload", "journeyId"],
   ["runReceipt", "runId"],
-  ["runReceipt", "journeyId"],
   ["receipt", "runId"],
-  ["receipt", "journeyId"],
 ];
 
 const ATTRIBUTE_ALIASES = [
@@ -144,7 +147,7 @@ const CURRENT_REQUIRED_DOMAINS = [
 
 function usage() {
   return [
-    "Usage: node tools/agent-server/phase6-player-panel-gate.mjs --before <repo-jsonl> --after <repo-jsonl> --receipt <repo-jsonl> [--expected-runs 10]",
+    "Usage: node --import tsx ../agent-server/phase6-player-panel-gate.ts --before <repo-jsonl> --after <repo-jsonl> --receipt <repo-jsonl> [--expected-runs 10]",
     "",
     "Reads ten-run before/after player panel JSON/JSONL and RunReceipt JSON/JSONL.",
     "Prints only counts, hashes, and stable error codes. Exits non-zero on gate failure.",
@@ -354,12 +357,28 @@ function textValue(value) {
   return String(value);
 }
 
+function selectedRunIdentity(record) {
+  // A Phase 6 receipt has two intentionally different identifiers: runId
+  // identifies the experiment execution and journeyId identifies the player
+  // journey. The before/after panels are attached to a journey, so use that
+  // shared identity whenever it is available. Only compare values within the
+  // selected identifier namespace; comparing runId and journeyId directly
+  // would incorrectly reject a valid receipt.
+  const journeyIds = unique(JOURNEY_IDENTITY_PATHS
+    .map((segments) => textValue(getPath(record, segments)))
+    .filter(Boolean));
+  if (journeyIds.length > 0) return journeyIds;
+  return unique(RUN_IDENTITY_PATHS
+    .map((segments) => textValue(getPath(record, segments)))
+    .filter(Boolean));
+}
+
 function runIdentity(record) {
-  return textValue(firstValue(record, RUN_IDENTITY_PATHS));
+  return selectedRunIdentity(record)[0];
 }
 
 function runIdentities(record) {
-  return unique(RUN_IDENTITY_PATHS.map((segments) => textValue(getPath(record, segments))).filter(Boolean));
+  return selectedRunIdentity(record);
 }
 
 function extractPanel(record) {

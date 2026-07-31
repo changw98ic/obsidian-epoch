@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 
 import type { EpochEvent } from "./events.ts";
-import type { JourneyActionResolution } from "./journeyActionResolutionRules.ts";
+import {
+  JOURNEY_ACTION_RESOLUTION_RULE_VERSION,
+  type JourneyActionResolution,
+} from "./journeyActionResolutionRules.ts";
 import { epochEventsForPersistence } from "./runtimePublicProjectionRules.ts";
 import type { Phase6ServerScoringWorldCursor } from "./phase6ServerScoringRules.ts";
 
@@ -60,6 +63,12 @@ export interface Phase6ServerActionResolutionEvidence
   extends Omit<JourneyActionResolution, "authority">, Phase6ServerOutcomeEvidenceBinding {
   readonly source: "hosted_action_recorded";
   readonly serverResolutionAuthority: JourneyActionResolution["authority"];
+  /**
+   * `safe_recall` is a server-signed withdrawal.  It deliberately resolves as
+   * a failed objective without pretending that a normal task action occurred.
+   */
+  readonly resolutionKind: "journey_action" | "safe_recall";
+  readonly recallMode?: "server_safe_return";
   readonly journeyId: string;
   readonly actionOptionId: string;
   readonly candidateText?: {
@@ -145,6 +154,7 @@ interface ActionEvidence {
   readonly commandId: string;
   readonly actionId: string;
   readonly resolution: JourneyActionResolution;
+  readonly resolutionKind: "journey_action" | "safe_recall";
 }
 
 function finding(
@@ -268,6 +278,63 @@ function isJourneyResolution(value: unknown): value is JourneyActionResolution {
     && typeof resolution.difficulty === "number";
 }
 
+function isServerSafeRecallResult(
+  result: UnknownRecord | undefined,
+  actionId: string,
+  actionOptionId: string | undefined,
+): boolean {
+  if (!result
+    || result.recalled !== true
+    || result.recallMode !== "server_safe_return"
+    || resultActionId(result) !== actionId
+    || (actionOptionId !== undefined && resultActionOptionId(result) !== actionOptionId)) {
+    return false;
+  }
+  return Array.isArray(result.episodes) && result.episodes.some((episode) => {
+    const storyBeat = record(record(record(episode).serverFacts).storyBeat);
+    return record(storyBeat.selectedAction).optionKey === "recall_without_objective";
+  });
+}
+
+function safeRecallResolution(
+  event: IndexedEvent,
+  result: UnknownRecord | undefined,
+  actionId: string,
+  actionOptionId: string | undefined,
+): JourneyActionResolution | undefined {
+  if (!isServerSafeRecallResult(result, actionId, actionOptionId)) return undefined;
+  return {
+    ruleVersion: JOURNEY_ACTION_RESOLUTION_RULE_VERSION,
+    authority: "server",
+    decisionKeyId: "server_safe_recall",
+    inputHash: stableHash({
+      kind: "server_safe_recall",
+      actionId,
+      ...(actionOptionId ? { actionOptionId } : {}),
+      eventId: event.eventId,
+      recallMode: "server_safe_return",
+    }),
+    outcome: "failure",
+    completionKind: "failed",
+    score: 0,
+    difficulty: 0,
+    margin: 0,
+    factors: {
+      baseCompetence: 0,
+      identity: 0,
+      attributes: 0,
+      resources: 0,
+      equipment: 0,
+      sceneSupport: 0,
+      journeyPreparation: 0,
+      condition: 0,
+      goalAlignment: 0,
+      deterministicVariance: 0,
+    },
+    summary: text(event.payload.outcomeSummary) || "server_safe_recall",
+  };
+}
+
 function eventTarget(event: IndexedEvent): Phase6ServerOutcomeFact["target"] {
   const aggregateType = text(record(event.event).aggregateType) || "event";
   const aggregateId = text(record(event.event).aggregateId)
@@ -383,12 +450,24 @@ function buildActionEvidence(
     .map((event) => {
       const actionId = text(event.payload.actionId);
       const actionOptionId = text(event.payload.actionOptionId);
-      const resolution = event.payload.journeyResolution;
-      if (!actionId || !isJourneyResolution(resolution)) return undefined;
+      if (!actionId) return undefined;
       const commandResult = commandResultForAction(actionId, actionOptionId, results);
       const commandId = commandIdFor(event, commandResult);
+      const normalResolution = isJourneyResolution(event.payload.journeyResolution)
+        ? event.payload.journeyResolution
+        : undefined;
+      const resolution = normalResolution
+        || safeRecallResolution(event, commandResult, actionId, actionOptionId);
+      if (!resolution) return undefined;
       if (!commandId) return undefined;
-      return { event, commandResult, commandId, actionId, resolution };
+      return {
+        event,
+        commandResult,
+        commandId,
+        actionId,
+        resolution,
+        resolutionKind: normalResolution ? "journey_action" : "safe_recall",
+      };
     })
     .filter((entry): entry is ActionEvidence => entry !== undefined)
     .sort((left, right) =>
@@ -426,6 +505,8 @@ function buildActionResolution(
     authority: "server_commit",
     source: "hosted_action_recorded",
     serverResolutionAuthority: evidence.resolution.authority,
+    resolutionKind: evidence.resolutionKind,
+    ...(evidence.resolutionKind === "safe_recall" ? { recallMode: "server_safe_return" as const } : {}),
     eventIds,
     commandId: evidence.commandId,
     actionId: evidence.actionId,

@@ -17,6 +17,10 @@ import {
   epochHostInstallEntries,
 } from "./hostInstall.ts";
 import { epochAgentWorldToolNames } from "./mcpTools.ts";
+import {
+  OBSIDIAN_EPOCH_PUBLIC_PAGES as PUBLIC_PAGES,
+  obsidianEpochPublicSurface,
+} from "./publicSurfaceContract.ts";
 
 export const OBSIDIAN_EPOCH_PACKAGE_FILE = "obsidian-epoch-agent-world-0.1.0-alpha.tar.gz";
 export const OBSIDIAN_EPOCH_PACKAGE_INTEGRITY_FILE = "obsidian-epoch/assets/package-integrity.json";
@@ -27,32 +31,13 @@ export const OBSIDIAN_EPOCH_SOURCE_DATE_EPOCH_ENV_VAR = "SOURCE_DATE_EPOCH";
 // Stable fallback derived from the repository release revision timestamp.
 export const OBSIDIAN_EPOCH_RELEASE_EPOCH_SECONDS = 1_780_806_923;
 export const OBSIDIAN_EPOCH_RELEASE_EPOCH_REVISION = "e3b228dc3feba56bb02edd2ddbc46de685276278";
-export const OBSIDIAN_EPOCH_PUBLIC_PAGES = {
-  console: "/epoch/console",
-  webPlay: "/epoch/web-play",
-  install: "/epoch/install",
-  pairing: "/epoch/pair",
-  world: "/epoch/world",
-  explorer: "/epoch/explorer/{explorerId}",
-  agent: "/epoch/agent/{agentId}",
-  hosted: "/epoch/hosted/{sessionId}",
-  region: "/epoch/region/{regionId}",
-  directTrade: "/epoch/direct-trade/{tradeId}",
-  partyRun: "/epoch/party-run/{partyRunId}",
-  season: "/epoch/season/{seasonId}",
-  npc: "/epoch/npc/{npcId}",
-  archive: "/epoch/archive/{agentId}",
-  auditIndex: "/epoch/audit",
-  audit: "/epoch/audit/{eventId}",
-  result: "/epoch/result/{pageId}",
-} as const;
+export const OBSIDIAN_EPOCH_PUBLIC_PAGES = PUBLIC_PAGES;
 
-export const OBSIDIAN_EPOCH_PAIRING_SURFACE = {
-  page: "/epoch/pair",
-  register: "/api/epoch/pairing/register",
-  issueAccessToken: "/api/epoch/mcp/access-tokens",
-  revokeAccessToken: "/api/epoch/mcp/access-tokens/revoke",
-  tokenEnvironmentVariable: "AGENT_WORLD_MCP_TOKEN",
+export const OBSIDIAN_EPOCH_MCP_BOOTSTRAP_SURFACE = {
+  tool: "obsidian_epoch.register_explorer",
+  authentication: "anonymous_mcp_bootstrap",
+  credentialHandoff: "package_stdio_proxy",
+  nextTool: "obsidian_epoch.agent_briefing",
   serverEnvironmentVariable: "AGENT_WORLD_SERVER",
 } as const;
 
@@ -517,7 +502,8 @@ export function obsidianEpochInstallSurface(
       readiness: "/api/health",
       epochReadiness: "/api/epoch/health",
     },
-    pairing: { ...OBSIDIAN_EPOCH_PAIRING_SURFACE },
+    bootstrap: { ...OBSIDIAN_EPOCH_MCP_BOOTSTRAP_SURFACE },
+    publicSurface: obsidianEpochPublicSurface(),
     publicPages: { ...OBSIDIAN_EPOCH_PUBLIC_PAGES },
     playbooks: { ...OBSIDIAN_EPOCH_PLAYBOOKS },
     tools: epochAgentWorldToolNames(),
@@ -645,6 +631,7 @@ export function synchronizeObsidianEpochInstallManifest(value: unknown, requeste
     || existingDistribution?.mode === "live-rewritten"
     ? "live-rewritten"
     : "local-template";
+  delete manifest.pairing;
   Object.assign(manifest, obsidianEpochInstallSurface(serverBase, distributionMode));
   manifest.serverBase = serverBase;
   manifest.packageUrl = packageUrl(serverBase);

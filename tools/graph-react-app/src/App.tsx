@@ -358,14 +358,14 @@ export default function App() {
   }
 
   function openMap() {
-    window.history.replaceState(null, "", isWebPlayPath ? "/epoch/console" : window.location.pathname);
+    window.history.replaceState(null, "", isWebPlayPath ? "/" : window.location.pathname);
     setAppMode("map");
   }
 
   if (appMode === "agent") {
     return (
       <Suspense fallback={<main className="loading-page"><h1>正在加载 Agent 探索控制台</h1></main>}>
-        <AgentExplorer onBack={openMap} initialSurface={isWebPlayPath ? "web-bridge" : undefined} />
+        <AgentExplorer onBack={openMap} initialSurface="web-bridge" />
       </Suspense>
     );
   }

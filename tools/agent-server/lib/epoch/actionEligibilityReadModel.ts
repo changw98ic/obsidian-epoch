@@ -74,13 +74,7 @@ export const EPOCH_ACTIVE_IDENTITY_TOOL_NAMES = [
   "obsidian_epoch.begin_phase6_run",
 ] as const;
 
-export const EPOCH_ACTIVE_IDENTITY_RECOMMENDED_TOOLS = [
-  "obsidian_epoch.turn_card",
-  "obsidian_epoch.start_hosted_session",
-  "obsidian_epoch.web_bridge_turn",
-] as const;
-
-export const EPOCH_ARCHIVED_IDENTITY_RECOMMENDED_TOOLS = [
+export const EPOCH_ARCHIVED_IDENTITY_LIFECYCLE_TOOL_NAMES = [
   "obsidian_epoch.identity_archive",
   "obsidian_epoch.result_page",
   "obsidian_epoch.reincarnate",
@@ -93,7 +87,6 @@ export interface EpochActionEligibilityInfo {
   readonly reason: string;
   readonly activeOnlyTools: readonly string[];
   readonly blockedTools: readonly string[];
-  readonly recommendedTools: readonly string[];
 }
 
 export function actionEligibilityView(identity?: EpochAgentIdentity): EpochActionEligibilityInfo {
@@ -102,10 +95,9 @@ export function actionEligibilityView(identity?: EpochAgentIdentity): EpochActio
       statusField: "progress.identity.status",
       status: "missing",
       canUseActiveTools: false,
-      reason: "No current identity is selected; issue or select a server identity before active play.",
+      reason: "No current identity is selected; active gameplay tools are unavailable.",
       activeOnlyTools: EPOCH_ACTIVE_IDENTITY_TOOL_NAMES,
       blockedTools: EPOCH_ACTIVE_IDENTITY_TOOL_NAMES,
-      recommendedTools: ["obsidian_epoch.identity", "obsidian_epoch.explorer_profile"],
     };
   }
   if (identity.status !== "active") {
@@ -113,10 +105,9 @@ export function actionEligibilityView(identity?: EpochAgentIdentity): EpochActio
       statusField: "progress.identity.status",
       status: "archived",
       canUseActiveTools: false,
-      reason: "This identity is archived; use archive/result/reincarnation tools instead of active gameplay tools.",
+      reason: "This identity is archived; active gameplay tools are unavailable.",
       activeOnlyTools: EPOCH_ACTIVE_IDENTITY_TOOL_NAMES,
       blockedTools: EPOCH_ACTIVE_IDENTITY_TOOL_NAMES,
-      recommendedTools: EPOCH_ARCHIVED_IDENTITY_RECOMMENDED_TOOLS,
     };
   }
   return {
@@ -126,6 +117,5 @@ export function actionEligibilityView(identity?: EpochAgentIdentity): EpochActio
     reason: "This identity is active and can use owner-authorized active gameplay tools.",
     activeOnlyTools: EPOCH_ACTIVE_IDENTITY_TOOL_NAMES,
     blockedTools: [],
-    recommendedTools: EPOCH_ACTIVE_IDENTITY_RECOMMENDED_TOOLS,
   };
 }

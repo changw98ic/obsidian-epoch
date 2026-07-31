@@ -10,7 +10,7 @@ import { copyFile, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, 
 import { DatabaseSync } from "node:sqlite";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { epochEventsFromPersistenceRecord } from "./epochPersistence.ts";
-import { createAgentWorldRuntime } from "./mcpTools.ts";
+import { createAgentWorldRuntime } from "./mcpRuntimeCore.ts";
 import { hydrateAgentRuntimeOptions } from "./store.ts";
 import {
   validatePlayerMcpAccessTokenLedgerContent,

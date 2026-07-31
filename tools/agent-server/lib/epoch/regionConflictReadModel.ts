@@ -24,10 +24,8 @@ export interface EpochRegionRaidHeat {
   readonly latestRaidAt?: string;
 }
 
-export type EpochRegionRaidTargetRecommendationReason = "cross_faction_pressure";
-
-export interface EpochRegionRaidTarget {
-  readonly recommendationId: string;
+export interface EpochRegionEligibleRaidTarget {
+  readonly eligibilityId: string;
   readonly regionId: string;
   readonly attackerAgentId: string;
   readonly attackerExplorerId: string;
@@ -37,8 +35,6 @@ export interface EpochRegionRaidTarget {
   readonly targetFactionId: string;
   readonly targetSeasonScore: number;
   readonly targetDefensePower: number;
-  readonly recommendationScore: number;
-  readonly recommendationReason: EpochRegionRaidTargetRecommendationReason;
   readonly sourceSeasonIds: readonly string[];
   readonly latestPairRaidId?: string;
   readonly latestPairRaidAt?: string;
@@ -249,16 +245,16 @@ function raidPairCooldownActive(latestPairRaid: EpochRaidResult | undefined, now
   return elapsedSeconds < RAID_PAIR_COOLDOWN_SECONDS;
 }
 
-export function regionRaidTargetsView(
+export function regionEligibleRaidTargetsView(
   projection: EpochProjection,
   input: { regionId: string; attackerAgentId?: string; limit?: number; nowIso: string },
-): EpochRegionRaidTarget[] {
+): EpochRegionEligibleRaidTarget[] {
   const limit = Math.max(1, Math.min(Number(input.limit || 8), 20));
   const candidates = regionRaidCandidateAgents(projection, input.regionId);
   const attackers = input.attackerAgentId
     ? candidates.filter((candidate) => candidate.agentId === input.attackerAgentId)
     : candidates;
-  const targets: EpochRegionRaidTarget[] = [];
+  const targets: EpochRegionEligibleRaidTarget[] = [];
   for (const attacker of attackers) {
     for (const target of candidates) {
       if (attacker.agentId === target.agentId) continue;
@@ -272,9 +268,8 @@ export function regionRaidTargetsView(
       if (raidPairCooldownActive(latestPairRaid, input.nowIso)) continue;
       const targetBalances = projection.resourceBalances[target.agentId] || {};
       const targetDefensePower = ((targetBalances.focus || 0) * 3) + (targetBalances.legend || 0);
-      const recommendationScore = target.seasonScore + targetDefensePower;
       targets.push({
-        recommendationId: `${input.regionId}:${attacker.agentId}:${target.agentId}`,
+        eligibilityId: `${input.regionId}:${attacker.agentId}:${target.agentId}`,
         regionId: input.regionId,
         attackerAgentId: attacker.agentId,
         attackerExplorerId: attacker.explorerId,
@@ -284,8 +279,6 @@ export function regionRaidTargetsView(
         targetFactionId: target.factionId,
         targetSeasonScore: target.seasonScore,
         targetDefensePower,
-        recommendationScore,
-        recommendationReason: "cross_faction_pressure",
         sourceSeasonIds: [...new Set([...attacker.sourceSeasonIds, ...target.sourceSeasonIds])].sort(),
         latestPairRaidId: latestPairRaid?.raidId,
         latestPairRaidAt: latestPairRaid?.resolvedAt,
@@ -294,9 +287,7 @@ export function regionRaidTargetsView(
   }
   return targets
     .sort((left, right) =>
-      right.recommendationScore - left.recommendationScore
-      || right.targetSeasonScore - left.targetSeasonScore
-      || left.attackerAgentId.localeCompare(right.attackerAgentId)
+      left.attackerAgentId.localeCompare(right.attackerAgentId)
       || left.targetAgentId.localeCompare(right.targetAgentId))
     .slice(0, limit);
 }

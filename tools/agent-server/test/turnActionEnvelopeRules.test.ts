@@ -24,7 +24,7 @@ const explanation = {
   choiceReason: "低风险且可确认线索。",
   rejectedAlternatives: ["直接冲突"],
   risk: "低",
-  expectedBenefit: "获得下一步依据。",
+  expectedBenefit: "获得行动判断依据。",
 };
 
 test("turn action envelope rules build stable signed turn-card envelopes", () => {

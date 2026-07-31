@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
-const gameCorePath = new URL("../lib/epoch/gameCore.ts", import.meta.url);
+const gameCorePath = new URL("../lib/epoch/gameCoreComposition.ts", import.meta.url);
+const gameCoreCombatPath = new URL("../lib/epoch/gameCoreCombat.ts", import.meta.url);
+const gameCoreJourneyPath = new URL("../lib/epoch/gameCoreJourney.ts", import.meta.url);
+const gameCoreOrganizationPath = new URL("../lib/epoch/gameCoreOrganization.ts", import.meta.url);
+const gameCoreTradePath = new URL("../lib/epoch/gameCoreTrade.ts", import.meta.url);
+const gameCoreTurnHostedPath = new URL("../lib/epoch/gameCoreTurnHosted.ts", import.meta.url);
 const downtimeRulesPath = new URL("../lib/epoch/downtimeRules.ts", import.meta.url);
 const identityProjectionRulesPath = new URL("../lib/epoch/identityProjectionRules.ts", import.meta.url);
 const identityAuthorizationRulesPath = new URL("../lib/epoch/identityAuthorizationRules.ts", import.meta.url);
@@ -611,7 +616,8 @@ test("game core delegates organization treasury and budget governance rules to a
   const tickOrganizationPolitics = gameCore.match(/function tickOrganizationPolitics[\s\S]*?(?=\n  function tickDirectTradeExpiry)/)?.[0] || "";
   const proposeOrganizationBudget = gameCore.match(/function proposeOrganizationBudget[\s\S]*?(?=\n  function resolveOrganizationBudget)/)?.[0] || "";
   const resolveOrganizationBudget = gameCore.match(/function resolveOrganizationBudget[\s\S]*?(?=\n  function purchaseOrganizationUpgrade)/)?.[0] || "";
-  const purchaseOrganizationUpgrade = gameCore.match(/function purchaseOrganizationUpgrade[\s\S]*?(?=\n  function updateRelationship)/)?.[0] || "";
+  const gameCoreOrganization = readFileSync(gameCoreOrganizationPath, "utf8");
+  const purchaseOrganizationUpgrade = gameCoreOrganization.match(/function purchaseOrganizationUpgrade[\s\S]*?(?=\n  return \{)/)?.[0] || "";
   assert.ok(createOrganization, "createOrganization should stay discoverable for boundary checks");
   assert.ok(updateOrganizationMembership, "updateOrganizationMembership should stay discoverable for boundary checks");
   assert.ok(tickOrganizationPolitics, "tickOrganizationPolitics should stay discoverable for boundary checks");
@@ -714,15 +720,16 @@ test("game core delegates party and raid settlement rules to a focused module", 
     "combatSettlementRules.ts should own party role, raid settlement math, and raid payload rules",
   );
   const gameCore = readFileSync(gameCorePath, "utf8");
+  const gameCoreCombat = readFileSync(gameCoreCombatPath, "utf8");
   const combatSettlementRules = readFileSync(combatSettlementRulesPath, "utf8");
-  const createPartyRun = gameCore.match(/function createPartyRun[\s\S]*?(?=\n  function updatePartyInvite)/)?.[0] || "";
-  const updatePartyInvite = gameCore.match(/function updatePartyInvite[\s\S]*?(?=\n  function joinPartyRun)/)?.[0] || "";
-  const joinPartyRun = gameCore.match(/function joinPartyRun[\s\S]*?(?=\n  function requestPartyJoin)/)?.[0] || "";
-  const requestPartyJoin = gameCore.match(/function requestPartyJoin[\s\S]*?(?=\n  function resolvePartyJoinRequest)/)?.[0] || "";
-  const resolvePartyJoinRequest = gameCore.match(/function resolvePartyJoinRequest[\s\S]*?(?=\n  function settlePartyRun)/)?.[0] || "";
-  const settlePartyRun = gameCore.match(/function settlePartyRun[\s\S]*?(?=\n  function resolveRaid)/)?.[0] || "";
-  const resolveRaid = gameCore.match(/function resolveRaid[\s\S]*?(?=\n  function resolveRetaliation)/)?.[0] || "";
-  const resolveRetaliation = gameCore.match(/function resolveRetaliation[\s\S]*?(?=\n  function proposeDiplomacy)/)?.[0] || "";
+  const createPartyRun = gameCoreCombat.match(/function createPartyRun[\s\S]*?(?=\n  function updatePartyInvite)/)?.[0] || "";
+  const updatePartyInvite = gameCoreCombat.match(/function updatePartyInvite[\s\S]*?(?=\n  function joinPartyRun)/)?.[0] || "";
+  const joinPartyRun = gameCoreCombat.match(/function joinPartyRun[\s\S]*?(?=\n  function requestPartyJoin)/)?.[0] || "";
+  const requestPartyJoin = gameCoreCombat.match(/function requestPartyJoin[\s\S]*?(?=\n  function resolvePartyJoinRequest)/)?.[0] || "";
+  const resolvePartyJoinRequest = gameCoreCombat.match(/function resolvePartyJoinRequest[\s\S]*?(?=\n  function settlePartyRun)/)?.[0] || "";
+  const settlePartyRun = gameCoreCombat.match(/function settlePartyRun[\s\S]*?(?=\n  function resolveRaid)/)?.[0] || "";
+  const resolveRaid = gameCoreCombat.match(/function resolveRaid[\s\S]*?(?=\n  function resolveRetaliation)/)?.[0] || "";
+  const resolveRetaliation = gameCoreCombat.match(/function resolveRetaliation[\s\S]*?(?=\n  function proposeDiplomacy)/)?.[0] || "";
   assert.ok(createPartyRun, "createPartyRun should stay discoverable for focused boundary checks");
   assert.ok(updatePartyInvite, "updatePartyInvite should stay discoverable for focused boundary checks");
   assert.ok(joinPartyRun, "joinPartyRun should stay discoverable for focused boundary checks");
@@ -1029,6 +1036,7 @@ test("game core delegates turn and hosted action signed envelope rules to a focu
     "turnActionEnvelopeRules.ts should own turn-card, turn-resolution, and hosted-action signed envelope hashing",
   );
   const gameCore = readFileSync(gameCorePath, "utf8");
+  const gameCoreTurnHosted = readFileSync(gameCoreTurnHostedPath, "utf8");
   const turnHostedActionRules = readFileSync(turnHostedActionRulesPath, "utf8");
   const turnActionEnvelopeRules = readFileSync(turnActionEnvelopeRulesPath, "utf8");
 
@@ -1059,6 +1067,7 @@ test("game core delegates turn and hosted action rules to a focused module", () 
     "turnHostedActionRules.ts should own turn/hosted trust, option, high-risk, and settlement policies",
   );
   const gameCore = readFileSync(gameCorePath, "utf8");
+  const gameCoreTurnHosted = readFileSync(gameCoreTurnHostedPath, "utf8");
   const turnHostedActionRules = readFileSync(turnHostedActionRulesPath, "utf8");
 
   assert.match(gameCore, /from "\.\/turnHostedActionRules\.ts"/);
@@ -1085,7 +1094,7 @@ test("game core delegates turn and hosted action rules to a focused module", () 
   assert.ok(createTurnCard, "createTurnCard should stay discoverable for boundary checks");
   const resolveTurnCard = gameCore.match(/function resolveTurnCard[\s\S]*?(?=\n  function startHostedSession)/)?.[0] || "";
   const startHostedSession = gameCore.match(/function startHostedSession[\s\S]*?(?=\n  function submitHostedAction)/)?.[0] || "";
-  const submitHostedAction = gameCore.match(/function submitHostedAction[\s\S]*?(?=\n  function queueServerHostedJob)/)?.[0] || "";
+  const submitHostedAction = gameCoreTurnHosted.match(/function submitHostedAction[\s\S]*?(?=\n  return \{)/)?.[0] || "";
   assert.ok(resolveTurnCard, "resolveTurnCard should stay discoverable for boundary checks");
   assert.ok(startHostedSession, "startHostedSession should stay discoverable for boundary checks");
   assert.ok(submitHostedAction, "submitHostedAction should stay discoverable for boundary checks");
@@ -1131,6 +1140,7 @@ test("game core delegates server-hosted job payload rules to a focused module", 
     "serverHostedRuntimeRules.ts should own server-hosted job lifecycle payload planning",
   );
   const gameCore = readFileSync(gameCorePath, "utf8");
+  const gameCoreJourney = readFileSync(gameCoreJourneyPath, "utf8");
   const serverHostedRuntimeRules = readFileSync(serverHostedRuntimeRulesPath, "utf8");
 
   assert.match(gameCore, /from "\.\/serverHostedRuntimeRules\.ts"/);
@@ -1141,9 +1151,9 @@ test("game core delegates server-hosted job payload rules to a focused module", 
   assert.match(serverHostedRuntimeRules, /export function planServerHostedJobCompletedEvents/);
   assert.match(serverHostedRuntimeRules, /export function planServerHostedJobSkippedEvents/);
 
-  const queueServerHostedJob = gameCore.match(/function queueServerHostedJob[\s\S]*?(?=\n  function canRunServerHostedJobOption)/)?.[0] || "";
-  const completeServerHostedJob = gameCore.match(/function completeServerHostedJob[\s\S]*?(?=\n  function skipServerHostedJob)/)?.[0] || "";
-  const skipServerHostedJob = gameCore.match(/function skipServerHostedJob[\s\S]*?(?=\n  return \{)/)?.[0] || "";
+  const queueServerHostedJob = gameCoreJourney.match(/function queueServerHostedJob[\s\S]*?(?=\n  function canRunServerHostedJobOption)/)?.[0] || "";
+  const completeServerHostedJob = gameCoreJourney.match(/function completeServerHostedJob[\s\S]*?(?=\n  function skipServerHostedJob)/)?.[0] || "";
+  const skipServerHostedJob = gameCoreJourney.match(/function skipServerHostedJob[\s\S]*?(?=\n  return \{)/)?.[0] || "";
   assert.ok(queueServerHostedJob, "queueServerHostedJob should stay discoverable for boundary checks");
   assert.ok(completeServerHostedJob, "completeServerHostedJob should stay discoverable for boundary checks");
   assert.ok(skipServerHostedJob, "skipServerHostedJob should stay discoverable for boundary checks");
@@ -1482,6 +1492,8 @@ test("game core delegates relationship and hosted social interaction rules to a 
     "agentInteractionRules.ts should own relationship scores, child NPC bond guards, and hosted social hook reads",
   );
   const gameCore = readFileSync(gameCorePath, "utf8");
+  const gameCoreCombat = readFileSync(gameCoreCombatPath, "utf8");
+  const gameCoreTurnHosted = readFileSync(gameCoreTurnHostedPath, "utf8");
   const agentInteractionRules = readFileSync(agentInteractionRulesPath, "utf8");
 
   assert.match(gameCore, /from "\.\/agentInteractionRules\.ts"/);
@@ -1514,11 +1526,11 @@ test("game core delegates relationship and hosted social interaction rules to a 
   assert.match(agentInteractionRules, /export function planHostedSocialHookSideEffectEvents/);
   assert.match(agentInteractionRules, /export function consumedSocialHookIdsForAgentRegion/);
 
-  const proposeDiplomacy = gameCore.match(/function proposeDiplomacy[\s\S]*?(?=\n  function respondDiplomacy)/)?.[0] || "";
-  const respondDiplomacy = gameCore.match(/function respondDiplomacy[\s\S]*?(?=\n  function createOrganization)/)?.[0] || "";
-  const updateRelationship = gameCore.match(/function updateRelationship[\s\S]*?(?=\n  function updateAgentNpcBond)/)?.[0] || "";
-  const updateAgentNpcBond = gameCore.match(/function updateAgentNpcBond[\s\S]*?(?=\n  function deployTraceConflict)/)?.[0] || "";
-  const submitHostedAction = gameCore.match(/function submitHostedAction[\s\S]*?(?=\n  function queueServerHostedJob)/)?.[0] || "";
+  const proposeDiplomacy = gameCoreCombat.match(/function proposeDiplomacy[\s\S]*?(?=\n  function respondDiplomacy)/)?.[0] || "";
+  const respondDiplomacy = gameCoreCombat.match(/function respondDiplomacy[\s\S]*?(?=\n\n  function updateRelationship)/)?.[0] || "";
+  const updateRelationship = gameCoreCombat.match(/function updateRelationship[\s\S]*?(?=\n  function updateAgentNpcBond)/)?.[0] || "";
+  const updateAgentNpcBond = gameCoreCombat.match(/function updateAgentNpcBond[\s\S]*?(?=\n  return \{)/)?.[0] || "";
+  const submitHostedAction = gameCoreTurnHosted.match(/function submitHostedAction[\s\S]*?(?=\n  return \{)/)?.[0] || "";
   assert.ok(proposeDiplomacy, "proposeDiplomacy should stay discoverable for boundary checks");
   assert.ok(respondDiplomacy, "respondDiplomacy should stay discoverable for boundary checks");
   assert.ok(updateRelationship, "updateRelationship should stay discoverable for boundary checks");
@@ -2265,6 +2277,7 @@ test("game core delegates bounty payload rules to a focused module", () => {
     "bountyRules.ts should own bounty escrow, claim, influence, and trace payload planning",
   );
   const gameCore = readFileSync(gameCorePath, "utf8");
+  const gameCoreTrade = readFileSync(gameCoreTradePath, "utf8");
   const bountyRules = readFileSync(bountyRulesPath, "utf8");
 
   assert.match(gameCore, /from "\.\/bountyRules\.ts"/);
@@ -2283,9 +2296,9 @@ test("game core delegates bounty payload rules to a focused module", () => {
   assert.match(bountyRules, /export function planBountyClaimEvents/);
   assert.match(bountyRules, /export function projectBountyClaim/);
 
-  const createBounty = gameCore.match(/function createBounty[\s\S]*?(?=\n  function claimBounty)/)?.[0] || "";
+  const createBounty = gameCoreTrade.match(/function createBounty[\s\S]*?(?=\n  function claimBounty)/)?.[0] || "";
   assert.ok(createBounty, "createBounty should stay discoverable for boundary checks");
-  const claimBounty = gameCore.match(/function claimBounty[\s\S]*?(?=\n  function createPartyRun)/)?.[0] || "";
+  const claimBounty = gameCoreTrade.match(/function claimBounty[\s\S]*?(?=\n  return \{)/)?.[0] || "";
   assert.ok(claimBounty, "claimBounty should stay discoverable for boundary checks");
 
   assert.doesNotMatch(gameCore, /type BountyCreatedPayload/);

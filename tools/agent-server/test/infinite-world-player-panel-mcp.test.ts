@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createAgentHttpServer } from "../lib/httpServer.ts";
-import { createAgentWorldMcpRuntime, createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldMcpRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 import { createCausalWorldSnapshot, type CausalWorldSnapshotV1 } from "../lib/epoch/causalWorldSnapshot.ts";
 import { buildKnowledgeState, type EpochKnowledgeInputItem } from "../lib/epoch/knowledgeStateRules.ts";
 import type { ProgressionAttributeId, ProgressionState } from "../lib/epoch/progressionRules.ts";

@@ -198,7 +198,7 @@ function parseArgs(argv, errors) {
     const arg = argv[index];
     if (arg === "--help" || arg === "-h") {
       process.stdout.write([
-        "Usage: phase6-score-gate.mjs [--expected-runs N] <score.json|score.jsonl>...",
+        "Usage: node --import tsx ../agent-server/phase6-score-gate.ts [--expected-runs N] <score.json|score.jsonl>...",
         "",
         "Validates Phase 6 RunReceipt score formula integrity without printing raw receipt text.",
         "",

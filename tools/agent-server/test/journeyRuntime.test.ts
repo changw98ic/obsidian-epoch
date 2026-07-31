@@ -19,6 +19,7 @@ import {
 } from "../lib/epoch/journeyGeneratedTaskRules.ts";
 import { normalizeJourneyMandate, type JourneyMandate } from "../lib/epoch/journeyPolicyRules.ts";
 import type { PrepareJourneyRuntimeInput } from "../lib/epoch/journeyRuntime.ts";
+import { deriveMirrorConsequenceEntryId } from "../lib/epoch/journeyMirrorLedger.ts";
 import {
   JOURNEY_ACTION_RESOLUTION_RULE_VERSION,
   type JourneyActionResolution,
@@ -141,6 +142,62 @@ function prepareWithTaskPlan(
     installation,
   });
 }
+
+test("mirror ledger promotion and discard retries are version-idempotent", () => {
+  const runtime = runtimeAt("2026-07-12T00:00:00.000Z");
+  const installed = prepareWithTaskPlan(runtime, {
+    agentId: "agent_1",
+    explorerId: "explorer_1",
+    originRegionId: "region_gray_harbor",
+    destinationRegionId: "region_gray_harbor",
+    taskType: "镜像账本重放校验",
+    mandate: { objective: "镜像账本重放校验" },
+    policy: { presetId: "cautious" },
+  });
+  const journeyId = installed.journey.journeyId;
+  const entry = {
+    actionEventId: "action_mirror_1",
+    effectKind: "trace_created" as const,
+    targetEntityId: "trace:test",
+    delta: 1,
+    consequenceType: "collateral" as const,
+    sourceEventIds: [],
+    effectBlueprint: {},
+    recordedAt: "2026-07-12T00:00:00.000Z",
+    dedupeKey: "trace:test",
+  };
+  const recorded = runtime.recordMirrorConsequences({
+    journeyId,
+    expectedVersion: installed.journey.version,
+    entries: [entry],
+  });
+  const entryId = deriveMirrorConsequenceEntryId({
+    journeyId,
+    actionEventId: entry.actionEventId,
+    dedupeKey: entry.dedupeKey,
+  });
+  const promoted = runtime.promoteMirrorConsequences({
+    journeyId,
+    expectedVersion: recorded.journey.version,
+    promotions: [{ entryId, canonicalEventId: "epoch_trace_1" }],
+  });
+  const promotionReplay = runtime.promoteMirrorConsequences({
+    journeyId,
+    expectedVersion: promoted.journey.version,
+    promotions: [{ entryId, canonicalEventId: "epoch_trace_1" }],
+  });
+  assert.equal(promotionReplay.journey.version, promoted.journey.version);
+
+  const discarded = runtime.discardMirrorConsequences({
+    journeyId,
+    expectedVersion: promotionReplay.journey.version,
+  });
+  const discardReplay = runtime.discardMirrorConsequences({
+    journeyId,
+    expectedVersion: discarded.journey.version,
+  });
+  assert.equal(discardReplay.journey.version, discarded.journey.version);
+});
 
 function groundedEpisode(
   runtime: ReturnType<typeof createJourneyRuntime>,

@@ -22,10 +22,9 @@
     "epochReadiness": "/api/epoch/health"
   },
   "publicPages": {
-    "console": "/epoch/console",
+    "console": "/epoch/web-play",
     "webPlay": "/epoch/web-play",
     "install": "/epoch/install",
-    "pairing": "/epoch/pair",
     "world": "/epoch/world",
     "explorer": "/epoch/explorer/{explorerId}",
     "agent": "/epoch/agent/{agentId}",
@@ -56,8 +55,8 @@
     "restoreBackupCommand": "npm run agent:restore-backup -- --json",
     "packageIntegrityManifest": "obsidian-epoch/assets/package-integrity.json",
     "packageSignatureAlgorithm": "Ed25519",
-    "packageReleasePublicKey": "MCowBQYDK2VwAyEArLbZdjwsSGsRD1ZXGYXPHup65h3A9j17ogpaGbBEhzM=",
-    "packageReleaseKeyId": "485faa069d02bd063111d12376a75a592c4c2078c73874b99d0cafb26973662e",
+    "packageReleasePublicKey": "MCowBQYDK2VwAyEAVdpDv4rtfxy6Rn2a/h+9LK50YixFqxuWiaoWNstWJ7s=",
+    "packageReleaseKeyId": "e1b0b127c17d75e9a55aaaaebbbfc3c3e207818fe45903e44930cbd8df063ce7",
     "packageSigningTrust": "local_alpha_fallback",
     "packageSigningKeySource": "ephemeral_local_alpha_fallback",
     "reproducibleArchive": {
@@ -340,7 +339,7 @@
         "resultTool": "obsidian_epoch.create_result_page",
         "playbook": "obsidian-epoch/references/web-llm-bridge-playbook.md",
         "publicPages": {
-          "console": "/epoch/console",
+          "console": "/epoch/web-play",
           "play": "/epoch/web-play",
           "install": "/epoch/install",
           "world": "/epoch/world",
@@ -380,7 +379,7 @@
               }
             ],
             "publicPages": {
-              "console": "/epoch/console",
+              "console": "/epoch/web-play",
               "play": "/epoch/web-play",
               "install": "/epoch/install",
               "world": "/epoch/world",
@@ -3843,18 +3842,10 @@
       "path": "obsidian-epoch/host-config/web-llm-bridge-sequence.json",
       "url": "/api/epoch/host-config/web-llm-bridge-sequence.json",
       "contentType": "application/json",
-      "bytes": 823,
-      "sha256": "219a998411fd1e5e37abb9c610639e93649de337125078ad11f0600088cf6235"
+      "bytes": 824,
+      "sha256": "addf5e14cc6525254201670b6d7d011fa2018a389b6640d5a605fb15665a4c09"
     }
   ],
-  "pairing": {
-    "page": "/epoch/pair",
-    "register": "/api/epoch/pairing/register",
-    "issueAccessToken": "/api/epoch/mcp/access-tokens",
-    "revokeAccessToken": "/api/epoch/mcp/access-tokens/revoke",
-    "tokenEnvironmentVariable": "AGENT_WORLD_MCP_TOKEN",
-    "serverEnvironmentVariable": "AGENT_WORLD_SERVER"
-  },
   "hostSupport": {
     "schemaVersion": 1,
     "hosts": [
@@ -3902,5 +3893,43 @@
     "productionSource": "live-rewritten-package-endpoint",
     "liveManifestUrl": "http://127.0.0.1:8787/api/epoch/install-manifest",
     "livePackageUrl": "http://127.0.0.1:8787/api/epoch/package/obsidian-epoch-agent-world-0.1.0-alpha.tar.gz"
+  },
+  "bootstrap": {
+    "tool": "obsidian_epoch.register_explorer",
+    "authentication": "anonymous_mcp_bootstrap",
+    "credentialHandoff": "package_stdio_proxy",
+    "nextTool": "obsidian_epoch.agent_briefing",
+    "serverEnvironmentVariable": "AGENT_WORLD_SERVER"
+  },
+  "publicSurface": {
+    "schemaVersion": 1,
+    "canonicalPlayerContinuePath": "/epoch/web-play",
+    "canonicalWebPlayAssetBasePath": "/epoch/web-play/",
+    "legacyPlayerContinuePaths": [
+      "/epoch/console"
+    ],
+    "publicPages": {
+      "console": "/epoch/web-play",
+      "webPlay": "/epoch/web-play",
+      "install": "/epoch/install",
+      "world": "/epoch/world",
+      "explorer": "/epoch/explorer/{explorerId}",
+      "agent": "/epoch/agent/{agentId}",
+      "hosted": "/epoch/hosted/{sessionId}",
+      "region": "/epoch/region/{regionId}",
+      "directTrade": "/epoch/direct-trade/{tradeId}",
+      "partyRun": "/epoch/party-run/{partyRunId}",
+      "season": "/epoch/season/{seasonId}",
+      "npc": "/epoch/npc/{npcId}",
+      "archive": "/epoch/archive/{agentId}",
+      "auditIndex": "/epoch/audit",
+      "audit": "/epoch/audit/{eventId}",
+      "result": "/epoch/result/{pageId}"
+    },
+    "successfulResult": {
+      "rewardAuthority": "server_settled_state_delta",
+      "forbiddenFailurePanel": "Phase 6 结果页校验未通过"
+    },
+    "version": "sha256:9186303634b8eb3ecf1269f23e00dda7c9e633d34cb34caf4be288669b1fa128"
   }
 }

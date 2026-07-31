@@ -15,7 +15,6 @@ const recoveryRotationControllerTs = readFileSync(new URL("./recoveryRotationCon
 const agentPlayerLabelsTs = readFileSync(new URL("./agentPlayerLabels.ts", import.meta.url), "utf8");
 const gameRunTimelineTsx = readFileSync(new URL("./components/GameRunTimeline.tsx", import.meta.url), "utf8");
 const publicReceiptDisclosureTsx = readFileSync(new URL("./components/PublicReceiptDisclosure.tsx", import.meta.url), "utf8");
-const resultNavigationTsx = readFileSync(new URL("./components/ResultNavigation.tsx", import.meta.url), "utf8");
 const inventoryPanelPath = new URL("./components/InventoryPanel.tsx", import.meta.url);
 const inventoryPanelTsx = existsSync(inventoryPanelPath)
   ? readFileSync(inventoryPanelPath, "utf8")
@@ -169,12 +168,12 @@ test("Agent console uses identity issue only after an explorer already exists", 
   assert.match(issueIdentityBody, /recoveryCode:\s*explorer\.recoveryCode/);
 });
 
-test("Agent result panel delegates navigation timeline and receipt display to focused components", () => {
+test("Agent result panel shows receipt and timeline without prescribing a follow-up", () => {
   assert.match(agentExplorerTsx, /<PublicReceiptDisclosure/);
   assert.match(agentExplorerTsx, /<GameRunTimeline/);
-  assert.match(agentExplorerTsx, /<ResultNavigation/);
+  assert.doesNotMatch(agentExplorerTsx, /<ResultNavigation/);
   assert.doesNotMatch(agentExplorerTsx, /resultPage\.receipt\.canonicalEvents\.slice\(0,\s*3\)\.map/);
-  assert.doesNotMatch(agentExplorerTsx, /resultPage\.nextActions\.length\s*\?/);
+  assert.doesNotMatch(agentExplorerTsx, /nextActions/);
 
   assert.match(publicReceiptDisclosureTsx, /aria-label="校验证明"/);
   assert.match(publicReceiptDisclosureTsx, /canonicalEvents\.slice\(0,\s*3\)/);
@@ -184,8 +183,6 @@ test("Agent result panel delegates navigation timeline and receipt display to fo
   assert.match(typesTs, /runSummary\?: EpochResultPageRunSummary/);
   assert.match(typesTs, /run\?: EpochGameRunReadModel/);
   assert.match(gameRunTimelineTsx, /resultPage\.runSummary\.stepCount/);
-  assert.match(resultNavigationTsx, /aria-label="结果页下一步"/);
-  assert.match(resultNavigationTsx, /暂无服务器建议行动/);
 });
 
 test("Agent console first screen keeps the S001 information budget and defers complex systems", () => {
@@ -217,7 +214,7 @@ test("Agent console first screen keeps the S001 information budget and defers co
   assert.doesNotMatch(agentExplorerTsx.slice(operatorStart, operatorSummaryStart), /open/);
 });
 
-test("Agent console defaults the first run to the archive recommended commission with only risk preference choices", () => {
+test("Agent console defaults the first run to the archive starting commission with only risk preference choices", () => {
   const playerModeStart = agentExplorerTsx.indexOf("agent-player-mode");
   const operatorStart = agentExplorerTsx.indexOf("agent-operator-details");
   assert.ok(playerModeStart >= 0, "player mode section not found");
@@ -226,7 +223,7 @@ test("Agent console defaults the first run to the archive recommended commission
 
   assert.match(agentExplorerTsx, /STARTER_RISK_PREFERENCE_OPTIONS/);
   assert.match(agentExplorerTsx, /useState<StarterRiskPreference>\("balanced"\)/);
-  assert.match(agentExplorerTsx, /档案馆推荐委托/);
+  assert.match(agentExplorerTsx, /档案馆起始委托/);
   assert.match(agentExplorerTsx, /灰港边缘巡查/);
   assert.match(firstScreen, /aria-label="首局风险偏好"/);
   assert.match(agentExplorerTsx, /label:\s*"谨慎"/);
@@ -643,7 +640,7 @@ test("Agent console places a player watch board before operator tools with live 
 
   const watchBoard = agentExplorerTsx.slice(watchStart, operatorStart);
   assert.match(watchBoard, /aria-label="玩家等候看板"/);
-  assert.match(watchBoard, /单句下一步/);
+  assert.match(watchBoard, /服务器状态/);
   assert.match(watchBoard, /安装/);
   assert.match(watchBoard, /身份/);
   assert.match(watchBoard, /托管/);
@@ -655,7 +652,7 @@ test("Agent console places a player watch board before operator tools with live 
   assert.match(watchBoard, /progress\?\.pendingDowntime/);
   assert.match(watchBoard, /progress\?\.downtimeDiaryEntries/);
   assert.match(watchBoard, /progress\?\.latestEvents/);
-  assert.match(watchBoard, /agentBriefing\?\.pendingActions/);
+  assert.doesNotMatch(watchBoard, /pendingActions/);
   assert.match(watchBoard, /agentBriefing\.regionalContext\?\.news/);
   assert.match(watchBoard, /agentBriefing\.regionalContext\?\.messages/);
   assert.match(watchBoard, /简报：/);
@@ -663,7 +660,6 @@ test("Agent console places a player watch board before operator tools with live 
   assert.match(watchBoard, /自动刷新/);
   assert.match(watchBoard, /agentBriefing\?\.publicPages\.agent/);
   assert.match(watchBoard, /公开进度页/);
-  assert.match(watchBoard, /pendingActions \|\| \[\]\)\.slice\(0,\s*2\)/);
   assert.match(watchBoard, /primaryHostedSession/);
   assert.match(watchBoard, /serverHostedJobs/);
   assert.match(agentExplorerTsx, /<TurnHostedActionPanel/);
@@ -693,13 +689,11 @@ test("Agent console places a player watch board before operator tools with live 
   assert.match(agentExplorerCss, /\.agent-player-watch-live\s*\{/);
 });
 
-test("Agent console keeps a compact live status summary visible across player and web bridge surfaces", () => {
+test("Agent console keeps a compact live status summary in its detailed inspection surface", () => {
   const liveStatusStart = agentExplorerTsx.indexOf("agent-live-status");
-  const surfaceBranchStart = agentExplorerTsx.indexOf('initialSurface === "web-bridge"');
   assert.ok(liveStatusStart >= 0, "live status summary should exist");
-  assert.ok(liveStatusStart < surfaceBranchStart, "live status summary should stay outside the surface branch");
 
-  const liveStatus = agentExplorerTsx.slice(liveStatusStart, surfaceBranchStart);
+  const liveStatus = agentExplorerTsx.slice(liveStatusStart, liveStatusStart + 2400);
   assert.match(liveStatus, /role="status"/);
   assert.match(liveStatus, /aria-live="polite"/);
   assert.match(liveStatus, /aria-atomic="true"/);
@@ -766,27 +760,19 @@ test("Agent console delegates async action status handling to a focused controll
   assert.match(packageJson.scripts["agent:ui-test"], /agentActionController\.test\.ts/);
 });
 
-test("Agent console gives the revisit summary one primary action button", () => {
+test("Agent console shows status without selecting a player action", () => {
   const watchStart = agentExplorerTsx.indexOf("agent-player-watch");
   const operatorStart = agentExplorerTsx.indexOf("agent-operator-details");
   assert.ok(watchStart >= 0, "player watch board should exist");
   assert.ok(operatorStart > watchStart, "operator tools should follow player watch board");
   const watchBoard = agentExplorerTsx.slice(watchStart, operatorStart);
 
-  assert.match(agentExplorerTsx, /type RevisitPrimaryActionKind/);
-  assert.match(agentExplorerTsx, /const revisitPrimaryAction/);
-  assert.match(agentExplorerTsx, /function runRevisitPrimaryAction/);
-  assert.match(agentExplorerTsx, /审档/);
-  assert.match(agentExplorerTsx, /修正/);
-  assert.match(agentExplorerTsx, /接续/);
-  assert.match(agentExplorerTsx, /找回/);
-  assert.match(agentExplorerTsx, /领取/);
-  assert.match(watchBoard, /aria-label="回访摘要"/);
-  assert.match(watchBoard, /agent-revisit-primary-action/);
-  assert.match(watchBoard, /onClick=\{runRevisitPrimaryAction\}/);
-  assert.match(watchBoard, /revisitPrimaryAction\.label/);
-  assert.match(watchBoard, /revisitPrimaryAction\.disabled/);
-  assert.match(agentExplorerCss, /\.agent-revisit-primary-action/);
+  assert.match(watchBoard, /aria-label="状态摘要"/);
+  assert.match(watchBoard, /服务器状态/);
+  assert.match(watchBoard, /公开进度页/);
+  assert.doesNotMatch(agentExplorerTsx, /RevisitPrimaryAction|revisitPrimaryAction|runRevisitPrimaryAction/);
+  assert.doesNotMatch(watchBoard, /回访主按钮|agent-revisit-primary-action/);
+  assert.doesNotMatch(agentExplorerCss, /\.agent-revisit-primary-action/);
 });
 
 test("Agent console player watch board has automated desktop and mobile visual guards", () => {
@@ -1256,13 +1242,13 @@ test("Agent console disables active gameplay controls for archived identities", 
   assert.match(marketPanelTsx, /disabled=\{[^}]*activeIdentityDisabled[^}]*\}[\s\S]*?>\s*创建卖单\s*</);
 });
 
-test("Agent console surfaces progress action eligibility guidance", () => {
+test("Agent console surfaces action eligibility facts without next-action recommendations", () => {
   assert.match(agentExplorerTsx, /const actionEligibility = progress\?\.actionEligibility;/);
   assert.match(agentExplorerTsx, /行动权限/);
   assert.match(agentExplorerTsx, /canUseActiveTools/);
-  assert.match(agentExplorerTsx, /recommendedTools/);
   assert.match(agentExplorerTsx, /blockedTools/);
-  assert.match(agentExplorerTsx, /建议下一步/);
+  assert.doesNotMatch(agentExplorerTsx, /recommendedTools/);
+  assert.doesNotMatch(agentExplorerTsx, /建议下一步/);
   assert.match(agentExplorerTsx, /暂不可用/);
   assert.match(agentExplorerTsx, /playerToolLabel/);
 });
@@ -1283,10 +1269,10 @@ test("Agent console region panel surfaces server-derived raid heat", () => {
   assert.match(regionOverviewPanelTsx, /raidHeat\.latestRaidId/);
 });
 
-test("Agent console region panel surfaces server-derived raid target recommendations", () => {
-  assert.match(regionOverviewPanelTsx, /推荐目标/);
-  assert.match(regionOverviewPanelTsx, /region\?\.raidTargets/);
-  assert.match(regionOverviewPanelTsx, /target\.recommendationScore/);
+test("Agent console region panel surfaces server-derived eligible raid candidates without ranking", () => {
+  assert.match(regionOverviewPanelTsx, /可对抗目标/);
+  assert.match(regionOverviewPanelTsx, /region\?\.eligibleRaidTargets/);
+  assert.doesNotMatch(regionOverviewPanelTsx, /recommendationScore/);
   assert.match(regionOverviewPanelTsx, /target\.targetSeasonScore/);
   assert.match(regionOverviewPanelTsx, /target\.targetDefensePower/);
   assert.match(regionOverviewPanelTsx, /target\.attackerFactionId/);
@@ -2529,21 +2515,18 @@ test("Agent console exposes recovery-authorized and web-confirmed turn-card cont
   assert.match(turnHostedActionPanelTsx, /agent-turn-card/);
 });
 
-test("Browser Web LLM play has a dedicated first-screen route and complete relay loop", () => {
-  assert.ok(existsSync(webBridgePlaySurfacePath), "WebBridgePlaySurface should own the dedicated browser relay flow");
+test("Browser Agent page is an MCP observer instead of a manual game relay", () => {
+  assert.ok(existsSync(webBridgePlaySurfacePath), "WebBridgePlaySurface should own the MCP observer surface");
   assert.match(appTsx, /\/epoch\/web-play/);
-  assert.match(appTsx, /initialSurface=\{isWebPlayPath \? "web-bridge" : undefined\}/);
+  assert.match(appTsx, /initialSurface="web-bridge"/);
   assert.match(agentExplorerTsx, /<WebBridgePlaySurface/);
-  assert.match(agentExplorerTsx, /initialSurface === "web-bridge"/);
-  assert.match(webBridgePlaySurfaceTsx, /网页大模型接力/);
-  assert.match(webBridgePlaySurfaceTsx, /签发行动身份/);
-  assert.match(webBridgePlaySurfaceTsx, /生成接力回合/);
-  assert.match(webBridgePlaySurfaceTsx, /复制提示/);
-  assert.match(webBridgePlaySurfaceTsx, /网页模型输出/);
-  assert.match(webBridgePlaySurfaceTsx, /onSubmitAction/);
-  assert.match(webBridgePlaySurfaceTsx, /服务器结算/);
-  assert.match(webBridgePlaySurfaceTsx, /发布结果/);
-  assert.match(webBridgePlaySurfaceTsx, /下一回合/);
+  assert.match(agentExplorerTsx, /if \(initialSurface === "web-bridge"\) \{[\s\S]*?<WebBridgePlaySurface/s);
+  assert.match(webBridgePlaySurfaceTsx, /MCP 行动观察/);
+  assert.match(webBridgePlaySurfaceTsx, /网页只用于查看进度、凭证和安装信息/);
+  assert.match(webBridgePlaySurfaceTsx, /根据身份、资源、区域事件、行动限制和你的游戏计划，自行决定是否调用其他工具/);
+  assert.match(webBridgePlaySurfaceTsx, /复制给 Agent/);
+  assert.doesNotMatch(webBridgePlaySurfaceTsx, /pendingActions|服务器下一步|服务器推荐/);
+  assert.doesNotMatch(webBridgePlaySurfaceTsx, /签发行动身份|生成接力回合|网页模型输出|onIssueIdentity|onStartTurn|onSubmitAction|onPublishResult/);
   assert.match(agentExplorerCss, /\.agent-web-play-surface\s*\{/);
   assert.match(agentExplorerCss, /\.agent-web-play-columns\s*\{/);
 });
@@ -2678,38 +2661,33 @@ test("Agent console can revoke shared result pages from the web UI", () => {
   assert.match(functionBody("revokeSharedResultPage"), /await loadWorldOverview\(\)/);
 });
 
-test("Agent console result panel surfaces next actions and regional context", () => {
-  assert.match(agentExplorerTsx, /<ResultNavigation/);
-  assert.match(resultNavigationTsx, /resultPage\.nextActions/);
-  assert.match(resultNavigationTsx, /action\.media/);
+test("Agent console result panel surfaces regional facts without next-action guidance", () => {
+  assert.doesNotMatch(agentExplorerTsx, /<ResultNavigation|nextActions/);
   assert.match(agentExplorerTsx, /resultPage\.regionalContext/);
   assert.match(agentExplorerTsx, /resultPage\.regionalContext\.regionControl/);
-  assert.match(resultNavigationTsx, /下一步/);
   assert.match(agentExplorerTsx, /区域上下文/);
   assert.match(agentExplorerTsx, /区域控制/);
   assert.match(agentExplorerTsx, /暂无公开控制者/);
   assert.doesNotMatch(agentExplorerTsx, /控制位开放/);
-  assert.match(resultNavigationTsx, /agent-activity-media-row/);
 });
 
-test("Agent console splits settlement into four single-action screens", () => {
+test("Agent console splits settlement into four read-only screens", () => {
   assert.match(agentExplorerTsx, /type ResultSettlementScreenKey/);
   assert.match(agentExplorerTsx, /RESULT_SETTLEMENT_SCREENS/);
   assert.match(agentExplorerTsx, /resultSettlementScreen/);
   assert.match(agentExplorerTsx, /activeSettlementScreen/);
-  assert.match(agentExplorerTsx, /function runSettlementPrimaryAction/);
   assert.match(agentExplorerTsx, /结局/);
   assert.match(agentExplorerTsx, /评分/);
   assert.match(agentExplorerTsx, /掉落/);
-  assert.match(agentExplorerTsx, /下一步/);
+  assert.match(agentExplorerTsx, /状态/);
   assert.match(agentExplorerTsx, /aria-label="四屏结算"/);
   assert.match(agentExplorerTsx, /role="tablist"/);
   assert.match(agentExplorerTsx, /RESULT_SETTLEMENT_SCREENS\.map/);
   assert.match(agentExplorerTsx, /setResultSettlementScreen\(screen\.key\)/);
   assert.match(agentExplorerTsx, /agent-settlement-screen/);
-  assert.match(agentExplorerTsx, /agent-settlement-primary-action/);
   assert.match(agentExplorerCss, /\.agent-settlement-flow/);
-  assert.match(agentExplorerCss, /\.agent-settlement-primary-action/);
+  assert.doesNotMatch(agentExplorerTsx, /runSettlementPrimaryAction|agent-settlement-primary-action|primaryAction:/);
+  assert.doesNotMatch(agentExplorerCss, /\.agent-settlement-primary-action/);
 });
 
 test("Agent console shows a static minimap impact slice on the drop settlement screen", () => {

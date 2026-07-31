@@ -461,6 +461,12 @@ export function classifyHttpError(error: unknown): HttpErrorResponse {
   if (message === "public_registration_invite_invalid") {
     return { statusCode: 403, body: { error: "public_registration_invite_invalid" } };
   }
+  if (message === "public_release_evidence_store_unavailable") {
+    return { statusCode: 503, body: { error: "public_release_evidence_store_unavailable" } };
+  }
+  if (message.startsWith("public_release_evidence_")) {
+    return { statusCode: 400, body: { error: message } };
+  }
   if (isBadRequestHttpErrorCode(message)) {
     return { statusCode: 400, body: { error: message } };
   }

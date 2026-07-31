@@ -3,7 +3,7 @@ import http from "node:http";
 import test from "node:test";
 import { createSequentialEpochIdFactory } from "../lib/epoch/protocol.ts";
 import { createAgentHttpServer } from "../lib/httpServer.ts";
-import { createAgentWorldRuntime } from "../lib/mcpTools.ts";
+import { createAgentWorldRuntime } from "../lib/mcpRuntimeCore.ts";
 import { hydrateAgentRuntimeOptions } from "../lib/store.ts";
 import { createPhase6InMemoryStores } from "./phase6InMemoryStores.ts";
 
@@ -88,6 +88,19 @@ function openSamplingStream(baseUrl: string, pathName: string, headers: Record<s
   request.once("error", (error) => { rejectReady(error); rejectMessage(error); });
   request.end();
   return { ready, message, seen, close: () => request.destroy() };
+}
+
+async function waitForSamplingMessage(
+  stream: { readonly seen: readonly Record<string, unknown>[] },
+  index: number,
+) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const messages = stream.seen.filter((message) => message.method === "sampling/createMessage");
+    if (messages[index]) return messages[index];
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`sampling_message_timeout:${index}`);
 }
 
 test("Streamable HTTP carries nested Sampling request and response on one MCP session", async () => {
@@ -217,24 +230,40 @@ test("Streamable HTTP carries nested Sampling request and response on one MCP se
         const resumedSceneContract = resumedProposal.proposal.sceneContract;
         assert.ok(resumedSceneContract);
         assert.ok(resumedSceneContract.actionOptions.some((option) => option.actionOptionId === selected));
-        const accepted = await postJsonOnFreshConnection(baseUrl, "/mcp", {
-          jsonrpc: "2.0",
-          id: message.id,
-          result: {
-            role: "assistant",
-            content: {
-              type: "text",
-              text: JSON.stringify({
-                actionOptionId: selected,
-                rationale: "符合旅程授权",
-                confidence: 0.9,
-              }),
+        const acceptSamplingMessage = async (samplingMessage: Record<string, unknown>) => {
+          const samplingParams = samplingMessage.params as Record<string, any>;
+          const samplingPrompt = JSON.parse(samplingParams.messages[0].content.text);
+          const samplingSelection = samplingPrompt.actionOptions[0].actionOptionId;
+          const accepted = await postJsonOnFreshConnection(baseUrl, "/mcp", {
+            jsonrpc: "2.0",
+            id: samplingMessage.id,
+            result: {
+              role: "assistant",
+              content: {
+                type: "text",
+                text: JSON.stringify({
+                  actionOptionId: samplingSelection,
+                  rationale: "符合旅程授权",
+                  confidence: 0.9,
+                }),
+              },
+              model: "host-test-model",
+              stopReason: "endTurn",
             },
-            model: "host-test-model",
-            stopReason: "endTurn",
-          },
-        }, headers);
-        assert.equal(accepted.status, 202);
+          }, headers);
+          assert.equal(accepted.status, 202);
+        };
+        await acceptSamplingMessage(message);
+        let samplingIndex = 1;
+        while (true) {
+          const completed = await Promise.race([
+            startPromise.then(() => true, () => true),
+            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 100)),
+          ]);
+          if (completed) break;
+          await acceptSamplingMessage(await waitForSamplingMessage(stream, samplingIndex));
+          samplingIndex += 1;
+        }
     })();
     const [startCall] = await Promise.all([startPromise, samplingPump]);
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -243,12 +272,15 @@ test("Streamable HTTP carries nested Sampling request and response on one MCP se
     const started = JSON.parse(startCall.body.result.content[0].text);
     assert.equal(started.sampling.ok, true, JSON.stringify(started.sampling));
     assert.equal(started.settledAction.actionOptionId, started.sampling.decision.actionOptionId);
-    assert.equal(started.mainEpisode.phase, "main");
+    assert.ok(["main", "side"].includes(started.mainEpisode.phase));
     assert.equal(started.returnEpisode.phase, "return");
     const progress = stream.seen.filter((message) => message.method === "notifications/progress")
       .map((message) => message.params as { progressToken: string; progress: number });
-    assert.deepEqual(progress.map((message) => message.progressToken), ["journey-progress-1", "journey-progress-1"]);
-    assert.deepEqual(progress.map((message) => message.progress), [0, 1]);
+    assert.ok(progress.length >= 2);
+    assert.ok(progress.every((message) => message.progressToken === "journey-progress-1"));
+    assert.equal(progress[0]?.progress, 0);
+    assert.equal(progress.at(-1)?.progress, 1);
+    assert.ok(progress.every((message, index) => index === 0 || message.progress >= progress[index - 1]!.progress));
 
     const commandRecords = writes.get("command-events.jsonl") || [];
     assert.ok(commandRecords.length >= 1, "Journey and Epoch events must share durable command envelopes");
@@ -257,14 +289,12 @@ test("Streamable HTTP carries nested Sampling request and response on one MCP se
         || record.command === "obsidian_epoch.propose_journey_step"
         || record.command === "obsidian_epoch.commit_journey_action");
     assert.deepEqual(
-      durableJourneyStages.map((record) => record.command),
-      [
-        "obsidian_epoch.start_journey",
-        "obsidian_epoch.start_journey",
-        "obsidian_epoch.commit_journey_action",
-      ],
-      "Host Sampling must commit the frozen world window before model I/O, then commit journey start and action without holding a transaction across a remote await",
+      durableJourneyStages.slice(0, 2).map((record) => record.command),
+      ["obsidian_epoch.start_journey", "obsidian_epoch.start_journey"],
+      "Host Sampling must commit the frozen world window before model I/O and commit journey start before model I/O",
     );
+    assert.ok(durableJourneyStages.length >= 3);
+    assert.ok(durableJourneyStages.slice(2).every((record) => record.command === "obsidian_epoch.commit_journey_action"));
     const firstStartEventTypes = (durableJourneyStages[0]?.journeyEvents as Array<{ eventType?: string }> || [])
       .map((event) => event.eventType);
     const secondStartEventTypes = (durableJourneyStages[1]?.journeyEvents as Array<{ eventType?: string }> || [])
@@ -289,7 +319,10 @@ test("Streamable HTTP carries nested Sampling request and response on one MCP se
       recoveryCode,
     });
     assert.equal(restartedStatus.journey.status, "settled");
-    assert.deepEqual(restartedStatus.episodes.map((episode) => episode.phase), ["arrival", "main", "return"]);
+    const restartedPhases = restartedStatus.episodes.map((episode) => episode.phase);
+    assert.equal(restartedPhases[0], "arrival");
+    assert.equal(restartedPhases.at(-1), "return");
+    assert.ok(restartedPhases.slice(1, -1).every((phase) => phase === "main" || phase === "side"));
   } finally {
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

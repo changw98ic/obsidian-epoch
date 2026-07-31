@@ -98,7 +98,6 @@ test("release rehearsal command proves install backup restore and recovery evide
   const dataDir = path.join(tempDir, "server-data");
   const backupRoot = path.join(tempDir, "backups");
   const sqlitePath = path.join(tempDir, "drill.sqlite");
-  const restoreDataDir = path.join(tempDir, "restored-jsonl");
   const restoreSqlitePath = path.join(tempDir, "restored.sqlite");
   const port = await reserveFreePort();
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -114,6 +113,8 @@ test("release rehearsal command proves install backup restore and recovery evide
       AGENT_SERVER_HOST: "127.0.0.1",
       AGENT_SERVER_PORT: String(port),
       AGENT_SERVER_DATA_DIR: dataDir,
+      AGENT_SERVER_STORE: "sqlite",
+      AGENT_SERVER_SQLITE_PATH: sqlitePath,
       AGENT_SERVER_OPERATOR_KEY: operatorKey,
     },
   });
@@ -132,14 +133,10 @@ test("release rehearsal command proves install backup restore and recovery evide
       baseUrl,
       "--operator-key",
       operatorKey,
-      "--source",
-      dataDir,
       "--sqlite",
       sqlitePath,
       "--backup-root",
       backupRoot,
-      "--restore-target-source",
-      restoreDataDir,
       "--restore-target-sqlite",
       restoreSqlitePath,
       "--image-digest",
@@ -158,6 +155,14 @@ test("release rehearsal command proves install backup restore and recovery evide
     assert.equal(body.installSmoke.ok, true);
     assert.equal(body.installSmoke.webBridgeDeliveryTrust, "untrusted_client");
     assert.equal(body.installSmoke.webBridgePostResultMutationRejected, true);
+    assert.match(body.installSmoke.publicSurfaceVersion, /^sha256:[a-f0-9]{64}$/);
+    assert.equal(body.installSmoke.publicSurfaceManifestVerified, true);
+    assert.equal(body.installSmoke.publicSurfacePackageVerified, true);
+    assert.equal(body.installSmoke.installPageVerified, true);
+    assert.equal(body.installSmoke.resultPagePublicSurfaceVerified, true);
+    assert.equal(body.installSmoke.webBridgeResultPagePublicSurfaceVerified, true);
+    assert.equal(body.installSmoke.agentDecisionFactsVerified, true);
+    assert.equal(body.installSmoke.worldPageVerified, true);
     assert.match(body.installSmoke.packageSha256, /^[a-f0-9]{64}$/);
     assert.equal(body.artifacts.package.digest, `sha256:${body.installSmoke.packageSha256}`);
     assert.ok(body.artifacts.package.bytes > 0);
@@ -175,7 +180,6 @@ test("release rehearsal command proves install backup restore and recovery evide
     assert.equal(body.backup.ok, true);
     assert.ok(body.backup.fileCount > 0);
     assert.equal(body.restore.ok, true);
-    assert.equal(body.restore.jsonlRestored, true);
     assert.equal(body.restore.sqliteRestored, true);
     assert.deepEqual(body.checks, {
       installSmoke: true,

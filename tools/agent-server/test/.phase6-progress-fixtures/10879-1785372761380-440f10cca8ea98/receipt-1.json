@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "obsidian-epoch.phase6-command-receipt.v2",
+  "program": "/Users/chengwen/.nvm/versions/node/v24.4.1/bin/node",
+  "argvHash": "sha256:ef2d89c8c02d7df6d2e3806ad0570324936c9c4d336003e8b71ad4f802930316",
+  "cwd": ".",
+  "startedAt": "2026-07-30T00:52:41.463Z",
+  "endedAt": "2026-07-30T00:52:41.513Z",
+  "exitCode": 0,
+  "signal": null,
+  "stdout": {
+    "bytes": 0,
+    "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stderr": {
+    "bytes": 0,
+    "sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "outputs": [
+    {
+      "path": "tools/agent-server/test/.phase6-progress-fixtures/10879-1785372761380-440f10cca8ea98/output.txt",
+      "preState": "absent",
+      "createdByRun": true,
+      "bytes": 25,
+      "sha256": "sha256:8a2457163e37a948bf7c6c87a90ef243366f66bfe5ccf3b84a4ae396e75bce17",
+      "mtime": "2026-07-30T00:52:41.510Z",
+      "ctime": "2026-07-30T00:52:41.510Z"
+    }
+  ],
+  "receiptPath": "tools/agent-server/test/.phase6-progress-fixtures/10879-1785372761380-440f10cca8ea98/receipt-1.json",
+  "keyId": "sha256:f05b99590d76eba755a68436510ff73c96413273ac9c93abd676974130c1d138",
+  "receiptHash": "sha256:ce6d6df07de7c52b530245dec6276a3b1bfa315dedbe8a3e4682e8a33b99c18b",
+  "signature": "hmac-sha256:485022c491808ffc625bf170df81633b390a04a6ca06a949583352b98d46c814"
+}

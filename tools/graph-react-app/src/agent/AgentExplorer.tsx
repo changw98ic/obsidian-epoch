@@ -14,7 +14,6 @@ import { RaidRetaliationPanel } from "./components/RaidRetaliationPanel";
 import { RelationshipDiplomacyPanel } from "./components/RelationshipDiplomacyPanel";
 import { RegionOverviewPanel } from "./components/RegionOverviewPanel";
 import { ResourcePanel } from "./components/ResourcePanel";
-import { ResultNavigation } from "./components/ResultNavigation";
 import { SeasonPanel } from "./components/SeasonPanel";
 import { TurnHostedActionPanel } from "./components/TurnHostedActionPanel";
 import { WorldOverviewPanel } from "./components/WorldOverviewPanel";
@@ -281,7 +280,7 @@ const WORLD_INTERNAL_GOALS: readonly WorldInternalGoal[] = [
   {
     scope: "近期",
     title: "灰港边缘巡查证",
-    unlock: "完成一次档案馆推荐委托",
+    unlock: "完成一次档案馆起始委托",
     proof: "拿到首份可入档发现",
   },
   {
@@ -309,19 +308,19 @@ const STARTER_RISK_PREFERENCE_OPTIONS = [
     value: "cautious",
     label: "谨慎",
     caption: "低风险观察，优先撤退和封存线索",
-    mandate: "档案馆推荐委托：灰港边缘巡查。风险偏好：谨慎，只观察公开异常和安全路线。",
+    mandate: "起始委托模板：灰港边缘巡查。风险偏好：谨慎，只观察公开异常和安全路线。",
   },
   {
     value: "balanced",
     label: "均衡",
     caption: "标准巡查，允许有限接触和证据补全",
-    mandate: "档案馆推荐委托：灰港边缘巡查。风险偏好：均衡，优先完成可审档线索。",
+    mandate: "起始委托模板：灰港边缘巡查。风险偏好：均衡，优先完成可审档线索。",
   },
   {
     value: "bold",
     label: "冒险",
     caption: "更主动接近异常，但仍受首局保护",
-    mandate: "档案馆推荐委托：灰港边缘巡查。风险偏好：冒险，可尝试低阶异常接触。",
+    mandate: "起始委托模板：灰港边缘巡查。风险偏好：冒险，可尝试低阶异常接触。",
   },
 ] as const;
 
@@ -348,15 +347,7 @@ const STARTER_SECRET_EXPOSURE_POLICY = {
 
 type StarterRiskPreference = (typeof STARTER_RISK_PREFERENCE_OPTIONS)[number]["value"];
 
-type RevisitPrimaryActionKind = "审档" | "修正" | "接续" | "找回" | "领取";
-
-interface RevisitPrimaryAction {
-  readonly kind: RevisitPrimaryActionKind;
-  readonly label: string;
-  readonly disabled: boolean;
-}
-
-type ResultSettlementScreenKey = "ending" | "score" | "drop" | "next";
+type ResultSettlementScreenKey = "ending" | "score" | "drop" | "state";
 
 interface ResultImpactMapItem {
   readonly kind: "地点" | "阵营" | "委托" | "争议";
@@ -383,34 +374,29 @@ interface ShareCardStatus {
 const DEFAULT_RESULT_SETTLEMENT_SCREEN = {
   key: "ending",
   label: "结局",
-  caption: "确认本次结局和校验证明，再决定是否公开。",
-  primaryAction: "审档",
+  caption: "本次结局和校验证明。",
 } as const;
 
 const RESULT_SETTLEMENT_SCREENS: readonly {
   readonly key: ResultSettlementScreenKey;
   readonly label: string;
   readonly caption: string;
-  readonly primaryAction: "审档" | "修正" | "领取" | "接续";
 }[] = [
   DEFAULT_RESULT_SETTLEMENT_SCREEN,
   {
     key: "score",
     label: "评分",
-    caption: "复核事件、可信度和资源变化，发现异常就修正。",
-    primaryAction: "修正",
+    caption: "事件、可信度和资源变化。",
   },
   {
     key: "drop",
     label: "掉落",
-    caption: "查看可领取收益、资源变化和未领取托管收益。",
-    primaryAction: "领取",
+    caption: "已记录的收益、资源变化和待领取托管收益。",
   },
   {
-    key: "next",
-    label: "下一步",
-    caption: "选择接续、回访或刷新服务器建议行动。",
-    primaryAction: "接续",
+    key: "state",
+    label: "状态",
+    caption: "查看身份权限、区域事实和服务器记录。",
   },
 ] as const;
 
@@ -758,7 +744,6 @@ function normalizeProgressView(progress?: EpochProgressView | null): EpochProgre
     reason: base.identity ? "服务器未返回行动权限投影，已按身份状态兜底。" : "等待服务器签发身份。",
     activeOnlyTools: [],
     blockedTools: [],
-    recommendedTools: [],
   };
   return {
     ...base,
@@ -784,7 +769,6 @@ function normalizeResultPage(resultPage: EpochResultPage): EpochResultPage {
   return {
     ...resultPage,
     progress: normalizeProgressView(resultPage.progress),
-    nextActions: resultPage.nextActions || [],
     receipt: {
       ...receipt,
       focus: receipt.focus || {
@@ -1245,7 +1229,7 @@ export default function AgentExplorer({
   const [relationshipFocus, setRelationshipFocus] = useState(1);
   const [diplomacyTerms, setDiplomacyTerms] = useState("share_gray_harbor_patrols");
   const [diplomacyResponseFocus, setDiplomacyResponseFocus] = useState(1);
-  const [hostedMandate, setHostedMandate] = useState("档案馆推荐委托：灰港边缘巡查。风险偏好：均衡，优先完成可审档线索。");
+  const [hostedMandate, setHostedMandate] = useState("起始委托模板：灰港边缘巡查。风险偏好：均衡，优先完成可审档线索。");
   const [hostedVisibleText, setHostedVisibleText] = useState("按服务器选项行动，记录可见过程。");
   const [interventionInstruction, setInterventionInstruction] = useState("优先保留可审计线索，避免扩大风险。");
   const [interventionMode, setInterventionMode] = useState<InterventionMode>("running");
@@ -1454,42 +1438,6 @@ export default function AgentExplorer({
     (currentTurnCard?.status === "open" && currentTurnCard.actionOptions.some((option) => option.risk === "high"))
     || (primaryHostedSession?.status === "active" && primaryHostedSession.actionOptions.some((option) => option.risk === "high")),
   );
-  const primaryBriefingAction = agentBriefing?.pendingActions[0];
-  const revisitPrimaryAction: RevisitPrimaryAction = (() => {
-    if (progress?.pendingDowntime) {
-      return {
-        kind: "领取",
-        label: "领取托管收益",
-        disabled: isBusy || activeIdentityDisabled || !progress?.downtime?.active,
-      };
-    }
-    if (identity?.status === "archived") {
-      return {
-        kind: "找回",
-        label: identity.nextAgentId ? "已找回" : "找回身份",
-        disabled: isBusy || Boolean(identity.nextAgentId) || !explorer,
-      };
-    }
-    if (currentAgentId && !actionEligibility?.canUseActiveTools) {
-      return {
-        kind: "修正",
-        label: "修正状态",
-        disabled: isBusy || !explorer,
-      };
-    }
-    if (primaryBriefingAction || (resultPage?.nextActions || []).length || primaryHostedSession?.status === "active") {
-      return {
-        kind: "接续",
-        label: "接续下一步",
-        disabled: isBusy || activeIdentityDisabled || !currentAgentId,
-      };
-    }
-    return {
-      kind: "审档",
-      label: "审档预览",
-      disabled: isBusy || !currentAgentId,
-    };
-  })();
   const activeSettlementScreen = RESULT_SETTLEMENT_SCREENS.find((screen) => screen.key === resultSettlementScreen)
     || DEFAULT_RESULT_SETTLEMENT_SCREEN;
   const resultSettlementSummary = resultPage
@@ -1498,18 +1446,14 @@ export default function AgentExplorer({
         case "ending":
           return resultPage.focusTurnCard?.resolution?.outcomeSummary
             || resultPage.focusHostedSession?.actions.at(-1)?.outcomeSummary
-            || "本次结果已生成，可继续审档或公开。";
+            || "本次结果已生成。";
         case "score":
           return `历程 ${(resultPage.progress.latestEvents || []).length} 条 · 服务器已结算 · 收获项 ${resourceEntries(resultPage.progress.resources || {}).filter((item) => item.amount > 0).length}`;
         case "drop":
           return resourceEntries(resultPage.progress.resources || {}).filter((item) => item.amount > 0).map((item) => `${item.label}${item.amount}`).join(" / ")
-            || "暂无可领取资源，继续托管或接续行动。";
-        case "next": {
-          const nextAction = (resultPage.nextActions || [])[0];
-          return nextAction
-            ? `${nextAction.label} · ${playerToolLabel(nextAction.toolName)}`
-            : "暂无服务器建议行动，可刷新进度或接续托管。";
-        }
+            || "当前没有待领取资源。";
+        case "state":
+          return `${identity?.status === "archived" ? "身份已定档" : "身份仍在行动"} · ${actionEligibility?.canUseActiveTools ? "行动权限已开放" : actionEligibility?.reason || "行动权限受限"} · 区域记录 ${resultPage.regionalContext ? `${resultPage.regionalContext.news.length} 新闻 / ${resultPage.regionalContext.commissions.length} 委托` : "未加载"}`;
       }
     })()
     : "生成预览后显示结算。";
@@ -1631,7 +1575,6 @@ export default function AgentExplorer({
         const normalizedBriefing = {
           ...briefing,
           progress: normalizeProgressView(briefing.progress),
-          pendingActions: briefing.pendingActions || [],
         };
         setAgentBriefing(normalizedBriefing);
         setAgentBriefingSyncedAt(briefing.generatedAt);
@@ -1720,51 +1663,6 @@ export default function AgentExplorer({
     }
   }
 
-  function runRevisitPrimaryAction() {
-    switch (revisitPrimaryAction.kind) {
-      case "领取":
-        void claimDowntime();
-        return;
-      case "找回":
-        void reincarnateCurrentIdentity();
-        return;
-      case "修正":
-        if (explorer) {
-          void loadExplorerProfile();
-        } else {
-          void refreshProgress();
-        }
-        return;
-      case "接续":
-        void refreshProgress();
-        return;
-      case "审档":
-        void loadResultPage();
-        return;
-    }
-  }
-
-  function runSettlementPrimaryAction() {
-    switch (resultSettlementScreen) {
-      case "ending":
-        void loadResultPage();
-        return;
-      case "score":
-        void loadResultPage();
-        return;
-      case "drop":
-        if (progress?.pendingDowntime) {
-          void claimDowntime();
-        } else {
-          void refreshProgress();
-        }
-        return;
-      case "next":
-        runRevisitPrimaryAction();
-        return;
-    }
-  }
-
   function runLocalDemoMode() {
     setDemoModeReport({
       title: "本地演示样例",
@@ -1783,7 +1681,7 @@ export default function AgentExplorer({
 
   function pauseExploration() {
     setInterventionMode("paused");
-    setLastAgentRequest("本地介入：已暂停，不提交下一步行动。");
+    setLastAgentRequest("本地介入：已暂停，不提交行动。");
   }
 
   function resetInterventionBudgetForNewRun() {
@@ -3868,6 +3766,54 @@ export default function AgentExplorer({
     });
   }
 
+  async function copyMcpObserverInstruction(instruction: string) {
+    try {
+      await navigator.clipboard.writeText(instruction);
+      setLastAgentRequest("已复制给 Agent 的 MCP 指令");
+      setError("");
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }
+
+  async function refreshMcpObserver() {
+    await runAction("mcp-observer-refresh", async () => {
+      const [status, overview] = await Promise.all([
+        getEpochInstallStatus(),
+        getEpochWorldOverview({ limit: 4 }),
+      ]);
+      setInstallStatus(status);
+      setInstallStatusError("");
+      setWorldOverview(overview);
+      if (currentAgentId) await refreshProgress(currentAgentId, { quiet: true });
+    });
+  }
+
+  if (initialSurface === "web-bridge") {
+    return (
+      <main className="agent-explorer">
+        <header className="agent-topbar">
+          <div>
+            <strong>黑曜纪元 Agent 观察页</strong>
+            <span>{AGENT_SERVER_BASE}</span>
+          </div>
+          <button type="button" onClick={onBack}>返回地图</button>
+        </header>
+        <WebBridgePlaySurface
+          agentBriefing={agentBriefing}
+          currentAgentId={currentAgentId}
+          installStatus={installStatus}
+          isRefreshing={isBusy}
+          lastSyncedAt={agentBriefingSyncedAt ? formatDate(agentBriefingSyncedAt) : undefined}
+          onCopyInstruction={(instruction) => void copyMcpObserverInstruction(instruction)}
+          onRefresh={() => void refreshMcpObserver()}
+          worldOverview={worldOverview}
+        />
+        {error ? <section className="agent-error">观察连接：{error}</section> : null}
+      </main>
+    );
+  }
+
   return (
     <main className="agent-explorer">
       <header className="agent-topbar">
@@ -3903,28 +3849,7 @@ export default function AgentExplorer({
         </span>
       </section>
 
-      {initialSurface === "web-bridge" ? (
-        <WebBridgePlaySurface
-          currentAgentId={currentAgentId}
-          hostedMandate={hostedMandate}
-          hostedVisibleText={hostedVisibleText}
-          identityDisabledReason={playerIdentityActionDisabledReason}
-          isBusy={isBusy}
-          lastAction={lastWebBridgeAction}
-          onCopyPrompt={copyWebBridgePrompt}
-          onIssueIdentity={issueIdentity}
-          onPublishResult={publishWebBridgeResultPage}
-          onStartTurn={startWebBridgeTurn}
-          onSubmitAction={submitWebBridgeAction}
-          regionLabel={playerRegionLabel(regionId)}
-          resultPublishAuthorizationCopy={RESULT_PUBLISH_AUTHORIZATION_COPY}
-          setHostedMandate={setHostedMandate}
-          setHostedVisibleText={setHostedVisibleText}
-          webBridgeTurn={webBridgeTurn}
-        />
-      ) : null}
-
-      {initialSurface !== "web-bridge" ? <section className="agent-player-mode" aria-labelledby="agent-player-mode-title">
+      <section className="agent-player-mode" aria-labelledby="agent-player-mode-title">
         <div className="agent-player-copy" data-first-screen-block="intro">
           <span>黑曜纪元等候探索</span>
           <h1 id="agent-player-mode-title">等待写代码时，让你的行动身份在黑曜纪元行动</h1>
@@ -4009,35 +3934,24 @@ export default function AgentExplorer({
           </div>
         </div>
         <section className="agent-player-watch" aria-label="玩家等候看板" data-first-screen-block="watch">
-          <div className="agent-player-watch-next" aria-label="回访摘要">
-            <span>单句下一步</span>
+          <div className="agent-player-watch-status" aria-label="状态摘要">
+            <span>服务器状态</span>
             <strong>
               {!currentAgentId
-                ? "下一步：开始/继续身份，让服务器签发一个可托管的行动身份。"
+                ? "当前没有同步到此浏览器的行动身份。"
                 : !actionEligibility?.canUseActiveTools
-                  ? `下一步：${actionEligibility?.reason || "等待身份恢复后再行动。"}`
+                  ? `当前限制：${actionEligibility?.reason || "行动权限未开放。"}`
                   : progress?.pendingDowntime
-                    ? "下一步：领取托管收益，或继续等下一次服务器 tick。"
-                    : primaryBriefingAction
-                      ? `下一步：${primaryBriefingAction.label}，${primaryBriefingAction.reason}`
+                    ? `待领取托管收益：${rewardSummary(progress.pendingDowntime.rewards)}。`
                     : primaryHostedSession?.status === "active"
-                      ? "下一步：观察托管实况，满意后生成公开结果。"
-                      : "下一步：选择托管行动，让行动身份在你等待时推进世界。"}
+                      ? `托管进行中：${primaryHostedSession.actions.length} 条已结算行动。`
+                      : `身份可行动 · 区域 ${playerRegionLabel(agentBriefing?.regionId || regionId)} · ${agentBriefing?.regionalContext?.commissions.length || 0} 个开放委托。`}
             </strong>
             <small>
               最近请求：{lastAgentRequest} · 连接状态：{installReadiness.lastRequest}
               {agentBriefing ? ` · 简报：${playerRegionLabel(agentBriefing.regionId || regionId)} · ${agentBriefing.regionalContext?.news.length || 0} 新闻 · ${agentBriefing.regionalContext?.messages.length || 0} 留言` : ""}
               {agentBriefingSyncedAt ? ` · 自动刷新 ${formatDate(agentBriefingSyncedAt)}` : ""}
             </small>
-            <button
-              type="button"
-              className="agent-revisit-primary-action"
-              aria-label={`回访主按钮：${revisitPrimaryAction.kind}`}
-              disabled={revisitPrimaryAction.disabled}
-              onClick={runRevisitPrimaryAction}
-            >
-              {revisitPrimaryAction.label}
-            </button>
             {agentBriefing?.publicPages.agent ? (
               <a className="agent-player-watch-link" href={`${AGENT_SERVER_BASE}${agentBriefing.publicPages.agent}`} target="_blank" rel="noreferrer">
                 公开进度页
@@ -4124,12 +4038,6 @@ export default function AgentExplorer({
           </div>
           <div className="agent-player-watch-live" aria-label="最近实况">
             <b>最近实况</b>
-            {(agentBriefing?.pendingActions || []).slice(0, 2).map((action) => (
-              <span key={action.actionId}>
-                <em>{action.label}</em>
-                <small>{playerToolLabel(action.toolName)} · {playerRegionLabel(action.regionId || agentBriefing?.regionId)}</small>
-              </span>
-            ))}
             {(progress?.downtimeDiaryEntries || []).slice(0, 2).map((entry) => (
               <span key={entry.diaryId}>
                 <em>{entry.phase === "tick" ? "托管巡检" : "托管领取"}</em>
@@ -4142,7 +4050,7 @@ export default function AgentExplorer({
                 <small>{playerEventDetail(event)}</small>
               </span>
             ))}
-            {!(((agentBriefing?.pendingActions || []).length) || (progress?.downtimeDiaryEntries || []).length || (progress?.latestEvents || []).length) ? <span><em>待同步</em><small>刷新进度后显示服务器实况。</small></span> : null}
+            {!(((progress?.downtimeDiaryEntries || []).length) || (progress?.latestEvents || []).length) ? <span><em>待同步</em><small>刷新进度后显示服务器实况。</small></span> : null}
           </div>
         </section>
         <section className="agent-player-quick-panel" aria-label="首屏快速面板" data-first-screen-block="quick-panel">
@@ -4211,9 +4119,9 @@ export default function AgentExplorer({
               </span>
             </div>
           ) : null}
-          <div className="agent-player-starter-commission" aria-label="档案馆推荐委托">
+          <div className="agent-player-starter-commission" aria-label="档案馆起始委托">
             <span>
-              <b>档案馆推荐委托</b>
+              <b>档案馆起始委托</b>
               <small>{selectedStarterRiskPreference.mandate} · {STARTER_SECRET_EXPOSURE_POLICY.summary}</small>
             </span>
           </div>
@@ -4309,7 +4217,7 @@ export default function AgentExplorer({
             </span>
           </div>
         </section>
-      </section> : null}
+      </section>
 
       <details className="agent-operator-details">
         <summary>
@@ -4544,7 +4452,6 @@ export default function AgentExplorer({
               <span>行动权限</span>
               <b>{actionEligibility.canUseActiveTools ? "可行动" : actionEligibility.status === "archived" ? "已定档" : "待签发"}</b>
               <em>{actionEligibility.reason}</em>
-              <small>建议下一步 {actionEligibility.recommendedTools.map(playerToolLabel).join(" / ") || "等待进度"}</small>
               {!actionEligibility.canUseActiveTools && actionEligibility.blockedTools.length ? (
                 <small>暂不可用 {actionEligibility.blockedTools.slice(0, 5).map(playerToolLabel).join(" / ")}{actionEligibility.blockedTools.length > 5 ? " / ..." : ""}</small>
               ) : null}
@@ -5664,14 +5571,6 @@ export default function AgentExplorer({
                       )}
                     </div>
                   ) : null}
-                  <button
-                    type="button"
-                    className="agent-settlement-primary-action"
-                    disabled={isBusy || !resultPage}
-                    onClick={runSettlementPrimaryAction}
-                  >
-                    {activeSettlementScreen.primaryAction}
-                  </button>
                 </section>
               </div>
               <dl>
@@ -5711,12 +5610,6 @@ export default function AgentExplorer({
                 eventTypeLabel={playerEventTypeLabel}
                 formatDate={formatDate}
                 resultPage={resultPage}
-              />
-              <ResultNavigation
-                assetUrl={epochAssetUrl}
-                resultPage={resultPage}
-                sourceTypeLabel={playerSourceTypeLabel}
-                toolLabel={playerToolLabel}
               />
               {resultPage.regionalContext ? (
                 <div className="agent-mini-list">

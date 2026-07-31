@@ -8,13 +8,19 @@ import { gunzipSync } from "node:zlib";
 import { createSequentialEpochIdFactory } from "./lib/epoch/protocol.ts";
 import { isDirectEntrypoint } from "./lib/cliEntrypoint.ts";
 import { createAgentHttpServer } from "./lib/httpServer.ts";
-import { MCP_PROTOCOL_VERSION, createAgentWorldRuntime } from "./lib/mcpTools.ts";
+import { MCP_PROTOCOL_VERSION } from "./lib/mcpConstants.ts";
+import { createAgentWorldRuntime } from "./lib/mcpRuntimeCore.ts";
 import {
   OBSIDIAN_EPOCH_PACKAGE_INTEGRITY_FILE,
   OBSIDIAN_EPOCH_PACKAGE_SIGNATURE_ALGORITHM,
   verifyObsidianEpochPackageIntegrity,
   type PackageIntegrityVerification,
 } from "./lib/packageArchive.ts";
+import {
+  OBSIDIAN_EPOCH_PUBLIC_PAGE_MARKER_NAME,
+  OBSIDIAN_EPOCH_PUBLIC_SURFACE_VERSION,
+  obsidianEpochPublicSurface,
+} from "./lib/publicSurfaceContract.ts";
 
 type AnyRecord = Record<string, unknown>;
 
@@ -40,6 +46,30 @@ function htmlEscapedText(value: string) {
 
 function htmlIncludesUrl(html: string, urlPath: string) {
   return html.includes(urlPath) || html.includes(htmlEscapedText(urlPath));
+}
+
+function hasPublicSurfaceMarker(html: string) {
+  return html.includes(`<meta name="${OBSIDIAN_EPOCH_PUBLIC_PAGE_MARKER_NAME}" content="${OBSIDIAN_EPOCH_PUBLIC_SURFACE_VERSION}">`);
+}
+
+function hasLegacyPlayerContinueLink(html: string) {
+  return /\bhref=["'][^"']*\/epoch\/console(?:[\/?#][^"']*)?["']/i.test(html);
+}
+
+function publicSurfaceMatches(value: unknown) {
+  const surface = recordValue(value);
+  const expected = obsidianEpochPublicSurface();
+  const publicPages = recordValue(surface.publicPages);
+  return surface.version === expected.version
+    && surface.schemaVersion === expected.schemaVersion
+    && surface.canonicalPlayerContinuePath === expected.canonicalPlayerContinuePath
+    && surface.canonicalWebPlayAssetBasePath === expected.canonicalWebPlayAssetBasePath
+    && Array.isArray(surface.legacyPlayerContinuePaths)
+    && surface.legacyPlayerContinuePaths.length === expected.legacyPlayerContinuePaths.length
+    && surface.legacyPlayerContinuePaths.every((path, index) => path === expected.legacyPlayerContinuePaths[index])
+    && Object.entries(expected.publicPages).every(([name, path]) => publicPages[name] === path)
+    && recordValue(surface.successfulResult).rewardAuthority === expected.successfulResult.rewardAuthority
+    && recordValue(surface.successfulResult).forbiddenFailurePanel === expected.successfulResult.forbiddenFailurePanel;
 }
 
 function requiredPublishToken(value: unknown, errorCode: string) {
@@ -95,7 +125,7 @@ interface ConsoleExternalMediaSmokeResult {
   readonly consoleExternalMediaBytesRead: number | null;
 }
 
-const CONSOLE_SMOKE_ASSET_PATH = "/epoch/console/assets/media/14a0091da9_%E5%AD%A2%E9%9B%BE%E5%B7%A1%E7%8C%8E%E8%80%85_%E6%A1%A3%E6%A1%88%E5%8D%A1.png";
+const CONSOLE_SMOKE_ASSET_PATH = "/epoch/web-play/assets/media/14a0091da9_%E5%AD%A2%E9%9B%BE%E5%B7%A1%E7%8C%8E%E8%80%85_%E6%A1%A3%E6%A1%88%E5%8D%A1.png";
 const CONSOLE_SMOKE_ASSET_FILE = CONSOLE_SMOKE_ASSET_PATH.split("/").at(-1) || "";
 const CONSOLE_EXTERNAL_MEDIA_BASE_URL_ENV = "AGENT_INSTALL_SMOKE_CONSOLE_MEDIA_BASE_URL";
 const CONSOLE_EXTERNAL_MEDIA_REQUIRED_ENV = "AGENT_INSTALL_SMOKE_REQUIRE_EXTERNAL_CONSOLE_MEDIA";
@@ -105,6 +135,9 @@ const CONSOLE_EXTERNAL_MEDIA_PROBE_BYTES = 1_024;
 const CONSOLE_EXTERNAL_MEDIA_MAX_CONTENT_LENGTH = 50 * 1_024 * 1_024;
 const INSTALL_HTTP_REQUEST_TIMEOUT_MS = 60_000;
 const MCP_STDIO_REQUEST_TIMEOUT_MS = 90_000;
+const JOURNEY_MIRROR_HISTORY_MIN_WORLD_MINUTES = 45;
+const JOURNEY_MIRROR_HISTORY_WAIT_TIMEOUT_MS = 15_000;
+const JOURNEY_MIRROR_HISTORY_WAIT_INTERVAL_MS = 250;
 const REQUIRED_MCP_HOST_CONFIGS = [
   ["Claude Code", "obsidian-epoch/host-config/claude-code.mcp.json"],
   ["Codex", "obsidian-epoch/host-config/codex.mcp.json"],
@@ -299,6 +332,21 @@ function contentPayload(response: AnyRecord) {
   return JSON.parse(text);
 }
 
+async function waitForJourneyMirrorHistory(mcp: Pick<JsonRpcClient, "callTool">) {
+  const deadline = Date.now() + JOURNEY_MIRROR_HISTORY_WAIT_TIMEOUT_MS;
+  let lastWorldMinute = 0;
+  while (Date.now() < deadline) {
+    const worldClock = recordValue(contentPayload(await mcp.callTool("obsidian_epoch.world_clock")));
+    const worldMinute = Number(worldClock.worldMinute);
+    if (Number.isSafeInteger(worldMinute) && worldMinute >= JOURNEY_MIRROR_HISTORY_MIN_WORLD_MINUTES) {
+      return worldMinute;
+    }
+    if (Number.isFinite(worldMinute)) lastWorldMinute = Math.max(0, Math.floor(worldMinute));
+    await new Promise<void>((resolve) => setTimeout(resolve, JOURNEY_MIRROR_HISTORY_WAIT_INTERVAL_MS));
+  }
+  throw new Error(`install_smoke_journey_mirror_history_not_ready:${lastWorldMinute}`);
+}
+
 function packageEntries(archive: Buffer): PackageEntry[] {
   const raw = gunzipSync(archive);
   const entries: PackageEntry[] = [];
@@ -319,6 +367,28 @@ function packageEntries(archive: Buffer): PackageEntry[] {
   return entries;
 }
 
+function packagePublicSurfaceVersion(entries: readonly PackageEntry[]) {
+  const manifestPaths = ["install-manifest.json", "obsidian-epoch/assets/install-manifest.json"];
+  const versions = manifestPaths.map((path) => {
+    const entry = entries.find((candidate) => candidate.name === path);
+    if (!entry) throw new Error("install_smoke_package_public_surface_manifest_missing");
+    let manifest: unknown;
+    try {
+      manifest = JSON.parse(entry.content.toString("utf8"));
+    } catch {
+      throw new Error("install_smoke_package_public_surface_manifest_invalid");
+    }
+    if (!publicSurfaceMatches(recordValue(manifest).publicSurface)) {
+      throw new Error("install_smoke_package_public_surface_mismatch");
+    }
+    return String(recordValue(recordValue(manifest).publicSurface).version || "");
+  });
+  if (!versions.every((version) => version === OBSIDIAN_EPOCH_PUBLIC_SURFACE_VERSION)) {
+    throw new Error("install_smoke_package_public_surface_version_mismatch");
+  }
+  return OBSIDIAN_EPOCH_PUBLIC_SURFACE_VERSION;
+}
+
 async function extractPackageArchive(archive: Buffer, releasePublicKey: string) {
   const root = await mkdtemp(join(tmpdir(), "obsidian-epoch-install-smoke-"));
   const entries = packageEntries(archive);
@@ -335,12 +405,13 @@ async function extractPackageArchive(archive: Buffer, releasePublicKey: string) 
   if (!integrity.verified || integrity.fileCount < 1) {
     throw new Error("install_smoke_package_file_integrity_failed");
   }
+  const publicSurfaceVersion = packagePublicSurfaceVersion(entries);
   for (const entry of entries) {
     const target = join(root, entry.name);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, entry.content);
   }
-  return { root, integrity };
+  return { root, integrity, publicSurfaceVersion };
 }
 
 function createJsonRpcClient(serverBase: string, packageRoot: string, mcpToken: string | undefined): JsonRpcClient {
@@ -844,6 +915,10 @@ async function preflightInstallSurface(
   const packageUrl = manifest.body?.packageUrl;
   if (!packageInfo || typeof packageUrl !== "string") throw new Error("install_smoke_package_manifest_missing");
   if (manifest.body?.serverBase !== serverBase) throw new Error("install_smoke_manifest_server_mismatch");
+  if (!publicSurfaceMatches(manifest.body?.publicSurface)) {
+    throw new Error("install_smoke_public_surface_manifest_mismatch");
+  }
+  const publicSurfaceVersion = String(manifest.body?.publicSurface?.version || "");
   const packageSignatureAlgorithm = String(manifest.body?.verification?.packageSignatureAlgorithm || "");
   const packageReleasePublicKey = String(manifest.body?.verification?.packageReleasePublicKey || "");
   const packageReleaseKeyId = String(manifest.body?.verification?.packageReleaseKeyId || "");
@@ -894,7 +969,7 @@ async function preflightInstallSurface(
     throw new Error("install_smoke_release_rehearsal_commands_missing");
   }
   const consolePageUrl = manifest.body?.publicPages?.console;
-  if (consolePageUrl !== "/epoch/console") throw new Error("install_smoke_console_manifest_missing");
+  if (consolePageUrl !== "/epoch/web-play") throw new Error("install_smoke_console_manifest_missing");
   const worldPageUrl = manifest.body?.publicPages?.world;
   if (worldPageUrl !== "/epoch/world") throw new Error("install_smoke_world_manifest_missing");
   const webBridgeAuditIndexUrl = manifest.body?.publicPages?.auditIndex;
@@ -910,7 +985,9 @@ async function preflightInstallSurface(
     ? webBridgeEntry.configSnippets.find((snippet: AnyRecord) => snippet?.pathHint === "obsidian-epoch/host-config/web-llm-bridge-sequence.json")
     : undefined;
   const webBridgeSequencePublicPages = webBridgeSequence?.body?.publicPages;
-  const webBridgeAuditPublicPagesVerified = webBridgePublicPages?.auditIndex === webBridgeAuditIndexUrl
+  const webBridgeAuditPublicPagesVerified = webBridgePublicPages?.console === consolePageUrl
+    && webBridgeSequencePublicPages?.console === consolePageUrl
+    && webBridgePublicPages?.auditIndex === webBridgeAuditIndexUrl
     && webBridgePublicPages?.audit === webBridgeAuditReplayTemplate
     && webBridgeSequencePublicPages?.auditIndex === webBridgeAuditIndexUrl
     && webBridgeSequencePublicPages?.audit === webBridgeAuditReplayTemplate;
@@ -921,12 +998,20 @@ async function preflightInstallSurface(
   }
   const hostConfig = await verifyHostConfigFiles(serverBase, manifest.body);
 
+  const installPage = await getTextWithStatus(serverBase, "/epoch/install");
+  const installPageVerified = installPage.status === 200
+    && /text\/html/.test(installPage.contentType)
+    && hasPublicSurfaceMarker(installPage.text)
+    && !hasLegacyPlayerContinueLink(installPage.text);
+  if (!installPageVerified) throw new Error("install_smoke_install_page_public_surface_failed");
+
   const consolePage = await getTextWithStatus(serverBase, consolePageUrl);
   const consolePageVerified = consolePage.status === 200
     && /text\/html/.test(consolePage.contentType)
     && consolePage.text.includes("<div id=\"root\"></div>")
     && consolePage.text.includes("window.__WORLD_MAP_DATA__")
-    && consolePage.text.includes("<base href=\"/epoch/console/\">");
+    && consolePage.text.includes("<base href=\"/epoch/web-play/\">")
+    && hasPublicSurfaceMarker(consolePage.text);
   if (!consolePageVerified) throw new Error("install_smoke_console_page_failed");
 
   const consoleExternalMedia = await verifyConsoleExternalMedia(consolePage.text, serverBase, {
@@ -970,6 +1055,10 @@ async function preflightInstallSurface(
     epochHealthChecks: epochHealth.body.checks,
     manifestHealth: healthPaths,
     installManifestStatus: manifest.status,
+    publicSurfaceManifestVerified: true,
+    publicSurfaceVersion,
+    installPageVerified,
+    installPageStatus: installPage.status,
     ...hostConfig,
     consolePageVerified,
     consoleAssetVerified,
@@ -1078,7 +1167,11 @@ export async function runEpochInstallSmoke(options: InstallSmokeOptions = {}) {
       recoveryCode: ownerRecoveryCode,
       idempotencyKey: `${seed}-turn-1`,
     }));
-    const actionOptionId = turnCard.value.actionOptions[0].actionOptionId;
+    const firstAssistOption = Array.isArray(turnCard.value.actionOptions)
+      ? turnCard.value.actionOptions.find((option: AnyRecord) => option.optionKey === "assist")
+      : undefined;
+    const actionOptionId = firstAssistOption?.actionOptionId;
+    if (typeof actionOptionId !== "string") throw new Error("install_smoke_assist_action_missing");
 
     const resolvedTurn = contentPayload(await mcp.callTool("obsidian_epoch.resolve_turn", {
       turnCardId: turnCard.value.turnCardId,
@@ -1091,6 +1184,119 @@ export async function runEpochInstallSmoke(options: InstallSmokeOptions = {}) {
     }));
     if (resolvedTurn.value.actionOptionId !== actionOptionId) throw new Error("install_smoke_resolution_mismatch");
 
+    // Earn the second server-authorized coin, then prove that the installed
+    // package can turn those rewards into a server-approved purchase without
+    // inventing a price, effect, or credential.
+    const economyTurnCard = contentPayload(await mcp.callTool("obsidian_epoch.turn_card", {
+      agentId,
+      regionId: "region_city_pipes",
+      prompt: "Earn the second server-settled coin for the economy smoke flow.",
+      recoveryCode: ownerRecoveryCode,
+      idempotencyKey: `${seed}-economy-turn-2`,
+    }));
+    const secondAssistOption = Array.isArray(economyTurnCard.value.actionOptions)
+      ? economyTurnCard.value.actionOptions.find((option: AnyRecord) => option.optionKey === "assist")
+      : undefined;
+    const secondActionOptionId = secondAssistOption?.actionOptionId;
+    if (typeof secondActionOptionId !== "string") throw new Error("install_smoke_economy_assist_action_missing");
+    const secondResolvedTurn = contentPayload(await mcp.callTool("obsidian_epoch.resolve_turn", {
+      turnCardId: economyTurnCard.value.turnCardId,
+      sequence: economyTurnCard.value.sequence,
+      nonce: economyTurnCard.value.nonce,
+      actionOptionId: secondActionOptionId,
+      visibleText: "Install smoke selected a second server-issued assist action for a real shop purchase.",
+      recoveryCode: ownerRecoveryCode,
+      idempotencyKey: `${seed}-economy-resolve-2`,
+    }));
+    if (secondResolvedTurn.value.actionOptionId !== secondActionOptionId) {
+      throw new Error("install_smoke_economy_resolution_mismatch");
+    }
+    const economyMirrorHistoryWorldMinute = await waitForJourneyMirrorHistory(mcp);
+    const reserveJourney = contentPayload(await mcp.callTool("obsidian_epoch.prepare_journey", {
+      agentId,
+      destinationRegionId: "region_city_pipes",
+      mandate: { objective: "领取首次旅程准备补给", priorities: ["safe_return"] },
+      recoveryCode: ownerRecoveryCode,
+      idempotencyKey: `${seed}-economy-reserve-journey`,
+    }));
+    const reserveJourneyStart = contentPayload(await mcp.callTool("obsidian_epoch.start_journey", {
+      journeyId: reserveJourney.journey.journeyId,
+      expectedVersion: reserveJourney.journey.version,
+      decisionMode: "agent_native",
+      taskGenerationMode: "server_fallback",
+      recoveryCode: ownerRecoveryCode,
+      idempotencyKey: `${seed}-economy-reserve-start`,
+    }));
+    if (
+      reserveJourneyStart.journeyEntryReserve?.balances?.focus !== 2
+      || reserveJourneyStart.journeyEntryReserve?.balances?.stamina !== 1
+      || reserveJourneyStart.journeyEntryReserve?.duplicate !== false
+      || Object.hasOwn(reserveJourneyStart, "nextAction")
+    ) {
+      throw new Error("install_smoke_economy_reserve_missing");
+    }
+    const economyBriefing = contentPayload(await mcp.callTool("obsidian_epoch.agent_briefing", {
+      agentId,
+      regionId: "region_city_pipes",
+      recoveryCode: ownerRecoveryCode,
+    }));
+    const economyFacts = recordValue(economyBriefing.economyActions);
+    const economyOwnerAccess = recordValue(economyFacts.ownerAccess);
+    if (
+      economyFacts.authority !== "server_economy_action_facts"
+      || economyOwnerAccess.status !== "owner_authorized"
+      || economyOwnerAccess.canExecute !== true
+      || Object.hasOwn(economyFacts, "recommended")
+      || Object.hasOwn(economyBriefing, "pendingActions")
+    ) {
+      throw new Error("install_smoke_economy_facts_missing");
+    }
+    const pipeKitFact = (Array.isArray(economyFacts.actions) ? economyFacts.actions : [])
+      .map(recordValue)
+      .find((action) => action.actionId === "shop:pipewarden-valve-kit");
+    const pipeKitAvailability = recordValue(pipeKitFact?.availability);
+    const pipeKitBalancesAfter = recordValue(pipeKitAvailability.balancesAfter);
+    const pipeKitExecution = recordValue(pipeKitFact?.execution);
+    const pipeKitImpact = recordValue(pipeKitFact?.nextJourneyImpact);
+    const pipeKitEquipment = recordValue(pipeKitImpact.equipmentFactor);
+    if (
+      !pipeKitFact
+      || pipeKitAvailability.status !== "available"
+      || pipeKitBalancesAfter.coin !== 0
+      || pipeKitBalancesAfter.stamina !== 0
+      || pipeKitExecution.tool !== "obsidian_epoch.purchase_shop_offer"
+      || pipeKitExecution.idempotencyKeyRequired !== true
+      || pipeKitEquipment.delta !== 1
+      || Object.hasOwn(pipeKitFact, "recommendation")
+    ) {
+      throw new Error("install_smoke_economy_facts_invalid");
+    }
+    const purchasedPipeKit = contentPayload(await mcp.callTool("obsidian_epoch.purchase_shop_offer", {
+      ...recordValue(pipeKitExecution.arguments),
+      recoveryCode: ownerRecoveryCode,
+      idempotencyKey: `${seed}-economy-purchase-pipe-kit`,
+    }));
+    if (recordValue(purchasedPipeKit.value).itemKey !== "shop:pipewarden-valve-kit") {
+      throw new Error("install_smoke_economy_purchase_failed");
+    }
+    const afterPurchaseBriefing = contentPayload(await mcp.callTool("obsidian_epoch.agent_briefing", {
+      agentId,
+      regionId: "region_city_pipes",
+      recoveryCode: ownerRecoveryCode,
+    }));
+    const afterPurchaseFacts = recordValue(afterPurchaseBriefing.economyActions);
+    const limitedPipeKitFact = (Array.isArray(afterPurchaseFacts.actions) ? afterPurchaseFacts.actions : [])
+      .map(recordValue)
+      .find((action) => action.actionId === "shop:pipewarden-valve-kit");
+    const limitedPipeKitAvailability = recordValue(limitedPipeKitFact?.availability);
+    if (
+      !limitedPipeKitFact
+      || limitedPipeKitAvailability.status !== "purchase_limit_reached"
+      || Object.hasOwn(limitedPipeKitFact, "recommendation")
+    ) {
+      throw new Error("install_smoke_economy_purchase_limit_missing");
+    }
+
     const resultPagePreview = contentPayload(await mcp.callTool("obsidian_epoch.result_page", {
       turnCardId: turnCard.value.turnCardId,
     }));
@@ -1102,15 +1308,24 @@ export async function runEpochInstallSmoke(options: InstallSmokeOptions = {}) {
     }));
     const resultPlayMode = String(resultPage.page.payload.receipt?.playMode || "");
     const resultTrustTier = String(resultPage.page.payload.receipt?.trustTier || "");
-    if (resultPlayMode !== "ranked" || resultTrustTier !== "server_settled") {
+    if (
+      resultPlayMode !== "ranked"
+      || resultTrustTier !== "server_settled"
+      || Object.hasOwn(recordValue(resultPage.page.payload), "nextActions")
+    ) {
       throw new Error("install_smoke_result_trust_mode_mismatch");
     }
     const resultPageUrl = resultPage.page.urlPath as string;
     const resultPublicSummary = String(resultPage.page.payload.publicSafeSummary?.text || "");
     if (!resultPublicSummary) throw new Error("install_smoke_result_public_summary_missing");
-    const resultPageStatus = await getStatus(serverBase, resultPageUrl);
+    const resultPageHtml = await getTextWithStatus(serverBase, resultPageUrl);
+    const resultPageStatus = resultPageHtml.status;
+    const resultPagePublicSurfaceVerified = resultPageStatus === 200
+      && /text\/html/.test(resultPageHtml.contentType)
+      && hasPublicSurfaceMarker(resultPageHtml.text)
+      && !hasLegacyPlayerContinueLink(resultPageHtml.text);
     const agentPageStatus = await getStatus(serverBase, `/epoch/agent/${encodeURIComponent(agentId)}`);
-    if (resultPageStatus !== 200 || agentPageStatus !== 200) {
+    if (!resultPagePublicSurfaceVerified || agentPageStatus !== 200) {
       throw new Error("install_smoke_public_pages_failed");
     }
 
@@ -1181,8 +1396,13 @@ export async function runEpochInstallSmoke(options: InstallSmokeOptions = {}) {
       throw new Error("install_smoke_web_bridge_result_trust_mode_mismatch");
     }
     const webBridgeResultPageUrl = webBridgeResultPage.page.urlPath as string;
-    const webBridgeResultPageStatus = await getStatus(serverBase, webBridgeResultPageUrl);
-    if (webBridgeResultPageStatus !== 200) {
+    const webBridgeResultPageHtml = await getTextWithStatus(serverBase, webBridgeResultPageUrl);
+    const webBridgeResultPageStatus = webBridgeResultPageHtml.status;
+    const webBridgeResultPagePublicSurfaceVerified = webBridgeResultPageStatus === 200
+      && /text\/html/.test(webBridgeResultPageHtml.contentType)
+      && hasPublicSurfaceMarker(webBridgeResultPageHtml.text)
+      && !hasLegacyPlayerContinueLink(webBridgeResultPageHtml.text);
+    if (!webBridgeResultPagePublicSurfaceVerified) {
       throw new Error("install_smoke_web_bridge_public_page_failed");
     }
     const webBridgeReceiptEvents = webBridgeResultPage.page.payload.receipt?.canonicalEvents;
@@ -1224,6 +1444,8 @@ export async function runEpochInstallSmoke(options: InstallSmokeOptions = {}) {
       && worldPage.text.includes("世界总览")
       && htmlIncludesUrl(worldPage.text, resultPageUrl)
       && worldPage.text.includes(resultPublicSummary)
+      && hasPublicSurfaceMarker(worldPage.text)
+      && !hasLegacyPlayerContinueLink(worldPage.text)
       && !/<script/i.test(worldPage.text);
     if (!worldPageVerified) {
       throw new Error("install_smoke_world_page_failed");
@@ -1247,6 +1469,15 @@ export async function runEpochInstallSmoke(options: InstallSmokeOptions = {}) {
       explorerId,
       agentId,
       turnCardId: turnCard.value.turnCardId,
+      agentDecisionFactsVerified: true,
+      economyFactsVerified: true,
+      economyPurchaseVerified: true,
+      economyReserveJourneyId: reserveJourney.journey.journeyId,
+      economyMirrorHistoryWorldMinute,
+      economyPurchaseActionId: pipeKitFact.actionId,
+      economyPurchaseTool: pipeKitExecution.tool,
+      economyPurchaseEquipmentFactorDelta: pipeKitEquipment.delta,
+      economyPostPurchaseAvailability: limitedPipeKitAvailability.status,
       resultPageUrl,
       resultPublicSummary,
       resultPlayMode,
@@ -1263,6 +1494,7 @@ export async function runEpochInstallSmoke(options: InstallSmokeOptions = {}) {
       explorerProfileVerified,
       explorerProfileIdentityCount: explorerProfile.summary.totalIdentities,
       resultPageStatus,
+      resultPagePublicSurfaceVerified,
       worldPageStatus: worldPage.status,
       worldPageVerified,
       worldOverviewToolVerified,
@@ -1275,6 +1507,7 @@ export async function runEpochInstallSmoke(options: InstallSmokeOptions = {}) {
       webBridgePostResultMutationRejected,
       webBridgePostResultMutationError,
       webBridgeResultPageStatus,
+      webBridgeResultPagePublicSurfaceVerified,
       webBridgeAuditReplayStatus: webBridgeAuditReplayPage.status,
       webBridgeAuditReplayVerified,
       healthStatus: preflight.healthStatus,
@@ -1285,6 +1518,11 @@ export async function runEpochInstallSmoke(options: InstallSmokeOptions = {}) {
       epochHealthChecks: preflight.epochHealthChecks,
       manifestHealth: preflight.manifestHealth,
       installManifestStatus: preflight.installManifestStatus,
+      publicSurfaceManifestVerified: preflight.publicSurfaceManifestVerified,
+      publicSurfacePackageVerified: extractedPackage.publicSurfaceVersion === preflight.publicSurfaceVersion,
+      publicSurfaceVersion: preflight.publicSurfaceVersion,
+      installPageVerified: preflight.installPageVerified,
+      installPageStatus: preflight.installPageStatus,
       hostConfigFilesVerified: preflight.hostConfigFilesVerified,
       hostConfigFileCount: preflight.hostConfigFileCount,
       hostConfigFirstPath: preflight.hostConfigFirstPath,

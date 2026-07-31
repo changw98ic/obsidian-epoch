@@ -1,7 +1,5 @@
-import { randomUUID } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import {
-  renderEpochPairingCredentialPageHtml,
   renderEpochPairingPageHtml,
 } from "../pairingPageHtml.ts";
 import type { PlayerMcpAccessTokenStore } from "../playerMcpAccessTokenStore.ts";
@@ -26,18 +24,6 @@ type PlayerAccessRouteContext = EpochHttpRouteContext & {
 function requireTokenStore(store: PlayerMcpAccessTokenStore | undefined): PlayerMcpAccessTokenStore {
   if (!store) throw new Error("player_mcp_access_tokens_unavailable");
   return store;
-}
-
-async function readFormBody(request: IncomingMessage, maxBodyBytes: number): Promise<URLSearchParams> {
-  const chunks: Buffer[] = [];
-  let totalBytes = 0;
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    totalBytes += buffer.byteLength;
-    if (totalBytes > maxBodyBytes) throw new Error("json_body_too_large");
-    chunks.push(buffer);
-  }
-  return new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
 }
 
 function secureCredentialPageHeaders(context: PlayerAccessRouteContext): void {
@@ -132,36 +118,6 @@ export async function handleEpochPlayerAccessRoutes(context: PlayerAccessRouteCo
       expiresAt: challenge.expiresAt,
       headerName: "x-obsidian-epoch-device-challenge",
     }, allowedOrigins);
-    return true;
-  }
-
-  if (method === "POST" && pathname === "/epoch/pair/register") {
-    const fetchSite = request.headers["sec-fetch-site"];
-    if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
-      throw new Error("pairing_origin_forbidden");
-    }
-    const store = requireTokenStore(playerMcpAccessTokens);
-    await readFormBody(request, maxBodyBytes);
-    await admitPublicCredentialAction(
-      request,
-      playerMcpAccessTokens,
-      publicRegistrationProtection,
-      "pairing_registration",
-    );
-    const registration = runtime.epochRegisterExplorer({
-      idempotencyKey: `web-pair-${randomUUID()}`,
-    });
-    await context.persistEpochEvents(registration);
-    const access = await store.issue({ explorerId: registration.explorerId, ttlMs: playerMcpTokenTtlMs });
-    secureCredentialPageHeaders(context);
-    context.sendHtml(request, response, 201, renderEpochPairingCredentialPageHtml({
-      explorerId: registration.explorerId,
-      agentId: registration.value.agentId,
-      recoveryCode: registration.recoveryCode,
-      accessToken: access.bearerToken,
-      expiresAt: access.record.expiresAt,
-      serverBase: publicServerBase,
-    }), allowedOrigins);
     return true;
   }
 

@@ -404,14 +404,14 @@
   background: rgba(1, 5, 6, .5);
 }
 
-.agent-player-watch-next {
+.agent-player-watch-status {
   min-width: 0;
   display: grid;
   gap: 4px;
   grid-column: 1 / -1;
 }
 
-.agent-player-watch-next span,
+.agent-player-watch-status span,
 .agent-player-watch-live > b {
   color: var(--text-muted);
   font-size: 11px;
@@ -419,30 +419,19 @@
   text-transform: uppercase;
 }
 
-.agent-player-watch-next strong,
-.agent-player-watch-next small {
+.agent-player-watch-status strong,
+.agent-player-watch-status small {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-.agent-player-watch-next strong {
+.agent-player-watch-status strong {
   color: var(--text);
   font-size: 16px;
 }
 
-.agent-player-watch-next small {
+.agent-player-watch-status small {
   color: var(--text-soft);
-}
-
-.agent-revisit-primary-action {
-  width: fit-content;
-  max-width: 100%;
-  padding: 9px 12px;
-  border: 1px solid rgba(104, 215, 207, .42);
-  border-radius: 6px;
-  background: rgba(104, 215, 207, .14);
-  color: var(--cyan);
-  font-weight: 900;
 }
 
 .agent-player-watch-link {
@@ -1729,15 +1718,6 @@
 
 .agent-settlement-screen small {
   color: var(--text-soft);
-}
-
-.agent-settlement-primary-action {
-  width: fit-content;
-  max-width: 100%;
-  margin-top: 3px;
-  border-color: rgba(245, 190, 106, .48);
-  color: var(--gold);
-  font-weight: 900;
 }
 
 .agent-impact-minimap {
