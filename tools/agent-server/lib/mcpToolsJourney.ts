@@ -21,9 +21,14 @@ export const JOURNEY_TOOL_NAMES: readonly string[] = [
   "obsidian_epoch.propose_journey_step_compact",
   "obsidian_epoch.commit_journey_action",
   "obsidian_epoch.commit_journey_action_compact",
+  "obsidian_epoch.commit_journey_intent",
+  "obsidian_epoch.commit_journey_intent_compact",
   "obsidian_epoch.journey_status",
   "obsidian_epoch.journey_status_compact",
   "obsidian_epoch.recall_journey",
+  "obsidian_epoch.transition_to_gm",
+  "obsidian_epoch.journey_gm_act",
+  "obsidian_epoch.settle_gm_journey",
   "obsidian_epoch.journey_album",
   "obsidian_epoch.agent_memory",
   "obsidian_epoch.personal_migration_summary",
@@ -41,7 +46,12 @@ export interface JourneyHandlerHelpers {
     args: AnyRecord,
     options?: { readonly externalTransport?: boolean },
   ) => Promise<unknown>;
+  readonly commitJourneyIntentWithPersistence: (
+    args: AnyRecord,
+    options?: { readonly externalTransport?: boolean },
+  ) => Promise<unknown>;
   readonly compactJourneyCommitForTransport: (result: unknown) => unknown;
+  readonly compactJourneyIntentForTransport: (result: unknown) => unknown;
   readonly journeyStatusWithFinalVerification: (args: AnyRecord) => Promise<unknown>;
   readonly compactJourneyStatusForTransport: (result: unknown) => unknown;
   readonly recallJourneyHandler: (args: AnyRecord) => Promise<unknown>;
@@ -56,6 +66,9 @@ interface JourneyRuntime {
   epochAgentMemory(args: AnyRecord): unknown;
   epochPersonalMigrationSummary(args: AnyRecord): unknown;
   epochConfirmPersonalityDrift(args: AnyRecord): unknown;
+  epochTransitionToGM(args: AnyRecord): unknown;
+  epochJourneyGMAct(args: AnyRecord): unknown;
+  epochSettleGMJourney(args: AnyRecord): unknown;
 }
 
 // ── Registration ────────────────────────────────────────────────────
@@ -119,6 +132,16 @@ export function registerJourneyHandlers(
       await helpers.commitJourneyActionWithPersistence(args, { externalTransport: true }),
     ),
   );
+  handlers.set(
+    "obsidian_epoch.commit_journey_intent",
+    (args) => helpers.commitJourneyIntentWithPersistence(args, { externalTransport: true }),
+  );
+  handlers.set(
+    "obsidian_epoch.commit_journey_intent_compact",
+    async (args) => helpers.compactJourneyIntentForTransport(
+      await helpers.commitJourneyIntentWithPersistence(args, { externalTransport: true }),
+    ),
+  );
 
   // Journey status (full + compact).
   handlers.set("obsidian_epoch.journey_status", helpers.journeyStatusWithFinalVerification);
@@ -131,4 +154,9 @@ export function registerJourneyHandlers(
 
   // Recall journey — Phase 6 persistence logic is pre-bound in the parent scope.
   handlers.set("obsidian_epoch.recall_journey", helpers.recallJourneyHandler);
+
+  // GM mode tools.
+  handlers.set("obsidian_epoch.transition_to_gm", (args) => runtime.epochTransitionToGM(args));
+  handlers.set("obsidian_epoch.journey_gm_act", (args) => runtime.epochJourneyGMAct(args));
+  handlers.set("obsidian_epoch.settle_gm_journey", (args) => runtime.epochSettleGMJourney(args));
 }

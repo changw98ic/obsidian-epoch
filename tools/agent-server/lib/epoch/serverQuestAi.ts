@@ -2,7 +2,8 @@
  * serverQuestAi.ts — PR10 server-side quest AI proposal pipeline.
  *
  * Provides a provider-agnostic abstraction for generating quest proposals
- * via LLM providers (Direct Anthropic, MCP Sampling fallback) with
+ * via a generic model adapter (Anthropic/OpenAI-compatible) and MCP Sampling
+ * fallback with
  * deterministic replay, grounded validation, and a state-machine lifecycle.
  *
  * HARD INVARIANTS:
@@ -26,6 +27,12 @@ import {
 } from "./journeyStrategyRules.ts";
 import { OFFER_SCHEMA_VERSION, type InternalQuestOffer, type QuestOfferSource } from "./journeyOfferRules.ts";
 import { buildInternalQuestOffer, type ReplenishStrategy } from "./journeyOfferStore.ts";
+import {
+  createModelAdapter,
+  createModelAdapterFromEnv,
+  type ModelAdapter,
+  type ModelAdapterEnv,
+} from "../modelAdapter.ts";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -86,6 +93,7 @@ const KNOWN_TASK_FAMILY_PREFIXES = [
 ];
 
 const DIRECT_PROVIDER_NAME = "direct_anthropic";
+const OPENAI_COMPATIBLE_PROVIDER_NAME = "openai_compatible_model";
 const MCP_SAMPLING_PROVIDER_NAME = "mcp_sampling_fallback";
 const CATALOG_FALLBACK_SOURCE: QuestOfferSource = "catalog_fallback";
 const PROPOSAL_ID_PATTERN = /^prop_[a-zA-Z0-9_-]{4,64}$/;
@@ -302,167 +310,126 @@ class Semaphore {
   }
 }
 
-// ─── Direct Anthropic Provider ────────────────────────────────────────────────
+// ─── Generic model Provider ──────────────────────────────────────────────────
 
-interface AnthropicMessageContent {
-  readonly type: string;
-  readonly text?: string;
+function buildProposalPrompt(input: QuestGenerationInput): string {
+  const regionInfo = `Region: ${input.regionId}`;
+  const families = input.taskFamilies.join(", ");
+  const strategyHint = input.strategyContext !== undefined
+    ? `\nPreferred strategy: ${input.strategyContext}`
+    : "";
+  const existingCount = input.currentOffers.length;
+  return [
+    "You are a quest designer for a Chinese-language fantasy MMO.",
+    "Generate 1-3 quest proposals as a JSON array.",
+    "Each proposal must have: proposalId (format: prop_<alphanumeric>), region, taskFamilyId,",
+    "approachTags (array of: combat, stealth, diplomacy, support, logistics, scout, preservation),",
+    "title (Chinese, >=10 chars), description (Chinese, >=20 chars), worldSliceHash,",
+    "and optionally hiddenLinkId.",
+    "",
+    regionInfo,
+    `Available task families: ${families}`,
+    `World content hash: ${input.worldContentHash}`,
+    `Seed: ${input.seed}`,
+    `Existing offers in region: ${existingCount}`,
+    strategyHint,
+    "",
+    "CRITICAL: Do NOT include any numeric values, scores, bonuses, tiers, rewards, or viability.",
+    "Do NOT use meta-gaming language like 'optimal' or 'maximize'.",
+    "Write immersive Chinese roleplay text only.",
+    "",
+    "Respond with ONLY the JSON array, no explanation.",
+  ].join("\n");
 }
 
-interface AnthropicMessageResponse {
-  readonly content: readonly AnthropicMessageContent[];
+function parseProposalText(
+  text: string,
+  input: QuestGenerationInput,
+): readonly QuestGenerationProposal[] {
+  let jsonText = text.trim();
+  const fenceMatch = jsonText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (fenceMatch !== null && fenceMatch[1] !== undefined) {
+    jsonText = fenceMatch[1].trim();
+  }
+  const parsed: unknown = JSON.parse(jsonText);
+  if (!Array.isArray(parsed)) {
+    throw new Error("model_proposal_parse_not_array");
+  }
+  const proposals: QuestGenerationProposal[] = [];
+  for (const item of parsed) {
+    if (item !== null && typeof item === "object" && !Array.isArray(item)) {
+      const raw = item as Record<string, unknown>;
+      const approachTags: ApproachTag[] = [];
+      if (Array.isArray(raw["approachTags"])) {
+        for (const tag of raw["approachTags"]) {
+          if (isApproachTag(tag)) approachTags.push(tag);
+        }
+      }
+      proposals.push({
+        proposalId: String(raw["proposalId"] ?? ""),
+        region: String(raw["region"] ?? input.regionId),
+        taskFamilyId: String(raw["taskFamilyId"] ?? ""),
+        approachTags,
+        title: String(raw["title"] ?? ""),
+        description: String(raw["description"] ?? ""),
+        hiddenLinkId: typeof raw["hiddenLinkId"] === "string" ? raw["hiddenLinkId"] : undefined,
+        worldSliceHash: String(raw["worldSliceHash"] ?? input.worldContentHash),
+      });
+    }
+  }
+  return proposals;
 }
 
-/**
- * Direct Anthropic provider. Uses @anthropic-ai/sdk for proposal generation.
- * Requires ANTHROPIC_API_KEY in process.env.
- */
-export class DirectAnthropicProvider implements QuestGenerationProvider {
-  readonly name = DIRECT_PROVIDER_NAME;
-  private readonly apiKey: string;
+export class ModelQuestGenerationProvider implements QuestGenerationProvider {
+  readonly name: string;
+  private readonly adapter: ModelAdapter;
   private readonly semaphore: Semaphore;
 
-  constructor() {
-    const key = process.env["ANTHROPIC_API_KEY"];
-    if (key === undefined || key.length === 0) {
-      throw new Error("server_quest_ai_anthropic_key_missing");
-    }
-    this.apiKey = key;
+  constructor(adapter: ModelAdapter, name = `model_${adapter.provider}`) {
+    this.adapter = adapter;
+    this.name = name;
     this.semaphore = new Semaphore(3);
   }
 
   async warmup(): Promise<void> {
-    // Validate the API key is reachable by making a minimal request.
-    // If this fails, the provider is considered degraded.
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-    try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": this.apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 16,
-          messages: [{ role: "user", content: "ping" }],
-        }),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`anthropic_warmup_http_${response.status}`);
-      }
-    } finally {
-      clearTimeout(timeout);
-    }
+    await this.adapter.warmup();
   }
 
   async generate(input: QuestGenerationInput): Promise<readonly QuestGenerationProposal[]> {
     await this.semaphore.acquire();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
     try {
-      const prompt = this.buildPrompt(input);
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": this.apiKey,
-          "anthropic-version": "2023-06-01",
-        },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 4096,
-          messages: [{ role: "user", content: prompt }],
-        }),
-        signal: controller.signal,
+      const completion = await this.adapter.complete({
+        systemPrompt: "Return only the requested JSON. The server validates every field before it can become an offer.",
+        messages: [{ role: "user", content: buildProposalPrompt(input) }],
       });
-      if (!response.ok) {
-        throw new Error(`anthropic_generate_http_${response.status}`);
-      }
-      const data = (await response.json()) as AnthropicMessageResponse;
-      const textBlock = data.content.find((c) => c.type === "text");
-      if (textBlock === undefined || textBlock.text === undefined) {
-        throw new Error("anthropic_generate_no_text");
-      }
-      return this.parseProposals(textBlock.text, input);
+      return parseProposalText(completion.text, input);
     } finally {
-      clearTimeout(timeout);
       this.semaphore.release();
     }
   }
+}
 
-  private buildPrompt(input: QuestGenerationInput): string {
-    const regionInfo = `Region: ${input.regionId}`;
-    const families = input.taskFamilies.join(", ");
-    const strategyHint = input.strategyContext !== undefined
-      ? `\nPreferred strategy: ${input.strategyContext}`
-      : "";
-    const existingCount = input.currentOffers.length;
-    return [
-      "You are a quest designer for a Chinese-language fantasy MMO.",
-      "Generate 1-3 quest proposals as a JSON array.",
-      "Each proposal must have: proposalId (format: prop_<alphanumeric>), region, taskFamilyId,",
-      "approachTags (array of: combat, stealth, diplomacy, support, logistics, scout, preservation),",
-      "title (Chinese, >=10 chars), description (Chinese, >=20 chars), worldSliceHash,",
-      "and optionally hiddenLinkId.",
-      "",
-      regionInfo,
-      `Available task families: ${families}`,
-      `World content hash: ${input.worldContentHash}`,
-      `Seed: ${input.seed}`,
-      `Existing offers in region: ${existingCount}`,
-      strategyHint,
-      "",
-      "CRITICAL: Do NOT include any numeric values, scores, bonuses, tiers, rewards, or viability.",
-      "Do NOT use meta-gaming language like 'optimal' or 'maximize'.",
-      "Write immersive Chinese roleplay text only.",
-      "",
-      "Respond with ONLY the JSON array, no explanation.",
-    ].join("\n");
+function createLegacyAnthropicAdapter(): ModelAdapter {
+  const key = process.env["ANTHROPIC_API_KEY"]?.trim();
+  if (!key) throw new Error("server_quest_ai_anthropic_key_missing");
+  return createModelAdapter({
+    provider: "anthropic",
+    baseUrl: process.env["AGENT_SERVER_MODEL_BASE_URL"]?.trim() || "https://api.anthropic.com",
+    model: process.env["AGENT_SERVER_MODEL_NAME"]?.trim() || "claude-sonnet-4-20250514",
+    apiKey: key,
+  });
+}
+
+/** Provider-boundary wrapper retained for callers that explicitly request Anthropic. */
+export class DirectAnthropicProvider extends ModelQuestGenerationProvider {
+  constructor(adapter?: ModelAdapter) {
+    super(adapter || createLegacyAnthropicAdapter(), DIRECT_PROVIDER_NAME);
   }
+}
 
-  private parseProposals(
-    text: string,
-    input: QuestGenerationInput,
-  ): readonly QuestGenerationProposal[] {
-    // Extract JSON from potential markdown code fences
-    let jsonText = text.trim();
-    const fenceMatch = jsonText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-    if (fenceMatch !== null && fenceMatch[1] !== undefined) {
-      jsonText = fenceMatch[1].trim();
-    }
-    const parsed: unknown = JSON.parse(jsonText);
-    if (!Array.isArray(parsed)) {
-      throw new Error("anthropic_parse_not_array");
-    }
-    const proposals: QuestGenerationProposal[] = [];
-    for (const item of parsed) {
-      if (item !== null && typeof item === "object" && !Array.isArray(item)) {
-        const raw = item as Record<string, unknown>;
-        const approachTags: ApproachTag[] = [];
-        if (Array.isArray(raw["approachTags"])) {
-          for (const tag of raw["approachTags"]) {
-            if (isApproachTag(tag)) {
-              approachTags.push(tag);
-            }
-          }
-        }
-        proposals.push({
-          proposalId: String(raw["proposalId"] ?? ""),
-          region: String(raw["region"] ?? input.regionId),
-          taskFamilyId: String(raw["taskFamilyId"] ?? ""),
-          approachTags,
-          title: String(raw["title"] ?? ""),
-          description: String(raw["description"] ?? ""),
-          hiddenLinkId: typeof raw["hiddenLinkId"] === "string" ? raw["hiddenLinkId"] : undefined,
-          worldSliceHash: String(raw["worldSliceHash"] ?? input.worldContentHash),
-        });
-      }
-    }
-    return proposals;
+export class OpenAiCompatibleProvider extends ModelQuestGenerationProvider {
+  constructor(adapter: ModelAdapter) {
+    super(adapter, OPENAI_COMPATIBLE_PROVIDER_NAME);
   }
 }
 
@@ -590,30 +557,33 @@ export class McpSamplingFallbackProvider implements QuestGenerationProvider {
 // ─── Provider chain ───────────────────────────────────────────────────────────
 
 /**
- * Build the default provider chain: [DirectAnthropic, McpSampling].
- * DirectAnthropic is attempted first; McpSampling is the fallback.
- * If ANTHROPIC_API_KEY is absent, only McpSampling is included.
+ * Build the default provider chain: [configured model, MCP Sampling].
+ * The configured model can be Anthropic or any OpenAI-compatible chat endpoint.
+ * If no server model is configured, MCP Sampling remains available when a
+ * client is supplied.
  *
  * @param mcpClient - Optional MCP sampling client for the fallback provider.
+ * @param options.env - Injectable environment for tests and embedded runtimes.
  */
 export function buildProviderChain(mcpClient?: {
   createTaskPlanMessage: (
     input: unknown,
     context: { activeClientRequest: boolean; signal?: AbortSignal },
   ) => Promise<{ ok: boolean; proposal?: unknown; fallback?: string }>;
-}): readonly QuestGenerationProvider[] {
+}, options: { readonly env?: ModelAdapterEnv } = {}): readonly QuestGenerationProvider[] {
   const providers: QuestGenerationProvider[] = [];
 
-  // Direct Anthropic — only if API key is present
-  if (process.env["ANTHROPIC_API_KEY"] !== undefined && process.env["ANTHROPIC_API_KEY"].length > 0) {
-    try {
-      providers.push(new DirectAnthropicProvider());
-    } catch {
-      // Constructor throws if key is missing; swallow and skip
+  try {
+    const adapter = createModelAdapterFromEnv(options.env ?? process.env);
+    if (adapter?.provider === "anthropic") {
+      providers.push(new DirectAnthropicProvider(adapter));
+    } else if (adapter?.provider === "openai_compatible") {
+      providers.push(new OpenAiCompatibleProvider(adapter));
     }
+  } catch {
+    // Model configuration errors degrade to the normal deterministic fallback.
   }
 
-  // MCP Sampling fallback — only if client is provided
   if (mcpClient !== undefined) {
     providers.push(new McpSamplingFallbackProvider(mcpClient));
   }

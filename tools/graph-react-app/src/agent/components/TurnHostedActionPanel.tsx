@@ -4,6 +4,7 @@ import type {
   EpochHostedActionOption,
   EpochHostedSession,
   EpochHighValueConfirmation,
+  EpochIntentActionResult,
   EpochServerHostedActionRun,
   EpochServerHostedJob,
   EpochTurnActionOption,
@@ -59,6 +60,7 @@ interface TurnHostedActionPanelProps {
   readonly hostedMandate: string;
   readonly hostedOptionSummary: (option: EpochHostedActionOption) => string;
   readonly hostedRiskLabels: Record<EpochHostedActionOption["risk"], string>;
+  readonly hostedIntentText: string;
   readonly hostedVisibleText: string;
   readonly interventionBudget: number;
   readonly interventionInstruction: string;
@@ -66,6 +68,7 @@ interface TurnHostedActionPanelProps {
   readonly interventionRemaining: number;
   readonly isBusy: boolean;
   readonly lastServerHostedRun: EpochServerHostedActionRun | null;
+  readonly lastIntentAction: EpochIntentActionResult | null;
   readonly lastWebBridgeAction: EpochWebBridgeActionResult | null;
   readonly loadHighValueConfirmations: () => void;
   readonly loadHostedSessions: () => void;
@@ -85,6 +88,7 @@ interface TurnHostedActionPanelProps {
   readonly requestResolveTurnConfirmation: (option: EpochTurnActionOption) => void;
   readonly requestTurnCardConfirmation: () => void;
   readonly resolveTurnCard: (option: EpochTurnActionOption) => void;
+  readonly resolveTurnCardIntent: () => void;
   readonly resolveTurnCardWithConfirmation: (option: EpochTurnActionOption) => void;
   readonly resultPublishAuthorizationCopy: string;
   readonly riskStrategy: RiskStrategy;
@@ -99,22 +103,29 @@ interface TurnHostedActionPanelProps {
   readonly setAttestedSignature: (value: string) => void;
   readonly setAttestedTranscriptHash: (value: string) => void;
   readonly setHostedMandate: (value: string) => void;
+  readonly setHostedIntentText: (value: string) => void;
   readonly setHostedVisibleText: (value: string) => void;
   readonly setInterventionInstruction: (value: string) => void;
   readonly setServerHostedOptionKey: (value: EpochServerHostedJob["optionKey"]) => void;
+  readonly setTurnIntentText: (value: string) => void;
   readonly setTurnPrompt: (value: string) => void;
   readonly setTurnVisibleText: (value: string) => void;
   readonly startHostedSession: () => void;
   readonly startWebBridgeTurn: () => void;
   readonly submitAttestedAction: () => void;
   readonly submitHostedAction: (option: EpochHostedActionOption) => void;
+  readonly submitHostedIntent: () => void;
   readonly submitWebBridgeAction: (option: EpochWebBridgeActionOption) => void;
   readonly takeOverCurrentTurn: () => void;
   readonly turnPrompt: string;
+  readonly turnIntentText: string;
   readonly turnVisibleText: string;
   readonly updateLowStimulusMode: (enabled: boolean) => void;
+  readonly webBridgeIntentText: string;
   readonly webBridgeTurn: EpochWebBridgeTurn | null;
   readonly appendInterventionInstruction: () => void;
+  readonly setWebBridgeIntentText: (value: string) => void;
+  readonly submitWebBridgeIntent: () => void;
 }
 
 function ActionExplanationDetails({
@@ -176,6 +187,7 @@ export function TurnHostedActionPanel({
   interventionRemaining,
   isBusy,
   lastServerHostedRun,
+  lastIntentAction,
   lastWebBridgeAction,
   loadHighValueConfirmations,
   loadHostedSessions,
@@ -195,6 +207,7 @@ export function TurnHostedActionPanel({
   requestResolveTurnConfirmation,
   requestTurnCardConfirmation,
   resolveTurnCard,
+  resolveTurnCardIntent,
   resolveTurnCardWithConfirmation,
   resultPublishAuthorizationCopy,
   riskStrategy,
@@ -209,22 +222,30 @@ export function TurnHostedActionPanel({
   setAttestedSignature,
   setAttestedTranscriptHash,
   setHostedMandate,
+  hostedIntentText,
+  setHostedIntentText,
   setHostedVisibleText,
   setInterventionInstruction,
   setServerHostedOptionKey,
+  setTurnIntentText,
   setTurnPrompt,
   setTurnVisibleText,
   startHostedSession,
   startWebBridgeTurn,
   submitAttestedAction,
   submitHostedAction,
+  submitHostedIntent,
   submitWebBridgeAction,
   takeOverCurrentTurn,
   turnPrompt,
+  turnIntentText,
   turnVisibleText,
   updateLowStimulusMode,
+  webBridgeIntentText,
   webBridgeTurn,
   appendInterventionInstruction,
+  setWebBridgeIntentText,
+  submitWebBridgeIntent,
 }: TurnHostedActionPanelProps) {
   return (
     <article className="agent-panel agent-hosted">
@@ -234,6 +255,23 @@ export function TurnHostedActionPanel({
       </div>
       <input value={hostedMandate} onChange={(event) => setHostedMandate(event.target.value)} />
       <input value={hostedVisibleText} onChange={(event) => setHostedVisibleText(event.target.value)} />
+      <div className="agent-intent-box" aria-label="自然语言行动入口">
+        <strong>自然语言行动</strong>
+        <textarea
+          value={hostedIntentText}
+          onChange={(event) => setHostedIntentText(event.target.value)}
+          placeholder="例如：我先沿着潮汐门检查入口，尽量保留可审计线索。"
+          rows={3}
+        />
+        <small>服务器会理解你的意图并匹配当前允许的行动；能否成功、奖励和世界变化仍由 Game Core 结算。</small>
+        <button
+          type="button"
+          disabled={isBusy || activeIdentityDisabled || !explorer || !primaryHostedSession || primaryHostedSession.status !== "active" || !hostedIntentText.trim()}
+          onClick={submitHostedIntent}
+        >
+          提交自然语言行动
+        </button>
+      </div>
       <div className="agent-action-row">
         <button type="button" disabled={isBusy || activeIdentityDisabled || !explorer} onClick={startHostedSession}>开局</button>
         <button type="button" disabled={isBusy || activeIdentityDisabled || !explorer} onClick={startWebBridgeTurn}>网页桥接</button>
@@ -354,6 +392,23 @@ export function TurnHostedActionPanel({
         </div>
         <input value={turnPrompt} onChange={(event) => setTurnPrompt(event.target.value)} />
         <input value={turnVisibleText} onChange={(event) => setTurnVisibleText(event.target.value)} />
+        <div className="agent-intent-box" aria-label="回合自然语言行动入口">
+          <strong>直接描述本回合行动</strong>
+          <textarea
+            value={turnIntentText}
+            onChange={(event) => setTurnIntentText(event.target.value)}
+            placeholder="例如：我先观察守卫换岗，再决定是否接近。"
+            rows={3}
+          />
+          <small>Intent Agent 只负责理解和匹配；回合是否合法及其结果由服务器裁判。</small>
+          <button
+            type="button"
+            disabled={isBusy || activeIdentityDisabled || !explorer || !currentTurnCard || currentTurnCard.status !== "open" || !turnIntentText.trim()}
+            onClick={resolveTurnCardIntent}
+          >
+            提交本回合意图
+          </button>
+        </div>
         <div className="agent-action-row">
           <button type="button" disabled={isBusy || activeIdentityDisabled || !explorer} onClick={createTurnCard}>生成</button>
           <button type="button" disabled={isBusy || activeIdentityDisabled || !turnPrompt.trim()} onClick={requestTurnCardConfirmation}>请求回合卡确认</button>
@@ -452,6 +507,22 @@ export function TurnHostedActionPanel({
             <div><dt>信道</dt><dd>{playerChannelClassLabel(primaryHostedSession.channelClass || "server_hosted")}</dd></div>
             <div><dt>开始</dt><dd>{formatDate(primaryHostedSession.startedAt)}</dd></div>
           </dl>
+          {lastIntentAction ? (
+            <div className="agent-attestation-box" aria-label="自然语言行动服务器结算">
+              <strong>自然语言行动 · 服务器结算</strong>
+              <dl>
+                <div><dt>匹配状态</dt><dd>{lastIntentAction.match.status === "matched" ? "已匹配服务器行动" : "未匹配，记录为失败尝试"}</dd></div>
+                <div><dt>服务器行动</dt><dd>{lastIntentAction.match.optionLabel}</dd></div>
+                <div><dt>结果</dt><dd>{lastIntentAction.action.outcomeSummary}</dd></div>
+                {lastIntentAction.match.preparationSteps.length ? (
+                  <div><dt>准备步骤</dt><dd>{lastIntentAction.match.preparationSteps.join("；")}</dd></div>
+                ) : null}
+                {lastIntentAction.action.journeyResolution?.preparationSteps?.length ? (
+                  <div><dt>结算准备步骤</dt><dd>{lastIntentAction.action.journeyResolution.preparationSteps.join("；")}</dd></div>
+                ) : null}
+              </dl>
+            </div>
+          ) : null}
           <div className="agent-action-row">
             <a
               className="agent-public-link"
@@ -502,6 +573,22 @@ export function TurnHostedActionPanel({
               <textarea className="agent-bridge-prompt" readOnly value={webBridgeTurn.copyPrompt} />
               <div className="agent-action-row">
                 <button type="button" disabled={isBusy} onClick={copyWebBridgePrompt}>复制</button>
+              </div>
+              <div className="agent-intent-box" aria-label="网页桥接自然语言行动入口">
+                <strong>用自然语言回复网页桥接</strong>
+                <textarea
+                  value={webBridgeIntentText}
+                  onChange={(event) => setWebBridgeIntentText(event.target.value)}
+                  placeholder="例如：我先沿已知路线离开，不接触异常。"
+                  rows={3}
+                />
+                <button
+                  type="button"
+                  disabled={isBusy || activeIdentityDisabled || !explorer || !webBridgeIntentText.trim()}
+                  onClick={submitWebBridgeIntent}
+                >
+                  提交桥接意图
+                </button>
               </div>
               <div className="agent-mini-list">
                 {webBridgeTurn.actionOptions.map((option) => (

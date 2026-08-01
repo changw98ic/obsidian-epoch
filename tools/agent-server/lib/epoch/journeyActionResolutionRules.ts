@@ -92,6 +92,8 @@ export interface JourneyActionResolution {
   readonly margin: number;
   readonly factors: JourneyActionResolutionFactors;
   readonly gatingFailure?: "required_resource_missing";
+  /** Server-authored next steps when the current conditions cannot support the action. */
+  readonly preparationSteps?: readonly string[];
   readonly resourceCost?: {
     readonly resourceId: "focus" | "stamina";
     readonly amount: 1;
@@ -144,6 +146,11 @@ export interface ResolveJourneyActionInput {
     readonly bound: boolean;
   }[];
   readonly participantTargetCount: number;
+  /** A routing failure supplied by the server Intent Agent boundary. */
+  readonly forcedFailure?: {
+    readonly reason: "intent_not_supported";
+    readonly preparationSteps: readonly string[];
+  };
 }
 
 const BASE_COMPETENCE = 32;
@@ -232,6 +239,7 @@ function resolutionInput(input: ResolveJourneyActionInput) {
     ) as Partial<Record<EpochAttributeId, number>>,
     risk: input.risk,
     traits: [...new Set(input.identity.traits.map((trait) => trait.trim()).filter(Boolean))].sort(),
+    ...(input.forcedFailure ? { forcedFailure: input.forcedFailure } : {}),
   };
 }
 
@@ -295,6 +303,22 @@ function actionSummary(
   return `身份在${location}开始“${action}”，但准备与现场条件不足以支撑这次行动；为避免扩大后果，身份中止操作，“${objective}”未完成。`;
 }
 
+function preparationStepsForConditions(input: ResolveJourneyActionInput): readonly string[] {
+  const steps: string[] = [];
+  if (input.risk === "high") {
+    steps.push("先补充体力，并确认当前身份仍能承担高风险行动。");
+  } else if (input.risk === "medium") {
+    steps.push("先补充专注，并完成一次低风险观察或路线复核。");
+  } else {
+    steps.push("先完成服务器给出的低风险观察或事实记录步骤。");
+  }
+  if ((input.journeyPreparationScore ?? 0) < 4) {
+    steps.push("先积累本局准备度，再重新提交这个行动意图。");
+  }
+  steps.push("服务器会在下一次提交时重新检查资源、身份状态和前置事实。");
+  return steps;
+}
+
 export function resolveJourneyAction(input: ResolveJourneyActionInput): JourneyActionResolution {
   const canonicalInput = resolutionInput(input);
   const inputHash = `sha256:${createHash("sha256")
@@ -312,6 +336,22 @@ export function resolveJourneyAction(input: ResolveJourneyActionInput): JourneyA
     goalAlignment: 0,
     deterministicVariance: 0,
   };
+  if (input.forcedFailure) {
+    return {
+      ruleVersion: JOURNEY_ACTION_RESOLUTION_RULE_VERSION,
+      authority: "server",
+      decisionKeyId: runtimeActionKeyId(),
+      inputHash,
+      outcome: "failure",
+      completionKind: "failed",
+      score: 0,
+      difficulty: 0,
+      margin: 0,
+      factors: zeroFactors,
+      preparationSteps: input.forcedFailure.preparationSteps,
+      summary: `服务器没有把这段自然语言匹配到当前可执行行动；本次只记录失败尝试，“${normalizedText(input.objectiveTitle, "该目标")}”未完成。`,
+    };
+  }
   if (canonicalInput.objectiveKind === "choice") {
     return {
       ruleVersion: JOURNEY_ACTION_RESOLUTION_RULE_VERSION,
@@ -380,6 +420,9 @@ export function resolveJourneyAction(input: ResolveJourneyActionInput): JourneyA
         : "failure";
   const outcome: JourneyActionResolutionOutcome = gatingFailure ? "failure" : scoredOutcome;
   const riskPremium = journeyRiskPremiumForOutcome(input.risk, outcome);
+  const preparationSteps = outcome === "success" || outcome === "exceptional_success"
+    ? undefined
+    : preparationStepsForConditions(input);
   return {
     ruleVersion: JOURNEY_ACTION_RESOLUTION_RULE_VERSION,
     authority: "server",
@@ -394,6 +437,7 @@ export function resolveJourneyAction(input: ResolveJourneyActionInput): JourneyA
     ...(gatingFailure ? { gatingFailure } : {}),
     ...(resourceCost ? { resourceCost } : {}),
     ...(riskPremium ? { riskPremium } : {}),
+    ...(preparationSteps ? { preparationSteps } : {}),
     summary: actionSummary(input, outcome, gatingFailure),
   };
 }

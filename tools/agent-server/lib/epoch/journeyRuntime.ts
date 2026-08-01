@@ -354,7 +354,9 @@ export class JourneyRuntime {
     };
     this.#projection = projectJourneyRuntimeEvents(options.initialEvents ?? []);
     for (const record of Object.values(this.#projection.journeys)) {
-      if (["settling", "settled"].includes(record.journey.status) && !this.#hasGroundedThreePhase(record.journey)) {
+      if (["settling", "settled"].includes(record.journey.status)
+        && record.journey.taskPlan
+        && !this.#hasGroundedThreePhase(record.journey)) {
         throw new Error("journey_settlement_grounding_invalid");
       }
     }
@@ -849,6 +851,97 @@ export class JourneyRuntime {
     return this.#record(journeyId);
   }
 
+  commitGMEpisodes(
+    journeyId: string,
+    expectedVersion: number,
+    episodes: readonly JourneySceneEpisode[],
+  ): JourneyRuntimeRecord {
+    let journey = this.#record(journeyId).journey;
+    if (journey.version !== expectedVersion) throw new Error("journey_version_conflict");
+    if (journey.status !== "gm_active") throw new Error("journey_gm_status_invalid");
+    const events: JourneyRuntimeEvent[] = [];
+    for (const episode of episodes) {
+      if (!episode.episodeId.startsWith(`${journey.journeyId}:`)) throw new Error("journey_episode_id_invalid");
+      // Generate eventId at commit time per spec §14.2 and backfill into the episode
+      const sourceEventId = this.#options.idFactory("event");
+      const backfilledEpisode: JourneySceneEpisode = {
+        ...episode,
+        sourceFactIds: [sourceEventId],
+        ...(episode.serverFacts ? {
+          serverFacts: {
+            ...episode.serverFacts,
+            sourceEventIds: [sourceEventId],
+            confirmedFacts: episode.serverFacts.confirmedFacts.map((f) => ({
+              ...f,
+              sourceEventIds: [sourceEventId],
+            })),
+            rumors: episode.serverFacts.rumors.map((r) => ({
+              ...r,
+              sourceEventIds: [sourceEventId],
+            })),
+            stateChanges: episode.serverFacts.stateChanges.map((c) => ({
+              ...c,
+              sourceEventIds: [sourceEventId],
+            })),
+          },
+        } : {}),
+      };
+      journey = recordJourneyEpisode({
+        journey,
+        expectedVersion: journey.version,
+        episodeId: episode.episodeId,
+        sourceEventIds: [sourceEventId],
+      });
+      events.push(this.#snapshotEvent("journey_episode_recorded", journey, undefined, undefined, backfilledEpisode));
+    }
+    this.#append(events);
+    return this.#record(journeyId);
+  }
+
+  transitionToGMStatus(journeyId: string, expectedVersion: number): JourneyRuntimeRecord {
+    const current = this.#record(journeyId);
+    let journey = current.journey;
+    if (journey.version !== expectedVersion) throw new Error("journey_version_conflict");
+    journey = transitionJourney({
+      journey,
+      toStatus: "gm_active",
+      expectedVersion: journey.version,
+    });
+    this.#append([this.#snapshotEvent("journey_status_changed", journey)]);
+    return this.#record(journeyId);
+  }
+
+  settleGMToSettling(journeyId: string, expectedVersion: number): JourneyRuntimeRecord {
+    const current = this.#record(journeyId);
+    let journey = current.journey;
+    if (journey.version !== expectedVersion) throw new Error("journey_version_conflict");
+    if (journey.status !== "gm_active" && journey.status !== "gm_paused") {
+      throw new Error("journey_gm_status_invalid");
+    }
+    journey = transitionJourney({
+      journey,
+      toStatus: "settling",
+      expectedVersion: journey.version,
+    });
+    this.#append([this.#snapshotEvent("journey_status_changed", journey)]);
+    return this.#record(journeyId);
+  }
+
+  settleGMToSettled(journeyId: string, expectedVersion: number, settledAtWorldTime?: string): JourneyRuntimeRecord {
+    const current = this.#record(journeyId);
+    let journey = current.journey;
+    if (journey.version !== expectedVersion) throw new Error("journey_version_conflict");
+    if (journey.status !== "settling") throw new Error("journey_gm_status_invalid");
+    journey = transitionJourney({
+      journey,
+      toStatus: "settled",
+      expectedVersion: journey.version,
+      settledAtWorldTime: settledAtWorldTime ?? new Date().toISOString(),
+    });
+    this.#append([this.#snapshotEvent("journey_status_changed", journey)]);
+    return this.#record(journeyId);
+  }
+
   tick(input: UnknownRecord = {}): JourneyTickResult {
     const nowReal = typeof input.nowReal === "string"
       ? input.nowReal
@@ -873,6 +966,8 @@ export class JourneyRuntime {
         events.push(this.#snapshotEvent("journey_status_changed", journey));
       }
       if (journey.status === "settling") {
+        // GM journeys have no taskPlan / three-phase — settle via separate path
+        if (!journey.taskPlan) continue;
         if (!this.#hasGroundedThreePhase(journey)) continue;
         journey = transitionJourney({
           journey,

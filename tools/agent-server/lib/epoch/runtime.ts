@@ -78,6 +78,9 @@ import {
   type EpochServerHostedJob,
   type EpochTurnCard,
   type EpochTurnResolution,
+  type ActionIntentCommandResult,
+  type ResolveTurnCardIntentInput,
+  type SubmitHostedIntentInput,
   type TraceConflictDeployment,
   type TraceConflictMemoryView,
   type TraceConflictOwnerDeploymentView,
@@ -100,6 +103,12 @@ import {
 } from "./inventoryRules.ts";
 import { epochEconomyActionOptions } from "./economyActionReadModel.ts";
 import type { JourneySceneContractSeed } from "./journeySceneContractRules.ts";
+import {
+  createModelBackedIntentAgent,
+  publicActionIntentMatch,
+  type AsyncIntentAgent,
+} from "./intentAgent.ts";
+import type { ModelAdapter } from "../modelAdapter.ts";
 import type { NpcDoubtEvent } from "./journeyRoleplayRules.ts";
 import { JOURNEY_FIRST_ENTRY_RESERVE } from "./journeyActionResolutionRules.ts";
 import {
@@ -600,6 +609,8 @@ function traceConflictTargetFromInput(input: AnyRecord) {
 }
 
 export interface EpochRuntimeOptions extends EpochGameCoreOptions {
+  /** Optional server-side model used only to parse player language. */
+  readonly modelAdapter?: ModelAdapter;
   readonly initialResultPages?: readonly EpochSharedResultPage[];
   readonly resolveJourneyHiddenTaskSeal?: JourneyHiddenTaskSealResolver;
   readonly phase6RunAssemblyRepository?: JourneyRunReceiptRepositoryAdapter;
@@ -613,6 +624,55 @@ export interface EpochRuntimeOptions extends EpochGameCoreOptions {
   readonly abuseLimits?: EpochRuntimeAbuseLimits;
   readonly operatorKey?: string;
   readonly registrationSecret?: string;
+}
+
+export function publicIntentCommandResult(
+  result: EpochRuntimeResult<EpochHostedActionRecord>,
+): EpochRuntimeResult<ActionIntentCommandResult> {
+  const audit = result.value.intentAudit;
+  if (!audit) throw new Error("intent_audit_missing");
+  const {
+    actionOptionId: _actionOptionId,
+    intentAudit: _intentAudit,
+    signedEnvelope: _signedEnvelope,
+    socialHookId: _socialHookId,
+    ...publicAction
+  } = result.value;
+  const publicResult = attachEpochEventsForPersistence({
+    value: {
+      intent: audit.intent,
+      match: publicActionIntentMatch(audit),
+      action: publicAction,
+    },
+    events: result.events,
+    projection: result.projection,
+  }, epochEventsForPersistence(result));
+  Object.defineProperty(publicResult, "projection", { value: publicResult.projection, enumerable: false });
+  return publicResult;
+}
+
+function publicTurnIntentCommandResult(
+  result: EpochRuntimeResult<EpochTurnResolution>,
+) {
+  const audit = result.value.intentAudit;
+  if (!audit) throw new Error("intent_audit_missing");
+  const {
+    actionOptionId: _actionOptionId,
+    intentAudit: _intentAudit,
+    signedEnvelope: _signedEnvelope,
+    ...publicResolution
+  } = result.value;
+  const publicResult = attachEpochEventsForPersistence({
+    value: {
+      intent: audit.intent,
+      match: publicActionIntentMatch(audit),
+      action: publicResolution,
+    },
+    events: result.events,
+    projection: result.projection,
+  }, epochEventsForPersistence(result));
+  Object.defineProperty(publicResult, "projection", { value: publicResult.projection, enumerable: false });
+  return publicResult;
 }
 
 export interface EpochPhase6JourneyAdapterFailure {
@@ -1540,6 +1600,9 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
     ...options,
     identityNameFactory: options.identityNameFactory || systemAssignedIdentityName,
   });
+  const modelIntentAgent: AsyncIntentAgent | undefined = options.modelAdapter
+    ? createModelBackedIntentAgent(options.modelAdapter)
+    : undefined;
   const clock = options.clock || (() => new Date());
   const runtimeIdFactory = options.idFactory || createSequentialEpochIdFactory();
   const abuseRuntime = createRuntimeAbuseRuntime({
@@ -1608,6 +1671,7 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
   const idempotentlyWithSubject = idempotencyRuntime.idempotentlyWithSubject;
   const idempotentlyForExplorerRegistration = idempotencyRuntime.idempotentlyForExplorerRegistration;
   const idempotentlyAfterExplorerAuth = idempotencyRuntime.idempotentlyAfterExplorerAuth;
+  const idempotentlyAfterExplorerAuthAsync = idempotencyRuntime.idempotentlyAfterExplorerAuthAsync;
   const explorerRegistrationResults = new Map<string, EpochRegisterExplorerResult>();
   const explorerRegistrationSubjectHashes = new Map<string, string>();
 
@@ -1873,6 +1937,47 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
   function hostedSessionWatch(input: AnyRecord = {}): EpochHostedSessionWatchInfo {
     return publicWorldReadModel.hostedSessionWatch(input);
   }
+
+  /**
+   * Resolve and settle a Journey intent while retaining the server-owned
+   * action record for the Journey integration layer. The public wrapper below
+   * removes actionOptionId and the signed envelope before transport.
+   */
+  const commitJourneyHostedIntentWithServerModelInternal = async (input: AnyRecord = {}) => {
+    const journeyId = assertNonEmptyString(input.journeyId, "journey_id");
+    const sceneId = assertNonEmptyString(input.sceneId, "journey_scene_id");
+    const session = Object.values(core.project().hostedSessions).find((candidate) =>
+      candidate.sceneContract?.journeyId === journeyId
+      && candidate.sceneContract.sceneId === sceneId);
+    if (!session?.sceneContract) throw new Error("journey_scene_contract_not_found");
+    const expectedVersion = Number(input.expectedVersion);
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+      throw new Error("journey_expected_version_invalid");
+    }
+    const episodeId = assertNonEmptyString(input.episodeId, "journey_episode_id");
+    if (episodeId !== session.sceneContract.episodeId
+      || expectedVersion !== session.sceneContract.expectedVersion) {
+      throw new Error("journey_scene_commit_binding_invalid");
+    }
+    return idempotentlyAfterExplorerAuthAsync("commit_journey_intent", input, session.explorerId, async () => {
+      const intentText = assertNonEmptyString(input.intentText, "action_intent_text_required");
+      assertNoRequestSecretMaterialInPublicText(input, intentText);
+      const context = ownerVerifiedContextFromInput({ ...input, agentId: session.agentId }, session.explorerId);
+      return modelIntentAgent
+        ? commandResult(core.submitHostedStructuredIntent({
+          sessionId: session.sessionId,
+          intent: await modelIntentAgent.interpret(intentText),
+          visibleText: typeof input.visibleText === "string" ? input.visibleText : undefined,
+          journeyValidation: { journeyId, episodeId, expectedVersion },
+        }, context))
+        : commandResult(core.submitHostedIntent({
+          sessionId: session.sessionId,
+          intentText,
+          visibleText: typeof input.visibleText === "string" ? input.visibleText : undefined,
+          journeyValidation: { journeyId, episodeId, expectedVersion },
+        }, context));
+    });
+  };
 
   function worldOverview(input: AnyRecord = {}): EpochWorldOverviewInfo {
     return publicWorldReadModel.worldOverview(input);
@@ -2160,6 +2265,44 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
           && Boolean(!materialReward || existingMaterial)
           && itemGrants.every((grant) => grant.events.length === 0),
       }, persistenceEvents);
+    },
+    grantGMSettlementReward: (input: AnyRecord = {}) => {
+      const agentId = assertNonEmptyString(input.agentId, "agent_id");
+      const journeyId = assertNonEmptyString(input.journeyId, "journey_id");
+      const tier = assertNonEmptyString(input.tier, "tier");
+      const resourceId = assertNonEmptyString(input.resourceId, "resource_id");
+      const amount = Number(input.amount);
+      if (!Number.isSafeInteger(amount) || amount < 0) throw new Error("gm_reward_amount_invalid");
+      if (amount === 0) {
+        return attachEpochEventsForPersistence({
+          value: core.project().resourceBalances[agentId] ?? {},
+          events: [],
+          projection: publicProjection(core.project()),
+        }, []);
+      }
+      const reason = `gm_settlement:${journeyId}:${tier}`;
+      const existing = core.project().events.find((event) => event.eventType === "resource_granted"
+        && event.agentId === agentId
+        && event.payload.reason === reason);
+      if (existing) {
+        return attachEpochEventsForPersistence({
+          value: core.project().resourceBalances[agentId] ?? {},
+          events: [],
+          projection: publicProjection(core.project()),
+        }, []);
+      }
+      const grant = commandResult(core.grantResource({
+        agentId,
+        resourceId: resourceId as "coin" | "aether" | "legend",
+        amount,
+        reason,
+      }, maintenanceContext(input, reason)));
+      return attachEpochEventsForPersistence({
+        ...grant,
+        events: grant.events,
+        projection: grant.projection,
+        duplicate: false,
+      }, epochEventsForPersistence(grant));
     },
     agentBriefing,
     agentPublicIdentity,
@@ -3256,6 +3399,50 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         visibleText: typeof input.visibleText === "string" ? input.visibleText : undefined,
       }, ownerVerifiedContextFromInput(authInput, card.explorerId))));
     },
+    resolveTurnCardIntent: (input: AnyRecord = {}) => {
+      const turnCardId = assertNonEmptyString(input.turnCardId, "turn_card_id");
+      const card = core.project().turnCards[turnCardId];
+      if (!card) throw new Error("turn_card_not_found");
+      const authInput = { ...input, agentId: card.agentId };
+      return idempotentlyAfterExplorerAuth("resolve_turn", authInput, card.explorerId, () => {
+        assertNoRequestSecretMaterialInPublicText(input, input.intentText);
+        return publicTurnIntentCommandResult(commandResult(core.resolveTurnCardIntent({
+          turnCardId,
+          sequence: Number(input.sequence),
+          nonce: assertNonEmptyString(input.nonce, "turn_card_nonce_required"),
+          intentText: assertNonEmptyString(input.intentText, "action_intent_text_required"),
+          visibleText: typeof input.visibleText === "string" ? input.visibleText : undefined,
+        }, ownerVerifiedContextFromInput(authInput, card.explorerId))));
+      });
+    },
+    resolveTurnCardIntentWithServerModel: async (input: AnyRecord = {}) => {
+      const turnCardId = assertNonEmptyString(input.turnCardId, "turn_card_id");
+      const card = core.project().turnCards[turnCardId];
+      if (!card) throw new Error("turn_card_not_found");
+      const authInput = { ...input, agentId: card.agentId };
+      return idempotentlyAfterExplorerAuthAsync("resolve_turn", authInput, card.explorerId, async () => {
+        const intentText = assertNonEmptyString(input.intentText, "action_intent_text_required");
+        assertNoRequestSecretMaterialInPublicText(input, intentText);
+        const context = ownerVerifiedContextFromInput(authInput, card.explorerId);
+        if (!modelIntentAgent) {
+          return publicTurnIntentCommandResult(commandResult(core.resolveTurnCardIntent({
+            turnCardId,
+            sequence: Number(input.sequence),
+            nonce: assertNonEmptyString(input.nonce, "turn_card_nonce_required"),
+            intentText,
+            visibleText: typeof input.visibleText === "string" ? input.visibleText : undefined,
+          }, context)));
+        }
+        const intent = await modelIntentAgent.interpret(intentText);
+        return publicTurnIntentCommandResult(commandResult(core.resolveTurnCardStructuredIntent({
+          turnCardId,
+          sequence: Number(input.sequence),
+          nonce: assertNonEmptyString(input.nonce, "turn_card_nonce_required"),
+          intent,
+          visibleText: typeof input.visibleText === "string" ? input.visibleText : undefined,
+        }, context)));
+      });
+    },
     hostedSessions: (input: AnyRecord = {}): EpochHostedSessionInfo => hostedSessionsInfoView(core.project(), input),
     startHostedSession: (input: AnyRecord = {}): EpochRuntimeResult<EpochHostedSession> => {
       const agentId = assertNonEmptyString(input.agentId, "agent_id");
@@ -3482,6 +3669,37 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
         }, ownerVerifiedContextFromInput({ ...input, agentId: session.agentId }, session.explorerId)));
       });
     },
+    commitJourneyHostedIntent: (input: AnyRecord = {}): EpochRuntimeResult<ActionIntentCommandResult> => {
+      const journeyId = assertNonEmptyString(input.journeyId, "journey_id");
+      const sceneId = assertNonEmptyString(input.sceneId, "journey_scene_id");
+      const session = Object.values(core.project().hostedSessions).find((candidate) =>
+        candidate.sceneContract?.journeyId === journeyId
+        && candidate.sceneContract.sceneId === sceneId);
+      if (!session?.sceneContract) throw new Error("journey_scene_contract_not_found");
+      const expectedVersion = Number(input.expectedVersion);
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0) {
+        throw new Error("journey_expected_version_invalid");
+      }
+      const episodeId = assertNonEmptyString(input.episodeId, "journey_episode_id");
+      if (episodeId !== session.sceneContract.episodeId
+        || expectedVersion !== session.sceneContract.expectedVersion) {
+        throw new Error("journey_scene_commit_binding_invalid");
+      }
+      return idempotentlyAfterExplorerAuth("commit_journey_intent", input, session.explorerId, () => {
+        const intentText = assertNonEmptyString(input.intentText, "action_intent_text_required");
+        assertNoRequestSecretMaterialInPublicText(input, intentText);
+        const result = commandResult(core.submitHostedIntent({
+          sessionId: session.sessionId,
+          intentText,
+          visibleText: typeof input.visibleText === "string" ? input.visibleText : undefined,
+          journeyValidation: { journeyId, episodeId, expectedVersion },
+        }, ownerVerifiedContextFromInput({ ...input, agentId: session.agentId }, session.explorerId)));
+        return publicIntentCommandResult(result);
+      });
+    },
+    commitJourneyHostedIntentWithServerModel: async (input: AnyRecord = {}) =>
+      publicIntentCommandResult(await commitJourneyHostedIntentWithServerModelInternal(input)),
+    commitJourneyHostedIntentWithServerModelInternal,
     submitHostedAction: (input: AnyRecord = {}): EpochRuntimeResult<EpochHostedActionRecord> => {
       const sessionId = assertNonEmptyString(input.sessionId, "hosted_session_id");
       const session = core.project().hostedSessions[sessionId];
@@ -3493,6 +3711,43 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
           actionOptionId: assertNonEmptyString(input.actionOptionId, "action_option_id"),
           visibleText: typeof input.visibleText === "string" ? input.visibleText : undefined,
         }, ownerVerifiedContextFromInput(input, session.explorerId)));
+      });
+    },
+    submitHostedIntent: (input: AnyRecord = {}): EpochRuntimeResult<ActionIntentCommandResult> => {
+      const sessionId = assertNonEmptyString(input.sessionId, "hosted_session_id");
+      const session = core.project().hostedSessions[sessionId];
+      if (!session) throw new Error("hosted_session_not_found");
+      return idempotentlyAfterExplorerAuth("submit_hosted_intent", input, session.explorerId, () => {
+        const intentText = assertNonEmptyString(input.intentText, "action_intent_text_required");
+        assertNoRequestSecretMaterialInPublicText(input, intentText);
+        const result = commandResult(core.submitHostedIntent({
+          sessionId,
+          intentText,
+          visibleText: typeof input.visibleText === "string" ? input.visibleText : undefined,
+        }, ownerVerifiedContextFromInput(input, session.explorerId)));
+        return publicIntentCommandResult(result);
+      });
+    },
+    submitHostedIntentWithServerModel: async (input: AnyRecord = {}) => {
+      const sessionId = assertNonEmptyString(input.sessionId, "hosted_session_id");
+      const session = core.project().hostedSessions[sessionId];
+      if (!session) throw new Error("hosted_session_not_found");
+      return idempotentlyAfterExplorerAuthAsync("submit_hosted_intent", input, session.explorerId, async () => {
+        const intentText = assertNonEmptyString(input.intentText, "action_intent_text_required");
+        assertNoRequestSecretMaterialInPublicText(input, intentText);
+        const context = ownerVerifiedContextFromInput(input, session.explorerId);
+        const result = modelIntentAgent
+          ? commandResult(core.submitHostedStructuredIntent({
+            sessionId,
+            intent: await modelIntentAgent.interpret(intentText),
+            visibleText: typeof input.visibleText === "string" ? input.visibleText : undefined,
+          }, context))
+          : commandResult(core.submitHostedIntent({
+            sessionId,
+            intentText,
+            visibleText: typeof input.visibleText === "string" ? input.visibleText : undefined,
+          }, context));
+        return publicIntentCommandResult(result);
       });
     },
     webBridgeTurn: (input: AnyRecord = {}): EpochRuntimeResult<EpochWebBridgeTurn> => {
@@ -3535,6 +3790,22 @@ export function createEpochRuntime(options: EpochRuntimeOptions = {}) {
             action: result.value,
           },
         };
+      });
+    },
+    submitWebBridgeIntent: (input: AnyRecord = {}): EpochRuntimeResult<ActionIntentCommandResult> => {
+      const sessionId = assertNonEmptyString(input.sessionId, "hosted_session_id");
+      const session = core.project().hostedSessions[sessionId];
+      if (!session) throw new Error("hosted_session_not_found");
+      if (session.channelClass !== "browser_copy_paste") throw new Error("web_bridge_session_required");
+      return idempotentlyAfterExplorerAuth("submit_web_bridge_intent", input, session.explorerId, () => {
+        const intentText = assertNonEmptyString(input.intentText, "action_intent_text_required");
+        assertNoRequestSecretMaterialInPublicText(input, intentText);
+        const result = commandResult(core.submitHostedIntent({
+          sessionId,
+          intentText,
+          visibleText: typeof input.visibleText === "string" ? input.visibleText : undefined,
+        }, ownerVerifiedContextFromInput(input, session.explorerId)));
+        return publicIntentCommandResult(result);
       });
     },
     attestationChallenge: attestationRuntime.issueChallenge,

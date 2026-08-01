@@ -378,13 +378,16 @@ const REJECTED_COMMAND_AUDIT_TOOLS = new Set([
   "obsidian_epoch.deploy_trace_conflict",
   "obsidian_epoch.turn_card",
   "obsidian_epoch.resolve_turn",
+  "obsidian_epoch.resolve_turn_intent",
   "obsidian_epoch.start_hosted_session",
   "obsidian_epoch.submit_hosted_action",
+  "obsidian_epoch.submit_hosted_intent",
   "obsidian_epoch.run_server_hosted_action",
   "obsidian_epoch.queue_server_hosted_action",
   "obsidian_epoch.run_server_hosted_job",
   "obsidian_epoch.web_bridge_turn",
   "obsidian_epoch.submit_web_bridge_action",
+  "obsidian_epoch.submit_web_bridge_intent",
   "obsidian_epoch.attestation_challenge",
   "obsidian_epoch.submit_attested_action",
   "obsidian_epoch.confirm_personality_drift",
@@ -2766,6 +2769,41 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
       compactStateTool: "obsidian_epoch.journey_status_compact",
     }, result);
   };
+  const compactJourneyIntentForTransport = (result: Awaited<ReturnType<typeof runtime.epochCommitJourneyIntent>>) => {
+    const resultRecord = recordValue(result);
+    const value = recordValue(resultRecord.value);
+    const journey = recordValue(resultRecord.journey);
+    const action = recordValue(value.action);
+    const match = recordValue(value.match);
+    return preserveCompactTransportEvents({
+      authority: "server_intent_agent_and_game_core",
+      transportVersion: "journey_intent.compact.v1",
+      journey: compactJourneyForTransport(journey),
+      episode: compactEpisodeForTransport(
+        resultRecord.episode ?? resultRecord.objectiveEpisode ?? resultRecord.mainEpisode,
+      ),
+      expectedVersion: journey.version,
+      intent: value.intent,
+      match: {
+        status: match.status,
+        optionLabel: match.optionLabel,
+        confidence: match.confidence,
+        reason: match.reason,
+        preparationSteps: match.preparationSteps,
+      },
+      action: {
+        actionId: action.actionId,
+        optionLabel: action.optionLabel,
+        risk: action.risk,
+        outcomeSummary: action.outcomeSummary,
+        journeyResolution: action.journeyResolution,
+        reward: action.reward,
+        lifetimeDelta: action.lifetimeDelta,
+        nonEvidence: action.nonEvidence,
+        recordedAt: action.recordedAt,
+      },
+    }, result);
+  };
   const compactEconomyActionsForTransport = (value: unknown) => {
     const economy = recordValue(value);
     if (!Object.hasOwn(economy, "authority")) return undefined;
@@ -2990,12 +3028,14 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     ["obsidian_epoch.hosted_watch", (args) => runtime.epochHostedSessionWatch(args)],
     ["obsidian_epoch.start_hosted_session", (args) => runtime.epochStartHostedSession(args)],
     ["obsidian_epoch.submit_hosted_action", (args) => runtime.epochSubmitHostedAction(args)],
+    ["obsidian_epoch.submit_hosted_intent", (args) => runtime.epochSubmitHostedIntent(args)],
     ["obsidian_epoch.run_server_hosted_action", (args) => runtime.epochRunServerHostedAction(args)],
     ["obsidian_epoch.queue_server_hosted_action", (args) => runtime.epochQueueServerHostedAction(args)],
     ["obsidian_epoch.server_hosted_jobs", (args) => runtime.epochServerHostedJobs(args)],
     ["obsidian_epoch.run_server_hosted_job", (args) => runtime.epochRunServerHostedJob(args)],
     ["obsidian_epoch.web_bridge_turn", (args) => runtime.epochWebBridgeTurn(args)],
     ["obsidian_epoch.submit_web_bridge_action", (args) => runtime.epochSubmitWebBridgeAction(args)],
+    ["obsidian_epoch.submit_web_bridge_intent", (args) => runtime.epochSubmitWebBridgeIntent(args)],
     ["obsidian_epoch.attestation_challenge", (args) => runtime.epochAttestationChallenge(args)],
     ["obsidian_epoch.submit_attested_action", (args) => runtime.epochSubmitAttestedAction(args)],
     ["obsidian_epoch.events", (args) => runtime.epochEvents(args)],
@@ -3034,7 +3074,20 @@ export function createAgentWorldMcpRuntime(options: McpRuntimeOptions = {}): Age
     compactJourneyStartForTransport,
     compactJourneyProposalForTransport: compactJourneyProposalForTransport as (result: unknown) => unknown,
     commitJourneyActionWithPersistence,
+    commitJourneyIntentWithPersistence: async (
+      args: AnyRecord,
+      options: { readonly externalTransport?: boolean } = {},
+    ) => {
+      const result = await runtime.epochCommitJourneyIntent(args);
+      if (options.externalTransport && currentMcpRequestContext()?.persistPartial) {
+        const externalResult = { ...result };
+        if (isMcpResultAlreadyPersisted(result)) markMcpResultAlreadyPersisted(externalResult);
+        return externalResult;
+      }
+      return result;
+    },
     compactJourneyCommitForTransport: compactJourneyCommitForTransport as (result: unknown) => unknown,
+    compactJourneyIntentForTransport: compactJourneyIntentForTransport as (result: unknown) => unknown,
     journeyStatusWithFinalVerification,
     compactJourneyStatusForTransport,
     recallJourneyHandler: async (args: AnyRecord) => {

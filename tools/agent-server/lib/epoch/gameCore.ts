@@ -611,6 +611,11 @@ export type {
 } from "./gameCoreTypes.ts";
 
 export type { ReviewNpcCandidateResolution } from "./npcCandidateRules.ts";
+export type {
+  ActionIntentCommandResult,
+  ResolveTurnCardIntentInput,
+  SubmitHostedIntentInput,
+} from "./gameCoreTypes.ts";
 
 
 

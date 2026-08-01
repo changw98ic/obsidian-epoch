@@ -138,9 +138,9 @@ const EPOCH_CORE_ACTIVE_IDENTITY_METHOD_TOOL_COVERAGE = [
   { coreMethod: "updateAgentNpcBond", tools: ["obsidian_epoch.update_agent_npc_bond"] },
   { coreMethod: "deployTraceConflict", tools: ["obsidian_epoch.deploy_trace_conflict"] },
   { coreMethod: "createTurnCard", tools: ["obsidian_epoch.turn_card"] },
-  { coreMethod: "resolveTurnCard", tools: ["obsidian_epoch.resolve_turn"] },
+  { coreMethod: "resolveTurnCard", tools: ["obsidian_epoch.resolve_turn", "obsidian_epoch.resolve_turn_intent"] },
   { coreMethod: "startHostedSession", tools: ["obsidian_epoch.start_hosted_session", "obsidian_epoch.run_server_hosted_action", "obsidian_epoch.web_bridge_turn"] },
-  { coreMethod: "submitHostedAction", tools: ["obsidian_epoch.submit_hosted_action", "obsidian_epoch.run_server_hosted_action", "obsidian_epoch.run_server_hosted_job", "obsidian_epoch.submit_web_bridge_action", "obsidian_epoch.submit_attested_action"] },
+  { coreMethod: "submitHostedAction", tools: ["obsidian_epoch.submit_hosted_action", "obsidian_epoch.submit_hosted_intent", "obsidian_epoch.run_server_hosted_action", "obsidian_epoch.run_server_hosted_job", "obsidian_epoch.submit_web_bridge_action", "obsidian_epoch.submit_web_bridge_intent", "obsidian_epoch.submit_attested_action"] },
   { coreMethod: "queueServerHostedJob", tools: ["obsidian_epoch.queue_server_hosted_action"] },
   { coreMethod: "canRunServerHostedJobOption", tools: ["obsidian_epoch.run_server_hosted_job"] },
 ] as const;

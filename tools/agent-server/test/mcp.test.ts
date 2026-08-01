@@ -10,6 +10,7 @@ import type { EpochEvent } from "../lib/epoch/events.ts";
 import { createSequentialEpochIdFactory, type EpochClock } from "../lib/epoch/protocol.ts";
 import { createAgentHttpServer } from "../lib/httpServer.ts";
 import { createAgentWorldMcpRuntime } from "../lib/mcpTools.ts";
+import type { ModelAdapter } from "../lib/modelAdapter.ts";
 import { EPOCH_CONTEXT_PACK_VERSION } from "../lib/worldContextVersions.ts";
 import { handleJsonRpcMessage } from "../mcp.ts";
 
@@ -654,6 +655,11 @@ test("MCP tool registry exposes agent world tools without model credential field
   assert.match(JSON.stringify(quickstart), /smoke-playbook\.md/);
   assert.match(JSON.stringify(quickstart), /turn_card[\s\S]*resolve_turn[\s\S]*create_result_page/);
   const quickstartPayload = textPayload(quickstart);
+  const turnIntentStep = quickstartPayload.oneTurnFlow.find((step: { step: string }) => step.step === "resolve_turn_intent");
+  assert.equal(turnIntentStep.tool, "obsidian_epoch.resolve_turn_intent");
+  assert.ok(turnIntentStep.requires.includes("intentText"));
+  const turnCompatibilityStep = quickstartPayload.oneTurnFlow.find((step: { step: string }) => step.step === "resolve_turn_signed_compatibility");
+  assert.equal(turnCompatibilityStep.tool, "obsidian_epoch.resolve_turn");
   assert.equal(quickstartPayload.webConsole, "http://127.0.0.1:8787/epoch/web-play");
   assert.equal(quickstartPayload.contentPolicy.regionCode, "strict_region");
   assert.equal(quickstartPayload.contentPolicy.source, "configured_region");
@@ -4238,6 +4244,156 @@ test("MCP experimental shared-setting artifacts require current main-rule review
   assert.equal(reviewedNpc.value.candidate.experimentId, "exp-gray-harbor-rule-rollback");
   assert.equal(reviewedNpc.value.candidate.mainRuleReview.status, "passed");
   assert.equal(reviewedNpc.events[0].payload.experimentId, "exp-gray-harbor-rule-rollback");
+});
+
+test("MCP natural-language settlement uses the configured server model while keeping action mapping server-owned", async () => {
+  let completionCount = 0;
+  const modelAdapter: ModelAdapter = {
+    provider: "openai_compatible",
+    model: "test-model",
+    endpoint: "http://model.test/v1/chat/completions",
+    complete: async () => {
+      completionCount += 1;
+      return {
+        provider: "openai_compatible",
+        model: "test-model",
+        text: JSON.stringify({
+          verb: "observe",
+          target: "灰港入口",
+          desiredOutcome: "获得可核验信息",
+          constraints: ["avoid_unnecessary_risk"],
+          riskTolerance: "low",
+          actionOptionId: "forged_option",
+          outcome: "玩家宣布成功",
+        }),
+      };
+    },
+    warmup: async () => {},
+  };
+  const mcp = createAgentWorldMcpRuntime({
+    epoch: {
+      idFactory: createSequentialEpochIdFactory("mcp_server_model_intent"),
+      modelAdapter,
+    },
+  });
+  const explorerRecoveryCode = recoveryCode("explorer_mcp_server_model_intent", "local_mcp_server_model_intent_secret");
+  const identity = textPayload(await mcp.callTool("obsidian_epoch.identity", {
+    explorerId: "explorer_mcp_server_model_intent",
+    recoveryCode: explorerRecoveryCode,
+    identityName: "服务端模型意图者",
+    idempotencyKey: "identity-mcp-server-model-intent-1",
+  }));
+  const turn = textPayload(await mcp.callTool("obsidian_epoch.turn_card", {
+    agentId: identity.value.agentId,
+    regionId: "region_gray_harbor",
+    prompt: "描述一次自然语言观察",
+    recoveryCode: explorerRecoveryCode,
+    idempotencyKey: "turn-mcp-server-model-intent-1",
+  }));
+  const resolvedToolResult = await mcp.callTool("obsidian_epoch.resolve_turn_intent", {
+    turnCardId: turn.value.turnCardId,
+    sequence: turn.value.sequence,
+    nonce: turn.value.nonce,
+    intentText: "请先观察灰港入口并记录线索，别冒险。",
+    recoveryCode: explorerRecoveryCode,
+    idempotencyKey: "resolve-mcp-server-model-intent-1",
+  });
+  const resolved = textPayload(resolvedToolResult);
+
+  assert.equal(completionCount, 1);
+  assert.equal(resolved.value.match.status, "matched");
+  assert.equal(resolved.value.match.optionLabel, resolved.value.action.optionLabel);
+  assert.notEqual(resolved.value.match.optionLabel, "forged_option");
+  assert.equal("actionOptionId" in resolved.value.match, false);
+  assert.equal(resolved.value.intent.interpretationSource, "server_model");
+  assert.equal("actionOptionId" in resolved.value.action, false);
+  assert.equal("projection" in resolved, false);
+  assert.equal(resolved.value.action.outcomeSummary.includes("服务器"), true);
+  const formalResolution = persistenceEvents(resolvedToolResult).find((event) => event.eventType === "turn_resolved");
+  assert.ok(formalResolution);
+  if (formalResolution?.eventType === "turn_resolved") {
+    assert.equal(formalResolution.payload.intentAudit?.actionOptionId, formalResolution.payload.actionOptionId);
+  }
+});
+
+test("MCP natural-language play can publish the server-settled HTML result", async () => {
+  let completionCount = 0;
+  const modelAdapter: ModelAdapter = {
+    provider: "openai_compatible",
+    model: "test-model",
+    endpoint: "http://model.test/v1/chat/completions",
+    complete: async () => {
+      completionCount += 1;
+      return {
+        provider: "openai_compatible",
+        model: "test-model",
+        text: JSON.stringify({
+          verb: "observe",
+          target: "灰港入口",
+          desiredOutcome: "记录线索",
+          constraints: ["avoid_unnecessary_risk"],
+          riskTolerance: "low",
+        }),
+      };
+    },
+    warmup: async () => {},
+  };
+  const mcp = createAgentWorldMcpRuntime({
+    epoch: {
+      idFactory: createSequentialEpochIdFactory("mcp_server_model_html"),
+      modelAdapter,
+    },
+  });
+  const server = createAgentHttpServer({ runtime: mcp.runtime });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const explorerRecoveryCode = recoveryCode("explorer_mcp_server_model_html", "local_mcp_server_model_html_secret");
+    const identity = textPayload(await mcp.callTool("obsidian_epoch.identity", {
+      explorerId: "explorer_mcp_server_model_html",
+      recoveryCode: explorerRecoveryCode,
+      identityName: "服务端模型战报者",
+      idempotencyKey: "identity-mcp-server-model-html-1",
+    }));
+    const turn = textPayload(await mcp.callTool("obsidian_epoch.turn_card", {
+      agentId: identity.value.agentId,
+      regionId: "region_gray_harbor",
+      prompt: "描述一次自然语言观察并发布战报",
+      recoveryCode: explorerRecoveryCode,
+      idempotencyKey: "turn-mcp-server-model-html-1",
+    }));
+    const resolved = textPayload(await mcp.callTool("obsidian_epoch.resolve_turn_intent", {
+      turnCardId: turn.value.turnCardId,
+      sequence: turn.value.sequence,
+      nonce: turn.value.nonce,
+      intentText: "我想先观察灰港入口，记录能核验的线索。",
+      recoveryCode: explorerRecoveryCode,
+      idempotencyKey: "resolve-mcp-server-model-html-1",
+    }));
+    const preview = textPayload(await mcp.callTool("obsidian_epoch.result_page", {
+      turnCardId: turn.value.turnCardId,
+    }));
+    const page = textPayload(await mcp.callTool("obsidian_epoch.create_result_page", {
+      turnCardId: turn.value.turnCardId,
+      publishToken: preview.publishToken,
+      recoveryCode: explorerRecoveryCode,
+      idempotencyKey: "result-page-mcp-server-model-html-1",
+    }));
+    const htmlResponse = await fetch(`${baseUrl}${page.page.urlPath}`);
+    const html = await htmlResponse.text();
+
+    assert.equal(completionCount, 1);
+    assert.equal(htmlResponse.status, 200);
+    assert.match(html, /服务器结算/u);
+    assert.match(html, /正式/u);
+    assert.match(html, new RegExp(resolved.value.action.outcomeSummary));
+    assert.match(page.page.urlPath, /^\/epoch\/result\//u);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });
 
 test("MCP turn cards can use web-confirmed one-time owner tokens without exposing recovery", async () => {

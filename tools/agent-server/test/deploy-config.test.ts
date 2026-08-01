@@ -128,6 +128,12 @@ test("public deployment config ships Docker, Compose, env example, and operator 
   assert.match(compose, /AGENT_SERVER_EMBEDDING_QUERY_CACHE_MAX_ENTRIES: \$\{AGENT_SERVER_EMBEDDING_QUERY_CACHE_MAX_ENTRIES:-128\}/);
   assert.match(compose, /obsidian_epoch_embedding_api_key:/);
   assert.match(compose, /target: obsidian_epoch_embedding_api_key\s+uid: "65532"\s+gid: "65532"\s+mode: 0400/);
+  assert.match(compose, /AGENT_SERVER_MODEL_PROVIDER: \$\{AGENT_SERVER_MODEL_PROVIDER:-\}/);
+  assert.match(compose, /AGENT_SERVER_MODEL_BASE_URL: \$\{AGENT_SERVER_MODEL_BASE_URL:-\}/);
+  assert.match(compose, /AGENT_SERVER_MODEL_NAME: \$\{AGENT_SERVER_MODEL_NAME:-\}/);
+  assert.match(compose, /AGENT_SERVER_MODEL_API_KEY_FILE: \/run\/secrets\/obsidian_epoch_model_api_key/);
+  assert.match(compose, /obsidian_epoch_model_api_key:/);
+  assert.match(compose, /target: obsidian_epoch_model_api_key\s+uid: "65532"\s+gid: "65532"\s+mode: 0400/);
   assert.doesNotMatch(compose, /AGENT_SERVER_EMBEDDING_API_KEY:/);
   assert.match(compose, /test: \["CMD", "\/nodejs\/bin\/node"/);
   assert.match(compose, /fetch\('http:\/\/127\.0\.0\.1:8787\/api\/health'\)/);
@@ -190,6 +196,11 @@ test("public deployment config ships Docker, Compose, env example, and operator 
   assert.match(envExample, /AGENT_SERVER_EMBEDDING_VERIFICATION_INTERVAL_MS=3600000/);
   assert.match(envExample, /AGENT_SERVER_EMBEDDING_QUERY_CACHE_TTL_MS=900000/);
   assert.match(envExample, /AGENT_SERVER_EMBEDDING_QUERY_CACHE_MAX_ENTRIES=128/);
+  assert.match(envExample, /AGENT_SERVER_MODEL_PROVIDER=/);
+  assert.match(envExample, /AGENT_SERVER_MODEL_BASE_URL=/);
+  assert.match(envExample, /AGENT_SERVER_MODEL_NAME=/);
+  assert.match(envExample, /AGENT_SERVER_MODEL_API_KEY_FILE=/);
+  assert.match(envExample, /AGENT_SERVER_MODEL_TIMEOUT_MS=30000/);
   assert.match(envExample, /AGENT_SERVER_REGISTRATION_SECRET_FILE=/);
   assert.match(envExample, /AGENT_SERVER_REGISTRATION_ACTOR_HASH_SECRET_FILE=/);
   assert.match(envExample, /AGENT_SERVER_REGISTRATION_TRUST_PROXY_HOPS=1/);
@@ -212,6 +223,11 @@ test("public deployment config ships Docker, Compose, env example, and operator 
   assert.match(readme, /http:\/\/192\.168\.1\.7:1235/);
   assert.match(readme, /text-embedding-qwen3-embedding-8b/);
   assert.match(readme, /\/run\/secrets\/obsidian_epoch_embedding_api_key/);
+  assert.match(readme, /AGENT_SERVER_MODEL_PROVIDER=openai_compatible/);
+  assert.match(readme, /AGENT_SERVER_MODEL_BASE_URL/);
+  assert.match(readme, /POST \/v1\/chat\/completions/);
+  assert.match(readme, /\/run\/secrets\/obsidian_epoch_model_api_key/);
+  assert.match(readme, /checks\.serverAi/);
   assert.match(readme, /AGENT_SERVER_MAINTENANCE_ENABLED=1/);
   assert.match(readme, /AGENT_SERVER_MAINTENANCE_RESOURCE_NODE_REGION_IDS=region_gray_harbor/);
   assert.match(readme, /AGENT_SERVER_MAINTENANCE_RESOURCE_NODE_SETTLEMENT_LIMIT=3/);

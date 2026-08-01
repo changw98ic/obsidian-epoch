@@ -101,6 +101,11 @@ import {
 import {
   type JourneyActionResolution,
 } from "./journeyActionResolutionRules.ts";
+import type {
+  ActionIntentMatch,
+  PublicActionIntentMatch,
+  StructuredActionIntent,
+} from "./intentAgent.ts";
 import {
   type JourneySceneContract,
   type JourneySceneContractSeed,
@@ -1065,6 +1070,7 @@ export interface EpochTurnResolution {
   readonly explanation: EpochActionExplanation;
   readonly visibleText?: string;
   readonly outcomeSummary: string;
+  readonly intentAudit?: ActionIntentMatch;
   readonly reward?: EpochServerReward;
   readonly lifetimeDelta?: number;
   readonly nonEvidence?: boolean;
@@ -1107,6 +1113,7 @@ export interface EpochHostedActionRecord {
   readonly explanation: EpochActionExplanation;
   readonly visibleText?: string;
   readonly outcomeSummary: string;
+  readonly intentAudit?: ActionIntentMatch;
   readonly journeyResolution?: JourneyActionResolution;
   readonly reward?: EpochServerReward;
   readonly lifetimeDelta?: number;
@@ -2108,6 +2115,22 @@ export interface ResolveTurnCardInput {
   readonly sequence: number;
   readonly nonce: string;
   readonly visibleText?: string;
+  /** Only the server's Intent Agent may populate this audit record. */
+  readonly intentAudit?: ActionIntentMatch;
+}
+
+export interface ResolveTurnCardIntentInput {
+  readonly turnCardId: string;
+  readonly sequence: number;
+  readonly nonce: string;
+  readonly intentText: string;
+  readonly visibleText?: string;
+}
+
+/** Internal server boundary after an Intent Agent has produced structured data. */
+export interface ResolveTurnCardStructuredIntentInput
+  extends Omit<ResolveTurnCardIntentInput, "intentText"> {
+  readonly intent: StructuredActionIntent;
 }
 
 export interface StartHostedSessionInput {
@@ -2122,6 +2145,8 @@ export interface SubmitHostedActionInput {
   readonly sessionId: string;
   readonly actionOptionId: string;
   readonly visibleText?: string;
+  /** Only the server's Intent Agent may populate this audit record. */
+  readonly intentAudit?: ActionIntentMatch;
   readonly journeyValidation?: {
     readonly journeyId: string;
     readonly episodeId: string;
@@ -2137,6 +2162,31 @@ export interface SubmitHostedActionInput {
     readonly signatureBase: string;
     readonly signatureBaseHash: string;
   };
+}
+
+export interface SubmitHostedIntentInput {
+  readonly sessionId: string;
+  readonly intentText: string;
+  readonly visibleText?: string;
+  readonly journeyValidation?: SubmitHostedActionInput["journeyValidation"];
+  readonly attestation?: SubmitHostedActionInput["attestation"];
+}
+
+/** Internal server boundary after an Intent Agent has produced structured data. */
+export interface SubmitHostedStructuredIntentInput
+  extends Omit<SubmitHostedIntentInput, "intentText"> {
+  readonly intent: StructuredActionIntent;
+}
+
+export interface PublicActionIntentAction
+  extends Omit<EpochHostedActionRecord, "actionOptionId" | "intentAudit" | "signedEnvelope" | "socialHookId"> {
+}
+
+export interface ActionIntentCommandResult {
+  readonly intent: StructuredActionIntent;
+  /** Public result deliberately omits the internal actionOptionId. */
+  readonly match: PublicActionIntentMatch;
+  readonly action: PublicActionIntentAction;
 }
 
 export interface SolidifyJourneyWorldInput {

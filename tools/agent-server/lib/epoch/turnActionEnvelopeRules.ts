@@ -18,6 +18,7 @@ import type {
   TurnCardCreatedPayload,
   TurnResolvedPayload,
 } from "./events.ts";
+import type { ActionIntentMatch } from "./intentAgent.ts";
 
 export const TURN_CARD_ENVELOPE_PROTOCOL_VERSION = "obsidian-epoch.turn-card-envelope.v1";
 export const TURN_RESOLUTION_ENVELOPE_PROTOCOL_VERSION = "obsidian-epoch.turn-resolution-envelope.v1";
@@ -50,6 +51,7 @@ export interface TurnResolutionSignedEnvelopeInput {
   readonly explanation: EpochActionExplanation;
   readonly visibleText?: string;
   readonly outcomeSummary: string;
+  readonly intentAudit?: ActionIntentMatch;
   readonly reward?: EpochServerReward;
   readonly lifetimeDelta?: number;
   readonly nonEvidence?: boolean;
@@ -72,6 +74,7 @@ export interface HostedActionSignedEnvelopeInput {
   readonly explanation: EpochActionExplanation;
   readonly visibleText?: string;
   readonly outcomeSummary: string;
+  readonly intentAudit?: ActionIntentMatch;
   readonly journeyResolution?: HostedActionRecordedPayload["journeyResolution"];
   readonly reward?: EpochServerReward;
   readonly lifetimeDelta?: number;
@@ -139,6 +142,7 @@ export function turnResolutionSignedEnvelopeContent(input: TurnResolutionSignedE
     optionLabel: input.optionLabel,
     originalEnvelopeId: input.originalEnvelopeId,
     outcomeSummary: input.outcomeSummary,
+    ...(input.intentAudit ? { intentAudit: input.intentAudit } : {}),
     protocolVersion: TURN_RESOLUTION_ENVELOPE_PROTOCOL_VERSION,
     reward: input.reward,
     resolvedAt: input.resolvedAt,
@@ -180,6 +184,7 @@ export function hostedActionSignedEnvelopeContent(input: HostedActionSignedEnvel
     nonEvidence: input.nonEvidence,
     optionLabel: input.optionLabel,
     outcomeSummary: input.outcomeSummary,
+    ...(input.intentAudit ? { intentAudit: input.intentAudit } : {}),
     ...(input.journeyResolution ? { journeyResolution: input.journeyResolution } : {}),
     protocolVersion: HOSTED_ACTION_ENVELOPE_PROTOCOL_VERSION,
     recordedAt: input.recordedAt,

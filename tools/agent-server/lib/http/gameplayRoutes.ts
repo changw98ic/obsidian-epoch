@@ -151,5 +151,10 @@ export async function handleEpochGameplayRoutes(context: EpochHttpRouteContext):
     return true;
   }
 
+  if (method === "POST" && pathname === "/api/epoch/turns/resolve-intent") {
+    await persistAndSend(context, runtime.epochResolveTurnIntent(await context.readJsonBody(request, context.maxBodyBytes)));
+    return true;
+  }
+
   return false;
 }

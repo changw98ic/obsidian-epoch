@@ -50,6 +50,7 @@ import type {
 } from "./traceConflictRules.ts";
 import type { JourneySceneContract } from "./journeySceneContractRules.ts";
 import type { JourneyActionResolution } from "./journeyActionResolutionRules.ts";
+import type { ActionIntentMatch } from "./intentAgent.ts";
 import {
   type IdentityStrategyDisposition,
   type ApproachTag,
@@ -1855,6 +1856,8 @@ export interface TurnResolvedPayload {
   readonly explanation: EpochActionExplanation;
   readonly visibleText?: string;
   readonly outcomeSummary: string;
+  /** Server-audited natural-language routing record, when this was an intent submission. */
+  readonly intentAudit?: ActionIntentMatch;
   readonly reward?: EpochServerReward;
   readonly lifetimeDelta?: number;
   readonly nonEvidence?: boolean;
@@ -1889,6 +1892,8 @@ export interface HostedActionRecordedPayload {
   readonly explanation: EpochActionExplanation;
   readonly visibleText?: string;
   readonly outcomeSummary: string;
+  /** Server-audited natural-language routing record, when this was an intent submission. */
+  readonly intentAudit?: ActionIntentMatch;
   /** Server-authored generated-task result. Absent on legacy/non-journey hosted actions. */
   readonly journeyResolution?: JourneyActionResolution;
   readonly reward?: EpochServerReward;

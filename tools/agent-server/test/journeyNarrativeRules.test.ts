@@ -9,6 +9,8 @@ import {
   type SamplingJourneyNarrativeDraft,
   type ServerJourneyEpisodeFacts,
 } from "../lib/epoch/journeyNarrativeRules.ts";
+import { createNarrativeAgent } from "../lib/epoch/narrativeAgent.ts";
+import type { ModelAdapter } from "../lib/modelAdapter.ts";
 
 test("converts canonical settlement events into a closed server fact boundary", () => {
   const facts = buildServerJourneyEpisodeFacts({
@@ -86,6 +88,90 @@ test("wired narrative generation accepts references only and falls back on malfo
     serverFacts: facts,
     narrative: { ...grounded.value, postcard: { text: "灯蛾成为港主" } },
   }), undefined);
+});
+
+test("Narrative Agent accepts server facts and rejects prose that changes them", () => {
+  const facts = buildServerJourneyEpisodeFacts({
+    journeyId: "journey_narrative_agent",
+    episodeId: "episode_narrative_agent",
+    phase: "main",
+    title: "灰港核验",
+    agent: { id: "agent_narrative", displayName: "事实记录员" },
+    worldObjectRefs: [{ id: "region_gray_harbor", type: "region", label: "灰港" }],
+    action: {
+      optionLabel: "记录核验事实",
+      outcomeSummary: "服务器确认留下了一条可复核记录。",
+    },
+    canonicalEventIds: ["event_narrative_agent"],
+  });
+  const agent = createNarrativeAgent();
+  const grounded = agent.render({ serverFacts: facts });
+  assert.equal(grounded.ok, true);
+  assert.match(JSON.stringify(grounded.value), /可复核记录/u);
+
+  const rejected = agent.render({
+    serverFacts: facts,
+    samplingDraft: {
+      prose: "模型宣布玩家获得一座城和隐藏宝藏。",
+    },
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.value.kind, "structured_fact_template");
+  assert.doesNotMatch(JSON.stringify(rejected.value), /隐藏宝藏|一座城/u);
+});
+
+test("Narrative Agent uses the generic server model for a reference-only draft", async () => {
+  let completionCount = 0;
+  const adapter: ModelAdapter = {
+    provider: "openai_compatible",
+    model: "test-model",
+    endpoint: "http://model.test/v1/chat/completions",
+    complete: async () => {
+      completionCount += 1;
+      return {
+        provider: "openai_compatible",
+        model: "test-model",
+        text: JSON.stringify({
+          confirmedFactIds: ["episode_model_narrative:settlement"],
+          agentInterpretation: [{
+            stance: "hopeful",
+            factIds: ["episode_model_narrative:settlement"],
+            entityIds: ["agent_model_narrative", "region_model_narrative"],
+          }],
+          rumorIds: [],
+          stateChangeIds: ["episode_model_narrative:outcome"],
+          sourceEventIds: ["event_model_narrative"],
+          postcard: {
+            tone: "warm",
+            factIds: ["episode_model_narrative:settlement"],
+            entityIds: ["agent_model_narrative", "region_model_narrative"],
+          },
+          prose: "服务器没有确认的额外宝藏。",
+        }),
+      };
+    },
+    warmup: async () => {},
+  };
+  const facts = buildServerJourneyEpisodeFacts({
+    journeyId: "journey_model_narrative",
+    episodeId: "episode_model_narrative",
+    phase: "main",
+    title: "模型叙事测试",
+    agent: { id: "agent_model_narrative", displayName: "事实记录员" },
+    worldObjectRefs: [{ id: "region_model_narrative", type: "region", label: "灰港" }],
+    action: {
+      optionLabel: "记录核验事实",
+      outcomeSummary: "服务器确认留下了一条可复核记录。",
+    },
+    canonicalEventIds: ["event_model_narrative"],
+  });
+  const agent = createNarrativeAgent(adapter);
+  const rendered = await agent.renderWithServerModel({ serverFacts: facts });
+
+  assert.equal(completionCount, 1);
+  assert.equal(rendered.ok, false);
+  assert.equal(rendered.value.kind, "structured_fact_template");
+  assert.doesNotMatch(JSON.stringify(rendered.value), /额外宝藏/u);
 });
 
 function serverFacts(): ServerJourneyEpisodeFacts {

@@ -34,6 +34,8 @@ export function createRuntimeIdempotencyRuntime(options: RuntimeIdempotencyRunti
   const idempotentResults = new Map<string, EpochRuntimeResult<unknown>>();
   const ownerIdempotencyRecords = new Map<string, EpochOwnerIdempotencyRecord>();
   const subjectIdempotencyRecords = new Map<string, EpochOwnerIdempotencyRecord>();
+  const pendingAsyncResults = new Map<string, Promise<EpochRuntimeResult<unknown>>>();
+  const pendingAsyncSubjectHashes = new Map<string, string>();
 
   function duplicateResult<TValue>(cached: EpochRuntimeResult<TValue>): EpochRuntimeResult<TValue> {
     return {
@@ -139,10 +141,66 @@ export function createRuntimeIdempotencyRuntime(options: RuntimeIdempotencyRunti
     return authorizedResult;
   }
 
+  /**
+   * Async equivalent for server-side model-backed commands. The in-flight
+   * promise is keyed before the model call begins, so retries cannot invoke a
+   * second completion for the same idempotency key while the first is pending.
+   */
+  async function idempotentlyAfterExplorerAuthAsync<TValue>(
+    scope: string,
+    input: AnyRecord,
+    explorerId: string,
+    run: () => Promise<EpochRuntimeResult<TValue>>,
+    authOptions: { readonly allowRestrictedScore?: boolean } = {},
+  ): Promise<EpochRuntimeResult<TValue>> {
+    const idempotencyKey = requireIdempotencyKey(input);
+    const authorizationEvents = options.authorizeExplorerAction(scope, input, explorerId);
+    const key = ownerIdempotencyKey(scope, explorerId, idempotencyKey);
+    const subjectHash = idempotencySubjectHash(scope, explorerId, input);
+    const cached = idempotentResults.get(key) as EpochRuntimeResult<TValue> | undefined;
+    if (cached) {
+      const record = ownerIdempotencyRecords.get(key);
+      if (!record || record.subjectHash !== subjectHash) {
+        throw new Error("idempotency_key_conflict");
+      }
+      return duplicateResult(cached);
+    }
+    const pendingSubjectHash = pendingAsyncSubjectHashes.get(key);
+    if (pendingSubjectHash && pendingSubjectHash !== subjectHash) {
+      throw new Error("idempotency_key_conflict");
+    }
+    const pending = pendingAsyncResults.get(key);
+    if (pending) {
+      const result = await pending as EpochRuntimeResult<TValue>;
+      return duplicateResult(result);
+    }
+
+    const allowRestrictedScore = authOptions.allowRestrictedScore ?? true;
+    options.assertAbuseAllowed(input, { allowRestrictedScore });
+    pendingAsyncSubjectHashes.set(key, subjectHash);
+    const operation = (async () => {
+      const result = await run();
+      const authorizedResult = authorizationEvents.length
+        ? { ...result, events: [...authorizationEvents, ...result.events] }
+        : result;
+      idempotentResults.set(key, authorizedResult);
+      ownerIdempotencyRecords.set(key, { subjectHash });
+      return authorizedResult;
+    })();
+    pendingAsyncResults.set(key, operation as Promise<EpochRuntimeResult<unknown>>);
+    try {
+      return await operation;
+    } finally {
+      if (pendingAsyncResults.get(key) === operation) pendingAsyncResults.delete(key);
+      if (pendingAsyncSubjectHashes.get(key) === subjectHash) pendingAsyncSubjectHashes.delete(key);
+    }
+  }
+
   return {
     idempotently,
     idempotentlyWithSubject,
     idempotentlyForExplorerRegistration,
     idempotentlyAfterExplorerAuth,
+    idempotentlyAfterExplorerAuthAsync,
   };
 }

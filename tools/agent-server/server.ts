@@ -2,6 +2,7 @@ import { createAgentHttpServer, disposeAgentHttpServerTransport } from "./lib/ht
 import { epochMaintenanceConfigFromEnv, startEpochMaintenanceScheduler } from "./lib/maintenance.ts";
 import { createAgentWorldRuntime } from "./lib/mcpRuntimeCore.ts";
 import { ServerQuestAi, buildProviderChain, buildAiReplenishStrategy } from "./lib/epoch/serverQuestAi.ts";
+import { createModelAdapterFromEnv } from "./lib/modelAdapter.ts";
 import { createAgentPersistenceFromEnv } from "./lib/persistenceConfig.ts";
 import { productionAgentServerConfigFromEnv } from "./lib/productionConfig.ts";
 import { PlayerMcpAccessTokenStore } from "./lib/playerMcpAccessTokenStore.ts";
@@ -47,6 +48,13 @@ async function main() {
   reportStartupStage("player_mcp_ready");
   // PR10: Non-blocking server AI warmup (does not block startup)
   const serverQuestAi = new ServerQuestAi({ providers: buildProviderChain() });
+  let serverModelAdapter: ReturnType<typeof createModelAdapterFromEnv>;
+  try {
+    serverModelAdapter = createModelAdapterFromEnv(process.env);
+  } catch (error: unknown) {
+    serverModelAdapter = undefined;
+    console.error(`[server-model] configuration unavailable; intent/narrative model calls will use server fallback: ${error instanceof Error ? error.message : String(error)}`);
+  }
   serverQuestAi.startWarmup();
   serverQuestAi.awaitWarmup().then((state) => {
     console.log(`[PR10] ServerQuestAi warmup complete: state=${state}`);
@@ -86,6 +94,7 @@ async function main() {
       phase6ExperimentStore: persistence.phase6ExperimentStore,
       phase6CommittedResultStore: persistence.phase6CommittedResultStore,
       phase6RagTraceStore: persistence.phase6RagTraceStore,
+      ...(serverModelAdapter ? { modelAdapter: serverModelAdapter } : {}),
     },
     journey: {
       ...((persistence.loadedOptions as { journey?: Record<string, unknown> }).journey || {}),

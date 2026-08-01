@@ -44,6 +44,10 @@ tools/graph-react-app/dist/
 # Local agent-server append-only runtime data
 tools/agent-server/data/
 
+# Runtime audit artifacts (generated, not source)
+*.jsonl
+docs/audits/
+
 # Local MCP wiring and generated Phase 6 acceptance evidence
 /.mcp.json
 tools/agent-server/evidence/

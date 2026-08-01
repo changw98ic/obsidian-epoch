@@ -498,6 +498,7 @@ export interface TurnResolvedPayloadInput {
   readonly explanation: TurnResolvedPayload["explanation"];
   readonly visibleText?: string;
   readonly outcomeSummary: string;
+  readonly intentAudit?: TurnResolvedPayload["intentAudit"];
   readonly reward?: EpochServerReward;
   readonly lifetimeDelta?: number;
   readonly nonEvidence?: boolean;
@@ -519,6 +520,7 @@ export function turnResolvedPayload(input: TurnResolvedPayloadInput): TurnResolv
     explanation: input.explanation,
     visibleText,
     outcomeSummary: input.outcomeSummary,
+    intentAudit: input.intentAudit,
     reward: input.reward,
     lifetimeDelta: input.lifetimeDelta,
     nonEvidence: input.nonEvidence,
@@ -536,6 +538,7 @@ export function turnResolvedPayload(input: TurnResolvedPayloadInput): TurnResolv
       explanation: input.explanation,
       visibleText,
       outcomeSummary: input.outcomeSummary,
+      intentAudit: input.intentAudit,
       reward: input.reward,
       lifetimeDelta: input.lifetimeDelta,
       nonEvidence: input.nonEvidence,
@@ -639,6 +642,7 @@ export interface HostedActionRecordedPayloadInput {
   readonly explanation: HostedActionRecordedPayload["explanation"];
   readonly visibleText?: string;
   readonly outcomeSummary: string;
+  readonly intentAudit?: HostedActionRecordedPayload["intentAudit"];
   readonly journeyResolution?: HostedActionRecordedPayload["journeyResolution"];
   readonly reward?: EpochServerReward;
   readonly lifetimeDelta?: number;
@@ -662,6 +666,7 @@ export function hostedActionRecordedPayload(input: HostedActionRecordedPayloadIn
     explanation: input.explanation,
     visibleText,
     outcomeSummary: input.outcomeSummary,
+    intentAudit: input.intentAudit,
     ...(input.journeyResolution ? { journeyResolution: input.journeyResolution } : {}),
     reward: input.reward,
     lifetimeDelta: input.lifetimeDelta,
@@ -683,6 +688,7 @@ export function hostedActionRecordedPayload(input: HostedActionRecordedPayloadIn
       explanation: input.explanation,
       visibleText,
       outcomeSummary: input.outcomeSummary,
+      intentAudit: input.intentAudit,
       ...(input.journeyResolution ? { journeyResolution: input.journeyResolution } : {}),
       reward: input.reward,
       lifetimeDelta: input.lifetimeDelta,
@@ -763,6 +769,7 @@ export function planHostedActionSubmissionEvents(input: PlanHostedActionSubmissi
     explanation: input.explanation,
     visibleText: input.visibleText,
     outcomeSummary: input.outcomeSummary,
+    intentAudit: input.intentAudit,
     ...(input.journeyResolution ? { journeyResolution: input.journeyResolution } : {}),
     reward: input.reward,
     lifetimeDelta: input.lifetimeDelta,

@@ -2963,6 +2963,28 @@ export interface EpochActionExplanation {
   expectedBenefit: string;
 }
 
+export interface EpochStructuredActionIntent {
+  schemaVersion: string;
+  rawText: string;
+  normalizedText: string;
+  verb: "observe" | "assist" | "investigate" | "travel" | "return" | "engage" | "protect" | "record" | "wait" | "recall" | "unknown";
+  target?: string;
+  desiredOutcome?: string;
+  constraints: readonly string[];
+  riskTolerance: "low" | "medium" | "high" | "unspecified";
+}
+
+export interface EpochPublicIntentMatch {
+  ruleVersion: string;
+  intent: EpochStructuredActionIntent;
+  status: "matched" | "unmatched";
+  optionLabel: string;
+  confidence: number;
+  reason: string;
+  matchedSignals: readonly string[];
+  preparationSteps: readonly string[];
+}
+
 export interface EpochHostedActionOption {
   actionOptionId: string;
   optionKey: string;
@@ -3020,6 +3042,7 @@ export interface EpochTurnResolution {
   visibleText?: string;
   explanation: EpochActionExplanation;
   outcomeSummary: string;
+  intentAudit?: EpochPublicIntentMatch;
   reward?: EpochHostedReward;
   lifetimeDelta?: number;
   resolvedAt: string;
@@ -3071,6 +3094,7 @@ export interface EpochJourneyActionResolution {
     amount: 1;
     paid: boolean;
   };
+  preparationSteps?: readonly string[];
   summary: string;
 }
 
@@ -3088,11 +3112,20 @@ export interface EpochHostedActionRecord {
   visibleText?: string;
   explanation: EpochActionExplanation;
   outcomeSummary: string;
+  intentAudit?: EpochPublicIntentMatch;
   journeyResolution?: EpochJourneyActionResolution;
   reward?: EpochHostedReward;
   lifetimeDelta?: number;
   recordedAt: string;
   signedEnvelope: EpochHostedActionSignedEnvelope;
+}
+
+export type EpochIntentAction = Omit<EpochHostedActionRecord, "actionOptionId" | "intentAudit" | "signedEnvelope" | "socialHookId">;
+
+export interface EpochIntentActionResult {
+  intent: EpochStructuredActionIntent;
+  match: EpochPublicIntentMatch;
+  action: EpochIntentAction;
 }
 
 export interface EpochHostedActionSignedEnvelope {

@@ -139,6 +139,7 @@ import {
   resolveEpochRegionRevolt,
   resolveEpochRetaliation,
   resolveEpochTurn,
+  resolveEpochTurnIntent,
   respondEpochDiplomacy,
   seedEpochObjective,
   seedEpochSeason,
@@ -154,7 +155,9 @@ import {
   startEpochWebBridgeTurn,
   submitEpochAttestedAction,
   submitEpochHostedAction,
+  submitEpochHostedIntent,
   submitEpochWebBridgeAction,
+  submitEpochWebBridgeIntent,
   tickEpochDowntime,
   tickEpochDirectTradeExpiry,
   tickEpochMarketExpiry,
@@ -206,6 +209,7 @@ import type {
   EpochHostedActionOption,
   EpochHostedSession,
   EpochHighValueConfirmation,
+  EpochIntentActionResult,
   EpochInstallManifest,
   EpochInventoryItem,
   EpochMarketOrder,
@@ -1121,7 +1125,9 @@ export default function AgentExplorer({
   const [serverHostedJobs, setServerHostedJobs] = useState<readonly EpochServerHostedJob[]>([]);
   const [lastServerHostedRun, setLastServerHostedRun] = useState<EpochServerHostedActionRun | null>(null);
   const [webBridgeTurn, setWebBridgeTurn] = useState<EpochWebBridgeTurn | null>(null);
+  const [webBridgeIntentText, setWebBridgeIntentText] = useState("");
   const [lastWebBridgeAction, setLastWebBridgeAction] = useState<EpochWebBridgeActionResult | null>(null);
+  const [lastIntentAction, setLastIntentAction] = useState<EpochIntentActionResult | null>(null);
   const [currentTurnCard, setCurrentTurnCard] = useState<EpochTurnCard | null>(null);
   const [resultPage, setResultPage] = useState<EpochResultPage | null>(null);
   const [resultSettlementScreen, setResultSettlementScreen] = useState<ResultSettlementScreenKey>("ending");
@@ -1231,6 +1237,7 @@ export default function AgentExplorer({
   const [diplomacyResponseFocus, setDiplomacyResponseFocus] = useState(1);
   const [hostedMandate, setHostedMandate] = useState("起始委托模板：灰港边缘巡查。风险偏好：均衡，优先完成可审档线索。");
   const [hostedVisibleText, setHostedVisibleText] = useState("按服务器选项行动，记录可见过程。");
+  const [hostedIntentText, setHostedIntentText] = useState("");
   const [interventionInstruction, setInterventionInstruction] = useState("优先保留可审计线索，避免扩大风险。");
   const [interventionMode, setInterventionMode] = useState<InterventionMode>("running");
   const [interventionTakeoversUsed, setInterventionTakeoversUsed] = useState(0);
@@ -1239,6 +1246,7 @@ export default function AgentExplorer({
   const [serverHostedOptionKey, setServerHostedOptionKey] = useState<ServerHostedOptionKey>("observe");
   const [turnPrompt, setTurnPrompt] = useState("巡查当前区域");
   const [turnVisibleText, setTurnVisibleText] = useState("按服务器回合卡选项行动，记录可见过程。");
+  const [turnIntentText, setTurnIntentText] = useState("");
   const [attestedRunnerId, setAttestedRunnerId] = useState("runner_remote_1");
   const [attestedTranscriptHash, setAttestedTranscriptHash] = useState("sha256:paste_transcript_hash");
   const [attestedSignature, setAttestedSignature] = useState("");
@@ -1632,7 +1640,9 @@ export default function AgentExplorer({
     setServerHostedJobs([]);
     setLastServerHostedRun(null);
     setWebBridgeTurn(null);
+    setWebBridgeIntentText("");
     setLastWebBridgeAction(null);
+    setLastIntentAction(null);
     setCurrentTurnCard(null);
     setResultPage(null);
     setLastExplorationMetrics(null);
@@ -3366,6 +3376,23 @@ export default function AgentExplorer({
     });
   }
 
+  async function submitHostedIntent() {
+    if (!canUseActiveIdentity || !explorer || !primaryHostedSession || !hostedIntentText.trim()) return;
+    await runAction("hosted-intent", async () => {
+      const result = await submitEpochHostedIntent({
+        sessionId: primaryHostedSession.sessionId,
+        intentText: hostedIntentText.trim(),
+        visibleText: withLowStimulusGuidance(hostedVisibleText, lowStimulusMode),
+        recoveryCode: explorer.recoveryCode,
+        idempotencyKey: idempotencyKey("web_hosted_intent"),
+      });
+      setLastIntentAction(result.value);
+      setHostedIntentText("");
+      setHostedSessions((await getEpochHostedSessions(currentAgentId)).sessions);
+      await refreshProgress();
+    });
+  }
+
   async function runServerHostedAction() {
     if (!canUseActiveIdentity || !operatorKey.trim()) return;
     await runAction("server-hosted-action", async () => {
@@ -3494,6 +3521,24 @@ export default function AgentExplorer({
     });
   }
 
+  async function submitWebBridgeIntent() {
+    if (!canUseActiveIdentity || !explorer || !webBridgeTurn || !webBridgeIntentText.trim()) return;
+    await runAction("web-bridge-intent", async () => {
+      const submitted = await submitEpochWebBridgeIntent({
+        sessionId: webBridgeTurn.sessionId,
+        intentText: webBridgeIntentText.trim(),
+        visibleText: withLowStimulusGuidance(hostedVisibleText, lowStimulusMode),
+        recoveryCode: explorer.recoveryCode,
+        idempotencyKey: idempotencyKey("web_bridge_intent"),
+      });
+      setLastIntentAction(submitted.value);
+      setWebBridgeIntentText("");
+      setWebBridgeTurn(null);
+      setHostedSessions((await getEpochHostedSessions(currentAgentId)).sessions);
+      await refreshProgress();
+    });
+  }
+
   async function createTurnCard() {
     if (!canUseActiveIdentity || !explorer) return;
     await runAction("turn-card", async () => {
@@ -3547,6 +3592,29 @@ export default function AgentExplorer({
         resolvedAt: result.value.resolvedAt,
         resolution: result.value,
       } : previous);
+      await refreshProgress();
+    });
+  }
+
+  async function resolveTurnCardIntent() {
+    if (!canUseActiveIdentity || !explorer || !currentTurnCard || !turnIntentText.trim()) return;
+    await runAction("resolve-turn-intent", async () => {
+      const result = await resolveEpochTurnIntent({
+        turnCardId: currentTurnCard.turnCardId,
+        sequence: currentTurnCard.sequence,
+        nonce: currentTurnCard.nonce,
+        intentText: turnIntentText.trim(),
+        visibleText: withLowStimulusGuidance(turnVisibleText, lowStimulusMode),
+        recoveryCode: explorer.recoveryCode,
+        idempotencyKey: idempotencyKey("web_resolve_turn_intent"),
+      });
+      setCurrentTurnCard((previous) => previous ? {
+        ...previous,
+        status: "resolved",
+        resolvedAt: result.value.resolvedAt,
+        resolution: result.value,
+      } : previous);
+      setTurnIntentText("");
       await refreshProgress();
     });
   }
@@ -4758,6 +4826,7 @@ export default function AgentExplorer({
           hostedMandate={hostedMandate}
           hostedOptionSummary={hostedOptionSummary}
           hostedRiskLabels={HOSTED_RISK_LABELS}
+          hostedIntentText={hostedIntentText}
           hostedVisibleText={hostedVisibleText}
           interventionBudget={interventionBudget}
           interventionInstruction={interventionInstruction}
@@ -4765,6 +4834,7 @@ export default function AgentExplorer({
           interventionRemaining={interventionRemaining}
           isBusy={isBusy}
           lastServerHostedRun={lastServerHostedRun}
+          lastIntentAction={lastIntentAction}
           lastWebBridgeAction={lastWebBridgeAction}
           loadHighValueConfirmations={loadHighValueConfirmations}
           loadHostedSessions={loadHostedSessions}
@@ -4784,6 +4854,7 @@ export default function AgentExplorer({
           requestResolveTurnConfirmation={requestResolveTurnConfirmation}
           requestTurnCardConfirmation={requestTurnCardConfirmation}
           resolveTurnCard={resolveTurnCard}
+          resolveTurnCardIntent={resolveTurnCardIntent}
           resolveTurnCardWithConfirmation={resolveTurnCardWithConfirmation}
           resultPublishAuthorizationCopy={RESULT_PUBLISH_AUTHORIZATION_COPY}
           riskStrategy={riskStrategy}
@@ -4798,22 +4869,29 @@ export default function AgentExplorer({
           setAttestedSignature={setAttestedSignature}
           setAttestedTranscriptHash={setAttestedTranscriptHash}
           setHostedMandate={setHostedMandate}
+          setHostedIntentText={setHostedIntentText}
           setHostedVisibleText={setHostedVisibleText}
           setInterventionInstruction={setInterventionInstruction}
           setServerHostedOptionKey={setServerHostedOptionKey}
+          setTurnIntentText={setTurnIntentText}
           setTurnPrompt={setTurnPrompt}
           setTurnVisibleText={setTurnVisibleText}
           startHostedSession={startHostedSession}
           startWebBridgeTurn={startWebBridgeTurn}
           submitAttestedAction={submitAttestedAction}
           submitHostedAction={submitHostedAction}
+          submitHostedIntent={submitHostedIntent}
           submitWebBridgeAction={submitWebBridgeAction}
           takeOverCurrentTurn={takeOverCurrentTurn}
           turnPrompt={turnPrompt}
+          turnIntentText={turnIntentText}
           turnVisibleText={turnVisibleText}
           updateLowStimulusMode={updateLowStimulusMode}
+          webBridgeIntentText={webBridgeIntentText}
           webBridgeTurn={webBridgeTurn}
           appendInterventionInstruction={appendInterventionInstruction}
+          setWebBridgeIntentText={setWebBridgeIntentText}
+          submitWebBridgeIntent={submitWebBridgeIntent}
         />
 
         <article className="agent-panel agent-mcp">

@@ -16,6 +16,8 @@ export const JOURNEY_STATUSES = [
   "settled",
   "cancelled",
   "identity_ended",
+  "gm_active",
+  "gm_paused",
 ] as const;
 
 export type JourneyStatus = (typeof JOURNEY_STATUSES)[number];
@@ -347,12 +349,14 @@ const ACTIVE_JOURNEY_STATUSES: ReadonlySet<JourneyStatus> = new Set([
   "awaiting_user",
   "returning",
   "settling",
+  "gm_active",
+  "gm_paused",
 ]);
 
 export const LEGAL_JOURNEY_TRANSITIONS: Readonly<Record<JourneyStatus, readonly JourneyStatus[]>> = {
   draft: ["prepared", "cancelled", "identity_ended"],
   prepared: ["traveling", "cancelled", "identity_ended"],
-  traveling: ["awaiting_agent", "awaiting_user", "returning", "identity_ended"],
+  traveling: ["awaiting_agent", "awaiting_user", "returning", "identity_ended", "gm_active"],
   awaiting_agent: ["traveling", "awaiting_user", "returning", "identity_ended"],
   awaiting_user: ["traveling", "awaiting_agent", "returning", "identity_ended"],
   returning: ["settling", "identity_ended"],
@@ -360,6 +364,8 @@ export const LEGAL_JOURNEY_TRANSITIONS: Readonly<Record<JourneyStatus, readonly 
   settled: [],
   cancelled: [],
   identity_ended: [],
+  gm_active: ["gm_paused", "settling", "cancelled", "identity_ended"],
+  gm_paused: ["gm_active", "cancelled", "identity_ended"],
 };
 
 // Server timestamps use an unambiguous UTC ISO-8601 representation. Milliseconds
@@ -748,7 +754,8 @@ export function recordJourneyEpisode(input: RecordJourneyEpisodeInput): EpochJou
   if (input.journey.status !== "traveling"
     && input.journey.status !== "awaiting_agent"
     && input.journey.status !== "awaiting_user"
-    && input.journey.status !== "returning") {
+    && input.journey.status !== "returning"
+    && input.journey.status !== "gm_active") {
     if (isTerminalJourneyStatus(input.journey.status)) throw new Error("journey_terminal_immutable");
     throw new Error("journey_episode_status_invalid");
   }
@@ -768,4 +775,72 @@ export function recordJourneyEpisode(input: RecordJourneyEpisodeInput): EpochJou
     interactionIds: [...new Set([...input.journey.interactionIds, ...interactionIds])],
     version: input.journey.version + 1,
   };
+}
+
+export function transitionToGM(input: {
+  readonly journey: EpochJourney;
+  readonly expectedVersion: number;
+}): EpochJourney {
+  assertJourneyForTransition(input.journey);
+  assertExpectedVersion(input.journey, input.expectedVersion);
+  if (isTerminalJourneyStatus(input.journey.status)) throw new Error("journey_terminal_immutable");
+  if (!canTransitionJourney(input.journey.status, "gm_active")) {
+    throw new Error("journey_transition_invalid");
+  }
+  return {
+    ...input.journey,
+    status: "gm_active",
+    version: input.journey.version + 1,
+  };
+}
+
+export function pauseGMJourney(input: {
+  readonly journey: EpochJourney;
+  readonly expectedVersion: number;
+}): EpochJourney {
+  assertJourneyForTransition(input.journey);
+  assertExpectedVersion(input.journey, input.expectedVersion);
+  if (input.journey.status !== "gm_active") throw new Error("journey_gm_status_invalid");
+  return {
+    ...input.journey,
+    status: "gm_paused",
+    version: input.journey.version + 1,
+  };
+}
+
+export function resumeGMJourney(input: {
+  readonly journey: EpochJourney;
+  readonly expectedVersion: number;
+}): EpochJourney {
+  assertJourneyForTransition(input.journey);
+  assertExpectedVersion(input.journey, input.expectedVersion);
+  if (input.journey.status !== "gm_paused") throw new Error("journey_gm_status_invalid");
+  return {
+    ...input.journey,
+    status: "gm_active",
+    version: input.journey.version + 1,
+  };
+}
+
+export function settleGMJourneyFromActive(input: {
+  readonly journey: EpochJourney;
+  readonly expectedVersion: number;
+  readonly settledAtWorldTime?: string;
+}): EpochJourney {
+  assertJourneyForTransition(input.journey);
+  assertExpectedVersion(input.journey, input.expectedVersion);
+  if (input.journey.status !== "gm_active" && input.journey.status !== "gm_paused") {
+    throw new Error("journey_gm_status_invalid");
+  }
+  // gm_paused must resume to gm_active first before settling
+  let journey = input.journey;
+  if (journey.status === "gm_paused") {
+    journey = { ...journey, status: "gm_active", version: journey.version + 1 };
+  }
+  return transitionJourney({
+    journey,
+    toStatus: "settling",
+    expectedVersion: journey.version,
+    settledAtWorldTime: input.settledAtWorldTime,
+  });
 }

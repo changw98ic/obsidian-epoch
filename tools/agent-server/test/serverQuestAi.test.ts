@@ -863,73 +863,49 @@ describe("McpSamplingFallbackProvider", () => {
 
 describe("buildProviderChain", () => {
   it("returns empty chain when no API key and no MCP client", () => {
-    const original = process.env["ANTHROPIC_API_KEY"];
-    try {
-      delete process.env["ANTHROPIC_API_KEY"];
-      const chain = buildProviderChain();
-      assert.equal(chain.length, 0);
-    } finally {
-      if (original !== undefined) {
-        process.env["ANTHROPIC_API_KEY"] = original;
-      }
-    }
+    const chain = buildProviderChain(undefined, { env: {} });
+    assert.equal(chain.length, 0);
   });
 
   it("includes DirectAnthropic when API key is present", () => {
-    const original = process.env["ANTHROPIC_API_KEY"];
-    try {
-      process.env["ANTHROPIC_API_KEY"] = "test-key";
-      const chain = buildProviderChain();
-      assert.equal(chain.length, 1);
-      assert.equal(chain[0]!.name, "direct_anthropic");
-    } finally {
-      if (original !== undefined) {
-        process.env["ANTHROPIC_API_KEY"] = original;
-      } else {
-        delete process.env["ANTHROPIC_API_KEY"];
-      }
-    }
+    const chain = buildProviderChain(undefined, { env: { ANTHROPIC_API_KEY: "test-key" } });
+    assert.equal(chain.length, 1);
+    assert.equal(chain[0]!.name, "direct_anthropic");
   });
 
   it("includes McpSampling when client is provided", () => {
-    const original = process.env["ANTHROPIC_API_KEY"];
-    try {
-      delete process.env["ANTHROPIC_API_KEY"];
-      const mockClient = {
-        async createTaskPlanMessage() {
-          return { ok: true, proposal: null };
-        },
-      };
-      const chain = buildProviderChain(mockClient);
-      assert.equal(chain.length, 1);
-      assert.equal(chain[0]!.name, "mcp_sampling_fallback");
-    } finally {
-      if (original !== undefined) {
-        process.env["ANTHROPIC_API_KEY"] = original;
-      }
-    }
+    const mockClient = {
+      async createTaskPlanMessage() {
+        return { ok: true, proposal: null };
+      },
+    };
+    const chain = buildProviderChain(mockClient, { env: {} });
+    assert.equal(chain.length, 1);
+    assert.equal(chain[0]!.name, "mcp_sampling_fallback");
   });
 
   it("includes both providers when both available", () => {
-    const original = process.env["ANTHROPIC_API_KEY"];
-    try {
-      process.env["ANTHROPIC_API_KEY"] = "test-key";
-      const mockClient = {
-        async createTaskPlanMessage() {
-          return { ok: true, proposal: null };
-        },
-      };
-      const chain = buildProviderChain(mockClient);
-      assert.equal(chain.length, 2);
-      assert.equal(chain[0]!.name, "direct_anthropic");
-      assert.equal(chain[1]!.name, "mcp_sampling_fallback");
-    } finally {
-      if (original !== undefined) {
-        process.env["ANTHROPIC_API_KEY"] = original;
-      } else {
-        delete process.env["ANTHROPIC_API_KEY"];
-      }
-    }
+    const mockClient = {
+      async createTaskPlanMessage() {
+        return { ok: true, proposal: null };
+      },
+    };
+    const chain = buildProviderChain(mockClient, { env: { ANTHROPIC_API_KEY: "test-key" } });
+    assert.equal(chain.length, 2);
+    assert.equal(chain[0]!.name, "direct_anthropic");
+    assert.equal(chain[1]!.name, "mcp_sampling_fallback");
+  });
+
+  it("includes an OpenAI-compatible model adapter from generic environment settings", () => {
+    const chain = buildProviderChain(undefined, {
+      env: {
+        AGENT_SERVER_MODEL_PROVIDER: "openai_compatible",
+        AGENT_SERVER_MODEL_BASE_URL: "http://127.0.0.1:1234/v1",
+        AGENT_SERVER_MODEL_NAME: "qwen-local",
+      },
+    });
+    assert.equal(chain.length, 1);
+    assert.equal(chain[0]!.name, "openai_compatible_model");
   });
 });
 

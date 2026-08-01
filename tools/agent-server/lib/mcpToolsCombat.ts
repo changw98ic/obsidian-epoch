@@ -24,6 +24,7 @@ export const COMBAT_TOOL_NAMES: readonly string[] = [
   "obsidian_epoch.update_relationship",
   "obsidian_epoch.turn_card",
   "obsidian_epoch.resolve_turn",
+  "obsidian_epoch.resolve_turn_intent",
 ];
 
 // ── Minimal runtime interface for the combat delegates ────────────
@@ -40,6 +41,7 @@ interface CombatRuntime {
   epochUpdateRelationship(args: AnyRecord): unknown;
   epochTurnCard(args: AnyRecord): unknown;
   epochResolveTurn(args: AnyRecord): unknown;
+  epochResolveTurnIntent(args: AnyRecord): unknown;
 }
 
 // ── Registration ──────────────────────────────────────────────────
@@ -64,4 +66,5 @@ export function registerCombatHandlers(
   // Turn-card handlers.
   handlers.set("obsidian_epoch.turn_card", (args) => runtime.epochTurnCard(args));
   handlers.set("obsidian_epoch.resolve_turn", (args) => runtime.epochResolveTurn(args));
+  handlers.set("obsidian_epoch.resolve_turn_intent", (args) => runtime.epochResolveTurnIntent(args));
 }

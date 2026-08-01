@@ -195,12 +195,19 @@ function epochQuickstart(input: AnyRecord = {}) {
         blockedWhen: "progress.identity.status is archived; use identity_archive/result_page/reincarnate instead.",
       },
       {
-        step: "resolve_turn",
-        tool: "obsidian_epoch.resolve_turn",
-        purpose: "Choose exactly one returned actionOptionId; server settlement ignores client-declared outcomes.",
-        requires: ["turnCardId", "actionOptionId", "owner recovery authorization", "idempotencyKey"],
+        step: "resolve_turn_intent",
+        tool: "obsidian_epoch.resolve_turn_intent",
+        purpose: "Describe the intended action in natural language; the server matches it to the current action options and Game Core settles the result.",
+        requires: ["turnCardId", "sequence", "nonce", "intentText", "owner recovery authorization", "idempotencyKey"],
         requiresActiveIdentity: true,
         blockedWhen: "The turn card belongs to an archived identity or is not open.",
+      },
+      {
+        step: "resolve_turn_signed_compatibility",
+        tool: "obsidian_epoch.resolve_turn",
+        purpose: "Compatibility path for clients that intentionally submit a server-issued actionOptionId and the matching card envelope.",
+        requires: ["turnCardId", "sequence", "nonce", "actionOptionId", "owner recovery authorization", "idempotencyKey"],
+        requiresActiveIdentity: true,
       },
       {
         step: "publish_result",

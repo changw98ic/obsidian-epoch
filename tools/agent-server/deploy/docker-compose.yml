@@ -47,6 +47,11 @@ services:
       AGENT_SERVER_WORLD_MEMORY_BATCH_SIZE: ${AGENT_SERVER_WORLD_MEMORY_BATCH_SIZE:-8}
       AGENT_SERVER_WORLD_MEMORY_BATCHES_PER_TICK: ${AGENT_SERVER_WORLD_MEMORY_BATCHES_PER_TICK:-4}
       AGENT_SERVER_WORLD_MEMORY_INTERVAL_MS: ${AGENT_SERVER_WORLD_MEMORY_INTERVAL_MS:-15000}
+      AGENT_SERVER_MODEL_PROVIDER: ${AGENT_SERVER_MODEL_PROVIDER:-}
+      AGENT_SERVER_MODEL_BASE_URL: ${AGENT_SERVER_MODEL_BASE_URL:-}
+      AGENT_SERVER_MODEL_NAME: ${AGENT_SERVER_MODEL_NAME:-}
+      AGENT_SERVER_MODEL_API_KEY_FILE: /run/secrets/obsidian_epoch_model_api_key
+      AGENT_SERVER_MODEL_TIMEOUT_MS: ${AGENT_SERVER_MODEL_TIMEOUT_MS:-30000}
       SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH:?set immutable release epoch from git show -s --format=%ct HEAD}
       AGENT_EPOCH_CONSOLE_MEDIA_BASE_URL: ${AGENT_EPOCH_CONSOLE_MEDIA_BASE_URL:?set public CDN or object storage base URL for console media assets}
       AGENT_SERVER_OPERATOR_KEY_FILE: /run/secrets/obsidian_epoch_operator_key
@@ -97,6 +102,11 @@ services:
         target: obsidian_epoch_mcp_bearer_token
       - source: obsidian_epoch_embedding_api_key
         target: obsidian_epoch_embedding_api_key
+        uid: "65532"
+        gid: "65532"
+        mode: 0400
+      - source: obsidian_epoch_model_api_key
+        target: obsidian_epoch_model_api_key
         uid: "65532"
         gid: "65532"
         mode: 0400
@@ -274,6 +284,8 @@ secrets:
     file: ${AGENT_SERVER_MCP_BEARER_TOKEN_FILE:?set path to MCP bearer token file}
   obsidian_epoch_embedding_api_key:
     file: ${AGENT_SERVER_EMBEDDING_API_KEY_FILE:-./embedding-api-key.empty}
+  obsidian_epoch_model_api_key:
+    file: ${AGENT_SERVER_MODEL_API_KEY_FILE:-./model-api-key.empty}
   obsidian_epoch_registration_secret:
     file: ${AGENT_SERVER_REGISTRATION_SECRET_FILE:?set path to registration HMAC secret file}
   obsidian_epoch_registration_actor_hash_secret:

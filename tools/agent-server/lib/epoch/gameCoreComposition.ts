@@ -326,6 +326,14 @@ import {
   resolveJourneyAction,
   type JourneyActionResolution,
 } from "./journeyActionResolutionRules.ts";
+import {
+  createIntentAgent,
+  type IntentActionOptionCandidate,
+} from "./intentAgent.ts";
+import type {
+  ResolveTurnCardStructuredIntentInput,
+  SubmitHostedStructuredIntentInput,
+} from "./gameCoreTypes.ts";
 import { planJourneyWorldImpactEvents, planJourneyObjectImpactBlueprints } from "./journeyWorldImpactRules.ts";
 import type { JourneyWorldCommit } from "./journeyRules.ts";
 import {
@@ -619,6 +627,10 @@ const TURN_CARD_TTL_MS = 15 * 60 * 1000;
 import type {
   AcceptDirectTradeInput, AdjustLifetimeInput, ArchiveIdentityInput, AttributeInput, BindInventoryItemInput, CancelDirectTradeInput, CancelMarketOrderInput, CanonicalizeNpcInput, CanRunServerHostedJobOptionInput, ChangeAgentCustodyInput, ClaimBountyInput, ClaimDowntimeInput, ClaimNewsLegendInput, ClaimReleasedRegionControlInput, CompleteServerHostedJobInput, ConfirmPersonalityDriftInput, ContestAnomalyEventInput, ContestResourceNodeInput, ContributeContestedObjectiveInput, ContributeOrganizationTreasuryInput, ContributeSeasonCampaignInput, CraftInventoryItemInput, CreateAnomalyEventInput, CreateBountyInput, CreateContestedObjectiveInput, CreateDirectTradeInput, CreateInventoryItemInput, CreateMarketOrderInput, CreateOrganizationInput, CreatePartyRunInput, CreateResourceNodeInput, CreateSeasonCampaignInput, CreateTurnCardInput, DecayAbuseScoresInput, DecayRegionControlsInput, DeployTraceConflictInput, EpochAbilityEffectCluster, EpochAbuseScoreDecay, EpochAbuseScoreProfile, EpochAbuseScoreRelease, EpochAgentCustodyState, EpochAgentFactionStanding, EpochAgentIdentity, EpochAgentNpcBond, EpochAgentPersonality, EpochAnomalyEvent, EpochAnomalyEventStatus, EpochAnomalyStanding, EpochAttestationRecord, EpochBounty, EpochBountyStatus, EpochCommandResult, EpochConflictTrace, EpochContestedObjective, EpochContestedObjectiveStatus, EpochCreatureBehaviorScopeReview, EpochCrossRegionMechanismReview, EpochDiplomacyRecord, EpochDiplomacyStatus, EpochDirectTrade, EpochDirectTradeAsset, EpochDirectTradeAssetKind, EpochDirectTradeStatus, EpochFuzzyTimeIntervalReview, EpochGameCoreOptions, EpochHostedActionRecord, EpochHostedSession, EpochHostedSessionStatus, EpochHousehold, EpochInventoryItem, EpochLegendAward, EpochLoreContributionRecord, EpochLoreTargetAdjudication, EpochMarketOrder, EpochMarketOrderStatus, EpochMarketRiskRestriction, EpochMarketRiskRestrictionRelease, EpochMarketSellKind, EpochMessageRecord, EpochModerationItem, EpochModerationItemStatus, EpochNpcAssetState, EpochNpcCandidate, EpochNpcCandidateDecision, EpochNpcCandidateReviewFlag, EpochNpcCandidateReviewLevel, EpochNpcCandidateStatus, EpochNpcCareerRecord, EpochNpcHealthState, EpochNpcLocationRecord, EpochNpcMemory, EpochNpcRecord, EpochNpcRelationship, EpochObjectiveStanding, EpochOrganization, EpochOrganizationBudget, EpochOrganizationBudgetVote, EpochOrganizationMembership, EpochOrganizationMemberType, EpochOrganizationPoliticsRecord, EpochOrganizationUpgrade, EpochPartyJoinRequest, EpochPartyJoinRequestStatus, EpochPartyMember, EpochPartyMemberResult, EpochPartyRun, EpochPartyRunStatus, EpochPersonalityDrift, EpochPersonalityDriftStatus, EpochProjection, EpochRaceCompletion, EpochRaidResult, EpochRecoveryRotation, EpochRegionControl, EpochRegionControlDecay, EpochRegionInfluenceChange, EpochRegionMonument, EpochRegionNews, EpochRegionRevoltResult, EpochRelationshipEdge, EpochResourceNode, EpochResourceNodeStanding, EpochResourceNodeStatus, EpochRetaliationOpportunity, EpochRetaliationOpportunityStatus, EpochRiskReview, EpochRumorAdmissionReview, EpochSeasonAgentStanding, EpochSeasonCampaign, EpochSeasonCampaignStatus, EpochSeasonContribution, EpochSeasonFactionStanding, EpochSeasonObjective, EpochSeasonObjectiveStatus, EpochSeasonObjectiveTemplate, EpochSeasonPhase, EpochSeasonPhaseEvent, EpochSeasonPhaseEventType, EpochServerHostedJob, EpochServerHostedJobStatus, EpochSocialHook, EpochTurnCard, EpochTurnCardStatus, EpochTurnResolution, EpochTurnTraceEffect, FillMarketOrderInput, GenerateRegionNewsInput, IssueIdentityInput, JoinPartyRunInput, MutableProjection, PostMessageInput, ProposeDiplomacyInput, ProposeOrganizationBudgetInput, PurchaseOrganizationUpgradeInput, PurchaseShopOfferInput, QueueServerHostedJobInput, RecordCommandRejectedInput, RecordLoreContributionInput, RecordLoreTargetAdjudicationInput, RecordNpcLifecycleInput, RecordNpcMemoryInput, RecordRiskReviewInput, ReincarnateInput, ReleaseAbuseRestrictionInput, ReleaseMarketRiskRestrictionInput, RequestPartyJoinInput, ResolveAnomalyEventInput, ResolveModerationItemInput, ResolveOrganizationBudgetInput, ResolvePartyJoinRequestInput, ResolveRaidInput, ResolveRegionRevoltInput, ResolveRetaliationInput, ResolveTurnCardInput, ResourceInput, RespondDiplomacyInput, ReviewNpcCandidateInput, RotateExplorerRecoveryInput, SetDowntimeInput, SettleContestedObjectiveInput, SettlePartyRunInput, SettleResourceNodeInput, SettleSeasonCampaignInput, SkipServerHostedJobInput, SolidifyJourneyWorldInput, StartHostedSessionInput, SubmitHostedActionInput, SubmitNpcCandidateInput, SubmitNpcCandidateResult, TickDirectTradeExpiryInput, TickDirectTradeExpiryResult, TickDowntimeInput, TickDowntimeResult, TickMarketExpiryInput, TickMarketExpiryResult, TickNpcLifecycleInput, TickNpcLifecycleResult, TickOrganizationPoliticsInput, TickOrganizationPoliticsResult, TraceConflictOwnerViewInput, TraceConflictRegionViewInput, UpdateAgentNpcBondInput, UpdateOrganizationMembershipInput, UpdatePartyInviteInput, UpdateRelationshipInput,
 } from "./gameCoreTypes.ts";
+import type {
+  ResolveTurnCardIntentInput,
+  SubmitHostedIntentInput,
+} from "./gameCoreTypes.ts";
 
 const DEFAULT_LIFETIME = 100;
 
@@ -776,6 +788,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
   const identityNameFactory = options.identityNameFactory || ((input: { explorerId: string; generation: number }) =>
     `${input.explorerId}-第${input.generation}世`);
   const journeyMirrorLedgerSink = options.journeyMirrorLedgerSink;
+  const intentAgent = createIntentAgent();
   let events = initialEvents;
   const frozenProjectionObjects = new WeakSet<object>();
   let currentProjection = freezeProjection(projectEpochEvents(events), frozenProjectionObjects);
@@ -3648,12 +3661,15 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     const actionOptionId = assertNonEmptyString(input.actionOptionId, "turn_action_option_id");
     const option = card.actionOptions.find((candidate) => candidate.actionOptionId === actionOptionId);
     if (!option) throw new Error("turn_action_option_not_found");
+    const intentRejected = input.intentAudit?.status === "unmatched";
     const template = turnOptionTemplate(option.optionKey);
-    const settlement = settlementPolicy(current, card.agentId, {
-      risk: template.risk,
-      reward: template.reward,
-      lifetimeDelta: template.lifetimeDelta,
-    });
+    const settlement = intentRejected
+      ? { reward: undefined, lifetimeDelta: undefined, nonEvidence: true }
+      : settlementPolicy(current, card.agentId, {
+          risk: template.risk,
+          reward: template.reward,
+          lifetimeDelta: template.lifetimeDelta,
+        });
     const resolvedAt = serverIsoTime(clock);
     const responseEnvelopeId = idFactory("challenge", `${turnCardId}:${card.sequence}:${actionOptionId}:${resolvedAt}:resolution`);
     const nextEvents = planTurnCardResolutionEvents({
@@ -3670,12 +3686,15 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       risk: template.risk,
       explanation: option.explanation,
       visibleText: input.visibleText,
-      outcomeSummary: settledOutcomeSummary(
+      outcomeSummary: intentRejected
+        ? `服务器未将这段自然语言匹配到当前行动卡；本次只记录失败尝试，未执行“${option.label}”。`
+        : settledOutcomeSummary(
         template.outcomeSummary,
         template.reward,
         settlement.reward,
         settlement.lifetimeDelta,
-      ),
+        ),
+      intentAudit: input.intentAudit,
       reward: settlement.reward,
       lifetimeDelta: settlement.lifetimeDelta,
       nonEvidence: settlement.nonEvidence,
@@ -3688,6 +3707,46 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     const turnResolution = nextProjection.turnCards[turnCardId].resolution;
     if (!turnResolution) throw new Error("turn_resolution_projection_failed");
     return commit(nextEvents, turnResolution);
+  }
+
+  function resolveTurnCardIntent(
+    input: ResolveTurnCardIntentInput,
+    context: EpochCommandContext,
+  ): EpochCommandResult<EpochTurnResolution> {
+    const intent = intentAgent.interpret(input.intentText);
+    return resolveTurnCardStructuredIntent({
+      turnCardId: input.turnCardId,
+      sequence: input.sequence,
+      nonce: input.nonce,
+      visibleText: input.visibleText,
+      intent,
+    }, context);
+  }
+
+  function resolveTurnCardStructuredIntent(
+    input: ResolveTurnCardStructuredIntentInput,
+    context: EpochCommandContext,
+  ): EpochCommandResult<EpochTurnResolution> {
+    const turnCardId = assertNonEmptyString(input.turnCardId, "turn_card_id");
+    const card = projection().turnCards[turnCardId];
+    if (!card) throw new Error("turn_card_not_found");
+    const intent = input.intent;
+    const candidates: readonly IntentActionOptionCandidate[] = card.actionOptions.map((option) => ({
+      actionOptionId: option.actionOptionId,
+      optionKey: option.optionKey,
+      label: option.label,
+      explanation: option.explanation.brief,
+      risk: option.risk,
+    }));
+    const intentAudit = intentAgent.match(intent, candidates);
+    return resolveTurnCard({
+      turnCardId,
+      actionOptionId: intentAudit.actionOptionId,
+      sequence: input.sequence,
+      nonce: input.nonce,
+      visibleText: input.visibleText || intent.rawText,
+      intentAudit,
+    }, context);
   }
 
   function startHostedSession(input: StartHostedSessionInput, context: EpochCommandContext): EpochCommandResult<EpochHostedSession> {
@@ -3755,6 +3814,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     const actionOptionId = assertNonEmptyString(input.actionOptionId, "hosted_action_option_id");
     const option = session.actionOptions.find((candidate) => candidate.actionOptionId === actionOptionId);
     if (!option) throw new Error("hosted_action_option_not_found");
+    const intentRejected = input.intentAudit?.status === "unmatched";
     const signedJourneyAction = session.sceneContract?.actionOptions.find((candidate) =>
       candidate.actionOptionId === actionOptionId);
     if (session.sceneContract) {
@@ -3776,11 +3836,13 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
         throw new Error("journey_scene_action_signature_invalid");
       }
     }
-    const settlement = settlementPolicy(current, session.agentId, {
-      risk: option.risk,
-      reward: option.reward,
-      lifetimeDelta: option.lifetimeDelta,
-    });
+    const settlement = intentRejected
+      ? { reward: undefined, lifetimeDelta: undefined, nonEvidence: true }
+      : settlementPolicy(current, session.agentId, {
+          risk: option.risk,
+          reward: option.reward,
+          lifetimeDelta: option.lifetimeDelta,
+        });
     const phase6PreparationScore = session.sceneContract?.phase6Readiness?.journeyPreparationScore ?? 0;
     const journeyPreparationScore = session.sceneContract
       ? Math.min(16, phase6PreparationScore + Object.values(current.hostedSessions).reduce((score, priorSession) => {
@@ -3820,6 +3882,12 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
             .filter((item): item is EpochInventoryItem => Boolean(item)),
           participantTargetCount: signedJourneyAction.targetEntityIds.filter((targetId) =>
             session.sceneContract?.participants.some((participant) => participant.id === targetId)).length,
+          ...(intentRejected ? {
+            forcedFailure: {
+              reason: "intent_not_supported" as const,
+              preparationSteps: input.intentAudit?.preparationSteps || [],
+            },
+          } : {}),
         })
       : undefined;
     const completedJourneyObjective = journeyResolution?.completionKind === "complete"
@@ -3836,7 +3904,7 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
             : `journey_side_objective:${session.sceneContract?.journeyId}:${completedJourneyObjective.objectiveId}`,
         }
       : undefined;
-    const actionReward = journeyObjectiveReward ?? settlement.reward;
+    const actionReward = intentRejected ? undefined : journeyObjectiveReward ?? settlement.reward;
     const recordedAt = serverIsoTime(clock);
     const actionId = idFactory("action", `record:${sessionId}:${actionOptionId}`);
     const responseEnvelopeId = idFactory("challenge", `${actionId}:${recordedAt}:hosted-action`);
@@ -3870,19 +3938,23 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
       } : undefined,
       explanation: option.explanation,
       visibleText: input.visibleText,
-      outcomeSummary: journeyResolution?.summary ?? settledOutcomeSummary(
-        option.outcomeSummary,
-        option.reward,
-        actionReward,
-        settlement.lifetimeDelta,
-      ),
+      outcomeSummary: journeyResolution?.summary ?? (intentRejected
+        ? `服务器未将这段自然语言匹配到当前行动；本次只记录失败尝试，未执行“${option.label}”。`
+        : settledOutcomeSummary(
+            option.outcomeSummary,
+            option.reward,
+            actionReward,
+            settlement.lifetimeDelta,
+          )),
+      intentAudit: input.intentAudit,
       ...(journeyResolution ? { journeyResolution } : {}),
       reward: actionReward,
       lifetimeDelta: settlement.lifetimeDelta,
-      nonEvidence: settlement.nonEvidence,
+      nonEvidence: intentRejected ? true : settlement.nonEvidence,
       recordedAt,
       sideEffectEvents: (actionRecorded) => {
         const sideEffects: EpochEvent[] = [];
+        if (intentRejected) return sideEffects;
         const resourceCost = journeyResolution?.resourceCost;
         if (resourceCost?.paid) {
           const balance = currentBalance(current, session.agentId, resourceCost.resourceId);
@@ -4092,6 +4164,50 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     return commit(nextEvents, recorded);
   }
 
+  function submitHostedIntent(
+    input: SubmitHostedIntentInput,
+    context: EpochCommandContext,
+  ): EpochCommandResult<EpochHostedActionRecord> {
+    const intent = intentAgent.interpret(input.intentText);
+    return submitHostedStructuredIntent({
+      sessionId: input.sessionId,
+      visibleText: input.visibleText,
+      journeyValidation: input.journeyValidation,
+      attestation: input.attestation,
+      intent,
+    }, context);
+  }
+
+  function submitHostedStructuredIntent(
+    input: SubmitHostedStructuredIntentInput,
+    context: EpochCommandContext,
+  ): EpochCommandResult<EpochHostedActionRecord> {
+    const sessionId = assertNonEmptyString(input.sessionId, "hosted_session_id");
+    const session = projection().hostedSessions[sessionId];
+    if (!session) throw new Error("hosted_session_not_found");
+    const intent = input.intent;
+    const sceneOptions = session.sceneContract?.actionOptions;
+    const candidates: readonly IntentActionOptionCandidate[] = (sceneOptions || session.actionOptions).map((option) => ({
+      actionOptionId: option.actionOptionId,
+      optionKey: option.optionKey,
+      label: option.label,
+      ...(("intent" in option && typeof option.intent === "string") ? { intent: option.intent } : {}),
+      explanation: "explanation" in option && option.explanation
+        ? option.explanation.brief
+        : undefined,
+      risk: option.risk,
+    }));
+    const intentAudit = intentAgent.match(intent, candidates);
+    return submitHostedAction({
+      sessionId,
+      actionOptionId: intentAudit.actionOptionId,
+      visibleText: input.visibleText,
+      intentAudit,
+      ...(input.journeyValidation ? { journeyValidation: input.journeyValidation } : {}),
+      ...(input.attestation ? { attestation: input.attestation } : {}),
+    }, context);
+  }
+
   const journeyCommands = createJourneyCommands({
     projection,
     commit,
@@ -4182,8 +4298,12 @@ export function createEpochGameCore(options: EpochGameCoreOptions = {}) {
     ownerTraceConflictMemories,
     createTurnCard,
     resolveTurnCard,
+    resolveTurnCardIntent,
+    resolveTurnCardStructuredIntent,
     startHostedSession,
     submitHostedAction,
+    submitHostedIntent,
+    submitHostedStructuredIntent,
     ...journeyCommands,
   };
 }

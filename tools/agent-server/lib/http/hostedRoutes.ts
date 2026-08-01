@@ -58,6 +58,16 @@ export async function handleEpochHostedRoutes(context: EpochHttpRouteContext): P
     return true;
   }
 
+  if (method === "POST" && pathname === "/api/epoch/hosted/intent") {
+    await persistAndSend(context, runtime.epochSubmitHostedIntent(await context.readJsonBody(request, context.maxBodyBytes)));
+    return true;
+  }
+
+  if (method === "POST" && pathname === "/api/epoch/journey/intent") {
+    await persistAndSend(context, runtime.epochCommitJourneyIntent(await context.readJsonBody(request, context.maxBodyBytes)));
+    return true;
+  }
+
   if (method === "POST" && pathname === "/api/epoch/hosted/server-action") {
     await persistAndSend(context, runtime.epochRunServerHostedAction(await context.readJsonBody(request, context.maxBodyBytes)));
     return true;
@@ -90,6 +100,11 @@ export async function handleEpochHostedRoutes(context: EpochHttpRouteContext): P
 
   if (method === "POST" && pathname === "/api/epoch/web-bridge/action") {
     await persistAndSend(context, runtime.epochSubmitWebBridgeAction(await context.readJsonBody(request, context.maxBodyBytes)));
+    return true;
+  }
+
+  if (method === "POST" && pathname === "/api/epoch/web-bridge/intent") {
+    await persistAndSend(context, runtime.epochSubmitWebBridgeIntent(await context.readJsonBody(request, context.maxBodyBytes)));
     return true;
   }
 

@@ -62,7 +62,7 @@ function journeyFixture(status: JourneyStatus = "draft", overrides: Partial<Epoc
 const EXPECTED_TRANSITIONS: Readonly<Record<JourneyStatus, readonly JourneyStatus[]>> = {
   draft: ["prepared", "cancelled", "identity_ended"],
   prepared: ["traveling", "cancelled", "identity_ended"],
-  traveling: ["awaiting_agent", "awaiting_user", "returning", "identity_ended"],
+  traveling: ["awaiting_agent", "awaiting_user", "returning", "identity_ended", "gm_active"],
   awaiting_agent: ["traveling", "awaiting_user", "returning", "identity_ended"],
   awaiting_user: ["traveling", "awaiting_agent", "returning", "identity_ended"],
   returning: ["settling", "identity_ended"],
@@ -70,6 +70,8 @@ const EXPECTED_TRANSITIONS: Readonly<Record<JourneyStatus, readonly JourneyStatu
   settled: [],
   cancelled: [],
   identity_ended: [],
+  gm_active: ["gm_paused", "settling", "cancelled", "identity_ended"],
+  gm_paused: ["gm_active", "cancelled", "identity_ended"],
 };
 
 function transitionInput(from: JourneyStatus, to: JourneyStatus): TransitionJourneyInput {

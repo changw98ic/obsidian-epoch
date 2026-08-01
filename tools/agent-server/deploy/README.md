@@ -72,6 +72,32 @@ image or exposed through health output. The service requests container mode
 0400 and also accepts Docker's read-only managed-secret mode when a Compose
 implementation cannot remap file-secret permissions. Leave it blank for an unauthenticated LAN endpoint.
 
+## Server-side text model
+
+The server's text-generation adapter is provider-neutral. It is optional and
+only generates untrusted proposals or presentation drafts; Game Core still
+checks every legal action, computes every value and writes every canonical
+event. If the adapter is disabled or unavailable, the server uses its
+deterministic catalog fallback and gameplay remains available.
+
+Use an OpenAI-compatible endpoint for a local Qwen, llama.cpp, vLLM or OpenAI
+deployment:
+
+```bash
+AGENT_SERVER_MODEL_PROVIDER=openai_compatible
+AGENT_SERVER_MODEL_BASE_URL=http://192.168.1.7:1235
+AGENT_SERVER_MODEL_NAME=<chat-model-name>
+AGENT_SERVER_MODEL_API_KEY_FILE=/etc/obsidian-epoch/model-api-key.txt
+```
+
+The endpoint must expose `POST /v1/chat/completions`. An embedding-only endpoint
+is not a text-generation endpoint. Anthropic is also supported by setting
+`AGENT_SERVER_MODEL_PROVIDER=anthropic`, its base URL and model name; the same
+model adapter is used in both cases. Keep the key in a mode-0600-or-stricter
+file; Compose mounts it as `/run/secrets/obsidian_epoch_model_api_key` and never
+includes it in health responses. `/api/health` reports the bounded state under
+`checks.serverAi` as `warming`, `ready` or `degraded`.
+
 ## Backup Rotation
 
 Run backup rotation from cron, systemd timers or your deployment platform before upgrades and at the cadence your world can afford to lose:

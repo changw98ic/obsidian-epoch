@@ -32,6 +32,11 @@ import {
   scrubJourneyForPublicView,
   scrubJourneyRecordForPublicView,
 } from "./journeyReadModel.ts";
+
+import {
+  settleGMJourney,
+  type GMSettlementResult,
+} from "./gmModeRules.ts";
 import { EPOCH_WORLD_CALENDAR_ORIGIN_YEAR, epochWorldCalendarMoment } from "./worldCalendar.ts";
 import type { HiddenPrerequisiteLink } from "./journeyRoleplayRules.ts";
 
@@ -1332,6 +1337,47 @@ export class AgentCompanionRuntime {
           };
       this.#idempotency.set(cacheKey, { subjectHash: command.subjectHash, value });
     }
+  }
+
+  transitionJourneyToGM(input: UnknownRecord = {}) {
+    const journeyId = requiredString(input.journeyId, "id");
+    const current = this.#journey.status(journeyId);
+    this.#authorizeExplorer(input, current.journey.explorerId);
+    return this.#idempotently("transition_to_gm", current.journey.explorerId, input, () => {
+      const record = this.#journey.transitionToGMStatus(journeyId, current.journey.version);
+      return scrubJourneyRecordForPublicView(record);
+    });
+  }
+
+  commitGMEpisode(input: {
+    readonly journeyId: string;
+    readonly expectedVersion: number;
+    readonly episode: JourneySceneEpisode;
+    readonly idempotencyKey: string;
+  }) {
+    const current = this.#journey.status(input.journeyId);
+    this.#authorizeExplorer({ idempotencyKey: input.idempotencyKey }, current.journey.explorerId);
+    return this.#idempotently("commit_gm_episode", current.journey.explorerId, { idempotencyKey: input.idempotencyKey, journeyId: input.journeyId }, () => {
+      const record = this.#journey.commitGMEpisodes(
+        input.journeyId,
+        input.expectedVersion,
+        [input.episode],
+      );
+      return scrubJourneyRecordForPublicView(record);
+    });
+  }
+
+  settleGMJourney(input: UnknownRecord = {}): GMSettlementResult {
+    const journeyId = requiredString(input.journeyId, "id");
+    const current = this.#journey.status(journeyId);
+    this.#authorizeExplorer(input, current.journey.explorerId);
+    if (current.journey.status !== "gm_active" && current.journey.status !== "gm_paused") {
+      throw new Error("journey_gm_status_invalid");
+    }
+    // gm_active/gm_paused → settling → settled (two-step, bypasses tick's three-phase check)
+    const settling = this.#journey.settleGMToSettling(journeyId, current.journey.version);
+    this.#journey.settleGMToSettled(journeyId, settling.journey.version);
+    return settleGMJourney({ companion: this, journeyId });
   }
 }
 

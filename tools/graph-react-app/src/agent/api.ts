@@ -36,6 +36,7 @@ import type {
   EpochHostedActionRecord,
   EpochHostedSession,
   EpochHostedSessionWatchInfo,
+  EpochIntentActionResult,
   EpochInventoryItem,
   EpochBounty,
   EpochLoreContributionsInfo,
@@ -985,6 +986,10 @@ export function resolveEpochTurn(body: unknown): Promise<EpochRuntimeResult<Epoc
   return postJson("/api/epoch/turns/resolve", body);
 }
 
+export function resolveEpochTurnIntent(body: unknown): Promise<EpochRuntimeResult<EpochTurnResolution>> {
+  return postJson("/api/epoch/turns/resolve-intent", body);
+}
+
 export function getEpochHostedSessions(agentId?: string): Promise<{ agentId?: string; sessions: readonly EpochHostedSession[] }> {
   const suffix = agentId ? `?agentId=${encodeURIComponent(agentId)}` : "";
   return getJson(`/api/epoch/hosted/sessions${suffix}`);
@@ -1000,6 +1005,14 @@ export function startEpochHostedSession(body: unknown): Promise<EpochRuntimeResu
 
 export function submitEpochHostedAction(body: unknown): Promise<EpochRuntimeResult<EpochHostedActionRecord>> {
   return postJson("/api/epoch/hosted/action", body);
+}
+
+export function submitEpochHostedIntent(body: unknown): Promise<EpochRuntimeResult<EpochIntentActionResult>> {
+  return postJson("/api/epoch/hosted/intent", body);
+}
+
+export function commitEpochJourneyIntent(body: unknown): Promise<EpochRuntimeResult<EpochIntentActionResult>> {
+  return postJson("/api/epoch/journey/intent", body);
 }
 
 export function runEpochServerHostedAction(body: unknown): Promise<EpochRuntimeResult<EpochServerHostedActionRun>> {
@@ -1032,6 +1045,10 @@ export function startEpochWebBridgeTurn(body: unknown): Promise<EpochRuntimeResu
 
 export function submitEpochWebBridgeAction(body: unknown): Promise<EpochRuntimeResult<EpochWebBridgeActionResult>> {
   return postJson("/api/epoch/web-bridge/action", body);
+}
+
+export function submitEpochWebBridgeIntent(body: unknown): Promise<EpochRuntimeResult<EpochIntentActionResult>> {
+  return postJson("/api/epoch/web-bridge/intent", body);
 }
 
 export function createEpochAttestationChallenge(body: unknown): Promise<EpochAttestationChallengeResponse> {

@@ -61,9 +61,10 @@ import {
   type JourneyRunReceipt,
 } from "./epoch/journeyRunReceiptRules.ts";
 import {
-  buildPersistedJourneyNarrative,
   buildServerJourneyEpisodeFacts,
 } from "./epoch/journeyNarrativeRules.ts";
+import { createNarrativeAgent } from "./epoch/narrativeAgent.ts";
+import type { ModelAdapter } from "./modelAdapter.ts";
 import {
   PHASE6_MCP_CONTRACT_RULESET_VERSION,
   validatePhase6McpPhase6ResultRead,
@@ -183,7 +184,11 @@ import { createFactionLedger } from "./factions.ts";
 import { createLoreLedger } from "./lore.ts";
 import { createEpochOperationSwitchRegistry, type EpochOperationGateInput } from "./operationSwitches.ts";
 import { createLegacyOutboxLedger, graphSyncFromOutboxEntries, type LegacyOutboxCreateInput } from "./outbox.ts";
-import { createEpochRuntime, type EpochSharedResultPage } from "./epoch/runtime.ts";
+import {
+  createEpochRuntime,
+  publicIntentCommandResult,
+  type EpochSharedResultPage,
+} from "./epoch/runtime.ts";
 import { projectEpochEvents } from "./epoch/gameCore.ts";
 import { createAgentCompanionRuntime } from "./epoch/agentCompanionRuntime.ts";
 import { createJourneyOfferRepository, type ReplenishStrategy } from "./epoch/journeyOfferStore.ts";
@@ -1496,6 +1501,9 @@ function uniqueStringArray(values: readonly (string | undefined)[]): readonly st
 export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
   const registry = createTicketRegistry(recordValue(options.tickets));
   const operationSwitches = createEpochOperationSwitchRegistry(options.operationSwitches);
+  const epochOptions = recordValue(options.epoch);
+  const modelAdapter = epochOptions.modelAdapter as ModelAdapter | undefined;
+  const narrativeAgent = createNarrativeAgent(modelAdapter);
   const loreLedger = createLoreLedger(recordValue(options.loreState), { operationSwitches });
   const progressionLedger = createProgressionLedger(recordValue(options.progression));
   const factionLedger = createFactionLedger(recordValue(options.factions));
@@ -1518,7 +1526,6 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         ? outboxOptions.initialEvents as readonly object[]
         : [],
   });
-  const epochOptions = recordValue(options.epoch);
   const journeyOptions = recordValue(options.journey);
   const worldClockOptions = recordValue(options.worldClock);
   const worldSimulationOptions = recordValue(options.worldSimulation);
@@ -2766,7 +2773,10 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     return attachEpochEventsForPersistence(result, hostedEvents);
   }
 
-  function commitSingleJourneyStepRuntime(input: AnyRecord = {}) {
+  function commitSingleJourneyStepRuntime(
+    input: AnyRecord = {},
+    precommittedAction?: ReturnType<typeof epochRuntime.commitJourneyHostedAction>,
+  ) {
     assertPublicSafe(input);
     const session = epochRuntime.journeyHostedSession(input);
     const contract = session.sceneContract;
@@ -2781,7 +2791,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     if (!episode || episode.episodeId !== contract.episodeId) {
       throw new Error("journey_scene_episode_binding_invalid");
     }
-    const action = epochRuntime.commitJourneyHostedAction({
+    const action = precommittedAction ?? epochRuntime.commitJourneyHostedAction({
       ...input,
       correlationId: status.journey.correlationId,
       causationId: contract.sceneId,
@@ -2880,7 +2890,7 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
         },
       } : {}),
     });
-    const narrative = recordedEpisode?.narrative ?? buildPersistedJourneyNarrative({
+    const narrative = recordedEpisode?.narrative ?? narrativeAgent.render({
       serverFacts,
       ...(input.narrativeDraft !== undefined ? { samplingDraft: input.narrativeDraft } : {}),
     }).value;
@@ -3467,7 +3477,51 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     if (!session.sceneContract) {
       throw new Error("journey_scene_contract_not_found");
     }
-    const main = commitSingleJourneyStepRuntime(input);
+    return finalizeJourneyActionRuntime(input);
+  }
+
+  async function commitJourneyIntentRuntime(input: AnyRecord = {}) {
+    const current = companionRuntime.status(input);
+    const action = await epochRuntime.commitJourneyHostedIntentWithServerModelInternal({
+      ...input,
+      correlationId: current.journey.correlationId,
+      causationId: input.sceneId,
+    });
+    const journeyResult = finalizeJourneyActionRuntime(input, action);
+    const publicIntent = publicIntentCommandResult(action);
+    const journeyRecord = recordValue(journeyResult);
+    const journeyView = { ...journeyResult } as AnyRecord;
+    delete journeyView.sceneContract;
+    delete journeyView.settledAction;
+    delete journeyView.returnAction;
+    const result = {
+      ...journeyView,
+      episode: journeyRecord.episode ?? journeyRecord.objectiveEpisode ?? journeyRecord.mainEpisode,
+      value: publicIntent.value,
+      events: publicIntent.events,
+      projection: publicIntent.projection,
+    };
+    Object.defineProperty(result, "projection", {
+      value: publicIntent.projection,
+      enumerable: false,
+    });
+    attachEpochEventsForPersistence(result, [
+      ...epochEventsForPersistence(journeyResult),
+      ...epochEventsForPersistence(publicIntent),
+    ]);
+    attachJourneyEventsForPersistence(result, journeyEventsForPersistence(journeyResult));
+    return result;
+  }
+
+  function finalizeJourneyActionRuntime(
+    input: AnyRecord = {},
+    action?: ReturnType<typeof epochRuntime.commitJourneyHostedAction>,
+  ) {
+    const session = epochRuntime.journeyHostedSession(input);
+    if (!session.sceneContract) {
+      throw new Error("journey_scene_contract_not_found");
+    }
+    const main = commitSingleJourneyStepRuntime(input, action);
     const current = companionRuntime.status(input);
     const recallOnlyMain = Boolean(current.journey.taskPlan
       && main.episode.phase === "main"
@@ -3795,6 +3849,133 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     return companionRuntime.recall(input);
   }
 
+  function parseLLMJson(text: string, context: string): AnyRecord {
+    // Try to extract JSON from the response (may be wrapped in markdown code blocks)
+    const jsonMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/) || [null, text];
+    const jsonStr = (jsonMatch[1] ?? text).trim();
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        throw new Error(`gm_${context}_response_not_object`);
+      }
+      return parsed;
+    } catch {
+      throw new Error(`gm_${context}_response_invalid_json`);
+    }
+  }
+
+  function requireString(value: unknown, field: string): string {
+    if (typeof value !== "string" || !value.trim()) throw new Error(`${field}_required`);
+    return value.trim();
+  }
+
+  async function journeyGMActRuntime(input: AnyRecord = {}): Promise<AnyRecord> {
+    const journeyId = requireString(input.journeyId, "journey_id");
+    const narrative = requireString(input.narrative, "narrative");
+    const idempotencyKey = requireString(input.idempotencyKey, "idempotency_key");
+
+    if (!modelAdapter) throw new Error("model_adapter_required");
+
+    // Read current world state
+    const statusValue = companionRuntime.status({ journeyId, ...input });
+    const status = recordValue(statusValue);
+    const journeyStatus = (status as AnyRecord).journey as AnyRecord | undefined;
+    if (!journeyStatus || journeyStatus.status !== "gm_active") throw new Error("journey_gm_status_invalid");
+
+    // Build world state snapshot
+    const { buildWorldState, buildKnownFacts, applyDataBoundaries, buildGMEpisode, DEFAULT_HARD_RULES, buildAdjudicatorSystemPrompt, buildAdjudicatorUserPrompt, buildNarratorSystemPrompt, buildNarratorUserPrompt } = await import("./epoch/gmModeRules.ts");
+    const snapshot = buildWorldState(companionRuntime, journeyId);
+    const knownFacts = buildKnownFacts(snapshot.episodes);
+
+    // Get recent episode summaries for context
+    const recentHistory = snapshot.episodes.slice(-3).map((ep) =>
+      ep.serverFacts?.storyBeat?.outcomeSummary ?? ""
+    ).filter(Boolean);
+
+    // Hard rule pre-check (code-level, no LLM)
+    const { hardRulePreCheck } = await import("./epoch/gmModeRules.ts");
+    const preCheck = hardRulePreCheck(narrative, snapshot, DEFAULT_HARD_RULES);
+    if (preCheck.blocked) {
+      return {
+        ...statusValue,
+        actionValid: false,
+        narrative: preCheck.reason,
+        npcDialogue: {},
+        atmosphere: "无法行动",
+        sensoryDetails: {},
+        discoveredInfo: [],
+        agentState: {
+          money: snapshot.agent.resources.money,
+          stamina: snapshot.agent.resources.stamina,
+          health: snapshot.agent.resources.health,
+          location: snapshot.agent.location,
+        },
+      };
+    }
+
+    // Call LLM for adjudication
+    const adjudicatorPrompt = buildAdjudicatorSystemPrompt({ hardRules: DEFAULT_HARD_RULES, snapshot, knownFacts });
+    const adjudicatorUserPrompt = buildAdjudicatorUserPrompt({ playerNarrative: narrative, snapshot, recentHistory });
+    const adjudicatorResponse = await modelAdapter.complete({
+      systemPrompt: adjudicatorPrompt,
+      messages: [{ role: "user", content: adjudicatorUserPrompt }],
+      responseFormat: "json_object",
+      maxTokens: 2000,
+    });
+    const judgment = parseLLMJson(adjudicatorResponse.text, "adjudicator") as unknown as import("./epoch/gmModeRules.ts").AdjudicatorOutput;
+
+    // Apply data boundaries
+    const validatedChanges = applyDataBoundaries(judgment, snapshot, DEFAULT_HARD_RULES);
+
+    // Call LLM for narration
+    const narratorPrompt = buildNarratorSystemPrompt();
+    const narratorUserPrompt = buildNarratorUserPrompt({ judgment, playerNarrative: narrative, agentName: snapshot.agent.name });
+    const narratorResponse = await modelAdapter.complete({
+      systemPrompt: narratorPrompt,
+      messages: [{ role: "user", content: narratorUserPrompt }],
+      responseFormat: "json_object",
+      maxTokens: 3000,
+    });
+    const narration = parseLLMJson(narratorResponse.text, "narrator") as unknown as import("./epoch/gmModeRules.ts").NarratorOutput;
+
+    // Build episode
+    const episodeIndex = snapshot.episodes.filter((ep) => ep.candidateId === "scene:gm:free_action").length + 1;
+    const episode = buildGMEpisode({
+      journeyId,
+      index: episodeIndex,
+      playerNarrative: narrative,
+      snapshot,
+      judgment,
+      narration,
+      validatedChanges,
+    });
+
+    // Commit episode
+    const committed = companionRuntime.commitGMEpisode({
+      journeyId,
+      expectedVersion: snapshot.journey.version,
+      episode,
+      idempotencyKey,
+    });
+
+    return {
+      ...committed,
+      narrative: narration.narrative,
+      npcDialogue: narration.npcDialogue,
+      atmosphere: narration.atmosphere,
+      innerThoughts: narration.innerThoughts,
+      sensoryDetails: narration.sensoryDetails,
+      discoveredInfo: judgment.informationConsequences.discovered,
+      agentState: {
+        money: validatedChanges.agent.money,
+        stamina: validatedChanges.agent.stamina,
+        health: validatedChanges.agent.health,
+        location: validatedChanges.agent.location,
+      },
+      availableReactions: judgment.availableReactions,
+    };
+  }
+
   async function phase6ExperimentStatusView(experimentId: string): Promise<AnyRecord> {
     const statusMethod = (epochRuntime as AnyRecord).phase6ExperimentStatus;
     const runMethod = (epochRuntime as AnyRecord).phase6ExperimentRun;
@@ -4076,6 +4257,35 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     epochConfirmPersonalityDrift: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
       return epochRuntime.confirmPersonalityDrift(input);
+    },
+    epochTransitionToGM: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return companionRuntime.transitionJourneyToGM(input);
+    },
+    epochJourneyGMAct: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return journeyGMActRuntime(input);
+    },
+    epochSettleGMJourney: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      const result = companionRuntime.settleGMJourney(input);
+      // Grant reward if tier is not 未及格
+      if (result.completionTier !== "未及格" && result.reward.amount > 0) {
+        const statusValue = companionRuntime.status({ journeyId: result.journeyId, ...input });
+        const status = recordValue(statusValue);
+        const agentId = ((status as AnyRecord).journey as AnyRecord | undefined)?.agentId;
+        if (typeof agentId === "string" && agentId.trim()) {
+          epochRuntime.grantGMSettlementReward({
+            journeyId: result.journeyId,
+            agentId,
+            tier: result.completionTier,
+            resourceId: result.reward.resourceId,
+            amount: result.reward.amount,
+            ...(typeof input.idempotencyKey === "string" ? { idempotencyKey: input.idempotencyKey } : {}),
+          });
+        }
+      }
+      return result;
     },
     epochAbuseStatus: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
@@ -4684,6 +4894,14 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
       });
       return epochRuntime.resolveTurnCard(input);
     },
+    epochResolveTurnIntent: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      assertOperationSwitchOpen({
+        action: "settlement",
+        ...operationDimensionsFromInput(input),
+      });
+      return epochRuntime.resolveTurnCardIntentWithServerModel(input);
+    },
     epochHostedSessions: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
       return epochRuntime.hostedSessions(input);
@@ -4703,6 +4921,14 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     epochSubmitHostedAction: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
       return epochRuntime.submitHostedAction(input);
+    },
+    epochSubmitHostedIntent: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return epochRuntime.submitHostedIntentWithServerModel(input);
+    },
+    epochCommitJourneyIntent: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return commitJourneyIntentRuntime(input);
     },
     epochRunServerHostedAction: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
@@ -4731,6 +4957,10 @@ export function createAgentWorldRuntime(options: RuntimeOptions = {}) {
     epochSubmitWebBridgeAction: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
       return epochRuntime.submitWebBridgeAction(input);
+    },
+    epochSubmitWebBridgeIntent: (input: AnyRecord = {}) => {
+      assertPublicSafe(input);
+      return epochRuntime.submitWebBridgeIntent(input);
     },
     epochAttestationChallenge: (input: AnyRecord = {}) => {
       assertPublicSafe(input);
